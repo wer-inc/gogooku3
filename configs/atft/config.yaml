@@ -1,0 +1,65 @@
+defaults:
+  - _self_
+  - data: jpx_large_scale  # プロダクション用データ設定
+  - model: atft_gat_fan
+  - train: production  # プロダクション用設定
+  - hardware: default  # ハードウェア設定（デフォルト）
+  - override hydra/hydra_logging: default
+  - override hydra/job_logging: jst
+
+# グローバル設定
+project:
+  name: ATFT-GAT-FAN
+  seed: 42
+  deterministic: true
+
+# 実行モード
+mode: train  # train, evaluate, predict, serve
+
+# デバッグ設定
+debug:
+  enabled: false
+  fast_dev_run: 10
+  profiler: false
+  detect_anomaly: false
+
+# パス設定
+paths:
+  root: .
+  data: data
+  models: models
+  logs: logs
+
+# データ設定
+data:
+  graph_builder:
+    # 実データディレクトリを指す data.source.data_dir を既定で参照
+    source_glob: "${data.source.data_dir}/*.parquet"
+    lookback: 60
+    k: 15
+    ewm_halflife: 20
+    shrinkage_gamma: 0.05
+    min_obs: 40
+    size_tau: 1.0
+    cache_dir: "graph_cache"
+    # リーク防止のため label_* は候補から外す
+    return_cols: ["return_1d", "feat_ret_1d"]
+    sector_col: "sector33"
+    log_mktcap_col: "log_mktcap"
+    method: "ewm_demean"
+    symmetric: true
+
+# ログ設定
+logging:
+  level: INFO
+
+# Hydra設定
+hydra:
+  run:
+    dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    name: ATFT-GAT-FAN
+    chdir: false  # 重要: 作業ディレクトリを変更しない

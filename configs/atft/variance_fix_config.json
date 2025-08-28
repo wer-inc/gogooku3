@@ -1,0 +1,35 @@
+{
+  "training_settings": {
+    "loss": {
+      "pred_var_min": 1.0,
+      "pred_var_weight": 10.0,
+      "use_huber": true,
+      "huber_delta": 1.0,
+      "huber_weight": 0.5,
+      "use_rankic": true,
+      "rankic_weight": 0.1
+    },
+    "optimizer": {
+      "lr": 5e-05,
+      "weight_decay": 0.01,
+      "gradient_clip_val": 0.5
+    },
+    "augmentation": {
+      "input_noise": 0.1,
+      "target_noise": 0.05,
+      "mixup_alpha": 0.2
+    },
+    "regularization": {
+      "dropout": 0.3,
+      "attention_dropout": 0.2,
+      "output_dropout": 0.3
+    }
+  },
+  "model_modifications": {
+    "use_residual": true,
+    "layer_norm_eps": 0.001,
+    "activation": "gelu",
+    "output_activation": "tanh",
+    "output_scaling": 2.0
+  }
+}

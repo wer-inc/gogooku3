@@ -1,0 +1,31 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Feast and dependencies
+RUN pip install --no-cache-dir \
+    feast[aws,redis,postgres]==0.36.0 \
+    boto3 \
+    redis \
+    psycopg2-binary \
+    polars \
+    pandas \
+    pyarrow
+
+# Copy feature definitions
+COPY scripts/feature_store /app/feature_repo
+
+# Initialize Feast
+WORKDIR /app/feature_repo
+RUN feast apply || true
+
+EXPOSE 6566 8888
+
+CMD ["feast", "serve", "-h", "0.0.0.0", "-p", "6566"]

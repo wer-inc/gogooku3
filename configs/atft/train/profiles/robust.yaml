@@ -1,0 +1,39 @@
+defaults:
+  - production
+
+# Robust profile: stability-first. Pairs well with env guards.
+# 継承により重複設定を削除
+
+trainer:
+  max_epochs: 50  # より短いエポック数で安定性を重視
+
+early_stopping:
+  patience: 9  # 早期停止を強化
+
+# Guards and stability enhancements
+model:
+  gat:
+    alpha_min: 0.2
+  prediction_head:
+    noise:
+      std: 0.01
+      warmup_epochs: 2
+  regularization:
+    sparsity_lambda: 0.001
+  variance_prediction:
+    min_pred_var: 0.01
+    loss_weight: 0.5
+
+guards:
+  degeneracy:
+    enabled: true
+    abort_on_nan: true
+    warmup_steps: 200
+    check_every_n_steps: 50
+
+loss_components:
+  use_t_nll: true
+  t_nll_weight: 0.7
+  use_pinball: true
+  pinball_weight: 0.3
+  horizon_weights: "1:0.6,2:0.15,3:0.1,5:0.1,10:0.05"

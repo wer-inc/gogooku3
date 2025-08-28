@@ -1,0 +1,33 @@
+{
+  "study_name": "working_model_opt_20250823_165531",
+  "best_trial": {
+    "number": 17,
+    "score": 0.0024461775174131617,
+    "params": {
+      "hidden_size": 512,
+      "num_layers": 1,
+      "bidirectional": true,
+      "use_attention": true,
+      "attention_heads": 8,
+      "attention_dropout": 0.07438217574535629,
+      "head_layers": 4,
+      "head_hidden_size": 256,
+      "head_dropout": 0.24739519416219496,
+      "lstm_dropout": 0.3970862122458573,
+      "input_noise": 0.04495770096839411,
+      "hidden_noise": 0.0010496408338849898,
+      "output_noise": 0.018386181340659318,
+      "learning_rate": 0.0038432995017678127,
+      "weight_decay": 3.5523172549125856e-06,
+      "batch_size": 64,
+      "init_std": 0.2939275602754168,
+      "activation": "gelu",
+      "use_batch_norm": false
+    },
+    "user_attrs": {
+      "final_variance": 0.0,
+      "n_parameters": 8307717
+    }
+  },
+  "timestamp": "2025-08-23T16:58:06.874840"
+}

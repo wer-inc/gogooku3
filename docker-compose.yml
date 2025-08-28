@@ -1,0 +1,329 @@
+version: '3.8'
+
+services:
+  # ========== Storage Services ==========
+
+  # MinIO - S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    container_name: gogooku3-minio
+    ports:
+      - "9000:9000"      # API port
+      - "9001:9001"      # Console port
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_DEFAULT_BUCKETS: gogooku,feast,mlflow,dagster
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - gogooku3-net
+
+  # ClickHouse - OLAP database
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: gogooku3-clickhouse
+    ports:
+      - "8123:8123"      # HTTP interface
+      - "9004:9000"      # Native protocol port (renamed to avoid conflict)
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: gogooku123
+      CLICKHOUSE_DB: gogooku3
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./config/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
+      - ./config/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Cache and online feature store
+  redis:
+    image: redis:7-alpine
+    container_name: gogooku3-redis
+    ports:
+      - "6379:6379"
+    environment:
+      REDIS_PASSWORD: gogooku123
+    command: redis-server --requirepass gogooku123 --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ========== ML Platform Services ==========
+
+  # MLflow - ML lifecycle management
+  mlflow:
+    image: python:3.10-slim
+    container_name: gogooku3-mlflow
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      MLFLOW_BACKEND_STORE_URI: postgresql://mlflow:mlflow123@postgres:5432/mlflow
+      MLFLOW_ARTIFACT_ROOT: s3://mlflow/artifacts
+    volumes:
+      - ./config/docker/mlflow_server.sh:/app/start.sh:ro
+      - mlflow_data:/mlflow
+    command: /bin/bash /app/start.sh
+    depends_on:
+      - minio
+      - postgres
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL - Backend for MLflow and Dagster
+  postgres:
+    image: postgres:15-alpine
+    container_name: gogooku3-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_MULTIPLE_DATABASES: mlflow:mlflow:mlflow123,dagster:dagster:dagster123,feast:feast:feast123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/docker/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ========== Orchestration Services ==========
+
+  # Dagster WebServer
+  dagster-webserver:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dagster
+    container_name: gogooku3-dagster-webserver
+    ports:
+      - "3001:3001"
+    environment:
+      DAGSTER_POSTGRES_USER: dagster
+      DAGSTER_POSTGRES_PASSWORD: dagster123
+      DAGSTER_POSTGRES_DB: dagster
+      DAGSTER_POSTGRES_HOST: postgres
+      DAGSTER_HOME: /opt/dagster/dagster_home
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: gogooku123
+      REDIS_HOST: redis
+      REDIS_PASSWORD: gogooku123
+    volumes:
+      - ./scripts:/opt/dagster/app/scripts:ro
+      - ./config/dagster:/opt/dagster/dagster_home:rw
+      - dagster_storage:/opt/dagster/storage
+    command: dagster-webserver -h 0.0.0.0 -p 3001 -w /opt/dagster/app/workspace.yaml
+    depends_on:
+      - postgres
+      - minio
+      - clickhouse
+      - redis
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/graphq"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Dagster Daemon
+  dagster-daemon:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dagster
+    container_name: gogooku3-dagster-daemon
+    environment:
+      DAGSTER_POSTGRES_USER: dagster
+      DAGSTER_POSTGRES_PASSWORD: dagster123
+      DAGSTER_POSTGRES_DB: dagster
+      DAGSTER_POSTGRES_HOST: postgres
+      DAGSTER_HOME: /opt/dagster/dagster_home
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: gogooku123
+      REDIS_HOST: redis
+      REDIS_PASSWORD: gogooku123
+    volumes:
+      - ./scripts:/opt/dagster/app/scripts:ro
+      - ./config/dagster:/opt/dagster/dagster_home:rw
+      - dagster_storage:/opt/dagster/storage
+    command: dagster-daemon run
+    depends_on:
+      - postgres
+      - minio
+      - clickhouse
+      - redis
+    networks:
+      - gogooku3-net
+
+  # ========== Feature Store Services ==========
+
+  # Feast Feature Server
+  feast-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.feast
+    container_name: gogooku3-feast-server
+    ports:
+      - "6566:6566"      # Feature server port
+      - "8888:8888"      # UI port
+    environment:
+      FEAST_REDIS_HOST: redis
+      FEAST_REDIS_PORT: 6379
+      FEAST_REDIS_PASSWORD: gogooku123
+      FEAST_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+      FEAST_POSTGRES_HOST: postgres
+      FEAST_POSTGRES_DB: feast
+      FEAST_POSTGRES_USER: feast
+      FEAST_POSTGRES_PASSWORD: feast123
+    volumes:
+      - ./scripts/feature_store:/app/feature_repo:ro
+      - feast_data:/app/data
+    command: feast serve -h 0.0.0.0 -p 6566
+    depends_on:
+      - redis
+      - minio
+      - postgres
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6566/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ========== Monitoring Services ==========
+
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: gogooku3-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana - Visualization and dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: gogooku3-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: gogooku123
+      GF_INSTALL_PLUGINS: redis-datasource,clickhouse-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - clickhouse
+      - redis
+    networks:
+      - gogooku3-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Node Exporter - System metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: gogooku3-node-exporter
+    ports:
+      - "9100:9100"
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - gogooku3-net
+
+networks:
+  gogooku3-net:
+    driver: bridge
+    name: gogooku3-network
+
+volumes:
+  minio_data:
+    name: gogooku3-minio-data
+  clickhouse_data:
+    name: gogooku3-clickhouse-data
+  redis_data:
+    name: gogooku3-redis-data
+  postgres_data:
+    name: gogooku3-postgres-data
+  mlflow_data:
+    name: gogooku3-mlflow-data
+  dagster_storage:
+    name: gogooku3-dagster-storage
+  feast_data:
+    name: gogooku3-feast-data
+  prometheus_data:
+    name: gogooku3-prometheus-data
+  grafana_data:
+    name: gogooku3-grafana-data

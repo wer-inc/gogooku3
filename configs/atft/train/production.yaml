@@ -1,0 +1,102 @@
+name: production
+
+# Batch configuration optimized for A100 GPU with stability
+batch:
+  train_batch_size: 2048
+  val_batch_size: 4096
+  test_batch_size: 4096
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
+  gradient_accumulation_steps: 2
+
+# Optimizer configuration with stability focus
+optimizer:
+  type: adamw
+  lr: 0.001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-7
+
+# Learning rate scheduler with plateau detection
+scheduler:
+  type: ReduceLROnPlateau
+  factor: 0.5
+  patience: 5
+  min_lr: 1e-5
+  verbose: true
+  threshold: 0.0001
+  threshold_mode: rel
+
+# Training configuration
+trainer:
+  max_epochs: 75
+  gradient_clip_val: 0.8
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 2
+  val_check_interval: 0.25
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 10
+  enable_checkpointing: true
+  enable_model_summary: true
+  enable_progress_bar: true
+  detect_anomaly: false
+  benchmark: true
+  deterministic: false
+  precision: bf16-mixed
+
+# Early stopping configuration
+early_stopping:
+  monitor: val/total_loss
+  mode: min
+  patience: 9
+  min_delta: 0.0001
+  verbose: true
+
+# Loss configuration
+loss:
+  type: mse
+  multi_horizon_weights: [1.0, 0.8, 0.6, 0.4, 0.2]
+
+# Model checkpointing
+checkpoint:
+  monitor: val/total_loss
+  mode: min
+  save_top_k: 3
+  save_last: false
+  save_on_train_epoch_end: false
+  filename: 'production-{epoch:03d}-{val_total_loss:.4f}'
+
+# Logging
+logging:
+  log_every_n_steps: 10
+  log_grad_norm: true
+  log_learning_rate: true
+
+# Hardware optimizations
+hardware_optimizations:
+  compile_model: false
+  channels_last: true
+  tf32: true
+  cudnn_benchmark: true
+  gradient_checkpointing: false
+
+# Mixed precision settings
+grad_scaler:
+  init_scale: 1024.0
+  growth_factor: 2.0
+  backoff_factor: 0.5
+  growth_interval: 1000
+
+# Validation stability
+validation:
+  per_date_metrics: true
+  outlier_detection: true
+  outlier_threshold: 3.0
+
+# Data safety
+data:
+  correlation_eps: 1e-8
+  correlation_clamp: [-0.999, 0.999]
+  nan_fill_value: 0.0

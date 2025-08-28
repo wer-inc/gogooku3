@@ -1,0 +1,52 @@
+version: 1
+
+formatters:
+  simple:
+    # Include timezone offset in timestamp (e.g., +0900)
+    format: "[%(asctime)s %(levelname)s][%(name)s] - %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S%z"
+
+  detailed:
+    format: "[%(asctime)s %(levelname)s][%(name)s:%(lineno)d] - %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S%z"
+
+handlers:
+  file:
+    class: logging.FileHandler
+    formatter: detailed
+    filename: ATFT-GAT-FAN.log
+    mode: a
+    encoding: utf-8
+
+  console:
+    class: logging.StreamHandler
+    formatter: simple
+    level: INFO
+
+  error_file:
+    class: logging.FileHandler
+    formatter: detailed
+    filename: ATFT-GAT-FAN-error.log
+    mode: a
+    encoding: utf-8
+    level: ERROR
+
+root:
+  level: INFO
+  handlers: [file, console, error_file]
+
+# Disable noisy loggers
+disable_existing_loggers: false
+
+loggers:
+  # Reduce noise from external libraries
+  torch:
+    level: WARNING
+  torch.nn:
+    level: WARNING
+  torch.optim:
+    level: WARNING
+  hydra:
+    level: WARNING
+  omegaconf:
+    level: WARNING

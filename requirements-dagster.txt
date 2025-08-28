@@ -1,0 +1,33 @@
+# Dagster core
+dagster==1.5.0
+dagster-webserver==1.5.0
+dagster-postgres==0.21.0
+
+# Storage integrations
+boto3==1.28.0
+minio==7.1.0
+clickhouse-driver==0.2.6
+redis==5.0.0
+
+# Data processing
+polars==0.19.0
+pandas==2.0.0
+pyarrow==13.0.0
+pandas-ta==0.3.14b0
+
+# ML and Feature Store
+feast[aws,redis,postgres]==0.36.0
+mlflow==2.8.0
+
+# Monitoring
+prometheus-client==0.18.0
+
+# Async processing
+aiohttp==3.8.0
+asyncio==3.4.3
+
+# Utilities
+pyyaml==6.0
+python-dotenv==1.0.0
+requests==2.31.0
+pytz==2023.3
