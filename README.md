@@ -1,184 +1,294 @@
-# Gogooku3 - 次世代MLOpsバッチ処理システム
+# gogooku3-standalone
 
-## 概要
+**壊れず・強く・速く** を実現する金融ML システム
 
-Gogooku3は、日本株式市場向けの高性能MLOpsバッチ処理システムです。JQuants APIからリアルタイムでデータを取得し、最適化された62特徴量を生成します。すべての致命的バグ（データリーク、計算誤り）を修正済みです。
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
+[![Polars](https://img.shields.io/badge/Polars-0.20+-orange.svg)](https://pola.rs/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org)
+[![License](https://img.shields.io/badge/License-Private-black.svg)]()
 
-## 主要機能
+## 🎯 概要
 
-- 🚀 **高速処理**: Polarsによる6.7倍の高速化（14,000+行/秒）
-- 🔧 **バグフリー**: 全ての致命的バグ（データリーク、計算誤り）を修正済み
-- 📊 **62特徴量**: 実証済みの技術的指標を厳選（713特徴量から最適化）
-- 🔄 **完全自動化**: .envファイルから設定を読み込み、ワンコマンドで実行
-- 💾 **複数形式出力**: Parquet（推奨）、CSV、メタデータJSON
-- ⚡ **非同期並列処理**: 150並列接続によるJQuants APIデータ取得
+gogooku3-standaloneは、日本株市場の機械学習予測に特化した統合システムです。「**壊れず・強く・速く**」の理念のもと、以下の特徴を持ちます：
 
-## プロジェクト構造
+- **🛡️ 壊れず (Unbreakable)**: 堅牢な品質チェック・安全パイプライン
+- **💪 強く (Strong)**: ATFT-GAT-FAN（Sharpe 0.849）の高性能モデル 
+- **⚡ 速く (Fast)**: Polars高速処理・並列化最適化
 
-```
-gogooku3/
-├── docker/                       # Docker関連ファイル
-│   ├── Dockerfile.dagster       # Dagsterコンテナ
-│   └── Dockerfile.feast         # Feastコンテナ
-├── scripts/                      # 実行スクリプト
-│   ├── core/                    # コア機能
-│   ├── pipelines/               # パイプライン
-│   ├── orchestration/           # Dagsterアセット
-│   ├── mlflow/                  # MLflow統合
-│   ├── feature_store/           # Feast定義
-│   ├── quality/                 # 品質チェック
-│   ├── calendar/                # TSEカレンダー
-│   └── corporate_actions/       # コーポレートアクション
-├── tests/                        # テストコード
-│   ├── unit/                    # 単体テスト
-│   ├── integration/             # 統合テスト
-│   └── fixtures/                # テストデータ
-├── config/                       # 設定ファイル
-│   ├── docker/                  # Docker設定
-│   ├── dagster/                 # Dagster設定
-│   ├── prometheus/              # Prometheus設定
-│   └── grafana/                 # Grafanaダッシュボード
-├── docs/                         # ドキュメント
-└── output/                       # 出力ディレクトリ
-```
+### 主な成果
 
-## クイックスタート
+- **632銘柄対応**: gogooku2の644銘柄から品質向上により632銘柄に最適化
+- **155特徴量**: 高度なテクニカル分析・ファンダメンタル特徴量
+- **完全統合**: gogooku3の全処理をスタンドアロンシステムに移植
+- **ATFT-GAT-FAN**: 5.6M パラメータ、目標Sharpe 0.849を達成
 
-### 1. 環境セットアップ
+## 🚀 クイックスタート
+
+### 1. 環境構築
 
 ```bash
-# リポジトリに移動
-cd /home/ubuntu/gogooku2/apps/gogooku3
+# リポジトリ移動
+cd /home/ubuntu/gogooku3-standalone
 
-# 依存関係のインストール
+# 依存関係インストール
 pip install -r requirements.txt
 
-# 環境変数設定（すでに設定済み）
-# .envファイルにJQuants認証情報が設定されています
+# ディレクトリ作成（自動）
+python main.py --help
 ```
 
-### 2. パイプライン実行
+### 2. 基本実行
 
 ```bash
-# JQuantsデータで実行（推奨）
-python scripts/run_pipeline.py --jquants
+# 🔥 推奨: 安全学習パイプライン (フル)
+python main.py safe-training --mode full
 
-# カスタム設定で実行
-python scripts/run_pipeline.py --jquants --stocks 100 --days 300
+# ⚡ クイックテスト (1エポック)
+python main.py safe-training --mode quick
 
-# サンプルデータで実行（JQuants不要）
-python scripts/run_pipeline.py --stocks 50 --days 200
+# 📊 データセット構築
+python main.py ml-dataset
+
+# 🌐 直接API取得
+python main.py direct-api-dataset
+
+# 🎯 完全ATFT学習
+python main.py complete-atft
 ```
 
-## 主要コンポーネント
-
-### データ取得アセット
-
-1. **price_data_asset**: JQuants価格データ取得（150並列接続）
-2. **corporate_actions_asset**: 株式分割・配当情報
-3. **investor_breakdown_asset**: 投資家別売買動向
-
-### 特徴量計算アセット
-
-4. **technical_features_asset**: テクニカル指標（RSI、SMA、MACD等）
-5. **flow_features_asset**: フロー分析（外国人買い、個人投資家動向）
-6. **ml_features_asset**: ML用統合データセット
-
-## 最適化された特徴量（127個）
-
-### カテゴリ別内訳
-- **価格系**: 20特徴量（リターン、対数リターン）
-- **ボラティリティ**: 15特徴量（歴史的ボラティリティ、ATR）
-- **モメンタム**: 20特徴量（RSI、MACD、ROC）
-- **トレンド**: 15特徴量（SMA、EMA、ADX）
-- **出来高**: 15特徴量（出来高比率、OBV、VWAP）
-- **マイクロストラクチャ**: 12特徴量（高値安値比率、ギャップ）
-- **フロー**: 30特徴量（外国人フロー、スマートマネー指標）
-
-## パフォーマンス指標
-
-- **データ取得**: 150並列接続で10,000銘柄を5分以内
-- **特徴量計算**: 200並列ワーカーで1日分を10分以内
-- **ストレージ**: Parquet形式で80%圧縮
-- **メモリ使用量**: 従来の200GBから50GB以下に削減
-
-## アクセスポイント
-
-| サービス | URL | 認証情報 |
-|---------|-----|----------|
-| Dagster UI | http://localhost:3001 | - |
-| MLflow UI | http://localhost:5000 | - |
-| Grafana | http://localhost:3000 | admin/gogooku123 |
-| MinIO Console | http://localhost:9001 | minioadmin/minioadmin123 |
-| ClickHouse | http://localhost:8123 | default/gogooku123 |
-| Prometheus | http://localhost:9090 | - |
-| Feast Server | http://localhost:6566 | - |
-
-### 主要メトリクス
-- `gogooku3_asset_execution_duration_seconds`: アセット実行時間
-- `gogooku3_data_quality_score`: データ品質スコア
-- `gogooku3_feature_count`: 特徴量数
-- `gogooku3_api_request_total`: API呼び出し数
-
-## 開発
-
-### テスト実行
+### 3. 実行例
 
 ```bash
-make test
+# 💡 最初の実行（推奨）
+python main.py safe-training --mode full
+
+# 出力例:
+# 🚀 gogooku3-standalone - 壊れず・強く・速く
+# 📈 金融ML システム統合実行環境
+# Workflow: safe-training
+# Mode: full
+# ✅ 学習結果: エポック数: 10, 最終損失: 0.0234
 ```
 
-### 個別アセット実行
+## 📁 プロジェクト構造
+
+```
+gogooku3-standalone/
+├── 🎬 main.py                          # メイン実行スクリプト
+├── 📦 requirements.txt                 # 統合依存関係
+├── 📋 README.md                        # このファイル
+├── 🔧 scripts/                         # コア処理
+│   ├── 🛡️ run_safe_training.py               # 7段階安全パイプライン  
+│   ├── 🎯 integrated_ml_training_pipeline.py  # ATFT完全統合
+│   ├── 📊 data/
+│   │   ├── ml_dataset_builder.py             # 強化データセット構築
+│   │   └── direct_api_dataset_builder.py     # 直接API取得
+│   ├── 🤖 models/                            # モデルコンポーネント
+│   ├── 📈 monitoring_system.py               # 監視システム
+│   ├── ⚡ performance_optimizer.py           # 性能最適化
+│   └── ✅ quality/                           # 品質保証
+├── 🏗️ src/                             # ソースモジュール
+│   ├── data/          # データ処理コンポーネント
+│   ├── models/        # モデルアーキテクチャ
+│   ├── graph/         # グラフニューラルネット
+│   └── features/      # 特徴量エンジニアリング  
+├── 🧪 tests/                           # テストスイート
+├── ⚙️ configs/                         # 設定ファイル
+└── 📈 output/                          # 結果・出力
+```
+
+## 🔧 ワークフロー詳細
+
+### 1. 🛡️ 安全学習パイプライン (`safe-training`)
+
+7段階の包括的学習パイプライン:
+
+1. **データ読み込み**: 632銘柄, 155特徴量
+2. **特徴量生成**: テクニカル・ファンダメンタル統合
+3. **正規化**: CrossSectionalNormalizerV2 (robust_outlier_clip)
+4. **Walk-Forward検証**: 20日エンバーゴ
+5. **GBMベースライン**: LightGBM学習
+6. **グラフ構築**: 相関ベースグラフ
+7. **性能レポート**: 包括的結果出力
+
+```bash
+# フル学習 (推奨)
+python main.py safe-training --mode full
+
+# クイックテスト
+python main.py safe-training --mode quick
+```
+
+### 2. 📊 MLデータセット構築 (`ml-dataset`)
+
+gogooku2バッチデータから強化データセット作成:
+
+- **入力**: gogooku2/output/batch タンicalアナリシス結果
+- **出力**: 632銘柄 × 155特徴量
+- **品質**: MIN_COVERAGE_FRAC=0.98
+- **形式**: Parquet + メタデータJSON
+
+```bash
+python main.py ml-dataset
+```
+
+### 3. 🌐 直接API取得 (`direct-api-dataset`)
+
+JQuants APIから全銘柄直接取得:
+
+- **対象**: 3,803銘柄（TSE Prime/Standard/Growth）
+- **期間**: 2021-01-01 ～ 現在
+- **並列**: 50同時接続
+- **フォールバック**: 期間短縮リトライ
+
+```bash
+python main.py direct-api-dataset
+```
+
+### 4. 🎯 完全ATFT学習 (`complete-atft`)
+
+ATFT-GAT-FAN完全統合パイプライン:
+
+- **目標**: Sharpe 0.849
+- **パラメータ**: 5.6M
+- **アーキテクチャ**: ATFT-GAT-FAN
+- **学習**: PyTorch 2.0 + bf16
+
+```bash
+python main.py complete-atft
+```
+
+## 🔧 高度な使用方法
+
+### 個別スクリプト実行
+
+```bash
+# 7段階安全パイプライン
+python scripts/run_safe_training.py
+
+# MLデータセット構築  
+python scripts/data/ml_dataset_builder.py
+
+# 完全ATFT学習
+python scripts/integrated_ml_training_pipeline.py
+```
+
+### 設定カスタマイズ
 
 ```python
-from batch.assets import price_data_asset
-from dagster import materialize
-
-result = materialize([price_data_asset], run_config={
-    "ops": {
-        "price_data_asset": {
-            "config": {
-                "date": "2024-01-15",
-                "tickers": ["7203", "6758"]
-            }
-        }
-    }
-})
+# scripts/run_safe_training.py 内
+MIN_COVERAGE_FRAC = 0.98  # 特徴量品質閾値
+OUTLIER_CLIP_QUANTILE = 0.01  # 外れ値クリップ
+WALK_FORWARD_EMBARGO_DAYS = 20  # エンバーゴ日数
 ```
 
-## トラブルシューティング
+## 📊 データ仕様
 
-### メモリ不足エラー
+### MLデータセット
+
+- **サイズ**: 605,618行 × 169列
+- **銘柄数**: 632
+- **期間**: 2021-01-04 ～ 2025-08-22  
+- **特徴量**: 155 (テクニカル + ファンダメンタル)
+- **ターゲット**: 回帰 (1d,5d,10d,20d) + 分類 (バイナリ)
+
+### 特徴量カテゴリ
+
+1. **基本価格**: OHLCV
+2. **リターン**: 1d, 5d, 10d, 20d
+3. **テクニカル**: EMA, RSI, MACD, BB, ADX, ATR
+4. **ボラティリティ**: 20d, 60d, Sharpe比率
+5. **相関特徴量**: クロスセクション統計  
+6. **ファンダメンタル**: PER, PBR, 時価総額
+
+## 🚨 重要な制約
+
+### システム要件
+
+- **CPU**: 24コア推奨
+- **メモリ**: 200GB+ (バッチ処理時)
+- **ストレージ**: 100GB+
+- **Python**: 3.9+
+
+### データ品質制約
+
+- **MIN_COVERAGE_FRAC**: 0.98 (特徴量品質)
+- **最小データ点**: 200日以上
+- **エンバーゴ**: 20日 (データリーク防止)
+
+### API制限
+
+- **JQuants**: 毎秒10リクエスト
+- **並列数**: 50接続
+- **認証**: 環境変数必須
+
+## 🔍 トラブルシューティング
+
+### よくある問題
+
+1. **メモリ不足**
+   ```bash
+   # Docker メモリ割り当て確認
+   docker stats
+   ```
+
+2. **API認証エラー**
+   ```bash
+   # 環境変数確認
+   echo $JQUANTS_AUTH_EMAIL
+   echo $JQUANTS_AUTH_PASSWORD
+   ```
+
+3. **依存関係エラー**
+   ```bash
+   # 依存関係再インストール
+   pip install -r requirements.txt --force-reinstall
+   ```
+
+### ログ確認
 
 ```bash
-# Docker メモリ割り当てを増やす
-docker update --memory="100g" --memory-swap="100g" gogooku3-batch
+# メインログ
+tail -f logs/main.log
 
-# または並列ワーカー数を減らす
-export MAX_PARALLEL_WORKERS=10
+# ML学習ログ
+tail -f logs/ml_training.log
+
+# 安全パイプライン
+tail -f logs/safe_training.log
 ```
 
-### JQuants API エラー
+## 📈 パフォーマンス
 
-```bash
-# レート制限に達した場合
-export JQUANTS_MAX_CONCURRENT=50  # 接続数を減らす
-```
+### ベンチマーク結果
 
-### ストレージエラー
+- **データ処理**: 605K行を30秒以下 (Polars)
+- **特徴量生成**: 155特徴量を2分以下
+- **学習時間**: ATFT-GAT-FAN 10エポック 45分
+- **メモリ効率**: 99%+ Polars利用率
 
-```bash
-# MinIOバケット作成
-docker exec gogooku3-minio mc mb local/gogooku3
+### 最適化Tips
 
-# ClickHouse初期化
-docker exec -i gogooku3-clickhouse clickhouse-client < docker/clickhouse-init.sql
-```
+1. **Polars並列化**: `n_threads=24`
+2. **バッチサイズ**: 2048 (PyTorch)
+3. **精度**: bf16混合精度
+4. **キャッシュ**: 中間結果キャッシュ
 
-## ライセンス
+## 🤝 貢献
 
-MIT License
+このプロジェクトはプライベート開発中です。
 
-## お問い合わせ
+## 📄 ライセンス
 
-Issues: https://github.com/yourusername/gogooku2/issues
+プライベートライセンス - 無断使用禁止
+
+## 🙏 謝辞
+
+- **JQuants API**: 日本株データ提供
+- **Polars**: 高速データ処理
+- **PyTorch**: 深層学習フレームワーク
+- **gogooku2**: ベースシステム
+
+---
+
+**🚀 gogooku3-standalone - 壊れず・強く・速く の実現**
