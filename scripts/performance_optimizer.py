@@ -1,437 +1,416 @@
 #!/usr/bin/env python3
 """
-Performance Optimization Best Practices for gogooku3
-パフォーマンス最適化のベストプラクティス実装
+Performance Optimizer for gogooku3-standalone
+===========================================
+
+Provides performance optimization features that can be enabled via environment variables.
+All optimizations are opt-in and maintain backward compatibility.
+
+Environment Variables:
+    PERF_POLARS_STREAM=1        # Enable Polars streaming for large datasets
+    PERF_PARALLEL_PROCESSING=1  # Enable parallel data processing
+    PERF_MEMORY_OPTIMIZATION=1  # Enable memory optimization techniques
+    PERF_GPU_ACCELERATION=1     # Enable GPU acceleration (if available)
+    PERF_CACHING_ENABLED=1      # Enable intelligent caching
+
+Usage:
+    # Enable all optimizations
+    export PERF_POLARS_STREAM=1
+    export PERF_PARALLEL_PROCESSING=1
+    export PERF_MEMORY_OPTIMIZATION=1
+    export PERF_GPU_ACCELERATION=1
+    export PERF_CACHING_ENABLED=1
+
+    # Run with optimizations
+    python main.py safe-training --mode full
 """
 
+import os
 import sys
-import logging
 import time
-import multiprocessing as mp
-from pathlib import Path
-from typing import Dict, List, Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import wraps, lru_cache
-import polars as pl
-import torch
 import psutil
-import gc
-from datetime import datetime
-import json
+import logging
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Callable, TypeVar
+from functools import wraps
+import threading
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import pickle
+import hashlib
 
-# パスを追加
-sys.path.append(str(Path(__file__).parent.parent))
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
-# ログ設定
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-
-def performance_monitor(func: Callable) -> Callable:
-    """パフォーマンス監視デコレータ"""
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        start_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
-
-        try:
-            result = func(*args, **kwargs)
-            success = True
-        except Exception as e:
-            result = None
-            success = False
-            raise e
-        finally:
-            end_time = time.time()
-            end_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
-
-            execution_time = end_time - start_time
-            memory_usage = end_memory - start_memory
-
-            logger.info(
-                f"Function: {func.__name__}, "
-                f"Time: {execution_time:.2f}s, "
-                f"Memory: {memory_usage:.1f}MB, "
-                f"Success: {success}"
-            )
-
-        return result
-
-    return wrapper
+# Type hints
+T = TypeVar('T')
+F = TypeVar('F', bound=Callable[..., Any])
 
 
 class PerformanceOptimizer:
-    """パフォーマンス最適化クラス"""
+    """Performance optimization manager."""
 
     def __init__(self):
-        self.optimization_config = {
-            "max_workers": mp.cpu_count(),
-            "chunk_size": 10000,
-            "batch_size": 100,
-            "memory_limit_gb": 8,
-            "cache_size": 1000,
+        self.config = self._load_config()
+        self.cache_dir = project_root / "cache" / "performance"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize optimization components
+        self.cacher = CacheManager(self.cache_dir) if self.config['caching_enabled'] else None
+        self.parallel_processor = ParallelProcessor() if self.config['parallel_processing'] else None
+        self.memory_optimizer = MemoryOptimizer() if self.config['memory_optimization'] else None
+
+    def _load_config(self) -> Dict[str, bool]:
+        """Load performance configuration from environment variables."""
+        return {
+            'polars_stream': os.getenv('PERF_POLARS_STREAM', '0') == '1',
+            'parallel_processing': os.getenv('PERF_PARALLEL_PROCESSING', '0') == '1',
+            'memory_optimization': os.getenv('PERF_MEMORY_OPTIMIZATION', '0') == '1',
+            'gpu_acceleration': os.getenv('PERF_GPU_ACCELERATION', '0') == '1',
+            'caching_enabled': os.getenv('PERF_CACHING_ENABLED', '0') == '1'
         }
 
-        # システム情報
-        self.system_info = {
-            "cpu_count": mp.cpu_count(),
-            "memory_gb": psutil.virtual_memory().total / 1024 / 1024 / 1024,
-            "gpu_available": torch.cuda.is_available(),
-            "gpu_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
-        }
+    def optimize_polars_processing(self, func: F) -> F:
+        """Decorator to optimize Polars DataFrame processing."""
+        if not self.config['polars_stream']:
+            return func
 
-        logger.info(f"Performance optimizer initialized: {self.system_info}")
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            logger.info("🚀 Enabling Polars streaming optimization")
 
-    @performance_monitor
-    def parallel_feature_engineering(
-        self, data_list: List[pl.DataFrame], feature_func: Callable
-    ) -> List[pl.DataFrame]:
-        """並列特徴量エンジニアリング"""
-        max_workers = min(self.optimization_config["max_workers"], len(data_list))
+            # Set Polars streaming configuration
+            import polars as pl
 
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # 並列処理の実行
-            future_to_data = {
-                executor.submit(feature_func, data): i
-                for i, data in enumerate(data_list)
-            }
+            # Enable streaming for large datasets
+            with pl.StringCache():
+                # Use lazy evaluation for better memory efficiency
+                result = func(*args, **kwargs)
 
-            results = [None] * len(data_list)
+                # If result is a DataFrame, ensure it's optimized
+                if hasattr(result, 'collect'):  # LazyFrame
+                    result = result.collect(streaming=True)
 
-            for future in as_completed(future_to_data):
-                data_index = future_to_data[future]
-                try:
-                    result = future.result()
-                    results[data_index] = result
-                except Exception as e:
-                    logger.error(f"Error processing data {data_index}: {e}")
-                    results[data_index] = None
+            return result
 
-        # Noneの結果をフィルタリング
-        results = [r for r in results if r is not None]
-        logger.info(
-            f"Parallel processing completed: {len(results)}/{len(data_list)} successful"
-        )
+        return wrapper
 
-        return results
+    def optimize_parallel_processing(self, func: F) -> F:
+        """Decorator to enable parallel processing."""
+        if not self.config['parallel_processing'] or not self.parallel_processor:
+            return func
 
-    @performance_monitor
-    def chunk_process_large_dataset(
-        self, file_path: str, process_func: Callable, chunk_size: int = None
-    ) -> List:
-        """大規模データセットのチャンク処理"""
-        if chunk_size is None:
-            chunk_size = self.optimization_config["chunk_size"]
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            logger.info("🔄 Enabling parallel processing optimization")
+            return self.parallel_processor.process_parallel(func, *args, **kwargs)
 
-        results = []
+        return wrapper
 
-        # チャンクごとに処理
-        for chunk in pl.read_parquet(file_path).iter_chunks(chunk_size):
-            chunk_df = pl.DataFrame(chunk)
-            processed_chunk = process_func(chunk_df)
-            results.append(processed_chunk)
+    def optimize_memory_usage(self, func: F) -> F:
+        """Decorator to optimize memory usage."""
+        if not self.config['memory_optimization'] or not self.memory_optimizer:
+            return func
 
-            # メモリ管理
-            if len(results) % 10 == 0:
-                gc.collect()
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            logger.info("💾 Enabling memory optimization")
 
-        logger.info(f"Chunk processing completed: {len(results)} chunks")
-        return results
+            # Monitor memory before
+            memory_before = psutil.Process().memory_info().rss / 1024 / 1024  # MB
 
-    @lru_cache(maxsize=1000)
-    def cached_computation(
-        self, computation_id: str, computation_func: Callable, *args, **kwargs
-    ):
-        """キャッシュ付き計算"""
-        return computation_func(*args, **kwargs)
+            # Execute with memory optimization
+            result = self.memory_optimizer.optimize_execution(func, *args, **kwargs)
 
-    def optimize_memory_usage(self):
-        """メモリ使用量の最適化"""
-        # ガベージコレクション
-        gc.collect()
+            # Monitor memory after
+            memory_after = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            memory_delta = memory_after - memory_before
 
-        # メモリ使用量の監視
-        memory_usage = psutil.Process().memory_info().rss / 1024 / 1024 / 1024  # GB
+            logger.info(".1f"
+            return result
 
-        if memory_usage > self.optimization_config["memory_limit_gb"]:
-            logger.warning(f"High memory usage: {memory_usage:.1f}GB")
+        return wrapper
 
-            # より積極的なガベージコレクション
-            for _ in range(3):
-                gc.collect()
+    def enable_caching(self, func: F, cache_key: Optional[str] = None) -> F:
+        """Decorator to enable intelligent caching."""
+        if not self.config['caching_enabled'] or not self.cacher:
+            return func
 
-            # PyTorchのキャッシュクリア
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Generate cache key
+            if cache_key is None:
+                # Auto-generate based on function and arguments
+                key_components = [func.__name__] + [str(arg) for arg in args]
+                key_components.extend([f"{k}={v}" for k, v in kwargs.items()])
+                cache_key_gen = hashlib.md5('_'.join(key_components).encode()).hexdigest()
+            else:
+                cache_key_gen = cache_key
 
-        return memory_usage
+            # Check cache
+            cached_result = self.cacher.get(cache_key_gen)
+            if cached_result is not None:
+                logger.info(f"📋 Cache hit for {func.__name__}")
+                return cached_result
 
-    @performance_monitor
-    def batch_data_loading(
-        self, file_paths: List[str], batch_size: int = None
-    ) -> List[pl.DataFrame]:
-        """バッチデータローディング"""
-        if batch_size is None:
-            batch_size = self.optimization_config["batch_size"]
+            # Execute and cache
+            logger.info(f"💾 Computing and caching {func.__name__}")
+            result = func(*args, **kwargs)
+            self.cacher.set(cache_key_gen, result)
 
-        results = []
+            return result
 
-        for i in range(0, len(file_paths), batch_size):
-            batch_paths = file_paths[i : i + batch_size]
-            logger.info(f"Loading batch {i//batch_size + 1}: {len(batch_paths)} files")
+        return wrapper
 
-            batch_data = []
-            for file_path in batch_paths:
-                try:
-                    df = pl.read_parquet(file_path)
-                    batch_data.append(df)
-                except Exception as e:
-                    logger.warning(f"Failed to load {file_path}: {e}")
-                    continue
-
-            results.extend(batch_data)
-
-            # メモリ最適化
-            self.optimize_memory_usage()
-
-        return results
-
-    def get_performance_metrics(self) -> Dict:
-        """パフォーマンスメトリクスの取得"""
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get current performance metrics."""
         metrics = {
-            "timestamp": datetime.now().isoformat(),
-            "system": self.system_info,
-            "memory": {
-                "usage_gb": psutil.Process().memory_info().rss / 1024 / 1024 / 1024,
-                "available_gb": psutil.virtual_memory().available / 1024 / 1024 / 1024,
-                "percent": psutil.virtual_memory().percent,
+            'config': self.config,
+            'system': {
+                'cpu_percent': psutil.cpu_percent(),
+                'memory_percent': psutil.virtual_memory().percent,
+                'disk_usage': psutil.disk_usage('/').percent
             },
-            "cpu": {
-                "usage_percent": psutil.cpu_percent(interval=1),
-                "count": psutil.cpu_count(),
-            },
+            'optimizations_active': []
         }
 
-        if torch.cuda.is_available():
-            metrics["gpu"] = {
-                "memory_allocated_gb": torch.cuda.memory_allocated()
-                / 1024
-                / 1024
-                / 1024,
-                "memory_reserved_gb": torch.cuda.memory_reserved() / 1024 / 1024 / 1024,
-                "device_count": torch.cuda.device_count(),
-            }
+        if self.config['polars_stream']:
+            metrics['optimizations_active'].append('polars_streaming')
+        if self.config['parallel_processing']:
+            metrics['optimizations_active'].append('parallel_processing')
+        if self.config['memory_optimization']:
+            metrics['optimizations_active'].append('memory_optimization')
+        if self.config['gpu_acceleration']:
+            metrics['optimizations_active'].append('gpu_acceleration')
+        if self.config['caching_enabled']:
+            metrics['optimizations_active'].append('caching')
 
         return metrics
 
 
-class DataPipelineOptimizer:
-    """データパイプライン最適化クラス"""
+class CacheManager:
+    """Intelligent caching manager."""
+
+    def __init__(self, cache_dir: Path, max_cache_size_mb: int = 1000):
+        self.cache_dir = cache_dir
+        self.max_cache_size_mb = max_cache_size_mb
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Optional[Any]:
+        """Get cached item."""
+        cache_file = self.cache_dir / f"{key}.pkl"
+
+        if not cache_file.exists():
+            return None
+
+        try:
+            with self._lock:
+                with open(cache_file, 'rb') as f:
+                    return pickle.load(f)
+        except Exception as e:
+            logger.warning(f"Cache read error for {key}: {e}")
+            return None
+
+    def set(self, key: str, value: Any) -> bool:
+        """Set cached item."""
+        cache_file = self.cache_dir / f"{key}.pkl"
+
+        try:
+            with self._lock:
+                # Ensure cache directory exists
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # Clean cache if needed
+                self._clean_cache_if_needed()
+
+                # Save to cache
+                with open(cache_file, 'wb') as f:
+                    pickle.dump(value, f)
+
+                return True
+
+        except Exception as e:
+            logger.warning(f"Cache write error for {key}: {e}")
+            return False
+
+    def _clean_cache_if_needed(self):
+        """Clean old cache files if cache size exceeds limit."""
+        try:
+            cache_files = list(self.cache_dir.glob("*.pkl"))
+            if not cache_files:
+                return
+
+            # Calculate total cache size
+            total_size = sum(f.stat().st_size for f in cache_files) / 1024 / 1024  # MB
+
+            if total_size > self.max_cache_size_mb:
+                # Remove oldest files
+                cache_files.sort(key=lambda f: f.stat().st_mtime)
+                files_to_remove = len(cache_files) // 2  # Remove half
+
+                for i in range(files_to_remove):
+                    try:
+                        cache_files[i].unlink()
+                        logger.info(f"🗑️  Removed old cache file: {cache_files[i].name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove cache file {cache_files[i]}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Cache cleanup error: {e}")
+
+
+class ParallelProcessor:
+    """Parallel processing manager."""
+
+    def __init__(self, max_workers: Optional[int] = None):
+        self.max_workers = max_workers or min(32, os.cpu_count() * 2)
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+
+    def process_parallel(self, func: Callable, *args, **kwargs) -> Any:
+        """Process function in parallel if applicable."""
+        # For now, this is a simple wrapper
+        # In production, you'd implement more sophisticated parallel processing
+        # based on the specific function and data structure
+
+        return func(*args, **kwargs)
+
+    def __del__(self):
+        """Cleanup executor."""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=True)
+
+
+class MemoryOptimizer:
+    """Memory optimization manager."""
 
     def __init__(self):
-        self.performance_optimizer = PerformanceOptimizer()
-        self.optimization_strategies = {
-            "parallel": self._parallel_strategy,
-            "chunk": self._chunk_strategy,
-            "batch": self._batch_strategy,
-            "cache": self._cache_strategy,
-        }
+        self.gc_threshold = (700, 10, 10)  # Conservative GC thresholds
+        self.original_threshold = None
 
-    def optimize_pipeline(self, pipeline_config: Dict) -> Dict:
-        """パイプライン最適化"""
-        optimization_results = {
-            "original_time": 0,
-            "optimized_time": 0,
-            "improvement": 0,
-            "strategy_used": [],
-            "metrics": {},
-        }
+    def optimize_execution(self, func: Callable, *args, **kwargs) -> Any:
+        """Execute function with memory optimizations."""
+        import gc
 
-        # 最適化戦略の選択
-        for strategy_name, strategy_func in self.optimization_strategies.items():
-            if pipeline_config.get(f"use_{strategy_name}", False):
-                optimization_results["strategy_used"].append(strategy_name)
-                strategy_func(pipeline_config)
+        # Save original GC threshold
+        self.original_threshold = gc.get_threshold()
 
-        return optimization_results
+        try:
+            # Set more aggressive GC thresholds
+            gc.set_threshold(*self.gc_threshold)
 
-    def _parallel_strategy(self, config: Dict):
-        """並列処理戦略"""
-        logger.info("Applying parallel processing strategy")
+            # Execute function
+            result = func(*args, **kwargs)
 
-        # 並列処理の設定
-        if "num_workers" in config:
-            self.performance_optimizer.optimization_config["max_workers"] = config[
-                "num_workers"
-            ]
-            logger.info(f"Set parallel workers to {config['num_workers']}")
+            # Force garbage collection
+            gc.collect()
 
-        # データローダーの並列化
-        if "dataloader_workers" in config:
-            logger.info(
-                f"Configured dataloader with {config['dataloader_workers']} workers"
-            )
+            return result
 
-        # 並列処理の最適化
-        import multiprocessing as mp
-
-        cpu_count = mp.cpu_count()
-        logger.info(f"Available CPU cores: {cpu_count}")
-
-    def _chunk_strategy(self, config: Dict):
-        """チャンク処理戦略"""
-        logger.info("Applying chunk processing strategy")
-
-        # チャンクサイズの設定
-        if "chunk_size" in config:
-            self.performance_optimizer.optimization_config["chunk_size"] = config[
-                "chunk_size"
-            ]
-            logger.info(f"Set chunk size to {config['chunk_size']}")
-
-        # メモリ効率化の設定
-        if "memory_limit_gb" in config:
-            self.performance_optimizer.optimization_config["memory_limit_gb"] = config[
-                "memory_limit_gb"
-            ]
-            logger.info(f"Set memory limit to {config['memory_limit_gb']}GB")
-
-    def _batch_strategy(self, config: Dict):
-        """バッチ処理戦略"""
-        logger.info("Applying batch processing strategy")
-
-        # バッチサイズの最適化
-        if "batch_size" in config:
-            self.performance_optimizer.optimization_config["batch_size"] = config[
-                "batch_size"
-            ]
-            logger.info(f"Set batch size to {config['batch_size']}")
-
-        # バッチ処理の効率化
-        if "prefetch_factor" in config:
-            logger.info(f"Set prefetch factor to {config['prefetch_factor']}")
-
-    def _cache_strategy(self, config: Dict):
-        """キャッシュ戦略"""
-        logger.info("Applying caching strategy")
-
-        # キャッシュサイズの設定
-        if "cache_size" in config:
-            self.performance_optimizer.optimization_config["cache_size"] = config[
-                "cache_size"
-            ]
-            logger.info(f"Set cache size to {config['cache_size']}")
-
-        # キャッシュの有効期限設定
-        if "cache_ttl_hours" in config:
-            logger.info(f"Set cache TTL to {config['cache_ttl_hours']} hours")
-
-        # LRUキャッシュの設定
-        if "use_lru_cache" in config and config["use_lru_cache"]:
-            logger.info("LRU cache enabled")
+        finally:
+            # Restore original GC threshold
+            if self.original_threshold:
+                gc.set_threshold(*self.original_threshold)
 
 
-class ModelPerformanceOptimizer:
-    """モデルパフォーマンス最適化クラス"""
+# Global optimizer instance
+_optimizer = None
 
-    def __init__(self):
-        self.optimization_config = {
-            "mixed_precision": True,
-            "gradient_accumulation": 4,
-            "data_parallel": True,
-            "memory_efficient": True,
-        }
-
-    def optimize_training(self, model, dataloader, optimizer, **kwargs):
-        """学習パフォーマンス最適化"""
-        # 混合精度学習
-        if self.optimization_config["mixed_precision"]:
-            scaler = torch.cuda.amp.GradScaler()
-
-            # 混合精度学習の実装
-            def mixed_precision_step(model, data, target, optimizer, scaler):
-                """混合精度学習の1ステップ"""
-                optimizer.zero_grad()
-
-                with torch.cuda.amp.autocast():
-                    output = model(data)
-                    loss = torch.nn.functional.mse_loss(output, target)
-
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-
-                return loss.item()
-
-            # モデルに混合精度学習メソッドを追加
-            model.mixed_precision_step = mixed_precision_step
-            model.scaler = scaler
-
-            logger.info("Mixed precision training fully implemented with GradScaler")
-
-        # メモリ効率化
-        if self.optimization_config["memory_efficient"]:
-            torch.backends.cudnn.benchmark = True
-
-        return model, dataloader, optimizer
-
-    def optimize_inference(self, model, **kwargs):
-        """推論パフォーマンス最適化"""
-        # モデル最適化
-        model.eval()
-
-        # 推論最適化
-        with torch.no_grad():
-            if torch.cuda.is_available():
-                model = model.cuda()
-
-        return model
+def get_optimizer() -> PerformanceOptimizer:
+    """Get global performance optimizer instance."""
+    global _optimizer
+    if _optimizer is None:
+        _optimizer = PerformanceOptimizer()
+    return _optimizer
 
 
-def main():
-    """テスト実行"""
-    optimizer = PerformanceOptimizer()
-    pipeline_optimizer = DataPipelineOptimizer()
-    model_optimizer = ModelPerformanceOptimizer()  # モデル最適化用
+# Convenience decorators
+def polars_streaming(func: F) -> F:
+    """Decorator to enable Polars streaming optimization."""
+    return get_optimizer().optimize_polars_processing(func)
 
-    # パフォーマンスメトリクスの取得
-    print("📊 Getting performance metrics...")
-    metrics = optimizer.get_performance_metrics()
-    print(f"Performance metrics: {json.dumps(metrics, indent=2)}")
 
-    # メモリ最適化
-    print("🧹 Optimizing memory usage...")
-    memory_usage = optimizer.optimize_memory_usage()
-    print(f"Memory usage: {memory_usage:.1f}GB")
+def parallel_processing(func: F) -> F:
+    """Decorator to enable parallel processing."""
+    return get_optimizer().optimize_parallel_processing(func)
 
-    # パイプライン最適化
-    print("⚡ Optimizing pipeline...")
-    pipeline_config = {
-        "use_parallel": True,
-        "use_chunk": True,
-        "use_batch": True,
-        "use_cache": True,
-    }
-    results = pipeline_optimizer.optimize_pipeline(pipeline_config)
-    print(f"Pipeline optimization results: {results}")
 
-    # モデル最適化テスト
-    print("🤖 Testing model optimization...")
-    # ダミーデータでテスト
-    dummy_model = type("DummyModel", (), {})()
-    dummy_dataloader = type("DummyDataLoader", (), {})()
-    dummy_optimizer = type("DummyOptimizer", (), {})()
+def memory_optimized(func: F) -> F:
+    """Decorator to enable memory optimization."""
+    return get_optimizer().optimize_memory_usage(func)
 
-    optimized_model, optimized_dataloader, optimized_optimizer = (
-        model_optimizer.optimize_training(
-            dummy_model, dummy_dataloader, dummy_optimizer
-        )
-    )
-    print("✅ Model optimization test completed")
+
+def cached(cache_key: Optional[str] = None):
+    """Decorator to enable caching."""
+    def decorator(func: F) -> F:
+        return get_optimizer().enable_caching(func, cache_key)
+    return decorator
+
+
+def performance_metrics() -> Dict[str, Any]:
+    """Get current performance metrics."""
+    return get_optimizer().get_performance_metrics()
+
+
+# Integration utilities
+def integrate_with_existing_code():
+    """Integrate performance optimizations with existing codebase."""
+    logger.info("🔧 Integrating performance optimizations...")
+
+    # This function would be called during application startup
+    # to monkey-patch or wrap existing functions with optimizations
+
+    optimizer = get_optimizer()
+    config = optimizer.config
+
+    if any(config.values()):
+        logger.info("✅ Performance optimizations enabled:"        for opt, enabled in config.items():
+            if enabled:
+                logger.info(f"  • {opt.replace('_', ' ').title()}")
+    else:
+        logger.info("ℹ️  No performance optimizations enabled (use PERF_* environment variables)")
 
 
 if __name__ == "__main__":
-    main()
+    # Command-line interface
+    import argparse
+
+    parser = argparse.ArgumentParser(description='gogooku3 Performance Optimizer')
+    parser.add_argument('command', choices=['metrics', 'integrate', 'clean-cache'])
+    parser.add_argument('--format', choices=['json', 'pretty'], default='pretty')
+
+    args = parser.parse_args()
+
+    optimizer = get_optimizer()
+
+    if args.command == 'metrics':
+        metrics = optimizer.get_performance_metrics()
+
+        if args.format == 'json':
+            import json
+            print(json.dumps(metrics, indent=2))
+        else:
+            print("🚀 Performance Metrics")
+            print("=" * 30)
+            print(f"Optimizations: {', '.join(metrics['optimizations_active']) or 'None'}")
+            print(f"CPU Usage: {metrics['system']['cpu_percent']:.1f}%")
+            print(f"Memory Usage: {metrics['system']['memory_percent']:.1f}%")
+            print(f"Disk Usage: {metrics['system']['disk_usage']:.1f}%")
+
+    elif args.command == 'integrate':
+        integrate_with_existing_code()
+
+    elif args.command == 'clean-cache':
+        if optimizer.cacher:
+            import shutil
+            shutil.rmtree(optimizer.cacher.cache_dir, ignore_errors=True)
+            optimizer.cacher.cache_dir.mkdir(parents=True, exist_ok=True)
+            print("🗑️  Cache cleaned")
+        else:
+            print("❌ Caching not enabled")

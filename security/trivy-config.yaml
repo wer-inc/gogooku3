@@ -1,0 +1,75 @@
+# ===========================================
+# Trivy Configuration for gogooku3-standalone
+# ===========================================
+
+# Global configuration
+format: table
+output: security/sast-reports/trivy-results.txt
+exit-code: 1
+no-progress: false
+cache-dir: .trivy/cache
+
+# Vulnerability scanning configuration
+vulnerability:
+  type:
+    - os
+    - library
+  severity:
+    - CRITICAL
+    - HIGH
+    - MEDIUM
+    - LOW
+    - UNKNOWN
+
+# Security checks configuration
+security-checks:
+  - vuln
+  - config
+  - secret
+
+# Ignore file patterns
+ignorefile: security/.trivyignore
+
+# Skip files/directories
+skip-files:
+  - "**/test/**"
+  - "**/tests/**"
+  - "**/*.test.*"
+  - "**/*_test.*"
+  - "**/node_modules/**"
+  - "**/.git/**"
+  - "**/dist/**"
+  - "**/build/**"
+
+skip-dirs:
+  - .git
+  - .github
+  - docs
+  - .trivy
+
+# Database configuration
+db-repository: ghcr.io/aquasecurity/trivy-db
+
+# Timeout settings
+timeout: 10m
+
+# Parallel processing
+parallel: 4
+
+# Offline mode (set to true for air-gapped environments)
+offline-scan: false
+
+# Debug mode
+debug: false
+
+# Quiet mode
+quiet: false
+
+# Insecure registries (not recommended for production)
+insecure-registries: []
+
+# Trusted registries
+trusted-registries: []
+
+# Non SSL registries
+non-ssl-registries: []

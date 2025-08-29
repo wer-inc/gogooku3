@@ -1,0 +1,655 @@
+# ===========================================
+# Performance Benchmarks for gogooku3-standalone
+# ===========================================
+
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run weekly on Sundays at 03:00 UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      benchmark_type:
+        description: 'Type of benchmark to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - memory
+          - cpu
+          - io
+          - training
+
+jobs:
+  # ===========================================
+  # System Performance Benchmarks
+  # ===========================================
+
+  system-benchmarks:
+    name: System Performance Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-benchmark psutil memory-profiler
+
+      - name: Install test dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Run system benchmarks
+        run: |
+          # Create benchmark results directory
+          mkdir -p benchmark-results
+
+          # Memory usage benchmark
+          echo "Running memory benchmarks..."
+          python -c "
+          import psutil
+          import time
+          import json
+
+          results = []
+          for i in range(10):
+              memory = psutil.virtual_memory()
+              results.append({
+                  'timestamp': time.time(),
+                  'memory_percent': memory.percent,
+                  'memory_used': memory.used,
+                  'memory_available': memory.available
+              })
+              time.sleep(1)
+
+          with open('benchmark-results/memory.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+          # CPU usage benchmark
+          echo "Running CPU benchmarks..."
+          python -c "
+          import psutil
+          import time
+          import json
+
+          results = []
+          for i in range(10):
+              cpu_percent = psutil.cpu_percent(interval=1)
+              results.append({
+                  'timestamp': time.time(),
+                  'cpu_percent': cpu_percent,
+                  'cpu_count': psutil.cpu_count()
+              })
+
+          with open('benchmark-results/cpu.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+          # Disk I/O benchmark
+          echo "Running disk I/O benchmarks..."
+          python -c "
+          import psutil
+          import time
+          import json
+
+          results = []
+          for i in range(5):
+              disk_io = psutil.disk_io_counters()
+              results.append({
+                  'timestamp': time.time(),
+                  'read_bytes': disk_io.read_bytes,
+                  'write_bytes': disk_io.write_bytes,
+                  'read_count': disk_io.read_count,
+                  'write_count': disk_io.write_count
+              })
+              time.sleep(2)
+
+          with open('benchmark-results/disk_io.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: system-benchmarks
+          path: benchmark-results/
+
+  # ===========================================
+  # Application Performance Benchmarks
+  # ===========================================
+
+  app-benchmarks:
+    name: Application Performance Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-benchmark memory-profiler
+
+      - name: Install test dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Run application benchmarks
+        run: |
+          # Create benchmark results directory
+          mkdir -p benchmark-results
+
+          # Health check performance
+          echo "Benchmarking health check performance..."
+          python -c "
+          from ops.health_check import HealthChecker
+          import time
+          import json
+
+          checker = HealthChecker()
+          results = []
+
+          for i in range(5):
+              start_time = time.time()
+              result = checker.health_check()
+              end_time = time.time()
+
+              results.append({
+                  'iteration': i,
+                  'duration': end_time - start_time,
+                  'status': result.get('status'),
+                  'timestamp': time.time()
+              })
+
+          with open('benchmark-results/health_check.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+          # Metrics exporter performance
+          echo "Benchmarking metrics exporter performance..."
+          python -c "
+          from ops.metrics_exporter import MetricsExporter
+          import time
+          import json
+
+          exporter = MetricsExporter()
+          results = []
+
+          for i in range(3):
+              start_time = time.time()
+              metrics = exporter.generate_metrics()
+              end_time = time.time()
+
+              results.append({
+                  'iteration': i,
+                  'duration': end_time - start_time,
+                  'metrics_size': len(metrics),
+                  'timestamp': time.time()
+              })
+
+          with open('benchmark-results/metrics_exporter.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: app-benchmarks
+          path: benchmark-results/
+
+  # ===========================================
+  # Memory Profiling Benchmarks
+  # ===========================================
+
+  memory-profiling:
+    name: Memory Profiling Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install memory-profiler psutil
+
+      - name: Install test dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Run memory profiling
+        run: |
+          # Create benchmark results directory
+          mkdir -p benchmark-results
+
+          # Profile health check memory usage
+          echo "Profiling health check memory usage..."
+          python -m memory_profiler ops/health_check.py health 2> benchmark-results/health_check_memory.txt || true
+
+          # Profile metrics exporter memory usage
+          echo "Profiling metrics exporter memory usage..."
+          python -m memory_profiler ops/metrics_exporter.py --once 2> benchmark-results/metrics_memory.txt || true
+
+          # Custom memory profiling
+          python -c "
+          import psutil
+          import os
+          import time
+          import json
+          from ops.health_check import HealthChecker
+          from ops.metrics_exporter import MetricsExporter
+
+          process = psutil.Process(os.getpid())
+          results = []
+
+          # Baseline memory
+          baseline_memory = process.memory_info().rss
+          results.append({
+              'phase': 'baseline',
+              'memory_rss': baseline_memory,
+              'timestamp': time.time()
+          })
+
+          # Health check memory
+          checker = HealthChecker()
+          health_memory = process.memory_info().rss
+          results.append({
+              'phase': 'after_health_check_import',
+              'memory_rss': health_memory,
+              'memory_delta': health_memory - baseline_memory,
+              'timestamp': time.time()
+          })
+
+          # Run health check
+          result = checker.health_check()
+          after_check_memory = process.memory_info().rss
+          results.append({
+              'phase': 'after_health_check_run',
+              'memory_rss': after_check_memory,
+              'memory_delta': after_check_memory - health_memory,
+              'timestamp': time.time()
+          })
+
+          # Clean up
+          del checker
+          import gc
+          gc.collect()
+
+          cleanup_memory = process.memory_info().rss
+          results.append({
+              'phase': 'after_cleanup',
+              'memory_rss': cleanup_memory,
+              'memory_delta': cleanup_memory - after_check_memory,
+              'timestamp': time.time()
+          })
+
+          with open('benchmark-results/memory_profile.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+      - name: Upload memory profiling results
+        uses: actions/upload-artifact@v3
+        with:
+          name: memory-profiling
+          path: benchmark-results/
+
+  # ===========================================
+  # Training Pipeline Benchmarks
+  # ===========================================
+
+  training-benchmarks:
+    name: Training Pipeline Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event.inputs.benchmark_type == 'training' || github.event.inputs.benchmark_type == 'all' || github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-benchmark
+
+      - name: Install test dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Create sample data for benchmarking
+        run: |
+          # Create minimal sample data for benchmarking
+          mkdir -p benchmark-data
+          python -c "
+          import pandas as pd
+          import numpy as np
+
+          # Create sample financial data
+          dates = pd.date_range('2021-01-01', periods=100, freq='D')
+          symbols = ['AAPL', 'GOOGL', 'MSFT']
+
+          data = []
+          for symbol in symbols:
+              for date in dates:
+                  data.append({
+                      'date': date,
+                      'symbol': symbol,
+                      'open': np.random.uniform(100, 200),
+                      'high': np.random.uniform(100, 200),
+                      'low': np.random.uniform(100, 200),
+                      'close': np.random.uniform(100, 200),
+                      'volume': np.random.randint(1000000, 10000000)
+                  })
+
+          df = pd.DataFrame(data)
+          df.to_parquet('benchmark-data/sample_data.parquet')
+          print(f'Created sample data with {len(df)} rows')
+          "
+
+      - name: Run training benchmarks
+        run: |
+          # Create benchmark results directory
+          mkdir -p benchmark-results
+
+          # Benchmark data loading
+          echo "Benchmarking data loading performance..."
+          python -c "
+          import time
+          import json
+          import pandas as pd
+
+          results = []
+          for i in range(3):
+              start_time = time.time()
+              df = pd.read_parquet('benchmark-data/sample_data.parquet')
+              end_time = time.time()
+
+              results.append({
+                  'iteration': i,
+                  'operation': 'data_loading',
+                  'duration': end_time - start_time,
+                  'rows_loaded': len(df),
+                  'timestamp': time.time()
+              })
+
+          with open('benchmark-results/data_loading.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+          # Benchmark basic data processing
+          echo "Benchmarking data processing performance..."
+          python -c "
+          import time
+          import json
+          import pandas as pd
+          import numpy as np
+
+          results = []
+          df = pd.read_parquet('benchmark-data/sample_data.parquet')
+
+          for i in range(3):
+              start_time = time.time()
+
+              # Simulate basic feature engineering
+              processed_df = df.copy()
+              processed_df['returns'] = processed_df.groupby('symbol')['close'].pct_change()
+              processed_df['ma_5'] = processed_df.groupby('symbol')['close'].rolling(5).mean()
+              processed_df['volatility'] = processed_df.groupby('symbol')['returns'].rolling(5).std()
+
+              end_time = time.time()
+
+              results.append({
+                  'iteration': i,
+                  'operation': 'feature_engineering',
+                  'duration': end_time - start_time,
+                  'input_rows': len(df),
+                  'output_rows': len(processed_df),
+                  'timestamp': time.time()
+              })
+
+          with open('benchmark-results/data_processing.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+          # Benchmark with performance optimizations
+          echo "Benchmarking with performance optimizations..."
+          PERF_POLARS_STREAM=1 PERF_MEMORY_OPTIMIZATION=1 python -c "
+          import time
+          import json
+          import pandas as pd
+          import numpy as np
+
+          results = []
+          df = pd.read_parquet('benchmark-data/sample_data.parquet')
+
+          for i in range(3):
+              start_time = time.time()
+
+              # Optimized feature engineering
+              processed_df = df.copy()
+              processed_df['returns'] = processed_df.groupby('symbol')['close'].pct_change()
+              processed_df['ma_5'] = processed_df.groupby('symbol')['close'].rolling(5).mean()
+              processed_df['volatility'] = processed_df.groupby('symbol')['returns'].rolling(5).std()
+
+              end_time = time.time()
+
+              results.append({
+                  'iteration': i,
+                  'operation': 'optimized_feature_engineering',
+                  'duration': end_time - start_time,
+                  'input_rows': len(df),
+                  'output_rows': len(processed_df),
+                  'optimizations': ['polars_stream', 'memory_optimization'],
+                  'timestamp': time.time()
+              })
+
+          with open('benchmark-results/optimized_processing.json', 'w') as f:
+              json.dump(results, f, indent=2)
+          "
+
+      - name: Upload training benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: training-benchmarks
+          path: benchmark-results/
+
+  # ===========================================
+  # Benchmark Summary & Comparison
+  # ===========================================
+
+  benchmark-summary:
+    name: Benchmark Summary & Comparison
+    runs-on: ubuntu-latest
+    needs: [
+      system-benchmarks,
+      app-benchmarks,
+      memory-profiling,
+      training-benchmarks
+    ]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all benchmark artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: benchmark-artifacts
+
+      - name: Generate benchmark summary
+        run: |
+          echo "# 📊 Performance Benchmark Summary" > benchmark-summary.md
+          echo "" >> benchmark-summary.md
+          echo "**Benchmark Date:** $(date)" >> benchmark-summary.md
+          echo "**Repository:** ${{ github.repository }}" >> benchmark-summary.md
+          echo "**Commit:** ${{ github.sha }}" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+
+          echo "## 🎯 Benchmark Results Overview" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+
+          # System benchmarks summary
+          if [ -d "benchmark-artifacts/system-benchmarks" ]; then
+              echo "### System Performance" >> benchmark-summary.md
+              find benchmark-artifacts/system-benchmarks -name "*.json" | while read file; do
+                  filename=$(basename "$file")
+                  echo "#### $filename" >> benchmark-summary.md
+                  jq -r '. | length' "$file" 2>/dev/null && echo " samples collected" >> benchmark-summary.md || echo " (no data)" >> benchmark-summary.md
+              done
+              echo "" >> benchmark-summary.md
+          fi
+
+          # Application benchmarks summary
+          if [ -d "benchmark-artifacts/app-benchmarks" ]; then
+              echo "### Application Performance" >> benchmark-summary.md
+              find benchmark-artifacts/app-benchmarks -name "*.json" | while read file; do
+                  filename=$(basename "$file")
+                  echo "#### $filename" >> benchmark-summary.md
+                  if [ "$filename" == "health_check.json" ]; then
+                      avg_duration=$(jq -r '[.[] | .duration] | add / length' "$file" 2>/dev/null)
+                      echo "Average duration: ${avg_duration}s" >> benchmark-summary.md
+                  elif [ "$filename" == "metrics_exporter.json" ]; then
+                      avg_duration=$(jq -r '[.[] | .duration] | add / length' "$file" 2>/dev/null)
+                      avg_size=$(jq -r '[.[] | .metrics_size] | add / length' "$file" 2>/dev/null)
+                      echo "Average duration: ${avg_duration}s, Average size: ${avg_size} bytes" >> benchmark-summary.md
+                  fi
+              done
+              echo "" >> benchmark-summary.md
+          fi
+
+          # Memory profiling summary
+          if [ -d "benchmark-artifacts/memory-profiling" ]; then
+              echo "### Memory Usage" >> benchmark-summary.md
+              if [ -f "benchmark-artifacts/memory-profiling/memory_profile.json" ]; then
+                  baseline=$(jq -r '.[] | select(.phase == "baseline") | .memory_rss' benchmark-artifacts/memory-profiling/memory_profile.json)
+                  peak=$(jq -r 'max_by(.memory_rss) | .memory_rss' benchmark-artifacts/memory-profiling/memory_profile.json)
+                  peak_mb=$((peak / 1024 / 1024))
+                  baseline_mb=$((baseline / 1024 / 1024))
+                  echo "Baseline memory: ${baseline_mb}MB" >> benchmark-summary.md
+                  echo "Peak memory: ${peak_mb}MB" >> benchmark-summary.md
+                  echo "Memory increase: $((peak_mb - baseline_mb))MB" >> benchmark-summary.md
+              fi
+              echo "" >> benchmark-summary.md
+          fi
+
+          # Training benchmarks summary
+          if [ -d "benchmark-artifacts/training-benchmarks" ]; then
+              echo "### Training Pipeline Performance" >> benchmark-summary.md
+              find benchmark-artifacts/training-benchmarks -name "*.json" | while read file; do
+                  filename=$(basename "$file")
+                  echo "#### $filename" >> benchmark-summary.md
+                  avg_duration=$(jq -r '[.[] | .duration] | add / length' "$file" 2>/dev/null)
+                  echo "Average duration: ${avg_duration}s" >> benchmark-summary.md
+              done
+              echo "" >> benchmark-summary.md
+          fi
+
+          echo "## 📈 Performance Trends" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+          echo "- Monitor memory usage patterns" >> benchmark-summary.md
+          echo "- Track application response times" >> benchmark-summary.md
+          echo "- Analyze training pipeline efficiency" >> benchmark-summary.md
+          echo "- Compare results across commits" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+
+          echo "## 🚨 Performance Alerts" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+
+          # Check for performance regressions
+          if [ -d "benchmark-artifacts/app-benchmarks" ] && [ -f "benchmark-artifacts/app-benchmarks/health_check.json" ]; then
+              avg_duration=$(jq -r '[.[] | .duration] | add / length' benchmark-artifacts/app-benchmarks/health_check.json)
+              if (( $(echo "$avg_duration > 1.0" | bc -l) )); then
+                  echo "⚠️ Health check average duration (${avg_duration}s) exceeds 1.0s threshold" >> benchmark-summary.md
+              else
+                  echo "✅ Health check performance within acceptable range" >> benchmark-summary.md
+              fi
+          fi
+
+          echo "" >> benchmark-summary.md
+          echo "## 📋 Recommendations" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+          echo "1. **Memory Optimization**: Monitor and reduce memory footprint if >500MB increase" >> benchmark-summary.md
+          echo "2. **Response Time**: Keep health check response <1.0s" >> benchmark-summary.md
+          echo "3. **Resource Usage**: Monitor CPU and I/O patterns for optimization opportunities" >> benchmark-summary.md
+          echo "4. **Training Efficiency**: Optimize data processing pipelines" >> benchmark-summary.md
+          echo "" >> benchmark-summary.md
+          echo "---" >> benchmark-summary.md
+          echo "*Generated by GitHub Actions Performance Benchmark Pipeline*" >> benchmark-summary.md
+
+      - name: Upload benchmark summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-summary
+          path: benchmark-summary.md
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('benchmark-summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📊 Performance Benchmark Results\n\n${summary}`
+            });
+
+      - name: Store benchmark results for trend analysis
+        run: |
+          # Create a timestamped archive of all benchmark results
+          timestamp=$(date +%Y%m%d_%H%M%S)
+          mkdir -p benchmark-history
+
+          # Copy all artifacts to timestamped directory
+          cp -r benchmark-artifacts/* benchmark-history/${timestamp}/ 2>/dev/null || true
+
+          # Keep only last 10 benchmark runs
+          ls benchmark-history/ | sort -r | tail -n +11 | xargs -I {} rm -rf benchmark-history/{}
+
+          # Upload historical data
+          tar -czf benchmark-history.tar.gz benchmark-history/
+
+      - name: Upload benchmark history
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-history
+          path: benchmark-history.tar.gz

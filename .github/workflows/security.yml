@@ -1,0 +1,443 @@
+# ===========================================
+# Security CI/CD Pipeline for gogooku3-standalone
+# ===========================================
+
+name: Security Checks
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run daily at 02:00 UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  # ===========================================
+  # Security Scanning
+  # ===========================================
+
+  trivy-filesystem-scan:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+          exit-code: 1
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-fs-results.sarif'
+
+      - name: Upload scan results as artifact
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: trivy-filesystem-results
+          path: trivy-fs-results.sarif
+
+  trivy-docker-scan:
+    name: Trivy Docker Image Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker images
+        run: |
+          docker compose build --no-cache
+
+      - name: Run Trivy Docker scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          scan-ref: 'gogooku3-app:latest'
+          format: 'sarif'
+          output: 'trivy-docker-results.sarif'
+          exit-code: 1
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Docker scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-docker-results.sarif'
+
+      - name: Upload scan results as artifact
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: trivy-docker-results
+          path: trivy-docker-results.sarif
+
+  gitleaks-scan:
+    name: Gitleaks Secrets Detection
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config-path: 'security/gitleaks-config.toml'
+
+  # ===========================================
+  # Dependency Security
+  # ===========================================
+
+  pip-audit:
+    name: Python Dependencies Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Run pip-audit
+        run: |
+          pip-audit --requirement requirements.txt --format json > pip-audit-results.json || true
+
+      - name: Check for critical vulnerabilities
+        run: |
+          if [ -f pip-audit-results.json ]; then
+            CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "CRITICAL")) | length' pip-audit-results.json)
+            HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "HIGH")) | length' pip-audit-results.json)
+
+            echo "Critical vulnerabilities: $CRITICAL_COUNT"
+            echo "High vulnerabilities: $HIGH_COUNT"
+
+            if [ "$CRITICAL_COUNT" -gt 0 ]; then
+              echo "❌ Critical vulnerabilities found!"
+              jq '.vulnerabilities | map(select(.severity == "CRITICAL"))' pip-audit-results.json
+              exit 1
+            fi
+
+            if [ "$HIGH_COUNT" -gt 5 ]; then
+              echo "❌ Too many high-severity vulnerabilities found!"
+              exit 1
+            fi
+          fi
+
+      - name: Upload pip-audit results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: pip-audit-results
+          path: pip-audit-results.json
+
+  # ===========================================
+  # Code Quality & Security
+  # ===========================================
+
+  bandit-security:
+    name: Bandit Security Linter
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install bandit
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit
+
+      - name: Run bandit
+        run: |
+          bandit -r src/ scripts/ main.py -f json -o bandit-results.json || true
+
+      - name: Check bandit results
+        run: |
+          if [ -f bandit-results.json ]; then
+            HIGH_COUNT=$(jq '.results | map(.issue_severity) | map(select(. == "High")) | length' bandit-results.json)
+            MEDIUM_COUNT=$(jq '.results | map(.issue_severity) | map(select(. == "Medium")) | length' bandit-results.json)
+
+            echo "High severity issues: $HIGH_COUNT"
+            echo "Medium severity issues: $MEDIUM_COUNT"
+
+            if [ "$HIGH_COUNT" -gt 0 ]; then
+              echo "❌ High-severity security issues found!"
+              jq '.results | map(select(.issue_severity == "High"))' bandit-results.json
+              exit 1
+            fi
+
+            if [ "$MEDIUM_COUNT" -gt 3 ]; then
+              echo "❌ Too many medium-severity security issues found!"
+              exit 1
+            fi
+          fi
+
+      - name: Upload bandit results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: bandit-results
+          path: bandit-results.json
+
+  # ===========================================
+  # Container Security
+  # ===========================================
+
+  hadolint-dockerfile:
+    name: Dockerfile Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          config: security/hadolint.yaml
+          format: sarif
+          output-file: hadolint-results.sarif
+
+      - name: Upload Hadolint results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: hadolint-results
+          path: hadolint-results.sarif
+
+  # ===========================================
+  # Infrastructure as Code Security
+  # ===========================================
+
+  checkov-iac-scan:
+    name: Checkov IaC Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          check: CKV_DOCKER_*
+
+      - name: Upload Checkov results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: checkov-results
+          path: checkov-results.sarif
+
+  # ===========================================
+  # Summary & Reporting
+  # ===========================================
+
+  security-summary:
+    name: Security Scan Summary
+    runs-on: ubuntu-latest
+    needs: [
+      trivy-filesystem-scan,
+      trivy-docker-scan,
+      gitleaks-scan,
+      pip-audit,
+      bandit-security,
+      hadolint-dockerfile,
+      checkov-iac-scan
+    ]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: security-reports
+
+      - name: Generate security summary
+        run: |
+          echo "# 🔒 Security Scan Summary" > security-summary.md
+          echo "" >> security-summary.md
+          echo "**Scan Date:** $(date)" >> security-summary.md
+          echo "**Repository:** ${{ github.repository }}" >> security-summary.md
+          echo "**Commit:** ${{ github.sha }}" >> security-summary.md
+          echo "" >> security-summary.md
+
+          echo "## 📊 Scan Results" >> security-summary.md
+          echo "" >> security-summary.md
+
+          # Count files in each artifact directory
+          for dir in security-reports/*/; do
+            if [ -d "$dir" ]; then
+              scan_name=$(basename "$dir")
+              file_count=$(find "$dir" -type f | wc -l)
+              echo "- **$scan_name**: $file_count files" >> security-summary.md
+            fi
+          done
+
+          echo "" >> security-summary.md
+          echo "## 🚨 Critical Findings" >> security-summary.md
+          echo "" >> security-summary.md
+
+          # Check for critical issues
+          if [ -d "security-reports/trivy-filesystem-results" ]; then
+            echo "### Trivy Filesystem" >> security-summary.md
+            find security-reports/trivy-filesystem-results -name "*.sarif" -exec cat {} \; | \
+              jq -r '.runs[0].results[] | select(.level == "error") | "- \(.message.text)"' >> security-summary.md || true
+          fi
+
+          echo "" >> security-summary.md
+          echo "## ✅ Next Steps" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "1. Review all security scan results in the artifacts" >> security-summary.md
+          echo "2. Address any critical or high-severity findings" >> security-summary.md
+          echo "3. Update dependencies with known vulnerabilities" >> security-summary.md
+          echo "4. Implement additional security controls if needed" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "---" >> security-summary.md
+          echo "*Generated by GitHub Actions Security Pipeline*" >> security-summary.md
+
+      - name: Upload security summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-summary
+          path: security-summary.md
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔒 Security Scan Results\n\n${summary}`
+            });
+
+  # ===========================================
+  # Dependency Updates
+  # ===========================================
+
+  dependency-updates:
+    name: Check for Dependency Updates
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'  # Only run on schedule
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-tools
+
+      - name: Check for outdated packages
+        run: |
+          pip list --outdated --format=json > outdated-packages.json
+
+      - name: Create dependency update issue
+        if: success()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const outdated = JSON.parse(fs.readFileSync('outdated-packages.json', 'utf8'));
+
+            if (outdated.length > 0) {
+              const issueBody = `## 📦 Outdated Dependencies Found
+
+              The following Python packages have newer versions available:
+
+              | Package | Current | Latest | Type |
+              |---------|---------|--------|------|
+              ${outdated.map(pkg => `| ${pkg.name} | ${pkg.version} | ${pkg.latest_version} | ${pkg.latest_filetype} |`).join('\n')}
+
+              ### Recommended Actions:
+              1. Review changelog for breaking changes
+              2. Test compatibility with existing code
+              3. Update packages in requirements.txt
+              4. Run full test suite after updates
+              5. Monitor for security vulnerabilities in new versions
+
+              *Generated by automated dependency check on ${new Date().toISOString()}*`;
+
+              // Check if issue already exists
+              const issues = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: ['dependencies', 'automated'],
+                state: 'open'
+              });
+
+              const existingIssue = issues.data.find(issue =>
+                issue.title.includes('Outdated Dependencies')
+              );
+
+              if (!existingIssue) {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: '📦 Outdated Dependencies Found',
+                  body: issueBody,
+                  labels: ['dependencies', 'automated']
+                });
+              }
+            }

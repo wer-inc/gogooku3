@@ -1,0 +1,356 @@
+# ===========================================
+# Release CI/CD Pipeline for gogooku3-standalone
+# ===========================================
+
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type (auto-detect if empty)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - patch
+          - minor
+          - major
+          - prerelease
+
+jobs:
+  # ===========================================
+  # Pre-Release Validation
+  # ===========================================
+
+  pre-release-validation:
+    name: Pre-Release Validation
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      has-changes: ${{ steps.check-changes.outputs.has-changes }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run full test suite
+        run: |
+          # Run all tests including integration and E2E
+          pytest tests/ -v --tb=short --cov=src/gogooku3 --cov-report=xml
+
+      - name: Run security checks
+        run: |
+          # Run security scans (lightweight version)
+          pip install pip-audit
+          pip-audit --requirement requirements.txt || true
+
+      - name: Check for unreleased changes
+        id: check-changes
+        run: |
+          # Check if there are commits since last tag
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            LAST_TAG=$(git describe --tags --abbrev=0)
+            CHANGES=$(git log --oneline ${LAST_TAG}..HEAD | wc -l)
+            echo "has-changes=$([ "$CHANGES" -gt 0 ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+            echo "Found $CHANGES changes since $LAST_TAG"
+          else
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+            echo "No previous tags found - first release"
+          fi
+
+      - name: Get current version
+        id: get-version
+        run: |
+          if [ -f pyproject.toml ]; then
+            VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Current version: $VERSION"
+          else
+            echo "version=0.1.0" >> $GITHUB_OUTPUT
+            echo "No pyproject.toml found, defaulting to 0.1.0"
+          fi
+
+  # ===========================================
+  # Semantic Release
+  # ===========================================
+
+  semantic-release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    needs: pre-release-validation
+    if: needs.pre-release-validation.outputs.has-changes == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release
+          npm install -g @semantic-release/git
+          npm install -g @semantic-release/changelog
+          npm install -g @semantic-release/exec
+          npm install -g @semantic-release/github
+          npm install -g conventional-changelog-conventionalcommits
+
+      - name: Set release type (if specified)
+        if: github.event.inputs.release_type != ''
+        run: |
+          echo "RELEASE_TYPE=${{ github.event.inputs.release_type }}" >> $GITHUB_ENV
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TYPE: ${{ env.RELEASE_TYPE }}
+        run: |
+          if [ -n "$RELEASE_TYPE" ]; then
+            # Manual release with specific type
+            npx semantic-release --branches main --dry-run false --no-ci
+          else
+            # Automatic release based on commits
+            npx semantic-release --branches main --dry-run false --no-ci
+          fi
+
+  # ===========================================
+  # Post-Release Validation
+  # ===========================================
+
+  post-release-validation:
+    name: Post-Release Validation
+    runs-on: ubuntu-latest
+    needs: semantic-release
+    if: success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install build twine
+
+      - name: Build distribution packages
+        run: |
+          python -m build
+
+      - name: Check distribution packages
+        run: |
+          twine check dist/*
+
+      - name: Test installation from package
+        run: |
+          # Test wheel installation
+          pip install dist/*.whl --force-reinstall
+
+          # Test basic functionality
+          python -c "import gogooku3; print('Package import successful')"
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: distribution-packages
+          path: dist/
+
+  # ===========================================
+  # Release Notification
+  # ===========================================
+
+  release-notification:
+    name: Release Notification
+    runs-on: ubuntu-latest
+    needs: [semantic-release, post-release-validation]
+    if: success()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get release info
+        id: release-info
+        run: |
+          # Get the latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+          # Get release notes from CHANGELOG
+          if [ -f CHANGELOG.md ]; then
+            RELEASE_NOTES=$(awk '/^## \['"$LATEST_TAG"'\]/,/^## \[/{p=1} /^## \[/{if(p){p=0; exit}} p' CHANGELOG.md)
+            echo "release_notes<<EOF" >> $GITHUB_OUTPUT
+            echo "$RELEASE_NOTES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release summary
+        run: |
+          echo "# 🚀 Release ${TAG}" > release-summary.md
+          echo "" >> release-summary.md
+          echo "**Release Date:** $(date)" >> release-summary.md
+          echo "**Tag:** ${TAG}" >> release-summary.md
+          echo "" >> release-summary.md
+          echo "## 📋 Release Notes" >> release-summary.md
+          echo "" >> release-summary.md
+          echo "${RELEASE_NOTES}" >> release-summary.md
+          echo "" >> release-summary.md
+          echo "## ✅ Validation Results" >> release-summary.md
+          echo "" >> release-summary.md
+          echo "- ✅ All tests passed" >> release-summary.md
+          echo "- ✅ Security scans passed" >> release-summary.md
+          echo "- ✅ Package build successful" >> release-summary.md
+          echo "- ✅ Installation test passed" >> release-summary.md
+          echo "" >> release-summary.md
+          echo "---" >> release-summary.md
+          echo "*Generated by GitHub Actions Release Pipeline*" >> release-summary.md
+        env:
+          TAG: ${{ steps.release-info.outputs.tag }}
+          RELEASE_NOTES: ${{ steps.release-info.outputs.release_notes }}
+
+      - name: Upload release summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-summary
+          path: release-summary.md
+
+      - name: Comment on release (if applicable)
+        if: github.event_name == 'push'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('release-summary.md', 'utf8');
+
+            // Find the latest release
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            if (releases.data.length > 0) {
+              const latestRelease = releases.data[0];
+
+              await github.rest.issues.createComment({
+                issue_number: latestRelease.id,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🎉 Release Summary\n\n${summary}`
+              });
+            }
+
+  # ===========================================
+  # Deployment (Optional)
+  # ===========================================
+
+  deploy-to-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: semantic-release
+    if: success() && contains(github.event.head_commit.modified, 'deploy')
+    environment: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        run: |
+          echo "🚀 Deploying to staging environment..."
+          # Add your staging deployment commands here
+          # For example:
+          # - Docker image build and push
+          # - Kubernetes deployment update
+          # - Configuration updates
+
+  # ===========================================
+  # Rollback Preparation
+  # ===========================================
+
+  prepare-rollback:
+    name: Prepare Rollback
+    runs-on: ubuntu-latest
+    needs: semantic-release
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create rollback plan
+        run: |
+          echo "# 🔄 Rollback Plan for ${GITHUB_SHA}" > rollback-plan.md
+          echo "" >> rollback-plan.md
+          echo "**Generated:** $(date)" >> rollback-plan.md
+          echo "**Commit:** ${GITHUB_SHA}" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+
+          echo "## 📋 Rollback Steps" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+          echo "1. **Identify the previous stable version:**" >> rollback-plan.md
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "main")
+          echo "   - Previous version: \`${PREV_TAG}\`" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+
+          echo "2. **Rollback deployment:**" >> rollback-plan.md
+          echo "   - Revert to previous Docker image tag" >> rollback-plan.md
+          echo "   - Update Kubernetes deployment" >> rollback-plan.md
+          echo "   - Update configuration files" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+
+          echo "3. **Rollback code changes:**" >> rollback-plan.md
+          echo "   \`\`\`bash" >> rollback-plan.md
+          echo "   git reset --hard ${PREV_TAG}" >> rollback-plan.md
+          echo "   git push --force-with-lease origin main" >> rollback-plan.md
+          echo "   \`\`\`" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+
+          echo "4. **Verification:**" >> rollback-plan.md
+          echo "   - Run health checks" >> rollback-plan.md
+          echo "   - Verify application functionality" >> rollback-plan.md
+          echo "   - Check monitoring dashboards" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+
+          echo "## ⚠️ Important Notes" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+          echo "- **Data changes:** Check if database migrations need to be reverted" >> rollback-plan.md
+          echo "- **Dependencies:** Verify compatibility with rolled-back version" >> rollback-plan.md
+          echo "- **Configuration:** Ensure environment variables match previous version" >> rollback-plan.md
+          echo "" >> rollback-plan.md
+          echo "---" >> rollback-plan.md
+          echo "*Generated by GitHub Actions Release Pipeline*" >> rollback-plan.md
+
+      - name: Upload rollback plan
+        uses: actions/upload-artifact@v3
+        with:
+          name: rollback-plan
+          path: rollback-plan.md

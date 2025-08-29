@@ -1,0 +1,586 @@
+# ===========================================
+# Backup Validation CI/CD Pipeline for gogooku3-standalone
+# ===========================================
+
+name: Backup Validation
+
+on:
+  schedule:
+    # Run daily at 03:00 UTC (off-peak hours)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      backup_type:
+        description: 'Type of backup to validate'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - data
+          - database
+          - configuration
+
+jobs:
+  # ===========================================
+  # Data Backup Validation
+  # ===========================================
+
+  validate-data-backups:
+    name: Validate Data Backups
+    runs-on: ubuntu-latest
+    if: github.event.inputs.backup_type == 'data' || github.event.inputs.backup_type == 'all' || github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pandas pyarrow
+
+      - name: Create test data for validation
+        run: |
+          # Create sample data to validate backup/restore process
+          mkdir -p test-data/processed
+          python -c "
+          import pandas as pd
+          import numpy as np
+          from datetime import datetime, timedelta
+
+          # Create sample financial data
+          start_date = datetime(2023, 1, 1)
+          dates = [start_date + timedelta(days=i) for i in range(100)]
+          symbols = ['TEST1', 'TEST2', 'TEST3']
+
+          data = []
+          for symbol in symbols:
+              for date in dates:
+                  data.append({
+                      'date': date,
+                      'symbol': symbol,
+                      'open': np.random.uniform(100, 200),
+                      'high': np.random.uniform(100, 200),
+                      'low': np.random.uniform(100, 200),
+                      'close': np.random.uniform(100, 200),
+                      'volume': np.random.randint(1000000, 10000000)
+                  })
+
+          df = pd.DataFrame(data)
+          df.to_parquet('test-data/processed/test_dataset.parquet')
+          print(f'Created test dataset with {len(df)} rows')
+
+          # Calculate checksum
+          import hashlib
+          with open('test-data/processed/test_dataset.parquet', 'rb') as f:
+              checksum = hashlib.md5(f.read()).hexdigest()
+          with open('test-data/checksum.md5', 'w') as f:
+              f.write(checksum)
+          print(f'Test data checksum: {checksum}')
+          "
+
+      - name: Create backup
+        run: |
+          # Create backup archive
+          BACKUP_NAME="test_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+          tar -czf "backups/${BACKUP_NAME}" test-data/
+          echo "BACKUP_NAME=${BACKUP_NAME}" >> $GITHUB_ENV
+          echo "Created backup: ${BACKUP_NAME}"
+
+      - name: Validate backup integrity
+        run: |
+          # Test backup integrity
+          if [ -f "backups/${BACKUP_NAME}" ]; then
+            echo "✅ Backup file exists"
+
+            # Test archive integrity
+            if tar -tzf "backups/${BACKUP_NAME}" >/dev/null 2>&1; then
+              echo "✅ Backup archive is valid"
+            else
+              echo "❌ Backup archive is corrupted"
+              exit 1
+            fi
+
+            # Check backup size
+            BACKUP_SIZE=$(stat -f%z "backups/${BACKUP_NAME}" 2>/dev/null || stat -c%s "backups/${BACKUP_NAME}")
+            if [ "${BACKUP_SIZE}" -gt 0 ]; then
+              echo "✅ Backup size is valid: ${BACKUP_SIZE} bytes"
+            else
+              echo "❌ Backup size is invalid"
+              exit 1
+            fi
+          else
+            echo "❌ Backup file not found"
+            exit 1
+          fi
+
+      - name: Test restore process
+        run: |
+          # Create restore directory
+          mkdir -p restore-test
+
+          # Extract backup
+          if tar -xzf "backups/${BACKUP_NAME}" -C restore-test/; then
+            echo "✅ Backup extraction successful"
+          else
+            echo "❌ Backup extraction failed"
+            exit 1
+          fi
+
+          # Verify restored data
+          if [ -f "restore-test/test-data/processed/test_dataset.parquet" ]; then
+            echo "✅ Restored data file exists"
+
+            # Verify data integrity
+            python -c "
+            import pandas as pd
+            try:
+                df = pd.read_parquet('restore-test/test-data/processed/test_dataset.parquet')
+                print(f'✅ Restored data integrity OK: {len(df)} rows, {len(df.columns)} columns')
+
+                # Verify data structure
+                required_cols = ['date', 'symbol', 'open', 'high', 'low', 'close', 'volume']
+                missing_cols = [col for col in required_cols if col not in df.columns]
+                if missing_cols:
+                    print(f'❌ Missing columns in restored data: {missing_cols}')
+                    exit(1)
+                else:
+                    print('✅ All required columns present in restored data')
+
+            except Exception as e:
+                print(f'❌ Data integrity check failed: {e}')
+                exit(1)
+            "
+          else
+            echo "❌ Restored data file not found"
+            exit 1
+          fi
+
+      - name: Verify backup checksum
+        run: |
+          # Verify checksum matches
+          if [ -f "test-data/checksum.md5" ] && [ -f "restore-test/test-data/checksum.md5" ]; then
+            ORIGINAL_CHECKSUM=$(cat test-data/checksum.md5)
+            RESTORED_CHECKSUM=$(cat restore-test/test-data/checksum.md5)
+
+            if [ "${ORIGINAL_CHECKSUM}" = "${RESTORED_CHECKSUM}" ]; then
+              echo "✅ Backup checksum verification passed"
+            else
+              echo "❌ Backup checksum verification failed"
+              echo "Original: ${ORIGINAL_CHECKSUM}"
+              echo "Restored: ${RESTORED_CHECKSUM}"
+              exit 1
+            fi
+          else
+            echo "⚠️ Checksum files not found, skipping checksum verification"
+          fi
+
+      - name: Upload backup validation results
+        uses: actions/upload-artifact@v3
+        with:
+          name: data-backup-validation-results
+          path: |
+            backups/
+            restore-test/
+            test-data/
+
+  # ===========================================
+  # Database Backup Validation
+  # ===========================================
+
+  validate-database-backups:
+    name: Validate Database Backups
+    runs-on: ubuntu-latest
+    if: github.event.inputs.backup_type == 'database' || github.event.inputs.backup_type == 'all' || github.event_name == 'schedule'
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:latest
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Wait for ClickHouse to be ready
+        run: |
+          # Wait for ClickHouse to start
+          for i in {1..30}; do
+            if curl -f http://localhost:8123/ping >/dev/null 2>&1; then
+              echo "ClickHouse is ready"
+              break
+            fi
+            echo "Waiting for ClickHouse... ($i/30)"
+            sleep 2
+          done
+
+          # Verify ClickHouse is responding
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "SELECT version()"
+
+      - name: Create test database and data
+        run: |
+          # Create test database and table
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "
+          CREATE DATABASE IF NOT EXISTS test_backup;
+          "
+
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "
+          CREATE TABLE IF NOT EXISTS test_backup.prices (
+              date Date,
+              symbol String,
+              open Float64,
+              high Float64,
+              low Float64,
+              close Float64,
+              volume UInt64
+          ) ENGINE = MergeTree()
+          PARTITION BY toYYYYMM(date)
+          ORDER BY (symbol, date);
+          "
+
+          # Insert test data
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "
+          INSERT INTO test_backup.prices VALUES
+          ('2023-01-01', 'TEST1', 100.0, 110.0, 95.0, 105.0, 1000000),
+          ('2023-01-02', 'TEST1', 105.0, 115.0, 100.0, 110.0, 1200000),
+          ('2023-01-01', 'TEST2', 200.0, 220.0, 190.0, 210.0, 2000000);
+          "
+
+          # Verify data insertion
+          COUNT=$(docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "SELECT COUNT(*) FROM test_backup.prices")
+          echo "Inserted ${COUNT} test records"
+
+      - name: Create database backup
+        run: |
+          # Create backup directory
+          mkdir -p db-backups
+
+          # Create ClickHouse backup
+          BACKUP_NAME="test_db_backup_$(date +%Y%m%d_%H%M%S)"
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "
+          BACKUP DATABASE test_backup TO Disk('backups', '${BACKUP_NAME}')
+          "
+
+          echo "DB_BACKUP_NAME=${BACKUP_NAME}" >> $GITHUB_ENV
+          echo "Created database backup: ${BACKUP_NAME}"
+
+      - name: Validate database backup
+        run: |
+          # List backups
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "SHOW BACKUPS"
+
+          # Verify backup exists
+          BACKUP_EXISTS=$(docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "SHOW BACKUPS" | grep "${DB_BACKUP_NAME}" | wc -l)
+
+          if [ "${BACKUP_EXISTS}" -gt 0 ]; then
+            echo "✅ Database backup exists: ${DB_BACKUP_NAME}"
+          else
+            echo "❌ Database backup not found"
+            exit 1
+          fi
+
+      - name: Test database restore
+        run: |
+          # Drop test database
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "DROP DATABASE test_backup"
+
+          # Verify database is dropped
+          DB_EXISTS=$(docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "SHOW DATABASES" | grep "test_backup" | wc -l)
+          if [ "${DB_EXISTS}" -eq 0 ]; then
+            echo "✅ Test database dropped successfully"
+          else
+            echo "❌ Failed to drop test database"
+            exit 1
+          fi
+
+          # Restore from backup
+          docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "
+          RESTORE DATABASE test_backup FROM Disk('backups', '${DB_BACKUP_NAME}')
+          "
+
+          # Verify restore
+          TABLES=$(docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "SHOW TABLES FROM test_backup")
+          if echo "${TABLES}" | grep -q "prices"; then
+            echo "✅ Database restore successful - tables found"
+          else
+            echo "❌ Database restore failed - tables not found"
+            exit 1
+          fi
+
+          # Verify data integrity
+          COUNT=$(docker exec $(docker ps -q --filter ancestor=clickhouse/clickhouse-server) clickhouse-client --query "SELECT COUNT(*) FROM test_backup.prices")
+          if [ "${COUNT}" -eq 3 ]; then
+            echo "✅ Data integrity verified: ${COUNT} records restored"
+          else
+            echo "❌ Data integrity check failed: expected 3 records, found ${COUNT}"
+            exit 1
+          fi
+
+      - name: Upload database backup validation results
+        uses: actions/upload-artifact@v3
+        with:
+          name: database-backup-validation-results
+          path: db-backups/
+
+  # ===========================================
+  # Configuration Backup Validation
+  # ===========================================
+
+  validate-config-backups:
+    name: Validate Configuration Backups
+    runs-on: ubuntu-latest
+    if: github.event.inputs.backup_type == 'configuration' || github.event.inputs.backup_type == 'all' || github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create configuration backup
+        run: |
+          # Create configuration backup directory
+          mkdir -p config-backups
+
+          # Backup configuration files
+          CONFIG_BACKUP_NAME="config_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+          tar -czf "config-backups/${CONFIG_BACKUP_NAME}" \
+            --exclude='*.log' \
+            --exclude='__pycache__' \
+            --exclude='.git' \
+            pyproject.toml \
+            docker-compose.yml \
+            docker-compose.override.yml \
+            .env.example \
+            configs/ \
+            ops/
+
+          echo "CONFIG_BACKUP_NAME=${CONFIG_BACKUP_NAME}" >> $GITHUB_ENV
+          echo "Created configuration backup: ${CONFIG_BACKUP_NAME}"
+
+      - name: Validate configuration backup
+        run: |
+          # Verify backup exists and is valid
+          if [ -f "config-backups/${CONFIG_BACKUP_NAME}" ]; then
+            echo "✅ Configuration backup exists"
+
+            # Test archive integrity
+            if tar -tzf "config-backups/${CONFIG_BACKUP_NAME}" >/dev/null 2>&1; then
+              echo "✅ Configuration backup archive is valid"
+            else
+              echo "❌ Configuration backup archive is corrupted"
+              exit 1
+            fi
+
+            # List backup contents
+            echo "📋 Configuration backup contents:"
+            tar -tzf "config-backups/${CONFIG_BACKUP_NAME}" | head -20
+
+          else
+            echo "❌ Configuration backup not found"
+            exit 1
+          fi
+
+      - name: Test configuration restore
+        run: |
+          # Create restore directory
+          mkdir -p config-restore
+
+          # Extract configuration backup
+          if tar -xzf "config-backups/${CONFIG_BACKUP_NAME}" -C config-restore/; then
+            echo "✅ Configuration backup extraction successful"
+          else
+            echo "❌ Configuration backup extraction failed"
+            exit 1
+          fi
+
+          # Verify critical configuration files
+          CRITICAL_FILES=(
+            "pyproject.toml"
+            "docker-compose.yml"
+          )
+
+          for file in "${CRITICAL_FILES[@]}"; do
+            if [ -f "config-restore/${file}" ]; then
+              echo "✅ Critical config file restored: ${file}"
+            else
+              echo "❌ Critical config file missing: ${file}"
+              exit 1
+            fi
+          done
+
+      - name: Upload configuration backup validation results
+        uses: actions/upload-artifact@v3
+        with:
+          name: config-backup-validation-results
+          path: |
+            config-backups/
+            config-restore/
+
+  # ===========================================
+  # Backup Validation Summary
+  # ===========================================
+
+  backup-validation-summary:
+    name: Backup Validation Summary
+    runs-on: ubuntu-latest
+    needs: [
+      validate-data-backups,
+      validate-database-backups,
+      validate-config-backups
+    ]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all validation artifacts
+        uses: actions/download-artifact@v3
+        continue-on-error: true
+        with:
+          path: validation-artifacts
+
+      - name: Generate backup validation summary
+        run: |
+          echo "# 💾 Backup Validation Summary" > backup-validation-summary.md
+          echo "" >> backup-validation-summary.md
+          echo "**Validation Date:** $(date)" >> backup-validation-summary.md
+          echo "**Repository:** ${{ github.repository }}" >> backup-validation-summary.md
+          echo "**Backup Type:** ${{ github.event.inputs.backup_type || 'scheduled' }}" >> backup-validation-summary.md
+          echo "" >> backup-validation-summary.md
+
+          echo "## 📊 Validation Results" >> backup-validation-summary.md
+          echo "" >> backup-validation-summary.md
+
+          # Summary of validation results
+          echo "| Component | Status | Details |" >> backup-validation-summary.md
+          echo "|-----------|--------|---------|" >> backup-validation-summary.md
+
+          # Data backup validation
+          if [ "${{ needs.validate-data-backups.result }}" == "success" ]; then
+            echo "| Data Backup | ✅ Passed | Integrity and restore validated |" >> backup-validation-summary.md
+          else
+            echo "| Data Backup | ❌ Failed | Check validation logs |" >> backup-validation-summary.md
+          fi
+
+          # Database backup validation
+          if [ "${{ needs.validate-database-backups.result }}" == "success" ]; then
+            echo "| Database Backup | ✅ Passed | ClickHouse backup/restore validated |" >> backup-validation-summary.md
+          else
+            echo "| Database Backup | ❌ Failed | Check validation logs |" >> backup-validation-summary.md
+          fi
+
+          # Configuration backup validation
+          if [ "${{ needs.validate-config-backups.result }}" == "success" ]; then
+            echo "| Configuration Backup | ✅ Passed | Config files backup/restore validated |" >> backup-validation-summary.md
+          else
+            echo "| Configuration Backup | ❌ Failed | Check validation logs |" >> backup-validation-summary.md
+          fi
+
+          echo "" >> backup-validation-summary.md
+          echo "## 📈 Backup Health Metrics" >> backup-validation-summary.md
+          echo "" >> backup-validation-summary.md
+
+          # Calculate backup metrics
+          if [ -d "validation-artifacts" ]; then
+            # Count backup files
+            BACKUP_COUNT=$(find validation-artifacts -name "*.tar.gz" -o -name "*.backup" | wc -l)
+            echo "- **Total Backups Created:** ${BACKUP_COUNT}" >> backup-validation-summary.md
+
+            # Calculate total backup size
+            TOTAL_SIZE=$(find validation-artifacts -name "*.tar.gz" -exec stat -f%z {} \; 2>/dev/null | paste -sd+ - | bc 2>/dev/null || find validation-artifacts -name "*.tar.gz" -exec stat -c%s {} \; 2>/dev/null | paste -sd+ - | bc 2>/dev/null)
+            if [ -n "${TOTAL_SIZE}" ] && [ "${TOTAL_SIZE}" -gt 0 ]; then
+              TOTAL_SIZE_MB=$((TOTAL_SIZE / 1024 / 1024))
+              echo "- **Total Backup Size:** ${TOTAL_SIZE_MB} MB" >> backup-validation-summary.md
+            fi
+
+            # Check validation artifacts
+            ARTIFACT_COUNT=$(find validation-artifacts -type f | wc -l)
+            echo "- **Validation Artifacts:** ${ARTIFACT_COUNT} files" >> backup-validation-summary.md
+          fi
+
+          echo "" >> backup-validation-summary.md
+          echo "## 🚨 Recommendations" >> backup-validation-summary.md
+          echo "" >> backup-validation-summary.md
+          echo "### Immediate Actions" >> backup-validation-summary.md
+          echo "- Review failed validations and fix issues" >> backup-validation-summary.md
+          echo "- Ensure backup storage has sufficient space" >> backup-validation-summary.md
+          echo "- Update backup scripts if validation fails consistently" >> backup-validation-summary.md
+          echo "" >> backup-validation-summary.md
+          echo "### Preventive Measures" >> backup-validation-summary.md
+          echo "- Schedule regular backup validation (daily/weekly)" >> backup-validation-summary.md
+          echo "- Monitor backup sizes and growth trends" >> backup-validation-summary.md
+          echo "- Implement backup encryption for sensitive data" >> backup-validation-summary.md
+          echo "- Set up backup failure alerts" >> backup-validation-summary.md
+          echo "" >> backup-validation-summary.md
+          echo "---" >> backup-validation-summary.md
+          echo "*Generated by GitHub Actions Backup Validation Pipeline*" >> backup-validation-summary.md
+
+      - name: Upload backup validation summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: backup-validation-summary
+          path: backup-validation-summary.md
+
+      - name: Create backup validation issue (if failures detected)
+        if: needs.validate-data-backups.result == 'failure' || needs.validate-database-backups.result == 'failure' || needs.validate-config-backups.result == 'failure'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('backup-validation-summary.md', 'utf8');
+
+            // Check if issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['backup', 'validation-failure'],
+              state: 'open'
+            });
+
+            const existingIssue = issues.data.find(issue =>
+              issue.title.includes('Backup Validation Failed')
+            );
+
+            if (!existingIssue) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🚨 Backup Validation Failed - Action Required',
+                body: `## Backup Validation Alert
+
+${summary}
+
+### Required Actions:
+1. **Review validation failures** in the workflow artifacts
+2. **Fix backup issues** identified in the validation
+3. **Test backup restore procedures** manually
+4. **Update backup configurations** if needed
+5. **Verify data integrity** after fixes
+
+### Next Steps:
+- Check the workflow artifacts for detailed error logs
+- Run manual backup validation tests
+- Update backup scripts and configurations
+- Re-run validation after fixes
+
+*Automated alert generated by backup validation pipeline*`,
+                labels: ['backup', 'validation-failure', 'urgent']
+              });
+            }

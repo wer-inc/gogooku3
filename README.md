@@ -282,6 +282,271 @@ tail -f logs/safe_training.log
 
 プライベートライセンス - 無断使用禁止
 
+## 🔐 セキュリティ & 運用性
+
+### 安全な起動手順
+
+#### 1. 環境変数設定（必須）
+
+```bash
+# .env.example をコピーして編集
+cp .env.example .env
+
+# 必須の環境変数を設定
+nano .env
+```
+
+**必須環境変数:**
+```bash
+# MinIO Storage
+MINIO_ROOT_USER=your_secure_username
+MINIO_ROOT_PASSWORD=your_secure_password_here
+MINIO_DEFAULT_BUCKETS=gogooku,feast,mlflow,dagster
+
+# ClickHouse Database
+CLICKHOUSE_USER=default
+CLICKHOUSE_PASSWORD=your_secure_ch_password_here
+CLICKHOUSE_DB=gogooku3
+
+# Redis Cache
+REDIS_PASSWORD=your_secure_redis_password_here
+
+# J-Quants API
+JQUANTS_AUTH_EMAIL=your_email@example.com
+JQUANTS_AUTH_PASSWORD=your_secure_api_password_here
+```
+
+#### 2. Docker Compose起動
+
+```bash
+# セキュアな設定で起動（推奨）
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+
+# 従来通り起動（開発用のみ）
+docker compose up -d
+```
+
+#### 3. セキュリティ検証
+
+```bash
+# セキュリティスキャン実行
+python ops/health_check.py health
+
+# ログセキュリティ確認
+tail -f logs/main.log | grep -i security
+```
+
+### オプション機能（デフォルト無効）
+
+#### パフォーマンス最適化
+
+```bash
+# Polarsストリーミング有効化
+export PERF_POLARS_STREAM=1
+
+# メモリ最適化有効化
+export PERF_MEMORY_OPTIMIZATION=1
+```
+
+#### 監視・オブザーバビリティ
+
+```bash
+# メトリクス収集有効化
+export OBS_METRICS_ENABLED=1
+
+# データ品質チェック有効化
+export DATA_QUALITY_ENABLED=1
+```
+
+### 監視エンドポイント
+
+```bash
+# ヘルスチェック
+curl http://localhost:8000/healthz
+
+# 詳細ヘルスチェック
+python ops/health_check.py health --format json
+
+# Prometheusメトリクス
+curl http://localhost:8000/metrics
+
+# 準備状況チェック
+python ops/health_check.py ready
+```
+
+### ログ管理
+
+```bash
+# ログローテーション設定確認
+cat ops/logrotate.conf
+
+# ログローテーション実行
+sudo logrotate -f /etc/logrotate.d/gogooku3
+
+# ログアーカイブ確認
+ls -la /var/log/gogooku3/archive/
+```
+
+## 🧪 テスト & 品質保証
+
+### 利用可能なテストスイート
+
+```bash
+# 全テスト実行
+pytest tests/ -v
+
+# ユニットテストのみ
+pytest tests/ -k "unit" -v
+
+# 統合テストのみ
+pytest tests/ -k "integration" -v
+
+# E2Eテストのみ
+pytest tests/test_e2e_docker.py -v
+
+# ヘルスチェックテスト
+pytest tests/test_health_check.py -v
+
+# データ品質テスト
+pytest tests/ -k "data_quality" -v
+
+# パフォーマンステスト
+pytest tests/ -k "performance" --benchmark-only
+```
+
+### CI/CD パイプライン
+
+- **セキュリティスキャン**: Trivy, Gitleaks, Bandit, pip-audit
+- **テスト自動化**: ユニット/統合/E2E/パフォーマンス/データ品質
+- **依存関係監査**: pip-audit, 脆弱性チェック
+- **パフォーマンス監視**: ベンチマーク自動実行
+- **バックアップ検証**: 日次自動バックアップ検証
+- **Semantic Release**: 自動バージョン管理とCHANGELOG生成
+
+### データ品質チェック
+
+```bash
+# Great Expectations 統合データ品質チェック
+export DATA_QUALITY_ENABLED=1
+python data_quality/great_expectations_suite.py validate --input data/processed/dataset.parquet
+
+# 品質チェックレポート確認
+cat data_quality/results/validation_*.json
+```
+
+### パフォーマンス最適化
+
+```bash
+# パフォーマンス最適化有効化
+export PERF_POLARS_STREAM=1
+export PERF_PARALLEL_PROCESSING=1
+export PERF_MEMORY_OPTIMIZATION=1
+export PERF_CACHING_ENABLED=1
+
+# 最適化適用で実行
+python main.py safe-training --mode full
+
+# パフォーマンスメトリクス確認
+python ops/metrics_exporter.py --once | grep -E "(optimization|performance)"
+```
+
+## 🛠️ 運用・保守
+
+### バックアップ & リカバリ
+
+```bash
+# データベースバックアップ
+docker exec gogooku3-clickhouse clickhouse-client --query "BACKUP DATABASE gogooku3 TO Disk('backups', 'backup_$(date +%Y%m%d)')"
+
+# ファイルシステムバックアップ
+tar -czf backups/data_$(date +%Y%m%d).tar.gz data/ output/
+
+# リストア手順
+tar -xzf backups/latest.tar.gz -C /
+```
+
+### ログ分析
+
+```bash
+# エラーログ確認
+grep -i error logs/*.log
+
+# パフォーマンスログ分析
+grep -i "duration\|memory\|cpu" logs/*.log
+
+# セキュリティイベント確認
+grep -i "security\|auth\|access" logs/*.log
+```
+
+### パフォーマンス監視
+
+```bash
+# システムリソース監視
+python ops/health_check.py health
+
+# パフォーマンスベンチマーク
+pytest tests/ -k "performance" --benchmark-only
+
+# メモリプロファイリング
+python -m memory_profiler main.py safe-training --mode quick
+```
+
+### 障害対応
+
+参照: `ops/runbook.md`
+
+```bash
+# 緊急停止
+docker compose down
+
+# 安全再起動
+docker compose up -d --force-recreate
+
+# ログ確認
+tail -f logs/main.log
+```
+
+## 📊 アーキテクチャ & ドキュメント
+
+### システム構成図
+
+```mermaid
+graph TB
+    A[Client] --> B[main.py]
+    B --> C[Safe Training Pipeline]
+    B --> D[ML Dataset Builder]
+    B --> E[Direct API Dataset]
+
+    C --> F[Data Processing]
+    C --> G[Model Training]
+    C --> H[Validation]
+
+    F --> I[Polars Engine]
+    G --> J[PyTorch ATFT-GAT-FAN]
+    H --> K[Cross-Sectional Validation]
+
+    L[Docker Services] --> M[MinIO]
+    L --> N[ClickHouse]
+    L --> O[Redis]
+    L --> P[MLflow]
+
+    Q[Monitoring] --> R[Health Check]
+    Q --> S[Metrics Exporter]
+    Q --> T[Log Rotation]
+
+    R --> U[/healthz]
+    S --> V[/metrics]
+    T --> W[Log Archive]
+```
+
+### 主要ドキュメント
+
+- **運用Runbook**: `ops/runbook.md`
+- **セキュリティガイド**: `security/sast.md`
+- **アーキテクチャ図**: `docs/arch/`
+- **APIドキュメント**: `docs/guides/`
+- **トラブルシューティング**: `docs/faq.md`
+
 ## 🙏 謝辞
 
 - **JQuants API**: 日本株データ提供
