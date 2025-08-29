@@ -4,7 +4,7 @@ Gogooku3 Safe Training Pipeline
 統合実行スクリプト - 実データでの安全な学習実行
 
 実行内容:
-1. データ読み込み（ProductionDatasetV3）
+1. データ読み込み（ProductionDatasetOptimized）
 2. 高品質特徴量生成（QualityFinancialFeaturesGenerator）
 3. Cross-sectional正規化（CrossSectionalNormalizerV2）
 4. Walk-Forward分割（WalkForwardSplitterV2）
@@ -37,7 +37,7 @@ sys.path.append(str(project_root))
 try:
     from src.data.safety.cross_sectional_v2 import CrossSectionalNormalizerV2
     from src.data.safety.walk_forward_v2 import WalkForwardSplitterV2
-    from src.data.loaders.production_loader_v3 import ProductionDatasetV3
+    from src.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
     from src.data.utils.graph_builder import FinancialGraphBuilder
     from src.models.baseline.lightgbm_baseline import LightGBMFinancialBaseline
     from src.features.quality_features import QualityFinancialFeaturesGenerator
@@ -159,7 +159,7 @@ class SafeTrainingPipeline:
     def step1_load_data(self) -> pl.DataFrame:
         """Step 1: データ読み込み"""
         if self.verbose:
-            logger.info("🔄 Step 1: Loading data with ProductionDatasetV3...")
+            logger.info("🔄 Step 1: Loading data with ProductionDatasetOptimized...")
         
         step_start = datetime.now()
         

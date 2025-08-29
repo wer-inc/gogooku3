@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Feast and dependencies
 RUN pip install --no-cache-dir \
-    feast[aws,redis,postgres]==0.36.0 \
+    feast[aws,redis,postgres]==0.50.0 \
     boto3 \
     redis \
     psycopg2-binary \

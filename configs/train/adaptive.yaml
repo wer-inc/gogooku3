@@ -1,0 +1,176 @@
+# @package _group_
+name: adaptive_training
+
+# トレーナー設定
+trainer:
+  max_epochs: 50  # 100から削減（データ量に応じて）
+  min_epochs: 10
+
+  # 検証設定
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+
+  # 勾配設定
+  gradient_clip_val: ${model.regularization.gradient_clip_val}
+  gradient_clip_algorithm: ${model.regularization.gradient_clip_algorithm}
+  accumulate_grad_batches: 2
+
+  # 精度設定
+  precision: 16-mixed
+
+  # その他
+  deterministic: ${project.deterministic}
+  benchmark: false
+  profiler: ${debug.profiler}
+  detect_anomaly: ${debug.detect_anomaly}
+
+# バッチ設定（データ量に応じて調整）
+batch:
+  train_batch_size: 64  # 256から削減
+  val_batch_size: 128
+  test_batch_size: 128
+
+  # DataLoader設定
+  num_workers: ${hardware.num_workers}
+  pin_memory: ${hardware.pin_memory}
+  persistent_workers: true
+  prefetch_factor: 2
+
+# 最適化設定
+optimizer:
+  type: AdamW
+  lr: 5e-4  # 1e-3から削減
+  weight_decay: ${model.regularization.weight_decay}
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+  # 学習率ウォームアップ
+  warmup:
+    enabled: true
+    steps: 500
+
+# スケジューラ設定
+scheduler:
+  type: CosineAnnealingWarmRestarts
+  T_0: 10  # 最初のリスタート周期
+  T_mult: 2  # 周期の増加率
+  eta_min: 1e-6
+
+# 損失関数設定
+loss:
+  # メイン損失
+  main:
+    type: quantile
+    quantiles: ${model.prediction_head.output.quantile_prediction.quantiles}
+
+  # ホライズン別重み
+  horizon_weights:
+    1: 1.0
+    2: 0.9
+    3: 0.8
+    5: 0.6
+    10: 0.4
+
+  # 補助損失
+  auxiliary:
+    # Sharpe比最大化
+    sharpe_loss:
+      enabled: true
+      weight: 0.1
+      min_periods: 10  # 20から削減
+
+    # 相関ペナルティ（分散投資促進）
+    correlation_penalty:
+      enabled: true
+      weight: 0.05
+      target_correlation: 0.3
+
+    # ランキング損失
+    ranking_loss:
+      enabled: true
+      weight: 0.1
+      margin: 0.1
+
+# Early Stopping
+early_stopping:
+  monitor: val/sharpe_ratio
+  mode: max
+  patience: 10
+  min_delta: 0.001
+
+# チェックポイント
+checkpoint:
+  monitor: ${early_stopping.monitor}
+  mode: ${early_stopping.mode}
+  save_top_k: 3
+  save_last: true
+  filename: "{epoch:03d}-{val_sharpe_ratio:.4f}"
+
+# ロギング
+logging:
+  # 基本設定
+  log_every_n_steps: 20  # 50から削減
+  log_grad_norm: true
+  log_learning_rate: true
+
+  # メトリクス
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - sharpe_ratio
+    - information_ratio
+    - max_drawdown
+    - hit_rate
+    - profit_factor
+
+  # 可視化
+  visualize:
+    attention_weights: true
+    feature_importance: true
+    prediction_distribution: true
+    portfolio_weights: true
+
+# 段階的学習設定（Phase Training）
+phase_training:
+  enabled: true
+
+  phases:
+    # Phase 0: ベースライン（シンプルなモデル）
+    baseline:
+      epochs: 10
+      freeze: []
+      config_overrides:
+        model.adaptive_normalization.fan.enabled: false
+        model.adaptive_normalization.san.enabled: false
+        model.gat.enabled: false
+        data.wavelet.enabled: false
+        data.augmentation.enabled: false
+
+    # Phase 1: 適応正規化
+    adaptive_norm:
+      epochs: 10
+      freeze: []
+      load_from: baseline
+      config_overrides:
+        model.adaptive_normalization.fan.enabled: true
+        model.adaptive_normalization.san.enabled: true
+        data.wavelet.enabled: true
+
+    # Phase 2: Graph Attention
+    gat:
+      epochs: 20
+      freeze: []  # TFTをフリーズしない（データが少ないため）
+      load_from: adaptive_norm
+      config_overrides:
+        model.gat.enabled: true
+        data.graph.enabled: true
+
+    # Phase 3: データ拡張とファインチューニング
+    augmentation:
+      epochs: 10
+      freeze: []
+      load_from: gat
+      config_overrides:
+        data.augmentation.enabled: true
+        optimizer.lr: 1e-4  # 学習率を下げる

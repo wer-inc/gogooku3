@@ -32,7 +32,7 @@ from tqdm import tqdm
 try:
     from gogooku3.data.scalers.cross_sectional_v2 import CrossSectionalNormalizerV2
     from gogooku3.data.scalers.walk_forward_v2 import WalkForwardSplitterV2
-    from gogooku3.data.loaders.production_loader_v3 import ProductionDatasetV3
+    from gogooku3.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
     from gogooku3.graph.financial_graph_builder import FinancialGraphBuilder
     from gogooku3.models.lightgbm_baseline import LightGBMFinancialBaseline
     from gogooku3.features.quality_features import QualityFinancialFeaturesGenerator
@@ -42,7 +42,7 @@ except ImportError as e:
     try:
         from src.data.safety.cross_sectional_v2 import CrossSectionalNormalizerV2
         from src.data.safety.walk_forward_v2 import WalkForwardSplitterV2
-        from src.data.loaders.production_loader_v3 import ProductionDatasetV3
+        from src.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
         from src.data.utils.graph_builder import FinancialGraphBuilder
         from src.models.baseline.lightgbm_baseline import LightGBMFinancialBaseline
         from src.features.quality_features import QualityFinancialFeaturesGenerator

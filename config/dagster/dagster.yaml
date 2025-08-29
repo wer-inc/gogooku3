@@ -26,7 +26,7 @@ run_launcher:
 # Use PostgreSQL for production
 run_storage:
   module: dagster_postgres.run_storage
-  class: DagsterPostgresRunStorage
+  class: PostgresRunStorage
   config:
     postgres_db:
       hostname: postgres
@@ -37,7 +37,7 @@ run_storage:
 
 event_log_storage:
   module: dagster_postgres.event_log
-  class: DagsterPostgresEventLogStorage
+  class: PostgresEventLogStorage
   config:
     postgres_db:
       hostname: postgres

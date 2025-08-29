@@ -10,8 +10,6 @@
 # Security: This file should be committed to version control as it contains
 # only variable references, not actual secrets.
 
-version: '3.8'
-
 services:
   # ========== Storage Services ==========
 
@@ -41,12 +39,6 @@ services:
   mlflow:
     environment:
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://localhost:5000}
-
-  # Dagster - Data orchestration
-  dagster:
-    environment:
-      DAGSTER_HOME: ${DAGSTER_HOME:-/opt/dagster/dagster_home}
-      DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD:-dagster}
 
   # ========== Application Services ==========
 

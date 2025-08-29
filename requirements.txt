@@ -16,7 +16,7 @@ lightgbm>=4.0.0             # GBMベースライン学習
 
 # ============= TECHNICAL ANALYSIS =============
 pandas-ta>=0.3.14b0         # テクニカル分析指標
-pywt>=1.4.0                 # PyWavelets（時系列変換）
+PyWavelets>=1.4.0           # PyWavelets（時系列変換）
 
 # ============= DATA SOURCES & APIs =============
 aiohttp>=3.9.0              # 非同期HTTP（JQuants API）

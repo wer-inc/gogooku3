@@ -1,0 +1,189 @@
+{
+  "positions": [
+    {
+      "code": "70670",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "78860",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "303A0",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "97080",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "75220",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "13800",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "241A0",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "13320",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "98500",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "99410",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "55860",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3790078306586649,
+      "prediction_strength": 0.0037900783065866
+    },
+    {
+      "code": "89450",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3771564441164095,
+      "prediction_strength": 0.003771564441164
+    },
+    {
+      "code": "58680",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3771564441164095,
+      "prediction_strength": 0.003771564441164
+    },
+    {
+      "code": "44180",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3716409740384226,
+      "prediction_strength": 0.0037164097403842
+    },
+    {
+      "code": "52460",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3716409740384226,
+      "prediction_strength": 0.0037164097403842
+    },
+    {
+      "code": "38030",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3716409740384226,
+      "prediction_strength": 0.0037164097403842
+    },
+    {
+      "code": "39130",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "60600",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "143A0",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "47690",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "175A0",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "42740",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "220A0",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "97160",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3597521576673629,
+      "prediction_strength": 0.0035975215766736
+    },
+    {
+      "code": "75010",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3597521576673629,
+      "prediction_strength": 0.0035975215766736
+    },
+    {
+      "code": "55900",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3561498008737434,
+      "prediction_strength": 0.0035614980087374
+    },
+    {
+      "code": "88980",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3510051519350048,
+      "prediction_strength": 0.00351005151935
+    },
+    {
+      "code": "60620",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3510051519350048,
+      "prediction_strength": 0.00351005151935
+    },
+    {
+      "code": "31720",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3510051519350048,
+      "prediction_strength": 0.00351005151935
+    },
+    {
+      "code": "78630",
+      "weight": 0.03333333333333333,
+      "predicted_return_pct": 0.3439948967766754,
+      "prediction_strength": 0.0034399489677667
+    }
+  ],
+  "summary": {
+    "total_stocks": 30,
+    "expected_return": 0.3711896337964517,
+    "avg_prediction_strength": 0.0037118963379644595
+  }
+}

@@ -1,0 +1,614 @@
+{
+  "long_positions": [
+    {
+      "code": "70670",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "78860",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "303A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "97080",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "75220",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "13800",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "241A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "13320",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "98500",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "99410",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3839940518809576,
+      "prediction_strength": 0.0038399405188095
+    },
+    {
+      "code": "55860",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3790078306586649,
+      "prediction_strength": 0.0037900783065866
+    },
+    {
+      "code": "89450",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3771564441164095,
+      "prediction_strength": 0.003771564441164
+    },
+    {
+      "code": "58680",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3771564441164095,
+      "prediction_strength": 0.003771564441164
+    },
+    {
+      "code": "44180",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3716409740384226,
+      "prediction_strength": 0.0037164097403842
+    },
+    {
+      "code": "52460",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3716409740384226,
+      "prediction_strength": 0.0037164097403842
+    },
+    {
+      "code": "38030",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3716409740384226,
+      "prediction_strength": 0.0037164097403842
+    },
+    {
+      "code": "39130",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "60600",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "143A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "47690",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "175A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "42740",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "220A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3678343407552948,
+      "prediction_strength": 0.0036783434075529
+    },
+    {
+      "code": "97160",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3597521576673629,
+      "prediction_strength": 0.0035975215766736
+    },
+    {
+      "code": "75010",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3597521576673629,
+      "prediction_strength": 0.0035975215766736
+    },
+    {
+      "code": "55900",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3561498008737434,
+      "prediction_strength": 0.0035614980087374
+    },
+    {
+      "code": "88980",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3510051519350048,
+      "prediction_strength": 0.00351005151935
+    },
+    {
+      "code": "60620",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3510051519350048,
+      "prediction_strength": 0.00351005151935
+    },
+    {
+      "code": "31720",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3510051519350048,
+      "prediction_strength": 0.00351005151935
+    },
+    {
+      "code": "78630",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3439948967766754,
+      "prediction_strength": 0.0034399489677667
+    },
+    {
+      "code": "92210",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "13750",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "96250",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "330A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "91300",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "59330",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "65130",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "30790",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3403610844347927,
+      "prediction_strength": 0.0034036108443479
+    },
+    {
+      "code": "61610",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3362884383922896,
+      "prediction_strength": 0.0033628843839228
+    },
+    {
+      "code": "147A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.3135625305330104,
+      "prediction_strength": 0.0031356253053301
+    },
+    {
+      "code": "30770",
+      "weight": 0.01,
+      "predicted_return_pct": 0.303750824086787,
+      "prediction_strength": 0.0030375082408678
+    },
+    {
+      "code": "87460",
+      "weight": 0.01,
+      "predicted_return_pct": 0.233069880695195,
+      "prediction_strength": 0.0023306988069519
+    },
+    {
+      "code": "190A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.233069880695195,
+      "prediction_strength": 0.0023306988069519
+    },
+    {
+      "code": "197A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.233069880695195,
+      "prediction_strength": 0.0023306988069519
+    },
+    {
+      "code": "95610",
+      "weight": 0.01,
+      "predicted_return_pct": 0.233069880695195,
+      "prediction_strength": 0.0023306988069519
+    },
+    {
+      "code": "27210",
+      "weight": 0.01,
+      "predicted_return_pct": 0.233069880695195,
+      "prediction_strength": 0.0023306988069519
+    },
+    {
+      "code": "37770",
+      "weight": 0.01,
+      "predicted_return_pct": 0.233069880695195,
+      "prediction_strength": 0.0023306988069519
+    },
+    {
+      "code": "206A0",
+      "weight": 0.01,
+      "predicted_return_pct": 0.233069880695195,
+      "prediction_strength": 0.0023306988069519
+    },
+    {
+      "code": "69930",
+      "weight": 0.01,
+      "predicted_return_pct": 0.2289565541306115,
+      "prediction_strength": 0.0022895655413061
+    },
+    {
+      "code": "77710",
+      "weight": 0.01,
+      "predicted_return_pct": 0.2206705576714012,
+      "prediction_strength": 0.002206705576714
+    }
+  ],
+  "short_positions": [
+    {
+      "code": "83640",
+      "weight": 0.01,
+      "predicted_return_pct": -2.5659407302948543,
+      "prediction_strength": 0.0256594073029485
+    },
+    {
+      "code": "46230",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "58580",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "58570",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "55330",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "46160",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "90230",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "17430",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "13840",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "93530",
+      "weight": 0.01,
+      "predicted_return_pct": -2.472968611027388,
+      "prediction_strength": 0.0247296861102738
+    },
+    {
+      "code": "62080",
+      "weight": 0.01,
+      "predicted_return_pct": -1.772745327674602,
+      "prediction_strength": 0.017727453276746
+    },
+    {
+      "code": "62290",
+      "weight": 0.01,
+      "predicted_return_pct": -1.772745327674602,
+      "prediction_strength": 0.017727453276746
+    },
+    {
+      "code": "43160",
+      "weight": 0.01,
+      "predicted_return_pct": -1.772745327674602,
+      "prediction_strength": 0.017727453276746
+    },
+    {
+      "code": "36910",
+      "weight": 0.01,
+      "predicted_return_pct": -1.772745327674602,
+      "prediction_strength": 0.017727453276746
+    },
+    {
+      "code": "77930",
+      "weight": 0.01,
+      "predicted_return_pct": -1.772745327674602,
+      "prediction_strength": 0.017727453276746
+    },
+    {
+      "code": "228A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.772745327674602,
+      "prediction_strength": 0.017727453276746
+    },
+    {
+      "code": "30450",
+      "weight": 0.01,
+      "predicted_return_pct": -1.772745327674602,
+      "prediction_strength": 0.017727453276746
+    },
+    {
+      "code": "39970",
+      "weight": 0.01,
+      "predicted_return_pct": -1.6906543977613444,
+      "prediction_strength": 0.0169065439776134
+    },
+    {
+      "code": "176A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "25030",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "96350",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "28060",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "95620",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "367A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "53330",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "90520",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "215A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "17580",
+      "weight": 0.01,
+      "predicted_return_pct": -1.5771439021444975,
+      "prediction_strength": 0.0157714390214449
+    },
+    {
+      "code": "13220",
+      "weight": 0.01,
+      "predicted_return_pct": -1.4616907626438156,
+      "prediction_strength": 0.0146169076264381
+    },
+    {
+      "code": "78870",
+      "weight": 0.01,
+      "predicted_return_pct": -1.4616907626438156,
+      "prediction_strength": 0.0146169076264381
+    },
+    {
+      "code": "173A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3616778101753375,
+      "prediction_strength": 0.0136167781017533
+    },
+    {
+      "code": "40760",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3616778101753375,
+      "prediction_strength": 0.0136167781017533
+    },
+    {
+      "code": "92350",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3616778101753375,
+      "prediction_strength": 0.0136167781017533
+    },
+    {
+      "code": "41800",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3616778101753375,
+      "prediction_strength": 0.0136167781017533
+    },
+    {
+      "code": "76060",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "36000",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "75020",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "36700",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "55800",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "55820",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "78110",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "340A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "60730",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "334A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "79370",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "79460",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "30650",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "304A0",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "52530",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    },
+    {
+      "code": "79860",
+      "weight": 0.01,
+      "predicted_return_pct": -1.3260247770167088,
+      "prediction_strength": 0.013260247770167
+    }
+  ],
+  "summary": {
+    "total_stocks": 100,
+    "long_stocks": 50,
+    "short_stocks": 50,
+    "expected_long_return": 0.33786591518104714,
+    "expected_short_return": -1.6856091628145242,
+    "portfolio_expected_return": -0.6738716238167386
+  }
+}

@@ -1,0 +1,165 @@
+# @package _group_
+name: ATFT_GAT_FAN_v1
+architecture: atft_gat_fan
+
+# モデル全体設定
+model:
+  # 埋め込み次元（データサイズに合わせて調整）
+  hidden_size: 64  # 128から削減
+
+  # 入力投影
+  input_projection:
+    use_layer_norm: true
+    dropout: 0.1
+
+# 入力特徴量次元（データローダーで自動計算）
+input_dims:
+  # 基本特徴量
+  basic_features: 46  # price + flags + technical indicators
+  # 履歴特徴量
+  historical_features: 260  # 13 indicators × 20 days
+  # 合計
+  total_features: 306
+
+# Temporal Fusion Transformer設定
+tft:
+  # LSTM設定（軽量化）
+  lstm:
+    layers: 1  # 2から削減
+    hidden_size: ${model.hidden_size}
+    dropout: 0.1
+    bidirectional: false
+
+  # Attention設定
+  attention:
+    heads: 4
+    dropout: 0.1
+    use_scale: true
+
+  # Variable Selection Networks
+  variable_selection:
+    hidden_size: ${model.hidden_size}
+    dropout: 0.1
+    use_sigmoid: true
+    sparsity_coefficient: 0.01  # スパース性促進
+
+  # Gated Residual Network
+  grn:
+    hidden_size: ${model.hidden_size}
+    dropout: 0.1
+    use_layer_norm: true
+
+  # Temporal処理
+  temporal:
+    use_positional_encoding: true
+    max_sequence_length: 20  # データに合わせて調整
+
+# 適応正規化設定
+adaptive_normalization:
+  # Frequency Adaptive Normalization
+  fan:
+    enabled: true
+    window_sizes: [5, 10, 20]  # データの時系列長に合わせて調整
+    aggregation: weighted_mean
+    learn_weights: true
+
+  # Slice Adaptive Normalization
+  san:
+    enabled: true
+    num_slices: 3  # 4から削減
+    overlap: 0.5
+    slice_aggregation: learned
+
+# Graph Attention Network設定
+gat:
+  enabled: true
+
+  # アーキテクチャ（軽量化）
+  architecture:
+    num_layers: 2
+    hidden_channels: [${model.hidden_size}, ${model.hidden_size}]
+    heads: [4, 2]  # 最終層のヘッド数を削減
+    concat: [true, false]
+
+  # 各層の設定
+  layer_config:
+    dropout: 0.2  # 過学習対策で増加
+    edge_dropout: 0.1
+    negative_slope: 0.2
+    add_self_loops: false  # データに基づいて調整
+    bias: true
+
+  # Edge attributes
+  edge_features:
+    use_edge_attr: true
+    edge_dim: 3  # correlation, market_similarity, sector_similarity
+    edge_projection: linear
+
+  # Regularization
+  regularization:
+    edge_weight_penalty: 0.01
+    attention_entropy_penalty: 0.001
+
+# 予測ヘッド設定
+prediction_head:
+  # アーキテクチャ（シンプル化）
+  architecture:
+    hidden_layers: [32]  # [64, 32]から削減
+    activation: relu
+    dropout: 0.2
+    use_batch_norm: false
+
+  # 出力設定
+  output:
+    # ポイント予測
+    point_prediction: true
+
+    # 分位点予測
+    quantile_prediction:
+      enabled: true
+      quantiles: [0.1, 0.25, 0.5, 0.75, 0.9]  # 7から5に削減
+
+    # 分布予測（オプション）
+    distribution_prediction:
+      enabled: false
+      type: normal
+
+# 最適化設定
+optimization:
+  # モデル圧縮
+  compression:
+    gradient_checkpointing: false
+    mixed_precision: true
+    channels_last: true
+
+  # torch.compile設定（PyTorch 2.0+）
+  compile:
+    enabled: false  # デバッグしやすくするため初期は無効
+    mode: default
+    fullgraph: false
+    dynamic: false
+
+  # 推論最適化
+  inference:
+    use_torch_script: false
+    use_onnx: false
+    optimize_for_inference: true
+
+# モデル初期化
+initialization:
+  method: xavier_uniform
+  gain: 1.0
+
+# 正則化（強化）
+regularization:
+  # Weight decay
+  weight_decay: 1e-4  # 1e-5から増加
+
+  # Gradient clipping
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+
+  # Dropout（各モジュールで個別設定済み）
+
+  # L2正則化
+  l2_lambda: 1e-4
