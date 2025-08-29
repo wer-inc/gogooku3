@@ -21,18 +21,18 @@ setup:
 
 # Docker services
 docker-up:
-	docker-compose -f docker/docker-compose.yml up -d
+	docker-compose up -d
 	@echo "✅ Services started"
-	@echo "📊 MinIO Console: http://localhost:9001 (minioadmin/minioadmin)"
-	@echo "📊 Dagster UI: http://localhost:3000"
-	@echo "📊 Grafana: http://localhost:3001 (admin/admin)"
+	@echo "📊 MinIO Console: http://localhost:9001 (minioadmin/minioadmin123)"
+	@echo "📊 Dagster UI: http://localhost:3001"
+	@echo "📊 Grafana: http://localhost:3000 (admin/gogooku123)"
 	@echo "📊 Prometheus: http://localhost:9090"
 
 docker-down:
-	docker-compose -f docker/docker-compose.yml down
+	docker-compose down
 
 docker-logs:
-	docker-compose -f docker/docker-compose.yml logs -f
+	docker-compose logs -f
 
 # Testing
 test:

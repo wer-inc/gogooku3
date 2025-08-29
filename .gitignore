@@ -62,9 +62,17 @@ artifacts/
 monitoring.db
 *.db
 
-# Logs
+# Logs (unified structure)
+_logs/**
 logs/
 *.log
+*.out
+*.err
+
+# Legacy log locations (deprecated)
+dagster_home/logs/
+mlruns/**/logs/
+output/**/logs/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -79,3 +87,19 @@ htmlcov/
 # Dagster
 dagster_home/
 .dagster/
+
+# Archive and cleanup
+_archive/**
+*.backup
+*_backup.*
+backup/
+temp/
+tmp/
+
+# Inventory and analysis files
+repo_inventory.csv
+duplicates.csv
+DISPOSITION.csv
+*_inventory.csv
+*_report.md
+cleanup_execution_report.md

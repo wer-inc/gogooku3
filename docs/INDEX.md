@@ -1,91 +1,52 @@
-# Gogooku3 ドキュメント索引
+# ⚠️ このファイルは移行されました
 
-## 📚 ドキュメント構成
+**新しいドキュメントポータル**: [docs/index.md](index.md) をご利用ください。
 
-本プロジェクトのドキュメントは、以下の4つのカテゴリに整理されています。
+## 🔄 ドキュメント再構成完了 (2025-08-28)
 
-### 📋 [仕様書 (specifications/)](specifications/)
-システムの技術仕様とデータ定義を記載したドキュメント群
+Gogooku3のドキュメントは全面的に再編成され、以下の新しい構造になりました：
 
-- **[ML_DATASET_COLUMNS.md](specifications/ML_DATASET_COLUMNS.md)**
-  - MLデータセットの全カラム仕様（62+ 特徴量）
-  - 各特徴量の計算式と意味
-  - データ型とNULL許容性
+### 📍 新しいメインポータル
+- **[📖 docs/index.md](index.md)** - 役割別ナビゲーション・全体索引
 
-- **[MODULAR_ETL_DESIGN.md](specifications/MODULAR_ETL_DESIGN.md)**
-  - モジュール化ETL設計の詳細
-  - 独立更新可能なコンポーネント設計
-  - データフロー仕様
+### 🗂️ 主要ドキュメント新配置
 
-- **[TECHNICAL_INDICATORS_COMPARISON.md](specifications/TECHNICAL_INDICATORS_COMPARISON.md)**
-  - 技術指標の実装比較（pandas-ta vs 独自実装）
-  - 使用推奨指標の一覧
-  - パフォーマンス比較
+**ML・評価:**
+- **[📊 ML評価メトリクス](ml/metrics.md)** ← 旧 specifications/TECHNICAL_INDICATORS_COMPARISON.md
+- **[🛡️ 安全性ガードレール](ml/safety-guardrails.md)** ← 新規作成（データリーク防止）
+- **[🧠 モデル学習](ml/model-training.md)** ← 新規作成（ATFT-GAT-FAN詳細）
 
-### 📊 [レポート (reports/)](reports/)
-プロジェクトの進捗と成果物に関する報告書
+**アーキテクチャ:**
+- **[🏗️ データパイプライン](architecture/data-pipeline.md)** ← 旧 specifications/ 統合
+- **[🏛️ システム概要](architecture/overview.md)** ← 新規作成
 
-- **[PROJECT_SUMMARY.md](reports/PROJECT_SUMMARY.md)**
-  - プロジェクト全体の成果サマリー
-  - 実装済み機能一覧
-  - パフォーマンス統計
+**開発・運用:**
+- **[👥 開発ガイド](development/contributing.md)** ← 旧 CLAUDE.md大幅リファクタリング
+- **[📋 変更履歴](releases/changelog.md)** ← 旧 reports/ 統合
 
-- **[BUG_FIXES_REPORT.md](reports/BUG_FIXES_REPORT.md)**
-  - 修正済みバグ一覧（P0-P2）
-  - データリーク防止策
-  - 計算精度改善内容
+**基本情報:**
+- **[🚀 はじめに](getting-started.md)** ← 新規作成（包括的セットアップ）
+- **[📚 用語集](glossary.md)** ← 新規作成
+- **[❓ FAQ](faq.md)** ← 新規作成
 
-### 📖 [ガイド (guides/)](guides/)
-実装と運用に関する実践的なガイド
+### 🗂️ アーカイブ保管
+旧ファイルは安全に保管されています：
+- **[docs/_archive/](\_archive/)** - 全元ファイル保管
 
-- **[PROCESSING_FLOW.md](guides/PROCESSING_FLOW.md)** 📌 **重要**
-  - データ処理フロー全体図
-  - 各フェーズの詳細説明
-  - 部分実行パターン
-  - トラブルシューティング
+## 📋 旧ファイル対応表
 
-### 🗄️ [アーカイブ (archive/)](archive/)
-過去のドキュメントと設計書
-
-- **[gogooku3-spec.md](archive/gogooku3-spec.md)** - 原設計仕様書
-- **[BATCH_REDESIGN_PLAN.md](archive/BATCH_REDESIGN_PLAN.md)** - バッチ再設計計画
-- **[IMPLEMENTATION_PLAN.md](archive/IMPLEMENTATION_PLAN.md)** - 実装計画書
-- **[legacy/](archive/legacy/)** - 過去の開発履歴
-
-## 🚀 クイックリファレンス
-
-### 最初に読むべきドキュメント
-1. [PROCESSING_FLOW.md](guides/PROCESSING_FLOW.md) - 処理フローを理解
-2. [ML_DATASET_COLUMNS.md](specifications/ML_DATASET_COLUMNS.md) - 生成される特徴量を確認
-3. [PROJECT_SUMMARY.md](reports/PROJECT_SUMMARY.md) - プロジェクト全体像を把握
-
-### ユースケース別ガイド
-
-#### 🔧 開発者向け
-- モジュール設計を理解したい → [MODULAR_ETL_DESIGN.md](specifications/MODULAR_ETL_DESIGN.md)
-- バグ修正内容を確認したい → [BUG_FIXES_REPORT.md](reports/BUG_FIXES_REPORT.md)
-- 技術指標の実装を知りたい → [TECHNICAL_INDICATORS_COMPARISON.md](specifications/TECHNICAL_INDICATORS_COMPARISON.md)
-
-#### 📊 データサイエンティスト向け
-- 特徴量の詳細を知りたい → [ML_DATASET_COLUMNS.md](specifications/ML_DATASET_COLUMNS.md)
-- データ品質を確認したい → [BUG_FIXES_REPORT.md](reports/BUG_FIXES_REPORT.md)
-
-#### 🏃 運用担当者向け
-- パイプライン実行方法 → [PROCESSING_FLOW.md](guides/PROCESSING_FLOW.md)
-- トラブルシューティング → [PROCESSING_FLOW.md#トラブルシューティング](guides/PROCESSING_FLOW.md#トラブルシューティング)
-
-## 📝 ドキュメントメンテナンス
-
-### 更新頻度
-- **仕様書**: APIや特徴量変更時に更新
-- **レポート**: マイルストーン完了時に更新
-- **ガイド**: 運用手順変更時に更新
-
-### 命名規則
-- 仕様書: `{COMPONENT}_SPEC.md` または `{COMPONENT}_COLUMNS.md`
-- レポート: `{TOPIC}_REPORT.md` または `{PROJECT}_SUMMARY.md`
-- ガイド: `{PROCESS}_FLOW.md` または `{TASK}_GUIDE.md`
+| 旧パス | 新パス | 内容 |
+|--------|--------|------|
+| specifications/TECHNICAL_INDICATORS_COMPARISON.md | [ml/metrics.md](ml/metrics.md) | 技術指標・評価メトリクス |
+| specifications/ML_DATASET_COLUMNS.md | [_archive/specifications_original/](\_archive/specifications_original/) | アーカイブ保管 |
+| specifications/MODULAR_ETL_DESIGN.md | [architecture/data-pipeline.md](architecture/data-pipeline.md) | データパイプライン設計 |
+| reports/ | [releases/changelog.md](releases/changelog.md) | 変更履歴・リリース情報 |
+| guides/PROCESSING_FLOW.md | [getting-started.md](getting-started.md) | セットアップ・使用方法 |
+| CLAUDE.md | [development/contributing.md](development/contributing.md) | 開発ガイド |
 
 ---
-*最終更新: 2025年1月27日*
-*整理実施者: Claude*
+
+**🔄 完全移行完了日**: 2025年8月28日  
+**📖 新ドキュメントポータル**: [index.md](index.md)  
+
+このファイル（INDEX.md）は参照用として残していますが、最新情報は新しいポータルをご利用ください。

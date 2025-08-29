@@ -1,0 +1,224 @@
+name: Log Files Quality Check
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  log-structure-check:
+    runs-on: ubuntu-latest
+    name: Check Log Files Structure
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check for scattered log files
+      run: |
+        echo "🔍 Checking for log files outside unified structure..."
+        
+        # Find log files outside _logs/ directory
+        scattered_logs=$(find . -path "./_logs" -prune -o -path "./.git" -prune -o \
+          \( -name "*.log" -o -name "*.out" -o -name "*.err" \) -type f -print)
+        
+        if [ -n "$scattered_logs" ]; then
+          echo "❌ ERROR: Log files found outside _logs/ directory:"
+          echo "$scattered_logs"
+          echo ""
+          echo "📋 Please move these files to the unified log structure:"
+          echo "   _logs/{env}/{service}/{YYYY}/{MM}/{DD}/"
+          echo ""
+          echo "💡 Use tools/logs_migrate.py for automated migration"
+          exit 1
+        fi
+        
+        echo "✅ No scattered log files found"
+        
+    - name: Check for log files in git
+      run: |
+        echo "🔍 Checking for log files committed to git..."
+        
+        # Check for log files that might be tracked
+        git_logs=$(git ls-files | grep -E "\.(log|out|err)$" | head -10)
+        
+        if [ -n "$git_logs" ]; then
+          echo "❌ WARNING: Log files found in git tracking:"
+          echo "$git_logs"
+          echo ""
+          echo "📋 These files should be added to .gitignore and removed from git"
+          echo "💡 Run: git rm --cached <file> && git commit -m 'Remove log files'"
+          # Note: This is a warning, not a failure
+        else
+          echo "✅ No log files found in git tracking"
+        fi
+        
+    - name: Validate unified log structure
+      run: |
+        echo "🔍 Validating unified log directory structure..."
+        
+        if [ -d "_logs" ]; then
+          echo "✅ _logs/ directory exists"
+          
+          # Check directory structure
+          for env in dev prd; do
+            if [ -d "_logs/$env" ]; then
+              echo "✅ _logs/$env/ environment directory exists"
+              
+              # Check service directories
+              for service in app dagster mlflow feast clickhouse redis postgres docker; do
+                if [ -d "_logs/$env/$service" ]; then
+                  echo "  ✅ _logs/$env/$service/ service directory exists"
+                fi
+              done
+            else
+              echo "ℹ️  _logs/$env/ environment directory not found (will be created as needed)"
+            fi
+          done
+          
+        else
+          echo "ℹ️  _logs/ directory not found (will be created as needed)"
+        fi
+        
+    - name: Check .gitignore log exclusions
+      run: |
+        echo "🔍 Checking .gitignore log exclusion patterns..."
+        
+        if grep -q "_logs/\*\*" .gitignore; then
+          echo "✅ _logs/** pattern found in .gitignore"
+        else
+          echo "❌ ERROR: _logs/** pattern missing from .gitignore"
+          exit 1
+        fi
+        
+        if grep -q "\*.log" .gitignore; then
+          echo "✅ *.log pattern found in .gitignore"
+        else
+          echo "❌ ERROR: *.log pattern missing from .gitignore"
+          exit 1
+        fi
+        
+        echo "✅ .gitignore log exclusions validated"
+
+  log-format-check:
+    runs-on: ubuntu-latest
+    name: Check Log Format Standards
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Test unified logger
+      run: |
+        echo "🧪 Testing unified logger functionality..."
+        
+        # Test logger creation
+        python -c "
+        import sys
+        import os
+        sys.path.append('src')
+        
+        try:
+            from utils.logging import setup_gogooku_logger
+            logger = setup_gogooku_logger(service='ci_test', enable_file=False)
+            logger.info('CI test message', extra={'test_field': 'test_value'})
+            print('✅ Unified logger test passed')
+        except Exception as e:
+            print(f'❌ Unified logger test failed: {e}')
+            sys.exit(1)
+        "
+        
+    - name: Validate logging configuration
+      run: |
+        echo "🔍 Validating logging configuration files..."
+        
+        if [ -f "configs/logging.yaml" ]; then
+          echo "✅ configs/logging.yaml exists"
+          
+          # Basic YAML syntax validation
+          python -c "
+          import yaml
+          try:
+              with open('configs/logging.yaml') as f:
+                  config = yaml.safe_load(f)
+              print('✅ logging.yaml syntax is valid')
+          except Exception as e:
+              print(f'❌ logging.yaml syntax error: {e}')
+              exit(1)
+          "
+        else
+          echo "❌ ERROR: configs/logging.yaml not found"
+          exit 1
+        fi
+
+  docker-logging-check:
+    runs-on: ubuntu-latest
+    name: Check Docker Compose Logging
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Validate docker-compose logging configuration
+      run: |
+        echo "🔍 Checking Docker Compose logging configuration..."
+        
+        if [ -f "docker-compose.yml" ]; then
+          # Count services with logging configuration
+          logging_services=$(grep -A 5 "logging:" docker-compose.yml | grep -c "driver.*json-file" || true)
+          total_services=$(grep -c "container_name:" docker-compose.yml || true)
+          
+          echo "📊 Services with unified logging: $logging_services/$total_services"
+          
+          # Check for json-file driver
+          if grep -q 'driver.*json-file' docker-compose.yml; then
+            echo "✅ json-file logging driver configured"
+          else
+            echo "❌ ERROR: json-file logging driver not found in docker-compose.yml"
+            exit 1
+          fi
+          
+          # Check for max-size configuration
+          if grep -q 'max-size.*50m' docker-compose.yml; then
+            echo "✅ Log rotation max-size (50MB) configured"
+          else
+            echo "❌ ERROR: Log rotation max-size not properly configured"
+            exit 1
+          fi
+          
+        else
+          echo "❌ ERROR: docker-compose.yml not found"
+          exit 1
+        fi
+
+  summary:
+    runs-on: ubuntu-latest
+    name: Log Quality Summary
+    needs: [log-structure-check, log-format-check, docker-logging-check]
+    if: always()
+    
+    steps:
+    - name: Report results
+      run: |
+        echo "📋 Gogooku3 Log Quality Check Summary"
+        echo "=================================="
+        echo "✅ Log structure validation: ${{ needs.log-structure-check.result }}"
+        echo "✅ Log format validation: ${{ needs.log-format-check.result }}"  
+        echo "✅ Docker logging validation: ${{ needs.docker-logging-check.result }}"
+        echo ""
+        
+        if [[ "${{ needs.log-structure-check.result }}" == "success" && 
+              "${{ needs.log-format-check.result }}" == "success" && 
+              "${{ needs.docker-logging-check.result }}" == "success" ]]; then
+          echo "🎉 All log quality checks passed!"
+          echo "📊 Unified logging system is properly configured"
+        else
+          echo "❌ Some log quality checks failed"
+          echo "💡 Please review the failed checks and fix the issues"
+        fi

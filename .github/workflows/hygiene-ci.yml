@@ -1,0 +1,177 @@
+name: Repository Hygiene CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  hygiene-check:
+    runs-on: ubuntu-latest
+    name: Repository Hygiene Check
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # For diff checks
+        
+    - name: Check for large files (>50MB)
+      run: |
+        echo "🔍 Checking for large files..."
+        large_files=$(find . -size +50M -not -path "./.git/*" | head -10)
+        if [ -n "$large_files" ]; then
+          echo "❌ ERROR: Large files detected (>50MB):"
+          echo "$large_files"
+          echo ""
+          echo "💡 Please use Git LFS for large files:"
+          echo "   git lfs track '*.pth' && git add .gitattributes"
+          exit 1
+        fi
+        echo "✅ No large files found"
+        
+    - name: Check for generated files in Git
+      run: |
+        echo "🔍 Checking for generated files..."
+        generated_files=$(git ls-files | grep -E "\.(csv|parquet|pkl|joblib|png|jpg|pdf)$" | head -10)
+        if [ -n "$generated_files" ]; then
+          echo "❌ WARNING: Generated files found in Git:"
+          echo "$generated_files"
+          echo ""
+          echo "💡 These files should be in .gitignore or use Git LFS"
+          # Warning only, don't fail
+        else
+          echo "✅ No generated files in Git tracking"
+        fi
+        
+    - name: Check for secrets
+      run: |
+        echo "🔍 Checking for potential secrets..."
+        secret_patterns=(
+          "password.*="
+          "secret.*="
+          "api_key.*="
+          "private_key"
+          "-----BEGIN.*PRIVATE KEY"
+        )
+        
+        found_secrets=false
+        for pattern in "${secret_patterns[@]}"; do
+          matches=$(git ls-files -z | xargs -0 grep -l "$pattern" 2>/dev/null || true)
+          if [ -n "$matches" ]; then
+            echo "❌ ERROR: Potential secrets found with pattern '$pattern':"
+            echo "$matches"
+            found_secrets=true
+          fi
+        done
+        
+        if [ "$found_secrets" = true ]; then
+          echo ""
+          echo "💡 Please remove secrets and use environment variables"
+          exit 1
+        fi
+        echo "✅ No secrets detected"
+        
+    - name: Check structure compliance
+      run: |
+        echo "🔍 Checking repository structure compliance..."
+        
+        # Check for logs outside _logs/
+        scattered_logs=$(find . -path "./_logs" -prune -o -path "./.git" -prune -o \
+          \( -name "*.log" -o -name "*.out" -o -name "*.err" \) -type f -print | head -5)
+        
+        if [ -n "$scattered_logs" ]; then
+          echo "❌ ERROR: Log files found outside _logs/ structure:"
+          echo "$scattered_logs"
+          echo ""
+          echo "💡 Move to unified structure: _logs/{env}/{service}/{YYYY}/{MM}/{DD}/"
+          exit 1
+        fi
+        
+        # Check for Python files outside proper structure
+        misplaced_py=$(find . -name "*.py" -not -path "./src/*" -not -path "./scripts/*" \
+          -not -path "./tests/*" -not -path "./tools/*" -not -path "./.git/*" \
+          -not -path "./_*" -not -path "./venv/*" | head -5)
+          
+        if [ -n "$misplaced_py" ]; then
+          echo "⚠️ WARNING: Python files outside standard structure:"
+          echo "$misplaced_py"
+          echo ""
+          echo "💡 Consider moving to src/ or scripts/"
+          # Warning only
+        fi
+        
+        echo "✅ Structure compliance check complete"
+        
+    - name: Check for duplicate content
+      run: |
+        echo "🔍 Running basic duplicate detection..."
+        
+        # Check for exact filename duplicates
+        duplicates=$(find . -type f -not -path "./.git/*" | \
+          sed 's|.*/||' | sort | uniq -d | head -5)
+          
+        if [ -n "$duplicates" ]; then
+          echo "⚠️ WARNING: Potential duplicate filenames found:"
+          echo "$duplicates"
+          echo ""
+          echo "💡 Consider consolidating or renaming for clarity"
+          # Warning only
+        else
+          echo "✅ No obvious filename duplicates"
+        fi
+        
+    - name: Validate critical files
+      run: |
+        echo "🔍 Validating critical files exist..."
+        
+        critical_files=(
+          "pyproject.toml"
+          "README.md"
+          ".gitignore"
+          "Makefile"
+          "docker-compose.yml"
+        )
+        
+        missing_files=()
+        for file in "${critical_files[@]}"; do
+          if [ ! -f "$file" ]; then
+            missing_files+=("$file")
+          fi
+        done
+        
+        if [ ${#missing_files[@]} -gt 0 ]; then
+          echo "❌ ERROR: Critical files missing:"
+          printf '%s\n' "${missing_files[@]}"
+          exit 1
+        fi
+        echo "✅ All critical files present"
+
+  summary:
+    runs-on: ubuntu-latest
+    name: Hygiene Summary
+    needs: [hygiene-check]
+    if: always()
+    
+    steps:
+    - name: Report hygiene status
+      run: |
+        echo "📋 Gogooku3 Repository Hygiene Summary"
+        echo "===================================="
+        echo "✅ Hygiene check: ${{ needs.hygiene-check.result }}"
+        echo ""
+        
+        if [[ "${{ needs.hygiene-check.result }}" == "success" ]]; then
+          echo "🎉 Repository hygiene is good!"
+          echo "📊 Clean and well-structured codebase maintained"
+        else
+          echo "❌ Hygiene issues detected"
+          echo "💡 Please review and fix the issues above"
+        fi
+        
+        echo ""
+        echo "🔧 For cleanup assistance:"
+        echo "   python tools/repo_inventory.py"
+        echo "   python tools/find_duplicates.py"
+        echo "   python tools/classify_files.py"

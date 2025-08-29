@@ -48,6 +48,22 @@ repos:
         args: ["-c", "pyproject.toml"]
         additional_dependencies: ["bandit[toml]"]
 
+  # Custom hooks for Gogooku3
+  - repo: local
+    hooks:
+      - id: forbid-logs-in-repo
+        name: Prevent log files from being committed
+        entry: bash -c 'find . -name "*.log" -o -name "*.out" -o -name "*.err" | grep -v ".git" | head -1 | grep -q . && echo "ERROR: Log files detected in repository!" && exit 1 || exit 0'
+        language: system
+        always_run: true
+        pass_filenames: false
+      - id: check-log-structure
+        name: Check logs are in unified structure (_logs/)
+        entry: bash -c 'find . -path "./_logs" -prune -o \( -name "*.log" -o -name "*.out" -o -name "*.err" \) -type f -print | head -1 | grep -q . && echo "ERROR: Log files found outside _logs/ directory!" && exit 1 || exit 0'
+        language: system
+        always_run: true
+        pass_filenames: false
+
 ci:
   autofix_commit_msg: |
     [pre-commit.ci] auto fixes from pre-commit hooks

@@ -17,6 +17,12 @@ services:
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -44,6 +50,12 @@ services:
       nofile:
         soft: 262144
         hard: 262144
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     networks:
       - gogooku3-net
     healthcheck:
@@ -63,6 +75,12 @@ services:
     command: redis-server --requirepass gogooku123 --appendonly yes
     volumes:
       - redis_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     networks:
       - gogooku3-net
     healthcheck:
@@ -94,6 +112,12 @@ services:
       - postgres
     networks:
       - gogooku3-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -113,6 +137,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./config/docker/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     networks:
       - gogooku3-net
     healthcheck:
@@ -157,6 +187,12 @@ services:
       - redis
     networks:
       - gogooku3-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/graphq"]
       interval: 30s
@@ -195,6 +231,12 @@ services:
       - redis
     networks:
       - gogooku3-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
 
   # ========== Feature Store Services ==========
 
@@ -222,6 +264,12 @@ services:
       - ./scripts/feature_store:/app/feature_repo:ro
       - feast_data:/app/data
     command: feast serve -h 0.0.0.0 -p 6566
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     depends_on:
       - redis
       - minio
@@ -251,6 +299,12 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--web.enable-lifecycle'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     networks:
       - gogooku3-net
     healthcheck:
@@ -273,6 +327,12 @@ services:
       - grafana_data:/var/lib/grafana
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     depends_on:
       - prometheus
       - clickhouse
@@ -300,6 +360,12 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        tag: "{{.Name}}/{{.ID}}"
     networks:
       - gogooku3-net
 

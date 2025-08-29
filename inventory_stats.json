@@ -1,0 +1,15 @@
+{
+  "total_files": 1498,
+  "total_size_bytes": 1064525049,
+  "git_tracked_files": 0,
+  "git_lfs_files": 0,
+  "binary_files": 1270,
+  "generated_files": 1273,
+  "notebook_files": 0,
+  "report_files": 28,
+  "secret_files": 1,
+  "large_files": 3,
+  "referenced_files": 39,
+  "scan_duration": "0:00:09.088961",
+  "scan_timestamp": "2025-08-29T07:50:44.201158+09:00"
+}
