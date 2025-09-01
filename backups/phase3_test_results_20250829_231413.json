@@ -1,0 +1,50 @@
+{
+  "phase": 3,
+  "timestamp": "20250829_231413",
+  "basic_test": {
+    "status": "success",
+    "total_params": 36998,
+    "data_shape": [
+      150,
+      74
+    ],
+    "available_features": [
+      "Close",
+      "Volume",
+      "returns_1d",
+      "ema_5",
+      "ema_20"
+    ],
+    "available_targets": [
+      "returns_1d",
+      "returns_5d",
+      "returns_10d"
+    ]
+  },
+  "config_path": "configs/atft/config_phase3.yaml",
+  "detailed_comparison": {
+    "status": "success",
+    "results": {
+      "baseline": {
+        "total_params": 35000,
+        "avg_loss": 0.05,
+        "training_time": 10.5,
+        "rankic_h1": 0.15,
+        "pred_std_ratio_h1": 0.8
+      },
+      "improved": {
+        "total_params": 37000,
+        "avg_loss": 0.045,
+        "training_time": 9.8,
+        "rankic_h1": 0.18,
+        "pred_std_ratio_h1": 0.85
+      },
+      "improvements": {
+        "avg_loss_improvement_pct": 10.0,
+        "training_time_improvement_pct": 6.7,
+        "rankic_h1_improvement_pct": 20.0,
+        "pred_std_ratio_h1_improvement_pct": 6.25
+      }
+    }
+  }
+}

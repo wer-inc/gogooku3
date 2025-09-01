@@ -24,7 +24,10 @@ if env_path.exists():
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
-from core.ml_dataset_builder import MLDatasetBuilder  # noqa: E402
+from data.ml_dataset_builder import MLDatasetBuilder  # noqa: E402
+from components.trading_calendar_fetcher import TradingCalendarFetcher  # noqa: E402
+from components.market_code_filter import MarketCodeFilter  # noqa: E402
+from components.daily_stock_fetcher import DailyStockFetcher  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -40,9 +43,9 @@ class JQuantsAsyncFetcher:
         self.password = password
         self.base_url = "https://api.jquants.com/v1"
         self.id_token = None
-        # Use environment variable or default
+        # 有料プラン向け設定
         self.max_concurrent = max_concurrent or int(
-            os.getenv("MAX_CONCURRENT_FETCH", 150)
+            os.getenv("MAX_CONCURRENT_FETCH", 75)  # 有料プラン向け
         )
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
 
@@ -71,15 +74,22 @@ class JQuantsAsyncFetcher:
 
         logger.info("✅ JQuants authentication successful")
 
-    async def get_listed_info(self, session: aiohttp.ClientSession) -> pl.DataFrame:
-        """Get listed company information."""
+    async def get_listed_info(self, session: aiohttp.ClientSession, date: Optional[str] = None) -> pl.DataFrame:
+        """Get listed company information with Market Code filtering."""
         url = f"{self.base_url}/listed/info"
         headers = {"Authorization": f"Bearer {self.id_token}"}
+        params = {}
+        if date:
+            params["date"] = date
 
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, params=params) as response:
             if response.status == 200:
                 data = await response.json()
-                return pl.DataFrame(data.get("info", []))
+                df = pl.DataFrame(data.get("info", []))
+                # Market Codeフィルタリング（8市場のみ）
+                if not df.is_empty():
+                    df = MarketCodeFilter.filter_stocks(df)
+                return df
             return pl.DataFrame()
 
     async def fetch_price_batch(
@@ -204,20 +214,22 @@ class JQuantsAsyncFetcher:
 
 
 class JQuantsPipeline:
-    """Complete pipeline from JQuants to ML dataset."""
+    """Complete pipeline from JQuants to ML dataset with Trading Calendar and Market Code filtering."""
 
     def __init__(self, output_dir: Path = None):
         self.output_dir = output_dir or Path(
-            "/home/ubuntu/gogooku2/apps/gogooku3/output"
+            "/home/ubuntu/gogooku3-standalone/output"
         )
         self.output_dir.mkdir(exist_ok=True)
         self.fetcher = None
+        self.calendar_fetcher = None
+        self.daily_stock_fetcher = None
         self.builder = MLDatasetBuilder(output_dir=self.output_dir)
 
     async def fetch_jquants_data(
-        self, n_stocks: int = 100, n_days: int = 300
+        self, start_date: str = None, end_date: str = None
     ) -> tuple[pl.DataFrame, pl.DataFrame]:
-        """Fetch data from JQuants API."""
+        """Fetch data from JQuants API using Trading Calendar."""
         # Get credentials
         email = os.getenv("JQUANTS_AUTH_EMAIL", "")
         password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
@@ -227,43 +239,83 @@ class JQuantsPipeline:
             logger.info("Please set JQUANTS_AUTH_EMAIL and JQUANTS_AUTH_PASSWORD")
             return pl.DataFrame(), pl.DataFrame()
 
-        # Initialize fetcher
+        # Initialize fetchers
         self.fetcher = JQuantsAsyncFetcher(email, password)
+        self.calendar_fetcher = TradingCalendarFetcher(self.fetcher)
+        self.daily_stock_fetcher = DailyStockFetcher(self.fetcher, MarketCodeFilter())
 
-        # Date range
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=n_days)
+        # Date range (default: 4 years)
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if not start_date:
+            start_date = "2021-01-01"
 
         async with aiohttp.ClientSession() as session:
             # Authenticate
             await self.fetcher.authenticate(session)
-
-            # Get listed companies
-            listed_df = await self.fetcher.get_listed_info(session)
-
-            if listed_df.is_empty():
-                logger.error("Failed to fetch listed companies")
+            
+            # Step 1: 営業日カレンダー取得
+            logger.info(f"Step 1: 営業日カレンダー取得中 ({start_date} - {end_date})...")
+            calendar_data = await self.calendar_fetcher.get_trading_calendar(
+                start_date, end_date, session
+            )
+            business_days = calendar_data.get("business_days", [])
+            logger.info(f"✅ 営業日数: {len(business_days)}日")
+            
+            if not business_days:
+                logger.error("営業日データが取得できませんでした")
                 return pl.DataFrame(), pl.DataFrame()
 
-            # Filter TSE stocks (Prime, Standard, Growth)
-            tse_codes = ["111", "112", "113"]
-            tse_stocks = listed_df.filter(pl.col("MarketCode").is_in(tse_codes))
-
-            if tse_stocks.is_empty():
-                tse_stocks = listed_df.head(n_stocks)
-            else:
-                tse_stocks = tse_stocks.head(n_stocks)
-
-            codes = tse_stocks["Code"].to_list()
-            logger.info(f"Selected {len(codes)} stocks: {codes[:5]}...")
-
-            # Fetch price data
-            price_df = await self.fetcher.fetch_all_prices(
-                session,
-                codes,
-                start_date.strftime("%Y-%m-%d"),
-                end_date.strftime("%Y-%m-%d"),
+            # Step 2: 営業日ごとの銘柄リスト取得
+            logger.info("Step 2: 営業日ごとの銘柄リスト取得中...")
+            daily_listings = await self.daily_stock_fetcher.get_stocks_for_period(
+                business_days,  # 全営業日分を取得
+                session
             )
+            
+            if not daily_listings:
+                logger.error("銘柄情報が取得できませんでした")
+                return pl.DataFrame(), pl.DataFrame()
+            
+            # 統計情報表示
+            stats = self.daily_stock_fetcher.get_statistics(daily_listings)
+            logger.info(f"✅ 期間中のユニーク銘柄数: {stats['total_unique_stocks']}")
+            logger.info(f"✅ 日次平均銘柄数: {stats['avg_daily_stocks']:.0f}")
+            
+            # Step 3: 営業日ごとに価格データ取得
+            logger.info(f"Step 3: 価格データ取得中...")
+            all_price_data = []
+            total_stocks = sum(len(df) for df in daily_listings.values())
+            processed_stocks = 0
+            
+            for idx, (date, stocks_df) in enumerate(daily_listings.items(), 1):
+                logger.info(f"  [{idx}/{len(daily_listings)}] {date}: {len(stocks_df)}銘柄の価格データ取得中...")
+                codes = stocks_df["Code"].to_list()
+                
+                # その日の価格データ取得
+                daily_prices = await self.fetcher.fetch_all_prices(
+                    session,
+                    codes,  # 全銘柄を取得
+                    date,
+                    date,
+                )
+                
+                if not daily_prices.is_empty():
+                    all_price_data.append(daily_prices)
+                    processed_stocks += len(stocks_df)
+                    logger.info(f"    ✓ {len(daily_prices)}レコード取得 (進捗: {processed_stocks}/{total_stocks}銘柄)")
+                
+                # メモリ管理: 定期的にデータを保存
+                if len(all_price_data) >= 30:  # 30日分ごとに中間保存
+                    temp_df = pl.concat(all_price_data)
+                    logger.info(f"    中間データ: {len(temp_df)}レコード")
+            
+            # 全データ結合
+            if all_price_data:
+                price_df = pl.concat(all_price_data)
+                logger.info(f"✅ 価格データ取得完了: {len(price_df)}レコード")
+            else:
+                price_df = pl.DataFrame()
 
             if price_df.is_empty():
                 logger.error("Failed to fetch price data")
@@ -314,10 +366,28 @@ class JQuantsPipeline:
 
             # Sort by Code and Date
             price_df = price_df.sort(["Code", "Date"])
+            
+            # Step 4: 営業日でフィルタリング
+            logger.info("Step 4: 営業日フィルタリング中...")
+            business_days_set = set(business_days)
+            original_count = len(price_df)
+            
+            # Date列を文字列に変換してフィルタリング
+            if "Date" in price_df.columns:
+                price_df = price_df.with_columns(
+                    pl.col("Date").cast(pl.Utf8)
+                )
+                price_df = price_df.filter(
+                    pl.col("Date").is_in(business_days)
+                )
+            
+            filtered_count = len(price_df)
+            logger.info(f"✅ 営業日フィルタリング: {original_count} → {filtered_count} レコード")
 
-            # Fetch TOPIX data
+            # Step 5: TOPIXデータ取得
+            logger.info("Step 5: TOPIXデータ取得中...")
             topix_df = await self.fetcher.fetch_topix_data(
-                session, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
+                session, start_date, end_date
             )
 
             return price_df, topix_df
@@ -354,24 +424,24 @@ class JQuantsPipeline:
         return df, metadata, (parquet_path, csv_path, meta_path)
 
     async def run(
-        self, use_jquants: bool = True, n_stocks: int = 100, n_days: int = 300
+        self, use_jquants: bool = True, start_date: str = None, end_date: str = None
     ):
-        """Run the complete pipeline."""
+        """Run the complete pipeline with Trading Calendar."""
         start_time = time.time()
 
         logger.info("=" * 60)
-        logger.info("COMPLETE ML DATASET PIPELINE")
+        logger.info("COMPLETE ML DATASET PIPELINE with Trading Calendar")
         logger.info("=" * 60)
 
         # Step 1: Get data
         topix_df = None
         if use_jquants:
-            logger.info("Step 1: Fetching data from JQuants API...")
-            price_df, topix_df = await self.fetch_jquants_data(n_stocks, n_days)
+            logger.info("Fetching data from JQuants API...")
+            price_df, topix_df = await self.fetch_jquants_data(start_date, end_date)
 
             if price_df.is_empty():
                 logger.warning("JQuants fetch failed, using sample data instead")
-                from core.ml_dataset_builder import create_sample_data
+                from data.ml_dataset_builder import create_sample_data
 
                 price_df = create_sample_data(n_stocks, n_days)
                 topix_df = None
@@ -456,31 +526,29 @@ async def main():
         help="Use JQuants API (requires credentials in .env)",
     )
     parser.add_argument(
-        "--stocks",
-        type=int,
-        default=None,
-        help="Number of stocks to process (default from .env or 100)",
+        "--start-date",
+        type=str,
+        default="2021-01-01",
+        help="Start date (YYYY-MM-DD)",
     )
     parser.add_argument(
-        "--days",
-        type=int,
+        "--end-date",
+        type=str,
         default=None,
-        help="Number of days of history (default from .env or 300)",
+        help="End date (YYYY-MM-DD, default: today)",
     )
 
     args = parser.parse_args()
 
-    # Use environment defaults if not specified
-    if args.stocks is None:
-        args.stocks = int(os.getenv("DEFAULT_STOCKS", 100))
-    if args.days is None:
-        args.days = int(os.getenv("DEFAULT_DAYS", 300))
+    # Set end date to today if not specified
+    if args.end_date is None:
+        args.end_date = datetime.now().strftime("%Y-%m-%d")
 
     # Check environment
     if args.jquants:
         if not os.getenv("JQUANTS_AUTH_EMAIL"):
             logger.error("JQuants credentials not found in .env file")
-            logger.error("Please check /home/ubuntu/gogooku2/apps/gogooku3/.env")
+            logger.error("Please check /home/ubuntu/gogooku3-standalone/.env")
             logger.info("\nUsing sample data instead...")
             args.jquants = False
         else:
@@ -491,7 +559,7 @@ async def main():
     # Run pipeline
     pipeline = JQuantsPipeline()
     df, metadata = await pipeline.run(
-        use_jquants=args.jquants, n_stocks=args.stocks, n_days=args.days
+        use_jquants=args.jquants, start_date=args.start_date, end_date=args.end_date
     )
 
     return df, metadata

@@ -1,0 +1,126 @@
+data:
+  graph_builder:
+    cache_dir: graph_cache
+    ewm_halflife: 20
+    k: 15
+    log_mktcap_col: log_mktcap
+    lookback: 60
+    method: ewm_demean
+    min_obs: 40
+    return_cols:
+    - return_1d
+    - feat_ret_1d
+    sector_col: sector33
+    shrinkage_gamma: 0.05
+    size_tau: 1.0
+    source_glob: ${data.source.data_dir}/*.parquet
+    symmetric: true
+debug:
+  detect_anomaly: false
+  enabled: false
+  fast_dev_run: 10
+  profiler: false
+defaults:
+- _self_
+- data: jpx_large_scale
+- model: atft_gat_fan
+- train: production
+- hardware: default
+- override hydra/hydra_logging: default
+- override hydra/job_logging: jst
+hydra:
+  job:
+    chdir: false
+    name: ATFT-GAT-FAN
+  run:
+    dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+improvements:
+  auto_recover_oom: true
+  compile_model: false
+  edge_dropout_p: 0.0
+  ema_decay: !!python/object/apply:numpy.core.multiarray.scalar
+  - &id001 !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - !!binary |
+    16NwPQrX7z8=
+  emergency_checkpoint: false
+  enable_tensorboard: true
+  enable_wandb: true
+  freq_dropout_max_width: 0.2
+  freq_dropout_min_width: 0.05
+  freq_dropout_p: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id001
+  - !!binary |
+    mpmZmZmZyT8=
+  gat_alpha_min: 0.05
+  gat_temperature: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id001
+  - !!binary |
+    mpmZmZmZ6T8=
+  huber_delta: !!python/object/apply:numpy.core.multiarray.scalar
+  - *id001
+  - !!binary |
+    exSuR+F6hD8=
+  huber_loss: true
+  log_grad_norm: false
+  memory_map: false
+  multi_horizon_weights:
+  - 1.0
+  - 0.8
+  - 0.7
+  - 0.5
+  - 0.3
+  online_normalization: true
+  output_head_small_init: true
+  use_ema: true
+logging:
+  level: INFO
+mode: train
+paths:
+  data: data
+  logs: logs
+  models: models
+  root: .
+project:
+  deterministic: true
+  name: ATFT-GAT-FAN
+  seed: 42
+train:
+  optimizer:
+    warmup_steps: !!python/object/apply:numpy.core.multiarray.scalar
+    - !!python/object/apply:numpy.dtype
+      args:
+      - i8
+      - false
+      - true
+      state: !!python/tuple
+      - 3
+      - <
+      - null
+      - null
+      - null
+      - -1
+      - -1
+      - 0
+    - !!binary |
+      3AUAAAAAAAA=
+  scheduler:
+    gamma: !!python/object/apply:numpy.core.multiarray.scalar
+    - *id001
+    - !!binary |
+      XI/C9Shc7z8=

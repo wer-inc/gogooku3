@@ -20,6 +20,14 @@ def setup_atft_environment():
     """ATFT-GAT-FANの成果を再現するための環境設定"""
     logger.info("🔧 Setting up ATFT-GAT-FAN environment for results reproduction...")
 
+    # W&B APIキーの設定
+    wandb_api_key = os.getenv('WANDB_API_KEY')
+    if wandb_api_key:
+        os.environ['WANDB_API_KEY'] = wandb_api_key
+        logger.info("✅ W&B API key configured")
+    else:
+        logger.warning("⚠️  W&B API key not found")
+
     # ATFT-GAT-FANの成果設定（Sharpe 0.849を達成した設定）
     atft_settings = {
         "USE_T_NLL": "1",
@@ -88,7 +96,13 @@ def train_atft_model(
         # 環境設定
         setup_atft_environment()
 
-        # 学習コマンドの構築（ATFT-GAT-FANの成果設定）
+        # W&B設定の準備
+        import pandas as pd
+        wandb_name = f"atft_training_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+        train_files_count = len([f for f in os.listdir(data_dir + '/train') if f.endswith('.parquet')])
+        wandb_notes = f"ATFT-GAT-FAN training with {train_files_count} training files, batch_size={batch_size}"
+
+        # 学習コマンドの構築（ATFT-GAT-FANの成果設定 + W&B改善）
         cmd = [
             "python",
             "scripts/train.py",
@@ -105,8 +119,14 @@ def train_atft_model(
             "train.trainer.accelerator=gpu",
             "train.trainer.devices=1",
             "train.trainer.strategy=auto",
-            "train.trainer.logger=tensorboard",
-            "train.trainer.log_every_n_steps=50",
+            "train.trainer.logger=wandb",  # W&Bロギング有効化
+            f"train.trainer.logger.wandb.name={wandb_name}",
+            f"train.trainer.logger.wandb.notes={wandb_notes}",
+            "train.trainer.logger.wandb.project=ATFT-GAT-FAN",
+            "train.trainer.logger.wandb.entity=wer-inc",
+            "train.trainer.logger.wandb.log_model=true",
+            "train.trainer.logger.wandb.save_code=true",
+            "train.trainer.log_every_n_steps=10",  # より頻繁にログ
             "train.trainer.val_check_interval=0.25",
             "train.trainer.check_val_every_n_epoch=1",
             "train.trainer.enable_progress_bar=true",
@@ -162,8 +182,17 @@ def train_atft_model(
                 training_result["target_achieved"] = sharpe_ratio >= 0.849
             else:
                 logger.warning("⚠️ Sharpe ratio not found in output")
+
+            # W&B run情報のログ
+            logger.info("📊 Training completed successfully with W&B logging enabled")
         else:
             logger.error(f"❌ ATFT-GAT-FAN training failed: {result.stderr}")
+            logger.error("🔍 Error details:")
+            logger.error(f"   Return code: {result.returncode}")
+            if result.stderr:
+                logger.error(f"   STDERR: {result.stderr[:500]}...")  # 最初の500文字
+            if result.stdout:
+                logger.error(f"   STDOUT: {result.stdout[-500:]}...")  # 最後の500文字
 
         return training_result
 

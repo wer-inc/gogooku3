@@ -1,0 +1,25 @@
+{
+  "phase": 2,
+  "timestamp": "20250829_231424",
+  "basic_test": {
+    "status": "success",
+    "total_params": 36998,
+    "data_shape": [
+      150,
+      74
+    ],
+    "available_features": [
+      "Close",
+      "Volume",
+      "returns_1d",
+      "ema_5",
+      "ema_20"
+    ],
+    "available_targets": [
+      "returns_1d",
+      "returns_5d",
+      "returns_10d"
+    ]
+  },
+  "config_path": "configs/atft/config_phase2.yaml"
+}

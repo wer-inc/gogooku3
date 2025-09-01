@@ -1,0 +1,46 @@
+{
+  "os": "Linux-6.8.0-1030-azure-x86_64-with-glibc2.35",
+  "python": "CPython 3.10.12",
+  "startedAt": "2025-08-30T00:11:48.453003Z",
+  "args": [
+    "--epochs",
+    "2",
+    "--batch-size",
+    "2"
+  ],
+  "program": "/home/ubuntu/gogooku3-standalone/scripts/production_training.py",
+  "codePath": "scripts/production_training.py",
+  "codePathLocal": "scripts/production_training.py",
+  "git": {
+    "remote": "https://github.com/wer-inc/gogooku3.git",
+    "commit": "efdf5513758bec4a40ff4bb5a680175e89be5b52"
+  },
+  "email": "wer.inc.jp@gmail.com",
+  "root": "/home/ubuntu/gogooku3-standalone",
+  "host": "client-instance-au9hc2cl",
+  "executable": "/usr/bin/python",
+  "cpu_count": 24,
+  "cpu_count_logical": 24,
+  "gpu": "NVIDIA A100 80GB PCIe",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "311993479168",
+      "used": "178745794560"
+    }
+  },
+  "memory": {
+    "total": "232209719296"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA A100 80GB PCIe",
+      "memoryTotal": "85899345920",
+      "cudaCores": 6912,
+      "architecture": "Ampere",
+      "uuid": "GPU-6fa85c20-8593-3729-ad6e-4155943a1707"
+    }
+  ],
+  "cudaVersion": "12.9",
+  "writerId": "icygffkla42ku3ffkzcu9ecrsaz8f8vt"
+}

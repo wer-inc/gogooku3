@@ -395,22 +395,69 @@ class QualityFinancialFeaturesGenerator:
             
             # 7. クリーンアップ
             df = self._cleanup_features(df)
-            
+
+            # 8. TOPIX市場特徴量の統合
+            df = self._integrate_topix_features(df)
+
             final_cols = len(df.columns)
             added_cols = final_cols - original_cols
-            
+
             if self.verbose:
                 logger.info(
                     f"Quality features generation completed: "
                     f"{original_cols} → {final_cols} columns (+{added_cols})"
                 )
-            
+
             return df
             
         except Exception as e:
             logger.error(f"Quality features generation failed: {e}")
             return df
-    
+
+    def _integrate_topix_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        TOPIX市場特徴量を統合
+
+        Args:
+            df: 入力データフレーム
+
+        Returns:
+            TOPIX特徴量統合済みのデータフレーム
+        """
+        try:
+            # TOPIX特徴量が既に存在するか確認
+            existing_topix_cols = [col for col in df.columns if col.startswith(('mkt_', 'beta_', 'alpha_', 'rel_'))]
+
+            if existing_topix_cols:
+                if self.verbose:
+                    logger.info(f"TOPIX features already exist: {len(existing_topix_cols)} features")
+                return df
+
+            # TOPIX特徴量がなければ、MLDatasetBuilderを使って追加
+            if self.verbose:
+                logger.info("Integrating TOPIX market features...")
+
+            try:
+                from scripts.data.ml_dataset_builder import MLDatasetBuilder
+
+                builder = MLDatasetBuilder()
+                df_with_topix = builder.add_topix_features(df)
+
+                topix_cols = [col for col in df_with_topix.columns if col.startswith(('mkt_', 'beta_', 'alpha_', 'rel_'))]
+                if self.verbose:
+                    logger.info(f"Added {len(topix_cols)} TOPIX market features")
+
+                return df_with_topix
+
+            except ImportError:
+                if self.verbose:
+                    logger.warning("MLDatasetBuilder not available, skipping TOPIX integration")
+                return df
+
+        except Exception as e:
+            logger.error(f"Error integrating TOPIX features: {e}")
+            return df
+
     def get_feature_categories(self, columns: List[str]) -> Dict[str, List[str]]:
         """特徴量をカテゴリ別に分類"""
         categories = {
@@ -422,6 +469,8 @@ class QualityFinancialFeaturesGenerator:
             'sharpe_features': [],
             'flag_features': [],
             'excess_returns': [],
+            'market_features': [],  # TOPIX市場特徴量
+            'cross_features': [],   # 銘柄×市場クロス特徴量
             'other': []
         }
         
@@ -444,6 +493,10 @@ class QualityFinancialFeaturesGenerator:
                 categories['flag_features'].append(col)
             elif 'excess' in col_lower:
                 categories['excess_returns'].append(col)
+            elif col.startswith('mkt_'):
+                categories['market_features'].append(col)
+            elif any(pattern in col_lower for pattern in ['beta_', 'alpha_', 'rel_']):
+                categories['cross_features'].append(col)
             else:
                 categories['other'].append(col)
         

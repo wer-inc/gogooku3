@@ -190,13 +190,26 @@ class CompleteATFTTrainingPipeline:
         try:
             logger.info("📊 Loading and validating ML dataset...")
 
-            # MLデータセットの読み込み（実際のデータパスに修正）
-            ml_dataset_path = Path("data/ml_dataset.parquet")
-            if not ml_dataset_path.exists():
+            # MLデータセットの読み込み（実際のデータを使用）
+            # 優先順位: output/ml_dataset_production.parquet > data/processed/ml_dataset_latest.parquet > data/ml_dataset.parquet
+            ml_dataset_paths = [
+                Path("output/ml_dataset_production.parquet"),
+                Path("data/processed/ml_dataset_latest.parquet"),
+                Path("data/ml_dataset.parquet")
+            ]
+
+            ml_dataset_path = None
+            for path in ml_dataset_paths:
+                if path.exists():
+                    ml_dataset_path = path
+                    break
+
+            if ml_dataset_path is None:
                 # テスト用のサンプルデータ作成
                 logger.warning("ML dataset not found, creating sample data for testing")
                 df = self._create_sample_ml_dataset()
             else:
+                logger.info(f"📂 Loading ML dataset from: {ml_dataset_path}")
                 df = pl.read_parquet(ml_dataset_path)
 
             # データ検証

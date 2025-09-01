@@ -1,0 +1,31 @@
+dashboard:
+  debug: false
+  host: 0.0.0.0
+  port: 8050
+monitoring:
+  alerts:
+    enabled: true
+    gpu_memory_threshold: 0.95
+    loss_threshold: 0.1
+    memory_threshold: 0.9
+    rankic_threshold: 0.05
+  enabled: true
+  interval_seconds: 300
+  notifications:
+    email:
+      enabled: false
+      recipients: []
+      smtp_server: ''
+    slack:
+      channel: '#alerts'
+      enabled: false
+      webhook_url: ''
+  tensorboard:
+    log_dir: logs
+    port: 6006
+  wandb:
+    entity: ''
+    project: ATFT-GAT-FAN
+    tags:
+    - production
+    - monitoring

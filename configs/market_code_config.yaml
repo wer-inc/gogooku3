@@ -1,0 +1,46 @@
+# Market Code Configuration
+# J-Quants APIの銘柄フィルタリング設定
+
+market_code_filter:
+  # フィルタリング方式
+  # - whitelist: 指定した市場のみ取得（推奨）
+  # - blacklist: 指定した市場を除外
+  mode: "whitelist"
+  
+  # 取得対象の市場コード（8市場）
+  include:
+    - "0101"  # 東証一部 (旧区分)
+    - "0102"  # 東証二部 (旧区分)
+    - "0104"  # マザーズ (旧区分)
+    - "0106"  # JASDAQ スタンダード (旧区分)
+    - "0107"  # JASDAQ グロース (旧区分)
+    - "0111"  # プライム (新区分: 2022-04-04以降)
+    - "0112"  # スタンダード (新区分: 2022-04-04以降)
+    - "0113"  # グロース (新区分: 2022-04-04以降)
+  
+  # 除外する市場コード（2市場）
+  exclude:
+    - "0105"  # TOKYO PRO MARKET (プロ投資家向け)
+    - "0109"  # その他
+  
+  # 市場名称マッピング
+  market_names:
+    "0101": "東証一部"
+    "0102": "東証二部"
+    "0104": "マザーズ"
+    "0105": "TOKYO PRO MARKET"
+    "0106": "JASDAQ スタンダード"
+    "0107": "JASDAQ グロース"
+    "0109": "その他"
+    "0111": "プライム"
+    "0112": "スタンダード"
+    "0113": "グロース"
+  
+  # 未知のMarket Code処理
+  unknown_handling: "warn_and_exclude"  # warn_and_exclude, include, error
+  
+  # 統計ログ出力
+  log_statistics: true
+  
+  # 市場再編日（参考情報）
+  market_restructure_date: "2022-04-04"
