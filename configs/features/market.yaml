@@ -1,0 +1,44 @@
+# Market features configuration
+
+vol:
+  method: parkinson  # parkinson | garman_klass | rogers_satchell
+  window: 20
+  annualize: 252
+
+beta:
+  window: 60
+  ridge: 1.0e-8
+  method: rolling  # rolling | ewma
+
+bollinger:
+  window: 20
+  num_std: 2.0
+
+atr:
+  period: 14
+
+ema_windows: [5, 20, 60, 200]
+return_horizons: [1, 5, 10, 20]
+
+z_score:
+  window: 60
+  features:
+    - mkt_ret_1d
+    - mkt_vol_20d
+    - mkt_bb_bw
+    - mkt_dd_from_peak
+
+regime:
+  bull_threshold: 200  # EMA period for bull/bear
+  vol_percentile: 0.75  # High vol threshold
+  squeeze_percentile: 0.25  # BB squeeze threshold
+
+winsor:
+  pct: 0.01  # 1% and 99% percentiles
+  
+zscore:
+  robust: true  # Use median/MAD instead of mean/std
+  
+joins:
+  tplus1_cutoff: "15:00:00"
+  embargo_days: 20

@@ -413,3 +413,132 @@
   合計: 145列
 
   各データソースは異なる頻度・タイミングで提供されますが、時間整合性を保ちながら日次パネルデータに統合され、MLモデルで利用可能な形式になります。
+
+  ------------------
+
+  プロジェクト改善計画 - データ取得→学習の全体フロー最適化                                                                  │ │
+│ │                                                                                                                           │ │
+│ │ 1. フォルダ構成の再編成                                                                                                   │ │
+│ │                                                                                                                           │ │
+│ │ 現状の問題点                                                                                                              │ │
+│ │                                                                                                                           │ │
+│ │ - scripts/に54個のPythonファイルが散在                                                                                    │ │
+│ │ - 同じ機能のパイプラインが複数バージョン存在（run_pipeline.py, v2, v3）                                                   │ │
+│ │ - src/とscripts/の役割分担が不明確                                                                                        │ │
+│ │                                                                                                                           │ │
+│ │ 改善案                                                                                                                    │ │
+│ │                                                                                                                           │ │
+│ │ gogooku3-standalone/                                                                                                      │ │
+│ │ ├── src/gogooku3/          # コアライブラリ（変更なし）                                                                   │ │
+│ │ ├── pipelines/              # 実行可能なパイプライン                                                                      │ │
+│ │ │   ├── data_collection/    # データ取得                                                                                  │ │
+│ │ │   ├── feature_engineering/# 特徴量生成                                                                                  │ │
+│ │ │   ├── model_training/     # モデル学習                                                                                  │ │
+│ │ │   └── evaluation/         # 評価・検証                                                                                  │ │
+│ │ ├── configs/                # 設定ファイル（統合）                                                                        │ │
+│ │ ├── scripts/                # ユーティリティのみ                                                                          │ │
+│ │ └── tests/                  # テスト（整理済み）                                                                          │ │
+│ │                                                                                                                           │ │
+│ │ 2. 重複コードの統合                                                                                                       │ │
+│ │                                                                                                                           │ │
+│ │ 削除・統合対象                                                                                                            │ │
+│ │                                                                                                                           │ │
+│ │ 1. パイプラインの統合                                                                                                     │ │
+│ │   - run_pipeline.py, v2, v3 → 1つに統合                                                                                   │ │
+│ │   - train_atft.py, train_atft_wrapper.py → 統合                                                                           │ │
+│ │ 2. 重複機能の削除                                                                                                         │ │
+│ │   - market_features.py（scripts/とsrc/に重複）                                                                            │ │
+│ │   - test_atft_training.py → testsへ移動                                                                                   │ │
+│ │ 3. 未使用コードの削除                                                                                                     │ │
+│ │   - corporate_actions/（使用されていない）                                                                                │ │
+│ │   - feature_store/（dagster関連、未使用）                                                                                 │ │
+│ │   - orchestration/（dagster関連、未使用）                                                                                 │ │
+│ │                                                                                                                           │ │
+│ │ 3. データフローの標準化                                                                                                   │ │
+│ │                                                                                                                           │ │
+│ │ 統一パイプライン構成                                                                                                      │ │
+│ │                                                                                                                           │ │
+│ │ # pipelines/main_pipeline.py                                                                                              │ │
+│ │ class UnifiedPipeline:                                                                                                    │ │
+│ │     def __init__(self, config_path):                                                                                      │ │
+│ │         self.config = load_config(config_path)                                                                            │ │
+│ │                                                                                                                           │ │
+│ │     def run(self):                                                                                                        │ │
+│ │         # Step 1: データ取得                                                                                              │ │
+│ │         data = self.collect_data()                                                                                        │ │
+│ │                                                                                                                           │ │
+│ │         # Step 2: 特徴量生成                                                                                              │ │
+│ │         features = self.generate_features(data)                                                                           │ │
+│ │                                                                                                                           │ │
+│ │         # Step 3: データセット作成                                                                                        │ │
+│ │         dataset = self.create_dataset(features)                                                                           │ │
+│ │                                                                                                                           │ │
+│ │         # Step 4: モデル学習                                                                                              │ │
+│ │         model = self.train_model(dataset)                                                                                 │ │
+│ │                                                                                                                           │ │
+│ │         # Step 5: 評価                                                                                                    │ │
+│ │         metrics = self.evaluate(model, dataset)                                                                           │ │
+│ │                                                                                                                           │ │
+│ │         return model, metrics                                                                                             │ │
+│ │                                                                                                                           │ │
+│ │ 4. 設定管理の一元化                                                                                                       │ │
+│ │                                                                                                                           │ │
+│ │ Hydraによる設定統合                                                                                                       │ │
+│ │                                                                                                                           │ │
+│ │ configs/                                                                                                                  │ │
+│ │ ├── main.yaml           # メイン設定                                                                                      │ │
+│ │ ├── data/                                                                                                                 │ │
+│ │ │   ├── jquants.yaml   # API設定                                                                                          │ │
+│ │ │   └── processing.yaml # 処理設定                                                                                        │ │
+│ │ ├── features/                                                                                                             │ │
+│ │ │   └── technical.yaml  # 特徴量設定                                                                                      │ │
+│ │ ├── models/                                                                                                               │ │
+│ │ │   └── atft.yaml       # モデル設定                                                                                      │ │
+│ │ └── training/                                                                                                             │ │
+│ │     └── default.yaml    # 学習設定                                                                                        │ │
+│ │                                                                                                                           │ │
+│ │ 5. 具体的な実行手順                                                                                                       │ │
+│ │                                                                                                                           │ │
+│ │ Phase 1: バックアップと準備                                                                                               │ │
+│ │                                                                                                                           │ │
+│ │ 1. 現在のscripts/をbackups/scripts_original/にバックアップ                                                                │ │
+│ │ 2. 新しいpipelines/ディレクトリ構造を作成                                                                                 │ │
+│ │                                                                                                                           │ │
+│ │ Phase 2: コード移行                                                                                                       │ │
+│ │                                                                                                                           │ │
+│ │ 1. 重複を排除しながらコードを新構造に移行                                                                                 │ │
+│ │ 2. importパスを更新                                                                                                       │ │
+│ │ 3. 設定ファイルを統合                                                                                                     │ │
+│ │                                                                                                                           │ │
+│ │ Phase 3: テストと検証                                                                                                     │ │
+│ │                                                                                                                           │ │
+│ │ 1. 単体テストの実行                                                                                                       │ │
+│ │ 2. エンドツーエンドパイプラインテスト                                                                                     │ │
+│ │ 3. パフォーマンス比較                                                                                                     │ │
+│ │                                                                                                                           │ │
+│ │ 6. 期待される効果                                                                                                         │ │
+│ │                                                                                                                           │ │
+│ │ 1. 保守性向上: コードの重複削除で保守が容易に                                                                             │ │
+│ │ 2. 理解しやすさ: 明確なフォルダ構造                                                                                       │ │
+│ │ 3. 実行効率: 統一パイプラインで無駄を削減                                                                                 │ │
+│ │ 4. 拡張性: 新機能追加が容易                                                                                               │ │
+│ │ 5. テスト容易性: 各ステップが独立してテスト可能                                                                           │ │
+│ │                                                                                                                           │ │
+│ │ 7. リスクと対策                                                                                                           │ │
+│ │                                                                                                                           │ │
+│ │ - リスク: 既存スクリプトへの依存                                                                                          │ │
+│ │ - 対策: 移行期間中は両方を維持、段階的移行                                                                                │ │
+│ │                                                                                                                           │ │
+│ │ 実装優先順位                                                                                                              │ │
+│ │                                                                                                                           │ │
+│ │ 1. 高優先度（即効果）                                                                                                     │ │
+│ │   - パイプライン統合                                                                                                      │ │
+│ │   - 重複コード削除                                                                                                        │ │
+│ │ 2. 中優先度（構造改善）                                                                                                   │ │
+│ │   - フォルダ再編成                                                                                                        │ │
+│ │   - 設定管理統合                                                                                                          │ │
+│ │ 3. 低優先度（将来対応）                                                                                                   │ │
+│ │   - dagster関連の完全削除                                                                                                 │ │
+│ │   - ドキュメント更新                                                                                                      │ │
+│ │                                                                                                                           │ │
+│ │ この改善により、データ取得→学習のフローが大幅に簡潔化され、保守性と拡張性が向上します。       
