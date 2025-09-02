@@ -1,6 +1,0 @@
-{
-  "timestamp": "20250829_231448",
-  "final_config": "configs/atft/config_production.yaml",
-  "backup_config": "backups/config_backup_20250829_231448.yaml",
-  "status": "deployed"
-}

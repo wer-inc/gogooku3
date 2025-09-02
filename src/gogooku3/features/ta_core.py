@@ -25,12 +25,16 @@ class TechnicalIndicators:
     @staticmethod
     def add_volatility(df: pl.DataFrame, windows: List[int] = [20, 60]) -> pl.DataFrame:
         """ボラティリティ（年率化）"""
-        exprs = []
         for window in windows:
-            exprs.append(
-                (pl.col("px_returns_1d").rolling_std(window) * np.sqrt(252)).alias(f"px_volatility_{window}d")
+            # ボラティリティ計算（min_periods明示）
+            df = df.with_columns(
+                (pl.col("px_returns_1d").rolling_std(window, min_periods=window) * np.sqrt(252)).alias(f"px_volatility_{window}d")
             )
-        return df.with_columns(exprs)
+            # 有効フラグ（十分なデータがある場合のみTrue）
+            df = df.with_columns(
+                pl.col(f"px_volatility_{window}d").is_not_null().alias(f"is_vol{window}_valid")
+            )
+        return df
     
     @staticmethod
     def add_realized_volatility(df: pl.DataFrame, window: int = 20, method: str = "parkinson") -> pl.DataFrame:
@@ -38,72 +42,100 @@ class TechnicalIndicators:
         if method == "parkinson":
             # Parkinson volatility: sqrt(1/(4*ln(2)) * mean(ln(H/L)^2))
             park_var = (pl.col("High") / pl.col("Low")).log().pow(2) / (4 * np.log(2))
-            expr = (park_var.rolling_mean(window).sqrt() * np.sqrt(252)).alias(f"px_park_vol_{window}d")
+            df = df.with_columns((park_var.rolling_mean(window, min_periods=window).sqrt() * np.sqrt(252)).alias(f"px_park_vol_{window}d"))
+            df = df.with_columns(pl.col(f"px_park_vol_{window}d").is_not_null().alias(f"is_park_vol{window}_valid"))
         elif method == "garman_klass":
             # Garman-Klass: more complex formula using OHLC
             term1 = 0.5 * (pl.col("High") / pl.col("Low")).log().pow(2)
             term2 = (2 * np.log(2) - 1) * (pl.col("Close") / pl.col("Open")).log().pow(2)
             gk_var = term1 - term2
-            expr = (gk_var.rolling_mean(window).sqrt() * np.sqrt(252)).alias(f"px_gk_vol_{window}d")
+            df = df.with_columns((gk_var.rolling_mean(window, min_periods=window).sqrt() * np.sqrt(252)).alias(f"px_gk_vol_{window}d"))
+            df = df.with_columns(pl.col(f"px_gk_vol_{window}d").is_not_null().alias(f"is_gk_vol{window}_valid"))
         elif method == "rogers_satchell":
             # Rogers-Satchell: handles drift
             rs_var = ((pl.col("High") / pl.col("Close")).log() * 
                      (pl.col("High") / pl.col("Open")).log() +
                      (pl.col("Low") / pl.col("Close")).log() * 
                      (pl.col("Low") / pl.col("Open")).log())
-            expr = (rs_var.rolling_mean(window).sqrt() * np.sqrt(252)).alias(f"px_rs_vol_{window}d")
+            df = df.with_columns((rs_var.rolling_mean(window, min_periods=window).sqrt() * np.sqrt(252)).alias(f"px_rs_vol_{window}d"))
+            df = df.with_columns(pl.col(f"px_rs_vol_{window}d").is_not_null().alias(f"is_rs_vol{window}_valid"))
         else:
             raise ValueError(f"Unknown method: {method}")
         
-        return df.with_columns(expr)
+        return df
     
     @staticmethod
     def add_moving_averages(df: pl.DataFrame, windows: List[int] = [5, 20, 60, 200]) -> pl.DataFrame:
         """移動平均（SMA/EMA）"""
-        exprs = []
         for window in windows:
-            exprs.extend([
-                pl.col("Close").rolling_mean(window).alias(f"px_sma_{window}"),
+            df = df.with_columns([
+                pl.col("Close").rolling_mean(window, min_periods=window).alias(f"px_sma_{window}"),
                 pl.col("Close").ewm_mean(span=window, adjust=False).alias(f"px_ema_{window}")
             ])
-        return df.with_columns(exprs)
+            df = df.with_columns(
+                pl.col(f"px_sma_{window}").is_not_null().alias(f"is_sma{window}_valid")
+            )
+        return df
     
     @staticmethod
     def add_price_ratios(df: pl.DataFrame, windows: List[int] = [5, 20, 60]) -> pl.DataFrame:
-        """価格比率指標"""
+        """価格比率指標（仕様準拠 + 既存互換）"""
         exprs = []
         for window in windows:
             exprs.extend([
-                (pl.col("Close") / pl.col(f"px_sma_{window}")).alias(f"px_price_to_sma_{window}"),
-                (pl.col("Close") / pl.col(f"px_ema_{window}")).alias(f"px_price_to_ema_{window}"),
-                ((pl.col(f"px_sma_5") - pl.col(f"px_sma_{window}")) / pl.col(f"px_sma_{window}")).alias(f"px_ma_gap_5_{window}")
+                (pl.col("Close") / (pl.col(f"px_sma_{window}") + 1e-12)).alias(f"px_price_to_sma_{window}"),
+                (pl.col("Close") / (pl.col(f"px_ema_{window}") + 1e-12)).alias(f"px_price_to_ema_{window}"),
+                ((pl.col(f"px_sma_5") - pl.col(f"px_sma_{window}")) / (pl.col(f"px_sma_{window}") + 1e-12)).alias(f"px_ma_gap_5_{window}"),
+                # 仕様: 乖離率 (Close - ema_k) / ema_k
+                ((pl.col("Close") - pl.col(f"px_ema_{window}")) / (pl.col(f"px_ema_{window}") + 1e-12)).alias(f"px_price_ema{window}_dev"),
             ])
         
-        # High/Low ratios
+        # 仕様: EMAギャップとクロス（Binary）
         exprs.extend([
-            (pl.col("High") / pl.col("Low")).alias("px_high_low_ratio"),
-            ((pl.col("Close") - pl.col("Low")) / (pl.col("High") - pl.col("Low") + 1e-10)).alias("px_close_position"),
-            (pl.col("Close") / pl.col("High")).alias("px_close_to_high"),
-            (pl.col("Close") / pl.col("Low")).alias("px_close_to_low")
+            ((pl.col("px_ema_5") - pl.col("px_ema_20")) / (pl.col("px_ema_20") + 1e-12)).alias("px_ema_gap_5_20"),
+            ((pl.col("px_ema_20") - pl.col("px_ema_60")) / (pl.col("px_ema_60") + 1e-12)).alias("px_ema_gap_20_60"),
+            ((pl.col("px_ema_60") - pl.col("px_ema_200")) / (pl.col("px_ema_200") + 1e-12)).alias("px_ema_gap_60_200"),
+            (pl.col("px_ema_5") > pl.col("px_ema_20")).cast(pl.Int8).alias("px_ema_cross_5_20"),
         ])
         
+        # High/Low range and positions（仕様の命名列も合わせて出力）
+        exprs.extend([
+            (pl.col("High") / (pl.col("Low") + 1e-12)).alias("px_high_low_ratio"),
+            ((pl.col("Close") - pl.col("Low")) / (pl.col("High") - pl.col("Low") + 1e-12)).alias("px_close_position"),
+            (pl.col("Close") / (pl.col("High") + 1e-12)).alias("px_close_to_high"),
+            (pl.col("Close") / (pl.col("Low") + 1e-12)).alias("px_close_to_low"),
+            # 仕様そのままの名前も追加（重複列名は避けるため存在チェックは別レイヤで行う想定）
+            ((pl.col("High") - pl.col("Close")) / (pl.col("High") - pl.col("Low") + 1e-12)).alias("close_to_high"),
+            ((pl.col("Close") - pl.col("Low")) / (pl.col("High") - pl.col("Low") + 1e-12)).alias("close_to_low"),
+        ])
+        
+        return df.with_columns(exprs)
+
+    @staticmethod
+    def add_trend_indicators(df: pl.DataFrame, slope_windows: List[int] = [10, 20, 60]) -> pl.DataFrame:
+        """EMAスロープ（pct_change(n=3)）を追加"""
+        exprs = []
+        for k in slope_windows:
+            exprs.append(pl.col(f"px_ema_{k}").pct_change(3).alias(f"px_ema{k}_slope_3"))
         return df.with_columns(exprs)
     
     @staticmethod
     def add_volume_indicators(df: pl.DataFrame, windows: List[int] = [5, 20]) -> pl.DataFrame:
         """出来高指標"""
-        exprs = []
-        
         # Volume moving averages
         for window in windows:
-            exprs.extend([
-                pl.col("Volume").rolling_mean(window).alias(f"px_volume_ma_{window}"),
-                (pl.col("Volume") / pl.col("Volume").rolling_mean(window)).alias(f"px_volume_ratio_{window}")
+            df = df.with_columns([
+                pl.col("Volume").rolling_mean(window, min_periods=window).alias(f"px_volume_ma_{window}"),
+                (pl.col("Volume") / (pl.col("Volume").rolling_mean(window, min_periods=window) + 1e-12)).alias(f"px_volume_ratio_{window}")
             ])
+            df = df.with_columns(
+                pl.col(f"px_volume_ma_{window}").is_not_null().alias(f"is_volume{window}_valid")
+            )
         
         # Turnover and dollar volume
+        exprs = []
         if "SharesOutstanding" in df.columns:
-            exprs.append((pl.col("Volume") / pl.col("SharesOutstanding")).alias("px_turnover_rate"))
+            exprs.append((pl.col("Volume") / (pl.col("SharesOutstanding") + 1e-12)).alias("px_turnover_rate"))
         
         exprs.append((pl.col("Close") * pl.col("Volume")).alias("px_dollar_volume"))
         
@@ -112,8 +144,6 @@ class TechnicalIndicators:
     @staticmethod
     def add_rsi(df: pl.DataFrame, periods: List[int] = [2, 14]) -> pl.DataFrame:
         """RSI（相対力指数）"""
-        exprs = []
-        
         for period in periods:
             # Price changes
             delta = pl.col("Close").diff()
@@ -125,16 +155,16 @@ class TechnicalIndicators:
             avg_loss = loss.ewm_mean(span=period, adjust=False)
             
             # RSI
-            rs = avg_gain / (avg_loss + 1e-10)
+            rs = avg_gain / (avg_loss + 1e-12)
             rsi = 100 - (100 / (1 + rs))
             
-            exprs.append(rsi.alias(f"px_rsi_{period}"))
+            df = df.with_columns(rsi.alias(f"px_rsi_{period}"))
         
         # RSI delta
-        if 14 in periods:
-            exprs.append((pl.col("px_rsi_14").diff()).alias("px_rsi_delta"))
+        if 14 in periods and "px_rsi_14" in df.columns:
+            df = df.with_columns((pl.col("px_rsi_14").diff()).alias("px_rsi_delta"))
         
-        return df.with_columns(exprs)
+        return df
     
     @staticmethod
     def add_macd(df: pl.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pl.DataFrame:
@@ -155,23 +185,26 @@ class TechnicalIndicators:
     @staticmethod
     def add_bollinger_bands(df: pl.DataFrame, window: int = 20, num_std: float = 2.0) -> pl.DataFrame:
         """ボリンジャーバンド"""
-        middle = pl.col("Close").rolling_mean(window)
-        std = pl.col("Close").rolling_std(window)
+        middle = pl.col("Close").rolling_mean(window, min_periods=window)
+        std = pl.col("Close").rolling_std(window, min_periods=window)
         
         upper = middle + (std * num_std)
         lower = middle - (std * num_std)
         width = upper - lower
         
         # Position within bands (0=lower, 1=upper)
-        position = (pl.col("Close") - lower) / (width + 1e-10)
+        position = (pl.col("Close") - lower) / (width + 1e-12)
         
-        return df.with_columns([
+        df = df.with_columns([
             upper.alias("px_bb_upper"),
             lower.alias("px_bb_lower"),
             middle.alias("px_bb_middle"),
             width.alias("px_bb_width"),
             position.alias("px_bb_position")
         ])
+        return df.with_columns(
+            pl.col("px_bb_middle").is_not_null().alias(f"is_bb{window}_valid")
+        )
     
     @staticmethod
     def add_atr(df: pl.DataFrame, period: int = 14) -> pl.DataFrame:
@@ -207,11 +240,11 @@ class TechnicalIndicators:
         dm_minus_smooth = dm_minus.ewm_mean(span=period, adjust=False)
         
         # Directional indicators
-        di_plus = (dm_plus_smooth / atr) * 100
-        di_minus = (dm_minus_smooth / atr) * 100
+        di_plus = (dm_plus_smooth / (atr + 1e-12)) * 100
+        di_minus = (dm_minus_smooth / (atr + 1e-12)) * 100
         
         # DX and ADX
-        dx = ((di_plus - di_minus).abs() / (di_plus + di_minus + 1e-10)) * 100
+        dx = ((di_plus - di_minus).abs() / (di_plus + di_minus + 1e-12)) * 100
         adx = dx.ewm_mean(span=period, adjust=False)
         
         return df.with_columns(adx.alias("px_adx"))
@@ -219,18 +252,19 @@ class TechnicalIndicators:
     @staticmethod
     def add_stochastic(df: pl.DataFrame, period: int = 14, smooth: int = 3) -> pl.DataFrame:
         """Stochastic Oscillator"""
-        low_min = pl.col("Low").rolling_min(period)
-        high_max = pl.col("High").rolling_max(period)
+        low_min = pl.col("Low").rolling_min(period, min_periods=period)
+        high_max = pl.col("High").rolling_max(period, min_periods=period)
         
         # %K
-        k = ((pl.col("Close") - low_min) / (high_max - low_min + 1e-10)) * 100
+        k = ((pl.col("Close") - low_min) / (high_max - low_min + 1e-12)) * 100
         
         # %D (smoothed %K)
-        d = k.rolling_mean(smooth)
+        d = k.rolling_mean(smooth, min_periods=smooth)
         
         return df.with_columns([
             k.alias("px_stoch_k"),
-            d.alias("px_stoch_d")
+            d.alias("px_stoch_d"),
+            k.is_not_null().alias(f"is_stoch{period}_valid")
         ])
     
     @staticmethod
@@ -253,13 +287,13 @@ class TechnicalIndicators:
     @staticmethod
     def add_all_indicators(
         df: pl.DataFrame,
-        return_periods: List[int] = [1, 5, 10, 20],
+        return_periods: List[int] = [1, 5, 10, 20, 60, 120],
         ma_windows: List[int] = [5, 20, 60, 200],
-        vol_windows: List[int] = [20, 60],
+        vol_windows: List[int] = [5, 10, 20, 60],
         realized_vol_method: str = "parkinson",
         target_horizons: List[int] = [1, 5, 10, 20]
     ) -> pl.DataFrame:
-        """全テクニカル指標を追加（約80列）"""
+        """全テクニカル指標を追加（仕様強化版）"""
         
         # Sequential processing to ensure dependencies
         df = TechnicalIndicators.add_returns(df, return_periods)
@@ -267,6 +301,7 @@ class TechnicalIndicators:
         df = TechnicalIndicators.add_realized_volatility(df, window=20, method=realized_vol_method)
         df = TechnicalIndicators.add_moving_averages(df, ma_windows)
         df = TechnicalIndicators.add_price_ratios(df, [w for w in ma_windows if w <= 60])
+        df = TechnicalIndicators.add_trend_indicators(df, [10, 20, 60])
         df = TechnicalIndicators.add_volume_indicators(df, [5, 20])
         df = TechnicalIndicators.add_rsi(df, [2, 14])
         df = TechnicalIndicators.add_macd(df)
@@ -310,18 +345,21 @@ class CrossSectionalNormalizer:
                     # Robust Z-score using median and MAD
                     median = pl.col(col).median().over("meta_date")
                     mad = (pl.col(col) - median).abs().median().over("meta_date")
-                    z = (pl.col(col) - median) / (mad * 1.4826 + 1e-10)  # 1.4826 converts MAD to std
+                    z = (pl.col(col) - median) / (mad * 1.4826 + 1e-12)  # 1.4826 converts MAD to std
                 else:
                     # Standard Z-score
                     mean = pl.col(col).mean().over("meta_date")
                     std = pl.col(col).std().over("meta_date")
-                    z = (pl.col(col) - mean) / (std + 1e-10)
+                    z = (pl.col(col) - mean) / (std + 1e-12)
                 
                 # Winsorize if specified
                 if winsorize_pct:
                     lower = z.quantile(winsorize_pct).over("meta_date")
                     upper = z.quantile(1 - winsorize_pct).over("meta_date")
                     z = z.clip(lower, upper)
+                
+                # Apply final clip to [-10, 10] as per specification
+                z = z.clip(-10, 10)
                 
                 normalized_exprs.append(z.alias(f"{col}_z"))
                 
@@ -336,7 +374,7 @@ class CrossSectionalNormalizer:
                 # Min-Max scaling
                 min_val = pl.col(col).min().over("meta_date")
                 max_val = pl.col(col).max().over("meta_date")
-                normalized = (pl.col(col) - min_val) / (max_val - min_val + 1e-10)
+                normalized = (pl.col(col) - min_val) / (max_val - min_val + 1e-12)
                 normalized_exprs.append(normalized.alias(f"{col}_minmax"))
         
         return df.with_columns(normalized_exprs)
