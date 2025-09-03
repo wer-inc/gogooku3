@@ -95,6 +95,7 @@ _archive/**
 backup/
 temp/
 tmp/
+backup_*.tar.gz
 
 # Inventory and analysis files
 repo_inventory.csv
