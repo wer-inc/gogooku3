@@ -15,6 +15,7 @@ import polars as pl
 from typing import Iterable, Optional, Callable
 import logging
 from datetime import datetime, timedelta
+from utils.dtypes import ensure_date, ensure_code
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,8 @@ def expand_flow_daily(
             # 仕様名のエイリアス
             pl.col("days_since_flow").alias("flow_days_since")
         ]).drop(["effective_start", "effective_end"])
+    # Normalize Date dtype
+    daily = ensure_date(daily, "Date")
     
     logger.info(f"P0-2 ✅: Created {len(daily)} daily flow records (optimized)")
     return daily
@@ -291,11 +294,11 @@ def attach_flow_to_quotes(
     """
     logger.info(f"Attaching flow features to {len(quotes_sec)} quote records")
     
-    # 日付の型を統一
-    if quotes_sec["Date"].dtype != flow_daily["Date"].dtype:
-        flow_daily = flow_daily.with_columns(
-            pl.col("Date").cast(quotes_sec["Date"].dtype)
-        )
+    # Normalize dtypes (Date/Code)
+    quotes_sec = ensure_date(quotes_sec, "Date")
+    flow_daily = ensure_date(flow_daily, "Date")
+    if "Code" in quotes_sec.columns:
+        quotes_sec = ensure_code(quotes_sec, "Code")
     
     # Section正規化
     quotes_sec = quotes_sec.with_columns([

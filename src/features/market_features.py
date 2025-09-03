@@ -16,6 +16,7 @@ import numpy as np
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
+from utils.dtypes import ensure_date, ensure_code
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,8 @@ class MarketFeaturesGenerator:
             return pl.DataFrame()
             
         df = topix_df.sort("Date")
+        # Normalize Date dtype
+        df = ensure_date(df, "Date")
         
         # ========== リターン・トレンド ==========
         df = df.with_columns([
@@ -190,16 +193,10 @@ class CrossMarketFeaturesGenerator:
         Returns:
             市場特徴量とクロス特徴量を含むDataFrame
         """
-        # Date列の型を統一（両方をDatetime[ms]に変換）
-        if "Date" in stock_df.columns:
-            stock_df = stock_df.with_columns(
-                pl.col("Date").cast(pl.Datetime("ms"))
-            )
-        
-        if "Date" in market_df.columns:
-            market_df = market_df.with_columns(
-                pl.col("Date").cast(pl.Datetime("ms"))
-            )
+        # Normalize Date and Code dtypes (pl.Date, zero-padded Code)
+        stock_df = ensure_date(stock_df, "Date")
+        stock_df = ensure_code(stock_df, "Code")
+        market_df = ensure_date(market_df, "Date")
         
         # 市場特徴量を結合
         df = stock_df.join(market_df, on="Date", how="left")
@@ -251,6 +248,9 @@ class CrossMarketFeaturesGenerator:
                 (pl.col("cov_xy20") / (pl.col("var_y20") + 1e-12)).alias("beta_20d_raw")
             ]).with_columns([
                 pl.coalesce([pl.col("beta_60d_raw"), pl.col("beta_20d_raw")]).alias("beta_rolling")
+            ]).with_columns([
+                # 仕様名に合わせた列（互換のためbeta_rollingも残す）
+                pl.col("beta_rolling").alias("beta_60d")
             ]).drop(["x_mean20","y_mean20","xy_mean20","x2_mean20","y2_mean20","cov_xy20","var_y20"])
             
             # 中間変数を削除
@@ -259,20 +259,23 @@ class CrossMarketFeaturesGenerator:
             # ========== 残差・相対強さ・整合性 ==========
             df = df.with_columns([
                 # α (残差リターン)
-                (pl.col("returns_1d") - pl.col("beta_rolling") * pl.col("mkt_ret_1d")).alias("alpha_1d"),
+                (pl.col("returns_1d") - pl.col("beta_60d") * pl.col("mkt_ret_1d")).alias("alpha_1d"),
             ])
             
             # 5日リターンが存在する場合
             if "returns_5d" in df.columns and "mkt_ret_5d" in df.columns:
                 df = df.with_columns([
-                    (pl.col("returns_5d") - pl.col("beta_rolling") * pl.col("mkt_ret_5d")).alias("alpha_5d"),
+                    (pl.col("returns_5d") - pl.col("beta_60d") * pl.col("mkt_ret_5d")).alias("alpha_5d"),
                     (pl.col("returns_5d") - pl.col("mkt_ret_5d")).alias("rel_strength_5d"),
                 ])
             
             # トレンド整合性（ema_gap_5_20が銘柄側の特徴）
             if "ma_gap_5_20" in df.columns and "mkt_gap_5_20" in df.columns:
                 df = df.with_columns([
-                    (pl.col("ma_gap_5_20") * pl.col("mkt_gap_5_20")).alias("trend_align_mkt"),
+                    # 仕様準拠: sign 同士の一致で整合性フラグを作る
+                    (pl.col("ma_gap_5_20").sign() == pl.col("mkt_gap_5_20").sign())
+                    .cast(pl.Int8)
+                    .alias("trend_align_mkt"),
                     (pl.col("alpha_1d") * pl.col("mkt_gap_5_20").sign()).alias("alpha_vs_regime"),
                 ])
             
@@ -280,12 +283,12 @@ class CrossMarketFeaturesGenerator:
             if "volatility_20d" in df.columns and "mkt_vol_20d" in df.columns:
                 df = df.with_columns([
                     (pl.col("volatility_20d") / 
-                     (pl.col("beta_rolling").abs() * pl.col("mkt_vol_20d") + 1e-6)).alias("idio_vol_ratio"),
+                     (pl.col("beta_60d").abs() * pl.col("mkt_vol_20d") + 1e-6)).alias("idio_vol_ratio"),
                 ])
             
             # β安定性（過去60日のβの標準偏差）
             df = df.with_columns([
-                pl.col("beta_rolling").rolling_std(60).over("Code").alias("beta_stability_60d")
+                pl.col("beta_60d").rolling_std(60).over("Code").alias("beta_stability_60d")
             ])
             
             logger.info("✅ Generated cross features (beta, alpha, relative strength)")

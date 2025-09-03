@@ -29,6 +29,9 @@ help: ## Show this help message
 	@echo "  END_DATE      End date for data processing (default: $(END_DATE))"
 	@echo "  CONFIG        Configuration file path (default: $(CONFIG))"
 	@echo "  HORIZONS      Prediction horizons (default: $(HORIZONS))"
+	@echo "  JQ=1         Use JQuants in wrappers (optional)"
+	@echo "  TRADES_SPEC  Path to trades_spec parquet (optional)"
+	@echo "  STATEMENTS   Path to statements parquet (optional)"
 
 setup: ## Install dependencies and setup environment
 	@echo "$(GREEN)Setting up environment...$(NC)"
@@ -42,15 +45,9 @@ data: ## Run Dagster pipeline to generate data assets
 	$(DAGSTER) job execute -j generate_ml_data \
 		--config '{"ops": {"daily_quotes": {"config": {"start_date": "$(START_DATE)", "end_date": "$(END_DATE)"}}}}'
 
-dataset: ## Build ML dataset using CLI
-	@echo "$(GREEN)Building ML dataset...$(NC)"
-	$(PYTHON) pipelines/make_dataset_cli.py \
-		--start-date $(START_DATE) \
-		--end-date $(END_DATE) \
-		--feature-groups all \
-		--normalize \
-		--validate \
-		--verbose
+dataset: ## Build ML dataset using script
+    @echo "$(GREEN)Building ML dataset (enhanced builder)...$(NC)"
+    $(PYTHON) scripts/data/ml_dataset_builder.py
 
 train: ## Train model with specified configuration
 	@echo "$(GREEN)Training model...$(NC)"
@@ -69,31 +66,24 @@ eval: ## Evaluate trained model
 		--test-start $(START_DATE) \
 		--test-end $(END_DATE)
 
-smoke: ## Run smoke test (10 stocks, 30 days)
-	@echo "$(YELLOW)Running smoke test...$(NC)"
-	@echo "Testing with 10 stocks over 30 days"
-	$(PYTHON) pipelines/make_dataset_cli.py \
-		--start-date 2024-01-01 \
-		--end-date 2024-01-31 \
-		--codes 1301 1332 1333 1605 1721 1801 1802 1803 1808 1812 \
-		--feature-groups price market \
-		--output-dir output/smoke_test \
-		--verbose
-	@echo "$(GREEN)Smoke test complete!$(NC)"
+smoke: ## Run smoke test
+    @echo "$(YELLOW)Running smoke test...$(NC)"
+    $(PYTHON) scripts/smoke_test.py
+    @echo "$(GREEN)Smoke test complete!$(NC)"
 
 test: ## Run unit tests
 	@echo "$(GREEN)Running tests...$(NC)"
 	$(PYTHON) -m pytest tests/ -v --cov=src
 
 lint: ## Run code linting
-	@echo "$(GREEN)Running linters...$(NC)"
-	ruff check src/ dagster_repo/ pipelines/
-	mypy src/ --ignore-missing-imports
+    @echo "$(GREEN)Running linters...$(NC)"
+    ruff check src/ scripts/orchestration/
+    mypy src/ --ignore-missing-imports
 
 format: ## Format code
-	@echo "$(GREEN)Formatting code...$(NC)"
-	ruff format src/ dagster_repo/ pipelines/
-	isort src/ dagster_repo/ pipelines/
+    @echo "$(GREEN)Formatting code...$(NC)"
+    ruff format src/ scripts/orchestration/
+    isort src/ scripts/orchestration/
 
 clean: ## Clean temporary files and caches
 	@echo "$(YELLOW)Cleaning temporary files...$(NC)"
@@ -117,19 +107,34 @@ docker-down: ## Stop Docker services
 
 dagster-dev: ## Start Dagster development server
 	@echo "$(GREEN)Starting Dagster UI...$(NC)"
-	$(DAGSTER) dev -f dagster_repo/repository.py
+	$(DAGSTER) dev -f scripts/orchestration/repository.py
+
+dataset-with-topix: ## Run base pipeline then add TOPIX features
+	@echo "$(GREEN)Running base pipeline + TOPIX enrichment...$(NC)"
+	$(PYTHON) scripts/pipelines/run_pipeline_with_topix.py \
+		$(if $(JQ),--jquants,) \
+		$(if $(START_DATE),--start-date $(START_DATE),) \
+		$(if $(END_DATE),--end-date $(END_DATE),)
+	@echo "$(GREEN)Done. See: output/ml_dataset_latest_with_topix.parquet$(NC)"
+
+dataset-with-enrichment: ## Base + TOPIX + trade spec + statements
+	@echo "$(GREEN)Running base pipeline + TOPIX + flow + statements...$(NC)"
+	$(PYTHON) scripts/pipelines/run_pipeline_with_enrichment.py \
+		$(if $(JQ),--jquants,) \
+		$(if $(START_DATE),--start-date $(START_DATE),) \
+		$(if $(END_DATE),--end-date $(END_DATE),) \
+		$(if $(TRADES_SPEC),--trades-spec $(TRADES_SPEC),) \
+		$(if $(STATEMENTS),--statements $(STATEMENTS),)
+	@echo "$(GREEN)Done. See: output/ml_dataset_latest_enriched.parquet$(NC)"
 
 notebook: ## Start Jupyter notebook for exploration
 	@echo "$(GREEN)Starting Jupyter notebook...$(NC)"
 	jupyter notebook --notebook-dir=notebooks/
 
 profile: ## Profile dataset creation
-	@echo "$(GREEN)Profiling dataset creation...$(NC)"
-	$(PYTHON) -m cProfile -o output/profile.stats pipelines/make_dataset_cli.py \
-		--start-date 2024-01-01 \
-		--end-date 2024-01-31 \
-		--lazy
-	$(PYTHON) -m pstats output/profile.stats
+    @echo "$(GREEN)Profiling dataset creation...$(NC)"
+    $(PYTHON) -m cProfile -o output/profile.stats scripts/data/ml_dataset_builder.py
+    $(PYTHON) -m pstats output/profile.stats
 
 benchmark: ## Run performance benchmark
 	@echo "$(GREEN)Running performance benchmark...$(NC)"

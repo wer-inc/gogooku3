@@ -75,7 +75,7 @@ class SafeTrainingPipeline:
     def __init__(
         self,
         data_dir: str = "data/raw/large_scale",
-        output_dir: str = "outputs",
+        output_dir: str = "output",
         experiment_name: str = "safe_training_pipeline",
         memory_limit_gb: float = 8.0,
         n_splits: int = 3,  # 実データなので軽量化
@@ -686,7 +686,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="Gogooku3 Safe Training Pipeline")
     parser.add_argument("--data-dir", default="data/raw/large_scale", help="Data directory")
-    parser.add_argument("--output-dir", default="outputs", help="Output directory")
+    parser.add_argument("--output-dir", default="output", help="Output directory")
     parser.add_argument("--experiment-name", default=f"safe_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}", help="Experiment name")
     parser.add_argument("--memory-limit", type=float, default=8.0, help="Memory limit in GB")
     parser.add_argument("--n-splits", type=int, default=3, help="Number of Walk-Forward splits")

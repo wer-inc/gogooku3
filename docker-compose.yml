@@ -42,8 +42,8 @@ services:
       CLICKHOUSE_DB: gogooku3
     volumes:
       - clickhouse_data:/var/lib/clickhouse
-      - ./config/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
-      - ./config/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro
+      - ./infra/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
+      - ./infra/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro
     ulimits:
       nofile:
         soft: 262144
@@ -102,7 +102,7 @@ services:
       MLFLOW_BACKEND_STORE_URI: postgresql://mlflow:mlflow123@postgres:5432/mlflow
       MLFLOW_ARTIFACT_ROOT: s3://mlflow/artifacts
     volumes:
-      - ./config/docker/mlflow_server.sh:/app/start.sh:ro
+      - ./infra/docker/mlflow_server.sh:/app/start.sh:ro
       - mlflow_data:/mlflow
     command: /bin/bash /app/start.sh
     depends_on:
@@ -134,7 +134,7 @@ services:
       POSTGRES_MULTIPLE_DATABASES: mlflow:mlflow:mlflow123,dagster:dagster:dagster123,feast:feast:feast123
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./config/docker/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - ./infra/docker/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh:ro
     logging:
       driver: "json-file"
       options:
@@ -175,7 +175,7 @@ services:
       REDIS_PASSWORD: gogooku123
     volumes:
       - ./scripts:/opt/dagster/app/scripts:ro
-      - ./config/dagster:/opt/dagster/dagster_home:rw
+      - ./infra/dagster:/opt/dagster/dagster_home:rw
       - dagster_storage:/opt/dagster/storage
     command: dagster-webserver -h 0.0.0.0 -p 3001 -w /opt/dagster/app/workspace.yaml
     depends_on:
@@ -219,7 +219,7 @@ services:
       REDIS_PASSWORD: gogooku123
     volumes:
       - ./scripts:/opt/dagster/app/scripts:ro
-      - ./config/dagster:/opt/dagster/dagster_home:rw
+      - ./infra/dagster:/opt/dagster/dagster_home:rw
       - dagster_storage:/opt/dagster/storage
     command: dagster-daemon run
     depends_on:
@@ -289,7 +289,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -323,8 +323,8 @@ services:
       GF_INSTALL_PLUGINS: redis-datasource,clickhouse-datasource
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
     logging:
       driver: "json-file"
       options:

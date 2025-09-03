@@ -429,11 +429,12 @@ class SafeJoiner:
         
         # P0-3: FY×Q ベースの正確な処理
         s = stm.sort(["Code", "DisclosedDate"]).with_columns([
-            # FiscalYear と Quarter の抽出
-            pl.col("FiscalYear").cast(pl.Int32, strict=False).alias("fiscal_year"),
-            
-            # TypeOfCurrentPeriod から四半期を抽出（1Q, 2Q, 3Q, FY → 1, 2, 3, 4）
-            pl.when(pl.col("TypeOfCurrentPeriod").str.contains("1Q"))
+            # FiscalYear と Quarter の抽出（列が無い場合はNULL/0でフォールバック）
+            (pl.col("FiscalYear") if "FiscalYear" in stm.columns else pl.lit(None))
+                .cast(pl.Int32, strict=False)
+                .alias("fiscal_year"),
+            (
+                pl.when(pl.col("TypeOfCurrentPeriod").str.contains("1Q"))
                 .then(1)
                 .when(pl.col("TypeOfCurrentPeriod").str.contains("2Q"))
                 .then(2)
@@ -442,7 +443,9 @@ class SafeJoiner:
                 .when(pl.col("TypeOfCurrentPeriod").str.contains("FY|4Q"))
                 .then(4)
                 .otherwise(0)
-                .alias("quarter"),
+                if "TypeOfCurrentPeriod" in stm.columns
+                else pl.lit(0)
+            ).alias("quarter"),
         ])
         
         # P0-3: 前年同期を (FY-1, Q) で特定

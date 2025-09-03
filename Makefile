@@ -9,6 +9,9 @@ help:
 	@echo "make test         - Run tests"
 	@echo "make run          - Start Dagster UI"
 	@echo "make clean        - Clean up environment"
+	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset"
+	@echo "make fetch-all    START=YYYY-MM-DD END=YYYY-MM-DD - Fetch prices/topix/trades_spec/statements"
+	@echo "make clean-deprecated                 - Remove deprecated shim scripts (use --apply via VAR APPLY=1)"
 
 # Python environment setup
 setup:
@@ -67,3 +70,21 @@ db-init:
 minio-create-bucket:
 	docker exec gogooku3-minio mc alias set local http://localhost:9000 minioadmin minioadmin
 	docker exec gogooku3-minio mc mb local/gogooku3 --ignore-existing
+
+# Unified dataset build (full pipeline)
+.PHONY: dataset-full
+dataset-full:
+	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END}
+
+# Fetch all raw components in one shot
+.PHONY: fetch-all
+fetch-all:
+	python scripts/data/fetch_jquants_history.py --jquants --all --start-date $${START} --end-date $${END}
+
+.PHONY: clean-deprecated
+clean-deprecated:
+	@if [ "$${APPLY}" = "1" ]; then \
+		python scripts/maintenance/cleanup_deprecated.py --apply ; \
+	else \
+		python scripts/maintenance/cleanup_deprecated.py ; \
+	fi

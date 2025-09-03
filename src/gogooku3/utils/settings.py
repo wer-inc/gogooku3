@@ -8,6 +8,45 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _search_up(start: Path, markers: tuple[str, ...] = ("pyproject.toml", ".git")) -> Optional[Path]:
+    """Search upwards from `start` for a directory containing any marker file/dir."""
+    cur = start.resolve()
+    if cur.is_file():
+        cur = cur.parent
+    while True:
+        for m in markers:
+            if (cur / m).exists():
+                return cur
+        if cur.parent == cur:
+            return None
+        cur = cur.parent
+
+
+def _detect_project_root() -> Path:
+    env = os.getenv("GOGOOKU3_PROJECT_ROOT")
+    if env:
+        return Path(env).resolve()
+    # Prefer CWD (interactive/scripts), fallback to this file's location
+    for start in (Path.cwd(), Path(__file__).resolve()):
+        found = _search_up(start)
+        if found:
+            return found
+    return Path.cwd().resolve()
+
+
+def _default_data_dir() -> Path:
+    return Path(os.getenv("GOGOOKU3_DATA_DIR", str(_detect_project_root() / "data")))
+
+
+def _default_output_dir() -> Path:
+    return Path(os.getenv("GOGOOKU3_OUTPUT_DIR", str(_detect_project_root() / "output")))
+
+
+def _default_config_dir() -> Path:
+    # App configs live under `configs/` (not infra)
+    return Path(os.getenv("GOGOOKU3_CONFIG_DIR", str(_detect_project_root() / "configs")))
+
+
 class Gogooku3Settings(BaseSettings):
     """Main settings for gogooku3 system."""
     
@@ -59,11 +98,11 @@ class Gogooku3Settings(BaseSettings):
     # Environment Configuration
     environment: str = Field(default="development", description="Environment (development/production)")
     
-    # Path Configuration
-    project_root: Path = Field(default_factory=lambda: Path("/home/ubuntu/gogooku3-standalone"))
-    data_dir: Path = Field(default_factory=lambda: Path("/home/ubuntu/gogooku3-standalone/data"))
-    output_dir: Path = Field(default_factory=lambda: Path("/home/ubuntu/gogooku3-standalone/output"))
-    config_dir: Path = Field(default_factory=lambda: Path("/home/ubuntu/gogooku3-standalone/configs"))
+    # Path Configuration (portable; overridable via env)
+    project_root: Path = Field(default_factory=_detect_project_root)
+    data_dir: Path = Field(default_factory=_default_data_dir)
+    output_dir: Path = Field(default_factory=_default_output_dir)
+    config_dir: Path = Field(default_factory=_default_config_dir)
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

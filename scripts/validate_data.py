@@ -76,7 +76,7 @@ def validate_data(config: DictConfig):
     logger.info("\\n=== Creating visualization plots ===")
 
     # 出力ディレクトリ
-    output_dir = Path("outputs/data_validation")
+    output_dir = Path("output/data_validation")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. リターン分布
