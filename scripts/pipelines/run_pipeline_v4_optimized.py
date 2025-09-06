@@ -429,6 +429,89 @@ class JQuantsOptimizedFetcherV4:
         self.tracker.end_component(metric, api_calls=len(business_days), records=len(result_df))
         return result_df
 
+    async def fetch_topix_data(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """Fetch TOPIX index data between [from_date, to_date]."""
+        url = f"{self.base_url}/indices/topix"
+        headers = {"Authorization": f"Bearer {self.id_token}"}
+
+        from_api = from_date.replace("-", "")
+        to_api = to_date.replace("-", "")
+
+        all_data = []
+        pagination_key = None
+
+        while True:
+            params = {"from": from_api, "to": to_api}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+
+            try:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status != 200:
+                        logger.warning(f"Failed to fetch TOPIX: {response.status}")
+                        break
+
+                    data = await response.json()
+                    topix_data = data.get("topix", [])
+
+                    if topix_data:
+                        all_data.extend(topix_data)
+
+                    pagination_key = data.get("pagination_key")
+                    if not pagination_key:
+                        break
+
+            except Exception as e:
+                logger.error(f"Error fetching TOPIX: {e}")
+                break
+
+        if all_data:
+            df = pl.DataFrame(all_data)
+            # Normalize dtypes
+            if "Date" in df.columns:
+                df = df.with_columns(
+                    pl.col("Date").str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
+                )
+            for c in ("Open", "High", "Low", "Close", "Volume"):
+                if c in df.columns:
+                    df = df.with_columns(pl.col(c).cast(pl.Float64, strict=False))
+            return df.sort("Date")
+
+        return pl.DataFrame()
+
+    async def fetch_trades_spec(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """Fetch trades_spec (投資部門別) between [from, to]."""
+        url = f"{self.base_url}/markets/trades_spec"
+        headers = {"Authorization": f"Bearer {self.id_token}"}
+        from_api = from_date.replace("-", "")
+        to_api = to_date.replace("-", "")
+        all_data = []
+        pagination_key = None
+        while True:
+            params = {"from": from_api, "to": to_api}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+            try:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status != 200:
+                        logger.warning(f"Failed to fetch trades_spec: {response.status}")
+                        break
+                    data = await response.json()
+                    items = data.get("trades_spec", [])
+                    if items:
+                        all_data.extend(items)
+                    pagination_key = data.get("pagination_key")
+                    if not pagination_key:
+                        break
+            except Exception as e:
+                logger.error(f"Error fetching trades_spec: {e}")
+                break
+        return pl.DataFrame(all_data) if all_data else pl.DataFrame()
+
 
 class JQuantsPipelineV4Optimized:
     """最適化されたパイプライン V4"""
@@ -522,6 +605,22 @@ class JQuantsPipelineV4Optimized:
             
             logger.info(f"✅ Statements: {len(statements_df)} records")
 
+            # Step 5: TOPIX（市場インデックス）
+            logger.info("Step 5: Fetching TOPIX index data...")
+            topix_df = await self.fetcher.fetch_topix_data(session, start_date, end_date)
+            if not topix_df.is_empty():
+                logger.info(f"✅ TOPIX: {len(topix_df)} records from {start_date} to {end_date}")
+            else:
+                logger.warning("No TOPIX data fetched via API; will rely on offline fallback if available")
+
+            # Step 6: Fetch trades_spec (flow)
+            logger.info("Step 6: Fetching trades_spec (flow data)...")
+            trades_spec_df = await self.fetcher.fetch_trades_spec(session, start_date, end_date)
+            if not trades_spec_df.is_empty():
+                logger.info(f"✅ trades_spec: {len(trades_spec_df)} records")
+            else:
+                logger.warning("No trades_spec fetched via API; will rely on offline fallback if available")
+
             # Adjustment列の処理
             if not price_df.is_empty():
                 columns_to_rename = {}
@@ -569,13 +668,17 @@ class JQuantsPipelineV4Optimized:
             
             self.tracker.end_component(metric, records=len(price_df))
             
-            return price_df, statements_df, events, snapshots
+            return price_df, statements_df, events, snapshots, topix_df, trades_spec_df
 
     def process_pipeline(
         self, 
         price_df: pl.DataFrame,
         statements_df: Optional[pl.DataFrame] = None,
-        events: Optional[List[Dict]] = None
+        events: Optional[List[Dict]] = None,
+        topix_df: Optional[pl.DataFrame] = None,
+        snapshots: Optional[Dict[str, pl.DataFrame]] = None,
+        trades_spec_df: Optional[pl.DataFrame] = None,
+        beta_lag: int = 1,
     ) -> tuple:
         """Process the pipeline with technical indicators."""
         metric = self.tracker.start_component("process_pipeline")
@@ -590,12 +693,119 @@ class JQuantsPipelineV4Optimized:
         # Add pandas-ta features
         df = self.builder.add_pandas_ta_features(df)
 
+        # Section / section_norm を付与（listed snapshotsがある場合）
+        try:
+            if snapshots:
+                # snapshots(dict[str,pl.DataFrame]) → listed_info_df
+                listed_frames = []
+                for d, snap in snapshots.items():
+                    if not snap.is_empty():
+                        if "Date" not in snap.columns:
+                            snap = snap.with_columns(pl.lit(d).cast(pl.Utf8).str.strptime(pl.Date, format="%Y-%m-%d", strict=False).alias("Date"))
+                        listed_frames.append(snap.select([c for c in snap.columns if c in ("Code","MarketCode","Date")] + (["Code","MarketCode","Date"])) )
+                if listed_frames:
+                    from features.section_mapper import SectionMapper
+                    listed_info_df = pl.concat(listed_frames, how="diagonal_relaxed")
+                    mapper = SectionMapper()
+                    mapping = mapper.create_section_mapping(listed_info_df)
+                    df = mapper.attach_section_to_daily(df, mapping)
+                    # section_norm を追加
+                    def norm_expr():
+                        return (
+                            pl.when(pl.col("Section").is_in(["TSE1st","Prime","Prime Market","TSE Prime","東証プライム"]))
+                              .then(pl.lit("TSEPrime"))
+                              .when(pl.col("Section").is_in(["TSE2nd","Standard","Standard Market","TSE Standard","JASDAQ","JASDAQ Standard","Other","東証スタンダード"]))
+                              .then(pl.lit("TSEStandard"))
+                              .when(pl.col("Section").is_in(["Mothers","Growth","Growth Market","TSE Growth","JASDAQ Growth","東証グロース"]))
+                              .then(pl.lit("TSEGrowth"))
+                              .otherwise(pl.col("Section"))
+                        )
+                    df = df.with_columns(norm_expr().alias("section_norm"))
+            else:
+                # フォールバック: 欠損時は AllMarket / AllMarket を付与
+                if "Section" not in df.columns:
+                    df = df.with_columns(pl.lit("AllMarket").alias("Section"))
+                if "section_norm" not in df.columns:
+                    df = df.with_columns(pl.lit("AllMarket").alias("section_norm"))
+        except Exception as e:
+            logger.warning(f"  Failed to attach Section: {e}")
+            if "Section" not in df.columns:
+                df = df.with_columns(pl.lit("AllMarket").alias("Section"))
+            if "section_norm" not in df.columns:
+                df = df.with_columns(pl.lit("AllMarket").alias("section_norm"))
+
+        # 財務諸表のローカルフォールバック（symlink or latest file）
+        try:
+            if (statements_df is None) or statements_df.is_empty():
+                stm_path = self.output_dir / "event_raw_statements.parquet"
+                if not stm_path.exists():
+                    cands = sorted(self.output_dir.glob("event_raw_statements_*.parquet"))
+                    if cands:
+                        stm_path = cands[-1]
+                if stm_path.exists():
+                    logger.info(f"  Loading statements fallback from {stm_path}")
+                    statements_df = pl.read_parquet(stm_path)
+        except Exception as e:
+            logger.warning(f"  Failed to load statements fallback: {e}")
+
         # 財務諸表データを結合
         if statements_df is not None and not statements_df.is_empty():
             logger.info(f"  Adding statement features: {len(statements_df)} records")
+            # スキーマの簡易ログ（型不一致デバッグ用）
+            try:
+                key_cols = [
+                    "Code","LocalCode","DisclosedDate","DisclosedTime","FiscalYear",
+                    "NetSales","OperatingProfit","Profit",
+                    "ForecastOperatingProfit","ForecastProfit",
+                    "Equity","TotalAssets"
+                ]
+                schema_map = {c: str(statements_df.schema.get(c)) for c in key_cols if c in statements_df.columns}
+                logger.info(f"  Statements key dtypes: {schema_map}")
+            except Exception as e:
+                logger.warning(f"  Failed to log statements schema: {e}")
             df = self.builder.add_statements_features(df, statements_df)
 
-        # Create metadata
+        # 市場（TOPIX）特徴量の統合（mkt_* + cross）
+        try:
+            df_before = len(df.columns)
+            df = self.builder.add_topix_features(df, topix_df=topix_df, beta_lag=beta_lag)
+            added = len(df.columns) - df_before
+            if added > 0:
+                logger.info(f"  Added {added} market features (TOPIX + cross)")
+        except Exception as e:
+            logger.warning(f"  Skipped TOPIX feature integration due to error: {e}")
+
+        # Flow特徴量の統合（trades_spec）
+        try:
+            if trades_spec_df is None or trades_spec_df.is_empty():
+                # フォールバック: output/ 以下のtrades_spec parquetを探索
+                flow_cands = sorted(self.output_dir.glob("trades_spec_*.parquet"))
+                if flow_cands:
+                    trades_spec_df = pl.read_parquet(flow_cands[-1])
+            if trades_spec_df is not None and not trades_spec_df.is_empty():
+                # listed_info_df（Section割当用）を構築
+                listed_frames = []
+                if snapshots:
+                    for d, snap in snapshots.items():
+                        if not snap.is_empty():
+                            if "Date" not in snap.columns:
+                                snap = snap.with_columns(pl.lit(d).cast(pl.Utf8).str.strptime(pl.Date, format="%Y-%m-%d", strict=False).alias("Date"))
+                            listed_frames.append(snap)
+                listed_info_df = pl.concat(listed_frames, how="diagonal_relaxed") if listed_frames else None
+                df = self.builder.add_flow_features(df, trades_spec_df, listed_info_df)
+                logger.info("  Flow features integrated from trades_spec")
+            else:
+                logger.info("  No trades_spec available; skipping flow features")
+        except Exception as e:
+            logger.warning(f"  Skipped flow integration due to error: {e}")
+
+        # Finalize dataset for spec conformance (column set + names)
+        try:
+            df = self.builder.finalize_for_spec(df)
+        except Exception as e:
+            logger.warning(f"  Spec finalization skipped due to error: {e}")
+
+        # Create metadata (after finalization)
         metadata = self.builder.create_metadata(df)
         
         # Add events to metadata
@@ -640,7 +850,7 @@ class JQuantsPipelineV4Optimized:
         # Step 1: Get data
         if use_jquants:
             logger.info("Fetching data from JQuants API (optimized)...")
-            price_df, statements_df, events, snapshots = await self.fetch_jquants_data_optimized(
+            price_df, statements_df, events, snapshots, topix_df, trades_spec_df = await self.fetch_jquants_data_optimized(
                 start_date, end_date
             )
 
@@ -677,12 +887,40 @@ class JQuantsPipelineV4Optimized:
             price_df = create_sample_data(100, 300)
             statements_df = None
             events = []
+            snapshots = {}
+            # Try to load a local TOPIX parquet for offline market features
+            try:
+                import re as _re
+                best = None
+                best_span = -1
+                for cand in sorted((self.output_dir).glob('topix_history_*.parquet')):
+                    m = _re.search(r"topix_history_(\d{8})_(\d{8})\.parquet$", cand.name)
+                    if not m:
+                        continue
+                    span = int(m.group(2)) - int(m.group(1))
+                    if span > best_span:
+                        best = cand
+                        best_span = span
+                topix_df = pl.read_parquet(best) if best else pl.DataFrame()
+            except Exception:
+                topix_df = pl.DataFrame()
+            # Load local trades_spec if available
+            try:
+                import re as _re
+                flow_best = None
+                for cand in sorted((self.output_dir).glob('trades_spec_*.parquet')):
+                    flow_best = cand
+                trades_spec_df = pl.read_parquet(flow_best) if flow_best else pl.DataFrame()
+            except Exception:
+                trades_spec_df = pl.DataFrame()
 
         logger.info(f"Data loaded: {len(price_df)} rows, {price_df['Code'].n_unique()} stocks")
 
         # Step 2: Process pipeline
         logger.info("\nStep 2: Processing ML features...")
-        df, metadata, file_paths = self.process_pipeline(price_df, statements_df, events)
+        # Parse beta_lag from args if available (fallback to env or default 1)
+        beta_lag = int(os.getenv("BETA_LAG", "1"))
+        df, metadata, file_paths = self.process_pipeline(price_df, statements_df, events, topix_df, snapshots, trades_spec_df, beta_lag)
 
         # Step 3: Performance report
         logger.info("\nStep 3: Generating performance report...")
@@ -745,6 +983,12 @@ async def main():
         default=None,
         help="End date (YYYY-MM-DD, default: today)",
     )
+    parser.add_argument(
+        "--beta-lag",
+        type=int,
+        default=1,
+        help="Lag to use for market returns in beta calc (0=no lag, 1=t-1)"
+    )
 
     args = parser.parse_args()
 
@@ -764,6 +1008,8 @@ async def main():
 
     # Run pipeline
     pipeline = JQuantsPipelineV4Optimized()
+    # Propagate beta_lag via env for simplicity
+    os.environ["BETA_LAG"] = str(args.beta_lag)
     df, metadata = await pipeline.run(
         use_jquants=args.jquants, start_date=args.start_date, end_date=args.end_date
     )

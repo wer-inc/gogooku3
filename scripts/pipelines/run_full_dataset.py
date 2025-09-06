@@ -25,15 +25,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiohttp
 import polars as pl
-
-# Local imports
-import sys
-from pathlib import Path
 
 # Ensure project root is on sys.path so that `scripts` is importable
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,7 +39,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.pipelines.run_pipeline_v4_optimized import JQuantsPipelineV4Optimized
-from scripts.data.ml_dataset_builder import MLDatasetBuilder
 from src.pipeline.full_dataset import enrich_and_save
 
 # Import JQuants fetcher to get trade-spec directly
@@ -54,27 +51,69 @@ logging.basicConfig(
 )
 logger = logging.getLogger("run_full_dataset")
 
+# Defaults
+DEFAULT_LOOKBACK_DAYS = 1826  # ~5 years
+
 
 def _find_latest(glob: str) -> Path | None:
-    cands = sorted((Path('output')).glob(glob))
+    """Return the latest matching file in `output/` by lexicographic order.
+
+    Files are expected to include sortable date tokens in their names.
+    """
+    cands = sorted(Path("output").glob(glob))
     return cands[-1] if cands else None
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for building the full enriched dataset."""
+    parser = argparse.ArgumentParser(
+        description="Build fully enriched 5y dataset in one command"
+    )
+    parser.add_argument(
+        "--jquants", action="store_true", help="Use JQuants API (requires .env)"
+    )
+    parser.add_argument(
+        "--start-date", type=str, default=None, help="YYYY-MM-DD (default: today-5y)"
+    )
+    parser.add_argument(
+        "--end-date", type=str, default=None, help="YYYY-MM-DD (default: today)"
+    )
+    parser.add_argument(
+        "--topix-parquet",
+        type=Path,
+        default=None,
+        help="Optional TOPIX parquet for offline enrichment",
+    )
+    parser.add_argument(
+        "--statements-parquet",
+        type=Path,
+        default=None,
+        help="Optional statements parquet for offline enrichment",
+    )
+    return parser.parse_args()
 
 
 ## Saving is delegated to src/pipeline/full_dataset.save_with_symlinks via enrich_and_save
 
 
 async def main() -> int:
-    parser = argparse.ArgumentParser(description="Build fully enriched 5y dataset in one command")
-    parser.add_argument("--jquants", action="store_true", help="Use JQuants API (requires .env)")
-    parser.add_argument("--start-date", type=str, default=None, help="YYYY-MM-DD (default: today-5y)")
-    parser.add_argument("--end-date", type=str, default=None, help="YYYY-MM-DD (default: today)")
-    parser.add_argument("--topix-parquet", type=Path, default=None, help="Optional TOPIX parquet for offline enrichment")
-    parser.add_argument("--statements-parquet", type=Path, default=None, help="Optional statements parquet for offline enrichment")
-    args = parser.parse_args()
+    """Entry point to orchestrate base pipeline and enrichment steps.
+
+    Follows the documented 3-step flow and persists artifacts under `output/`.
+    """
+    args = _parse_args()
 
     # Determine date range (default last ~5 years)
-    end_dt = datetime.now() if not args.end_date else datetime.strptime(args.end_date, "%Y-%m-%d")
-    start_dt = end_dt - timedelta(days=1826) if not args.start_date else datetime.strptime(args.start_date, "%Y-%m-%d")
+    end_dt = (
+        datetime.now()
+        if not args.end_date
+        else datetime.strptime(args.end_date, "%Y-%m-%d")
+    )
+    start_dt = (
+        end_dt - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        if not args.start_date
+        else datetime.strptime(args.start_date, "%Y-%m-%d")
+    )
     start_date = start_dt.strftime("%Y-%m-%d")
     end_date = end_dt.strftime("%Y-%m-%d")
 
@@ -82,7 +121,6 @@ async def main() -> int:
     trades_spec_path: Path | None = None
     if args.jquants:
         # Fetch trade-spec and save to Parquet
-        import os
         email = os.getenv("JQUANTS_AUTH_EMAIL", "")
         password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
         if not email or not password:

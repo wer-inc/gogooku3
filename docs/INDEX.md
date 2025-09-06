@@ -12,7 +12,7 @@ Gogooku3のドキュメントは全面的に再編成され、以下の新しい
 ### 🗂️ 主要ドキュメント新配置
 
 **ML・評価:**
-- **[📊 ML評価メトリクス](ml/metrics.md)** ← 旧 specifications/TECHNICAL_INDICATORS_COMPARISON.md
+- **[🧠 モデル学習/評価](ml/model-training.md)** ← 旧 specifications/TECHNICAL_INDICATORS_COMPARISON.md を統合
 - **[🛡️ 安全性ガードレール](ml/safety-guardrails.md)** ← 新規作成（データリーク防止）
 - **[🧠 モデル学習](ml/model-training.md)** ← 新規作成（ATFT-GAT-FAN詳細）
 
@@ -37,7 +37,7 @@ Gogooku3のドキュメントは全面的に再編成され、以下の新しい
 
 | 旧パス | 新パス | 内容 |
 |--------|--------|------|
-| specifications/TECHNICAL_INDICATORS_COMPARISON.md | [ml/metrics.md](ml/metrics.md) | 技術指標・評価メトリクス |
+| specifications/TECHNICAL_INDICATORS_COMPARISON.md | [ml/model-training.md](ml/model-training.md) | モデル学習/評価 |
 | specifications/ML_DATASET_COLUMNS.md | [_archive/specifications_original/](\_archive/specifications_original/) | アーカイブ保管 |
 | specifications/MODULAR_ETL_DESIGN.md | [architecture/data-pipeline.md](architecture/data-pipeline.md) | データパイプライン設計 |
 | reports/ | [releases/changelog.md](releases/changelog.md) | 変更履歴・リリース情報 |

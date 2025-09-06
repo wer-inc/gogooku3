@@ -333,7 +333,7 @@ Before deploying any model to production, ensure:
 
 ## 🔗 Related Documentation
 
-- [ML Metrics](metrics.md) - Evaluation methods and feature descriptions
+- [Model Training](model-training.md) - Training and evaluation overview
 - [Model Training](model-training.md) - ATFT-GAT-FAN training pipeline  
 - [Data Pipeline](../architecture/data-pipeline.md) - Technical architecture
 - [Contributing Guide](../development/contributing.md) - Development guidelines

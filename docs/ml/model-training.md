@@ -572,7 +572,7 @@ graph_builder = FinancialGraphBuilder(
 ## 🔗 Related Documentation
 
 - [Safety Guardrails](safety-guardrails.md) - Data leakage prevention and validation
-- [ML Metrics](metrics.md) - Evaluation metrics and feature engineering  
+- [Data Quality](data-quality.md) - Data validation and checks  
 - [Data Pipeline](../architecture/data-pipeline.md) - Technical data processing architecture
 - [Contributing Guide](../development/contributing.md) - Development and testing procedures
 

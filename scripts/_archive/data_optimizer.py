@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 Data Management Best Practices for gogooku3
 データ管理のベストプラクティス実装

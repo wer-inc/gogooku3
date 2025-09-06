@@ -21,28 +21,64 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_section_name(name: str) -> str:
-    """市場再編を跨ぐ名称ゆらぎを正規化。"""
+    """市場再編を跨ぐ名称ゆらぎを正規化。
+    
+    trades_specデータのSection名を統一形式に変換。
+    旧市場名は使用時期に応じて適切に扱う必要がある。
+    """
     if name is None:
         return None
     mapping = {
-        "TSE1st": "TSEPrime",
-        "TSE2nd": "TSEStandard",
-        "Mothers": "TSEGrowth",
-        "JASDAQ": "TSEStandard",
-        "JASDAQ Standard": "TSEStandard",
-        "JASDAQ Growth": "TSEGrowth",
+        # 旧市場名（2022年4月3日まで）
+        "TSE1st": "TSE1st",
+        "TSE 1st": "TSE1st",
+        "東証一部": "TSE1st",
+        "市場一部": "TSE1st",
+        "TSE2nd": "TSE2nd",
+        "TSE 2nd": "TSE2nd",
+        "東証二部": "TSE2nd",
+        "市場二部": "TSE2nd",
+        "Mothers": "TSEMothers",
+        "TSE Mothers": "TSEMothers",
+        "TSEMothers": "TSEMothers",
+        "マザーズ": "TSEMothers",
+        # JASDAQ 統合名（trade-specではJASDAQ統合が使われる）
+        # 結合脱落を避けるため、最小修正として Standard 側へ寄せる
+        "JASDAQ": "JASDAQStandard",
+        "TSEJASDAQ": "JASDAQStandard",
+        "JASDAQ Standard": "JASDAQStandard",
+        "JASDAQStandard": "JASDAQStandard",
+        "JASDAQスタンダード": "JASDAQStandard",
+        "JASDAQ Growth": "JASDAQGrowth",
+        "JASDAQGrowth": "JASDAQGrowth",
+        "JASDAQグロース": "JASDAQGrowth",
+        
+        # 新市場名（2022年4月4日以降）
         "Prime": "TSEPrime",
         "Prime Market": "TSEPrime",
         "TSE Prime": "TSEPrime",
+        "TSEPrime": "TSEPrime",
         "東証プライム": "TSEPrime",
+        "プライム": "TSEPrime",
         "Standard": "TSEStandard",
         "Standard Market": "TSEStandard",
         "TSE Standard": "TSEStandard",
+        "TSEStandard": "TSEStandard",
         "東証スタンダード": "TSEStandard",
+        "スタンダード": "TSEStandard",
         "Growth": "TSEGrowth",
         "Growth Market": "TSEGrowth",
         "TSE Growth": "TSEGrowth",
+        "TSEGrowth": "TSEGrowth",
         "東証グロース": "TSEGrowth",
+        "グロース": "TSEGrowth",
+        
+        # 特殊カテゴリ
+        # 東証および名証は AllMarket に寄せて結合脱落を回避
+        "TokyoNagoya": "AllMarket",
+        "東証および名証": "AllMarket",
+        
+        # 全市場・その他
         "All": "AllMarket",
         "ALL": "AllMarket",
         "All Market": "AllMarket",
@@ -186,6 +222,13 @@ def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
         pl.col("activity_z").alias("flow_activity_z"),
         pl.col("smart_money_idx").alias("flow_smart_idx"),
         pl.col("smart_money_mom4").alias("flow_smart_mom4"),
+        # 追加のflow系エイリアス
+        pl.col("breadth_pos").alias("flow_breadth_pos"),
+        pl.col("foreign_share_activity").alias("flow_foreign_share"),
+        (pl.col("foreign_net_z") > 0).cast(pl.Int8).alias("flow_foreign_net_pos"),
+        (pl.col("activity_z") > 1.0).cast(pl.Int8).alias("flow_activity_high"),
+        (pl.col("activity_z") < -1.0).cast(pl.Int8).alias("flow_activity_low"),
+        (pl.col("smart_money_idx") > 0).cast(pl.Int8).alias("flow_smart_pos"),
     ])
 
     # 必要な列のみ選択（元列＋flow_*エイリアス）
@@ -197,7 +240,8 @@ def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
         # flow_* alias (spec)
         "flow_foreign_net_ratio", "flow_individual_net_ratio", "flow_activity_ratio",
         "flow_foreign_net_z", "flow_individual_net_z", "flow_activity_z",
-        "flow_smart_idx", "flow_smart_mom4",
+        "flow_smart_idx", "flow_smart_mom4", "flow_breadth_pos", "flow_foreign_share",
+        "flow_foreign_net_pos", "flow_activity_high", "flow_activity_low", "flow_smart_pos",
     ]
     
     available_cols = [c for c in keep_cols if c in df.columns]

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 Apply Best Practices to gogooku3
 gogooku3にベストプラクティスを適用する統合スクリプト

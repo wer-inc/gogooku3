@@ -45,9 +45,9 @@ class SafeJoiner:
         """
         logger.info("Preparing base quotes data...")
         
-        # 型変換
+        # 型変換（Codeは必ず文字列で0埋め4桁）
         quotes = quotes_df.with_columns([
-            pl.col("Code").cast(pl.Utf8),
+            pl.col("Code").cast(pl.Utf8).str.zfill(4),
             pl.col("Date").cast(pl.Date),
         ])
         
@@ -96,12 +96,19 @@ class SafeJoiner:
             logger.warning("Statements DataFrame is empty, skipping join")
             return base_df
         
+        # base_dfのCode列も確実に文字列型で0埋め
+        base_df = base_df.with_columns([
+            pl.col("Code").cast(pl.Utf8).str.zfill(4)
+        ])
+        
         # statementsの準備（LocalCode/Code正規化）
         if "LocalCode" in statements_df.columns:
             stm = statements_df.with_columns([
                 pl.col("LocalCode").cast(pl.Utf8).str.zfill(4).alias("Code")
             ])
         elif "Code" in statements_df.columns:
+            # Codeが数値型の場合もあるため、まずUtf8にキャストして0埋め
+            # 型に関わらず常にUtf8にキャストしてから処理
             stm = statements_df.with_columns([
                 pl.col("Code").cast(pl.Utf8).str.zfill(4)
             ])
@@ -109,10 +116,15 @@ class SafeJoiner:
             logger.error("No Code/LocalCode column found in statements")
             return base_df
         
-        # 日付型変換
-        stm = stm.with_columns([
-            pl.col("DisclosedDate").cast(pl.Date).alias("disclosed_date")
-        ])
+        # 日付型変換（文字列から日付型へ）
+        if stm.schema.get("DisclosedDate") == pl.Utf8:
+            stm = stm.with_columns([
+                pl.col("DisclosedDate").str.strptime(pl.Date, format="%Y-%m-%d", strict=False).alias("disclosed_date")
+            ])
+        else:
+            stm = stm.with_columns([
+                pl.col("DisclosedDate").cast(pl.Date).alias("disclosed_date")
+            ])
         
         # 開示時刻の処理とT+1有効日計算
         if "DisclosedTime" in stm.columns and use_time_cutoff:
@@ -380,7 +392,8 @@ class SafeJoiner:
         result = base_df.join(
             topix.select(["Date"] + mkt_cols),
             on="Date",
-            how="left"
+            how="left",
+            coalesce=True
         )
         
         # 銘柄×市場Cross特徴量の計算
@@ -428,11 +441,20 @@ class SafeJoiner:
         by = ["Code"]
         
         # P0-3: FY×Q ベースの正確な処理
-        s = stm.sort(["Code", "DisclosedDate"]).with_columns([
-            # FiscalYear と Quarter の抽出（列が無い場合はNULL/0でフォールバック）
-            (pl.col("FiscalYear") if "FiscalYear" in stm.columns else pl.lit(None))
-                .cast(pl.Int32, strict=False)
-                .alias("fiscal_year"),
+        s = stm.sort(["Code", "DisclosedDate"])
+        
+        # FiscalYear列の処理
+        if "FiscalYear" in stm.columns:
+            s = s.with_columns([
+                pl.col("FiscalYear").cast(pl.Int32, strict=False).alias("fiscal_year")
+            ])
+        else:
+            s = s.with_columns([
+                pl.lit(None).cast(pl.Int32).alias("fiscal_year")
+            ])
+        
+        # Quarter列の処理
+        s = s.with_columns([
             (
                 pl.when(pl.col("TypeOfCurrentPeriod").str.contains("1Q"))
                 .then(1)
@@ -447,13 +469,32 @@ class SafeJoiner:
                 else pl.lit(0)
             ).alias("quarter"),
         ])
+
+        # 数値演算に用いる主要カラムを安全に数値型へキャスト
+        # JQuants APIのレスポンスは環境により文字列になることがあるため、strict=FalseでFloat64へ
+        numeric_cols = [
+            "NetSales",
+            "OperatingProfit",
+            "Profit",
+            "ForecastOperatingProfit",
+            "ForecastProfit",
+            "ForecastEarningsPerShare",
+            "ForecastDividendPerShareAnnual",
+            "Equity",
+            "TotalAssets",
+        ]
+        existing_numeric = [c for c in numeric_cols if c in s.columns]
+        if existing_numeric:
+            s = s.with_columns([
+                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in existing_numeric
+            ])
         
         # P0-3: 前年同期を (FY-1, Q) で特定
         s = s.with_columns([
             (pl.col("fiscal_year") - 1).alias("prev_fy")
         ])
         
-        # 前年同期データを自己結合で取得
+        # 前年同期データを自己結合で取得（この時点でNetSales等は数値型）
         yoy_base = s.select([
             pl.col("Code"),
             pl.col("fiscal_year").alias("base_fy"),
@@ -468,7 +509,8 @@ class SafeJoiner:
             yoy_base,
             left_on=["Code", "prev_fy", "quarter"],
             right_on=["Code", "base_fy", "base_q"],
-            how="left"
+            how="left",
+            coalesce=True
         ).drop(["base_fy", "base_q"])
         
         # 直近値（前回開示）の準備
@@ -514,30 +556,47 @@ class SafeJoiner:
             (pl.col("Profit") / (pl.col("Equity") + 1e-12)).alias("stmt_roe"),
             (pl.col("Profit") / (pl.col("TotalAssets") + 1e-12)).alias("stmt_roa"),
             
-            # 品質フラグ
-            pl.when(pl.col("ChangesInAccountingEstimates").is_not_null())
-            .then(
-                pl.col("ChangesInAccountingEstimates")
-                .cast(pl.Utf8, strict=False)
-                .str.to_lowercase()
-                .is_in(["true", "1", "yes"])
-            )
-            .otherwise(False)
-            .alias("stmt_change_in_est"),
-            
-            # 比較不能フラグ（会計方針変更等）
-            (
+        ])
+        
+        # 品質フラグ（列が存在する場合のみ処理）
+        if "ChangesInAccountingEstimates" in s.columns:
+            s = s.with_columns([
+                pl.when(pl.col("ChangesInAccountingEstimates").is_not_null())
+                .then(
+                    pl.col("ChangesInAccountingEstimates")
+                    .cast(pl.Utf8, strict=False)
+                    .str.to_lowercase()
+                    .is_in(["true", "1", "yes"])
+                )
+                .otherwise(False)
+                .alias("stmt_change_in_est")
+            ])
+        else:
+            s = s.with_columns([
+                pl.lit(False).alias("stmt_change_in_est")
+            ])
+        
+        # 比較不能フラグ（会計方針変更等）
+        nc_flag_expr = pl.lit(False)
+        if "ChangesBasedOnRevisionsOfAccountingStandard" in s.columns:
+            nc_flag_expr = nc_flag_expr | (
                 pl.col("ChangesBasedOnRevisionsOfAccountingStandard")
                 .cast(pl.Utf8, strict=False)
                 .str.to_lowercase()
                 .is_in(["true", "1", "yes"])
-                .fill_null(False) |
+                .fill_null(False)
+            )
+        if "RetrospectiveRestatement" in s.columns:
+            nc_flag_expr = nc_flag_expr | (
                 pl.col("RetrospectiveRestatement")
                 .cast(pl.Utf8, strict=False)
                 .str.to_lowercase()
                 .is_in(["true", "1", "yes"])
                 .fill_null(False)
-            ).alias("stmt_nc_flag"),
+            )
+        
+        s = s.with_columns([
+            nc_flag_expr.alias("stmt_nc_flag")
         ])
         
         # 中間列を削除

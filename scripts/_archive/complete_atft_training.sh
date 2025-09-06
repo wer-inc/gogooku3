@@ -1,4 +1,5 @@
 #!/bin/bash
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 # Complete ATFT-GAT-FAN Training Script for gogooku3
 # ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する学習スクリプト
 

@@ -301,30 +301,34 @@ class CompleteATFTTrainingPipeline:
                 "🏋️ Executing ATFT-GAT-FAN training with results reproduction..."
             )
 
-            # gogooku3の学習ラッパーを使用
+            # 内製トレーナーを使用（Hydra設定でオーバーライド）
             cmd = [
                 "python",
-                "scripts/train_atft_wrapper.py",
-                "--data_dir",
-                training_data_info["data_dir"],
-                "--batch_size",
-                str(self.atft_settings["batch_size"]),
-                "--learning_rate",
-                str(self.atft_settings["learning_rate"]),
-                "--max_epochs",
-                str(self.atft_settings["max_epochs"]),
-                "--precision",
-                self.atft_settings["precision"],
+                "scripts/train_atft.py",
+                # Hydra overrides
+                f"data.source.data_dir={training_data_info['data_dir']}",
+                "data=jpx_parquet",
+                # 時系列仕様（ATFT形式に合わせる）
+                f"data.time_series.sequence_length={self.atft_settings['sequence_length']}",
+                "data.time_series.prediction_horizons=[1,2,3,5,10]",
+                # 学習設定（本番寄り）
+                f"train.batch.train_batch_size={self.atft_settings['batch_size']}",
+                f"train.optimizer.lr={self.atft_settings['learning_rate']}",
+                f"train.trainer.max_epochs={self.atft_settings['max_epochs']}",
+                f"train.trainer.precision={self.atft_settings['precision']}",
+                # 追加の安定化（必要に応じて環境変数で上書き可能）
+                "hardware.num_workers=8",
+                "train.trainer.check_val_every_n_epoch=1",
+                "train.trainer.enable_progress_bar=true",
             ]
 
             logger.info(f"Running command: {' '.join(cmd)}")
 
-            # 学習実行（gogooku3ディレクトリで実行）
+            # 学習実行（リポジトリ直下で実行）
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd="/home/ubuntu/gogooku2/apps/gogooku3",
             )
 
             if result.returncode != 0:

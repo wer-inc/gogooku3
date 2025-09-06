@@ -15,7 +15,7 @@
 詳細なモデル情報は以下をご参照ください：
 
 - [モデル学習ドキュメント](../ml/model-training.md) - ATFT-GAT-FAN の完全な説明
-- [ML評価メトリクス](../ml/metrics.md) - モデル評価手法
+- [モデル学習/評価](../ml/model-training.md) - 学習・評価の概要
 - [安全性ガードレール](../ml/safety-guardrails.md) - 学習時の安全対策
 
 ---

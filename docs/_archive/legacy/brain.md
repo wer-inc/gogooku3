@@ -227,12 +227,9 @@ This strategic reduction follows ML best practices: start simple, add complexity
 
 ## 🔗 Related Documents
 
-- [BATCH_REDESIGN_PLAN.md](./BATCH_REDESIGN_PLAN.md) - Batch processing redesign plan
-- [gogooku3-spec.md](./gogooku3-spec.md) - System specification
-- [TECHNICAL_INDICATORS_COMPARISON.md](./TECHNICAL_INDICATORS_COMPARISON.md) - Detailed feature analysis
-- [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) - Project completion summary
-- [ML_DATASET_COLUMNS.md](./ML_DATASET_COLUMNS.md) - Dataset column documentation
-- [../README.md](../README.md) - Project README
+- [BATCH_REDESIGN_PLAN.md](../BATCH_REDESIGN_PLAN.md) - Batch processing redesign plan
+- [gogooku3-spec.md](../gogooku3-spec.md) - System specification
+- [ML_DATASET_COLUMNS.md](../specifications_original/ML_DATASET_COLUMNS.md) - Dataset column documentation
 
 ---
 

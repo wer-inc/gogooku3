@@ -97,8 +97,8 @@ python scripts/collect_feedback.py --create-sample --summary
 # 🌐 直接API取得
 python main.py direct-api-dataset
 
-# 🎯 完全ATFT学習
-python main.py complete-atft
+# 🎯 完全ATFT学習（内製ルート）
+python scripts/integrated_ml_training_pipeline.py
 ```
 
 ## 🏗️ アーキテクチャ
@@ -403,7 +403,7 @@ gogooku3-standalone/
 ├── 📋 README.md                        # このファイル
 ├── 🔧 scripts/                         # コア処理
 │   ├── 🛡️ run_safe_training.py               # 7段階安全パイプライン  
-│   ├── 🎯 integrated_ml_training_pipeline.py  # ATFT完全統合
+│   ├── 🎯 integrated_ml_training_pipeline.py  # ATFT完全統合（内製）
 │   ├── 📊 data/
 │   │   ├── ml_dataset_builder.py             # 強化データセット構築
 │   │   └── direct_api_dataset_builder.py     # 直接API取得
@@ -420,6 +420,24 @@ gogooku3-standalone/
 ├── ⚙️ configs/                         # 設定ファイル
 └── 📈 output/                          # 結果・出力
 ```
+
+## 🗃️ Archived Scripts（移管済み）
+以下のスクリプトは保守対象外となり、`scripts/_archive/` へ移動しました。代替手順をご利用ください。
+
+- apply_best_practices.py → 代替: `pre-commit run --all-files`、`ruff/black/mypy/bandit`
+- benchmark_market_features.py → 代替: `python scripts/validate_improvements.py --detailed`
+- complete_atft_training.sh → 代替: `python scripts/integrated_ml_training_pipeline.py`
+- convert_4000_to_atft_format.py → 代替: `python scripts/data/ml_dataset_builder.py`
+- create_full_historical_dataset.py / create_historical_dataset.py → 代替: `python scripts/pipelines/run_pipeline_v4_optimized.py`
+- data_optimizer.py → 代替: `python scripts/run_safe_training.py --memory-limit 6`、`python scripts/validate_data.py`
+- evaluate_atft_model.py → 代替: `python scripts/integrated_ml_training_pipeline.py`（評価内包）
+- generate_full_dataset.py → 代替: `python scripts/pipelines/run_full_dataset.py`
+- production_deployment.py → 代替: `make docker-up` + `gogooku3 train ...`（CLI運用）
+- production_training.py → 代替: `python scripts/run_safe_training.py`
+- run_jquants_pipeline.py → 代替: `python scripts/pipelines/run_pipeline_v4_optimized.py`
+- test_optimized_pipeline.py → 代替: `pytest tests/integration/`、`python scripts/smoke_test.py`
+
+アーカイブ版は互換のため残置されていますが、今後は上記の代替コマンドを使用してください。
 
 ## 🔧 ワークフロー詳細
 
@@ -493,7 +511,7 @@ python scripts/run_safe_training.py
 # MLデータセット構築  
 python scripts/data/ml_dataset_builder.py
 
-# 完全ATFT学習
+# 完全ATFT学習（内製ルート）
 python scripts/integrated_ml_training_pipeline.py
 ```
 

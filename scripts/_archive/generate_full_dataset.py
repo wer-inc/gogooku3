@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 Automated Full Historical Dataset Generation
 Generates dataset without user interaction

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 Optimized Pipeline Test - 最適化されたJ-Quants APIパイプラインの統合テスト
 軸自動選択、差分検知、イベント追跡を含む完全なテスト

@@ -97,6 +97,11 @@ class TopixUpdater:
 
         # Add TOPIX features
         df = self.builder.add_topix_features(df, topix_df)
+        # Finalize to match DATASET.md
+        try:
+            df = self.builder.finalize_for_spec(df)
+        except Exception:
+            pass
 
         logger.info(f"Dataset shape after: {df.shape}")
         return df

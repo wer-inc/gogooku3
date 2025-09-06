@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 ATFT-GAT-FAN Production Training Script
 本番環境での完全トレーニング実行スクリプト

@@ -16,20 +16,19 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 - [**🌟 はじめに**](getting-started.md) - セットアップ・最初の実行
 - [**📚 用語集**](glossary.md) - JQuants・JPX・金融ML用語
 - [**❓ FAQ**](faq.md) - よくある質問と回答
-- [**🔄 移行ガイド**](migration.md) - 旧システムからの移行
+ 
 
 ### 📊 **データサイエンティスト・アナリスト**  
 - [**📈 機械学習モデル**](ml/model-training.md) - ATFT-GAT-FAN・学習戦略
-- [**📊 メトリクス**](ml/metrics.md) - IC・RankIC・Decile・Sharpe
 - [**🛡️ セーフガード**](ml/safety-guardrails.md) - embargo・データリーク防止
 - [**🏗️ データパイプライン**](architecture/data-pipeline.md) - 特徴量・正規化・品質管理
+- [**🧩 ATFT ドキュメント集約**](ml/atft/index.md) - ATFT 関連ノート一覧
+- [**📦 データセット仕様**](ml/dataset.md) - 列仕様・生成フロー
 
 ### ⚙️ **運用・DevOps担当者**
 - [**📋 運用手順**](operations/runbooks.md) - 起動・停止・定期メンテナンス
-- [**🔧 トラブルシューティング**](operations/troubleshooting.md) - 典型的障害と対処法
+ - [**🔧 トラブルシューティング**](operations/troubleshooting.md) - 典型的障害と対処法
 - [**📈 観測性**](operations/observability.md) - Grafana・Prometheus・アラート
-- [**🗄️ ストレージ**](architecture/storage.md) - MinIO・ClickHouse・Redis・PostgreSQL
-- [**💾 バックアップ検証**](operations/backup-validation.md) - 自動バックアップ検証システム
 - [**🔒 セキュリティ運用**](security/operational-security.md) - セキュリティ監視・対応手順
 
 ---
@@ -39,7 +38,7 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 ### 🏗️ **アーキテクチャ**
 - [**overview.md**](architecture/overview.md) - システム全体設計・Mermaid図
 - [**data-pipeline.md**](architecture/data-pipeline.md) - JQuants→特徴量→正規化フロー
-- [**data-lineage.md**](arch/data-lineage.md) - データリネージ・品質ゲート・フロー図
+- [**data-lineage.md**](architecture/data-lineage.md) - データリネージ・品質ゲート・フロー図
 - [**model.md**](architecture/model.md) - ATFT-GAT-FAN・学習アーキテクチャ
 - [**orchestration.md**](architecture/orchestration.md) - Dagster（assets/jobs/schedules）
 - [**feature-store.md**](architecture/feature-store.md) - Feast・オンライン特徴量配信
@@ -49,7 +48,6 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 - [**runbooks.md**](operations/runbooks.md) - 標準運用手順・チェックリスト
 - [**troubleshooting.md**](operations/troubleshooting.md) - 障害対応・復旧手順
 - [**observability.md**](operations/observability.md) - 監視・アラート・ダッシュボード
-- [**backup-validation.md**](operations/backup-validation.md) - 自動バックアップ検証システム
 
 ### 👨‍💻 **開発**
 - [**contributing.md**](development/contributing.md) - 開発フロー・PR規約・コード品質
@@ -59,10 +57,11 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 - [**performance-optimization.md**](development/performance-optimization.md) - PERF_*フラグ・最適化ガイド
 
 ### 🧠 **機械学習**
-- [**metrics.md**](ml/metrics.md) - 金融ML評価指標（IC/RankIC/Decile/Sharpe）
 - [**safety-guardrails.md**](ml/safety-guardrails.md) - データリーク防止・embargo・正規化
 - [**model-training.md**](ml/model-training.md) - ATFT-GAT-FAN学習パイプライン
 - [**data-quality.md**](ml/data-quality.md) - Great Expectations・品質チェック
+- [**ATFT ドキュメント集約**](ml/atft/index.md) - ATFT 関連ノート一覧
+- [**データセット仕様**](ml/dataset.md) - 列仕様・生成フロー
 
 ### 🔒 **セキュリティ**
 - [**credentials.md**](security/credentials.md) - 認証情報・.env・Secret管理
@@ -76,10 +75,6 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 - [**adr/template.md**](governance/adr/template.md) - Architecture Decision Records テンプレート
 - [**adr/ADR-0001-modern-package-migration.md**](governance/adr/ADR-0001-modern-package-migration.md) - パッケージ現代化決定記録
 
-### 🌍 **多言語版**
-- [**🇯🇵 日本語版**](ja/index.md) - メインドキュメントの日本語版
-- [**🇺🇸 English**](index.md) - Main documentation in English
-
 ---
 
 ## 🔗 **重要なリンク**
@@ -92,7 +87,7 @@ gogooku3-standalone/
 │   └── performance_optimizer.py    # パフォーマンス最適化
 ├── configs/               # 設定ファイル（model/data/training）
 ├── docs/                  # このドキュメント群
-│   ├── arch/             # アーキテクチャドキュメント
+│   ├── architecture/             # アーキテクチャドキュメント
 │   └── index.md          # ドキュメントポータル
 ├── tests/                 # テストスイート
 │   ├── test_health_check.py       # ヘルスチェックテスト
@@ -201,6 +196,6 @@ ls -la backups/            # バックアップ確認
 
 ---
 
-**🇺🇸 [English](index.md) | 🇯🇵 [日本語](ja/index.md)**
+ 
 
 *Gogooku3 - 壊れず・強く・速く 金融MLシステム*

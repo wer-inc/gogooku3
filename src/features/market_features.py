@@ -175,8 +175,12 @@ class CrossMarketFeaturesGenerator:
     - beta_stability_60d: ベータ安定性
     """
     
-    def __init__(self):
-        pass
+    def __init__(self, beta_lag: int = 1):
+        """
+        Args:
+            beta_lag: 市場リターンのラグ（0ならラグなし、1ならt-1。デフォルト1）
+        """
+        self.beta_lag = int(beta_lag) if beta_lag is not None else 1
     
     def attach_market_and_cross(
         self, 
@@ -198,15 +202,16 @@ class CrossMarketFeaturesGenerator:
         stock_df = ensure_code(stock_df, "Code")
         market_df = ensure_date(market_df, "Date")
         
-        # 市場特徴量を結合
-        df = stock_df.join(market_df, on="Date", how="left")
+        # 市場特徴量を結合（coalesce=Trueを明示して将来のデフォルト変更に備える）
+        df = stock_df.join(market_df, on="Date", how="left", coalesce=True)
         
         # P1: β計算 with t-1 lag (60日ローリング)
         # 必要な列が存在するかチェック
         if "returns_1d" in df.columns and "mkt_ret_1d" in df.columns:
-            # P1: 市場リターンをt-1にラグ（1日前の市場と今日の個別銘柄）
+            # 市場リターンをラグ（0でラグなし、1でt-1）
+            lag = max(0, self.beta_lag)
             df = df.with_columns([
-                pl.col("mkt_ret_1d").shift(1).over("Code").alias("mkt_ret_lag1")
+                (pl.col("mkt_ret_1d").shift(lag).over("Code") if lag > 0 else pl.col("mkt_ret_1d")).alias("mkt_ret_lag1")
             ])
             
             df = df.with_columns([
@@ -276,19 +281,22 @@ class CrossMarketFeaturesGenerator:
                     (pl.col("ma_gap_5_20").sign() == pl.col("mkt_gap_5_20").sign())
                     .cast(pl.Int8)
                     .alias("trend_align_mkt"),
-                    (pl.col("alpha_1d") * pl.col("mkt_gap_5_20").sign()).alias("alpha_vs_regime"),
+                    # 仕様準拠: alpha_vs_regime = alpha_1d * mkt_bull_200
+                    (pl.col("alpha_1d") * pl.col("mkt_bull_200").cast(pl.Float64)).alias("alpha_vs_regime"),
                 ])
             
             # アイディオシンクラティック・ボラティリティ比
+            # DATASET.md定義: idio_vol_ratio = volatility_20d/(mkt_vol_20d+1e-12)
             if "volatility_20d" in df.columns and "mkt_vol_20d" in df.columns:
                 df = df.with_columns([
                     (pl.col("volatility_20d") / 
-                     (pl.col("beta_60d").abs() * pl.col("mkt_vol_20d") + 1e-6)).alias("idio_vol_ratio"),
+                     (pl.col("mkt_vol_20d") + 1e-12)).alias("idio_vol_ratio"),
                 ])
             
-            # β安定性（過去60日のβの標準偏差）
+            # β安定性（仕様準拠: 1/(std(beta_60d, 20) + 1e-12)）
             df = df.with_columns([
-                pl.col("beta_60d").rolling_std(60).over("Code").alias("beta_stability_60d")
+                (1.0 / (pl.col("beta_60d").rolling_std(20, min_periods=20).over("Code") + 1e-12))
+                .alias("beta_stability_60d")
             ])
             
             logger.info("✅ Generated cross features (beta, alpha, relative strength)")

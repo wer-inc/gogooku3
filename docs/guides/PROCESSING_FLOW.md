@@ -491,10 +491,9 @@ print(results["errors"])
 
 ## 📚 関連ドキュメント
 
-- [ML_DATASET_COLUMNS.md](ML_DATASET_COLUMNS.md) - 生成される特徴量の詳細仕様
-- [MODULAR_ETL_DESIGN.md](MODULAR_ETL_DESIGN.md) - モジュール設計の詳細
-- [BUG_FIXES_REPORT.md](BUG_FIXES_REPORT.md) - 修正済みバグ一覧
-- [brain.md](brain.md) - プロジェクト開発履歴
+- [データセット仕様](../ml/dataset.md) - 生成される特徴量の詳細仕様
+- [MODULAR_ETL_DESIGN.md](../_archive/specifications_original/MODULAR_ETL_DESIGN.md) - モジュール設計の詳細
+- [brain.md](../_archive/legacy/brain.md) - プロジェクト開発履歴
 
 ## 🚀 今後の拡張予定
 

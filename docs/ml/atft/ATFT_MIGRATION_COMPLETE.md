@@ -20,7 +20,7 @@
 - [x] **メイン学習スクリプト**: `scripts/train_atft.py` (192KB)
 - [x] **成功学習スクリプト**: `scripts/train_gat_fixed.sh`
 - [x] **評価スクリプト**: `scripts/evaluate_atft.py`
-- [x] **学習ラッパー**: `scripts/train_atft_wrapper.py`
+- [x] **学習ラッパー**: `scripts/train_atft_wrapper.py`（ARCHIVED → 内製: `scripts/integrated_ml_training_pipeline.py`）
 
 ### 3. 設定システム移行
 - [x] **Hydra設定**: `configs/atft/` - 完全設定
@@ -52,7 +52,7 @@ python scripts/test_atft_training.py
 ### 3. 学習実行
 ```bash
 # 方法1: ラッパー使用（推奨）
-python scripts/train_atft_wrapper.py
+python scripts/integrated_ml_training_pipeline.py
 
 # 方法2: 直接実行
 python scripts/train_atft.py data.source.data_dir=./output train=profiles/robust
@@ -158,7 +158,7 @@ gogooku3/
 │   └── portfolio/                # ポートフォリオ
 ├── scripts/                      # 学習スクリプト
 │   ├── train_atft.py            # メイン学習スクリプト
-│   ├── train_atft_wrapper.py    # 学習ラッパー
+│   ├── _archive/train_atft_wrapper.py    # 学習ラッパー（ARCHIVED）
 │   ├── test_atft_training.py    # 機能テスト
 │   └── models/                   # 既存推論機能
 ├── configs/                      # 設定ファイル
@@ -174,7 +174,7 @@ gogooku3/
 ### 即座に実行可能
 1. **機能テスト**: `python scripts/test_atft_training.py`
 2. **推論実行**: 既存の`atft_inference.py`を使用
-3. **学習実行**: `python scripts/train_atft_wrapper.py`
+3. **学習実行**: `python scripts/integrated_ml_training_pipeline.py`
 
 ### 今後の拡張
 - [ ] バッチ予測の高速化

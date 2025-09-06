@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 Full Historical Dataset Generation Script
 Fetches all available historical data from J-Quants API (2017-present)

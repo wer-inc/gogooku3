@@ -20,11 +20,11 @@ scripts/
 
 ### 1. フルパイプライン実行
 ```bash
-# サンプルデータで実行
-python scripts/pipelines/run_pipeline.py --stocks 10 --days 100
+# サンプルデータで実行（最適化版）
+python scripts/pipelines/run_pipeline_v4_optimized.py --stocks 10 --days 100
 
 # JQuants APIで実行
-python scripts/pipelines/run_pipeline.py --jquants --stocks 100 --days 300
+python scripts/pipelines/run_pipeline_v4_optimized.py --jquants --stocks 100 --days 300
 ```
 
 ### 2. TOPIX特徴量の追加
@@ -60,13 +60,13 @@ python scripts/components/modular_updater.py \
   - TradesSpecComponent: 売買仕様
   - ListedInfoComponent: 企業情報
 
-### pipelines/run_pipeline.py
-- **役割**: メインETLパイプライン
+### pipelines/run_pipeline_v4_optimized.py
+- **役割**: 最適化済みメインETLパイプライン
 - **機能**:
   - JQuants API認証
   - 非同期データ取得（150並行接続）
-  - 特徴量生成
-  - データ保存（Parquet/CSV/JSON）
+  - 特徴量生成（pandas-ta含む）
+  - データ保存（Parquet + メタデータ）
 
 ### pipelines/update_topix.py
 - **役割**: TOPIX専用更新スクリプト
@@ -113,8 +113,16 @@ DEFAULT_DAYS=300
 python -m pytest scripts/tests/
 
 # 動作確認
-python scripts/pipelines/run_pipeline.py --stocks 5 --days 10
+python scripts/pipelines/run_pipeline_v4_optimized.py --stocks 5 --days 10
 ```
+
+## Archived Scripts（移管済み）
+以下は `scripts/_archive/` に移動しました。代替をご利用ください。
+
+- run_pipeline.py → `scripts/pipelines/run_pipeline_v4_optimized.py`
+- create_full_historical_dataset.py / create_historical_dataset.py → `scripts/pipelines/run_pipeline_v4_optimized.py`
+- generate_full_dataset.py → `scripts/pipelines/run_full_dataset.py`
+- その他一覧はリポジトリの `README.md > Archived Scripts` を参照
 
 ## Integration with Dagster/Airflow
 `components/modular_updater.py`のコンポーネントは独立したタスクとして定義可能。

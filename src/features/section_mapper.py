@@ -14,19 +14,30 @@ logger = logging.getLogger(__name__)
 class SectionMapper:
     """
     銘柄コード → Section（市場区分）のマッピング管理
+    
+    注意:
+    - listed_info の MarketCode を trades_spec の Section に変換
+    - JASDAQは listed_info では Standard/Growth に分かれているが、
+      trades_spec では TSEJASDAQ として統合される場合がある
     """
     
     # MarketCode → Section のマッピング定義
     MARKET_TO_SECTION = {
-        "0101": "TSEPrime",      # 東証プライム
-        "0102": "TSEStandard",    # 東証スタンダード
-        "0103": "TSEGrowth",      # 東証グロース
-        "0104": "TSE1st",         # 東証1部（旧）
-        "0105": "TSE2nd",         # 東証2部（旧）
-        "0106": "TSEMothers",     # 東証マザーズ（旧）
-        "0107": "TSEJASDAQ",      # 東証JASDAQ（旧）
-        "0108": "TSEPro",         # TOKYO PRO Market
-        "0109": "TSEOther",       # その他
+        # 旧市場コード（2022年4月3日まで）
+        "0101": "TSE1st",         # 東証一部
+        "0102": "TSE2nd",         # 東証二部
+        "0104": "TSEMothers",     # マザーズ
+        "0105": "TSEPro",         # TOKYO PRO MARKET
+        "0106": "JASDAQStandard", # JASDAQ スタンダード
+        "0107": "JASDAQGrowth",   # JASDAQ グロース
+        "0109": "Other",          # その他
+        
+        # 新市場コード（2022年4月4日以降）
+        "0111": "TSEPrime",       # プライム
+        "0112": "TSEStandard",    # スタンダード
+        "0113": "TSEGrowth",      # グロース
+        
+        # 地方市場
         "0301": "NSEPremier",     # 名証プレミア
         "0302": "NSEMain",        # 名証メイン
         "0303": "NSENext",        # 名証ネクスト
@@ -40,11 +51,14 @@ class SectionMapper:
     }
     
     # 2022年4月の市場再編マッピング
+    # 旧市場コード → 新市場コードへの変換（デフォルト）
     MARKET_TRANSITION = {
-        "0104": "0101",  # 東証1部 → プライム（デフォルト）
-        "0105": "0102",  # 東証2部 → スタンダード
-        "0106": "0103",  # マザーズ → グロース
-        "0107": "0102",  # JASDAQ → スタンダード（デフォルト）
+        "0101": "0111",  # 東証1部 → プライム（デフォルト）
+        "0102": "0112",  # 東証2部 → スタンダード
+        "0104": "0113",  # マザーズ → グロース  
+        "0106": "0112",  # JASDAQ スタンダード → スタンダード
+        "0107": "0113",  # JASDAQ グロース → グロース
+        # 注: 実際の移行先は銘柄により異なる場合があります
     }
     
     def __init__(self, transition_date: str = "2022-04-04"):
@@ -117,7 +131,7 @@ class SectionMapper:
         
         # Section分布を表示
         section_counts = result.group_by("Section").agg(
-            pl.count().alias("count")
+            pl.len().alias("count")
         ).sort("count", descending=True)
         
         for row in section_counts.iter_rows(named=True):
@@ -127,14 +141,19 @@ class SectionMapper:
     
     def _map_market_code_expr(self) -> pl.Expr:
         """MarketCode を Section に変換する Polars 式"""
-        return pl.col("MarketCode").map_dict(
+        return pl.col("MarketCode").replace(
             self.MARKET_TO_SECTION,
-            default=pl.lit("Other")
+            default="Other"
         )
     
     def _apply_market_transition(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         2022年4月の市場再編を適用
+        
+        市場再編のルール:
+        - 2022年4月4日以降: 新市場コード（0111-0113）が使用される
+        - 2022年4月3日まで: 旧市場コード（0101,0102,0104,0106,0107）が使用される
+        - 新市場コードが既に正しくマッピングされているため、特別な変換は不要
         
         Args:
             df: マッピングデータ
@@ -142,27 +161,9 @@ class SectionMapper:
         Returns:
             市場再編を考慮したマッピング
         """
-        # 市場再編日以降のデータ
-        post_transition = df.filter(
-            pl.col("valid_from") >= self.transition_date
-        )
-        
-        # 再編対象のMarketCodeを持つものを変換
-        for old_code, new_code in self.MARKET_TRANSITION.items():
-            post_transition = post_transition.with_columns([
-                pl.when(pl.col("MarketCode") == old_code)
-                .then(pl.lit(self.MARKET_TO_SECTION.get(new_code, "Other")))
-                .otherwise(pl.col("Section"))
-                .alias("Section")
-            ])
-        
-        # 再編前のデータ
-        pre_transition = df.filter(
-            pl.col("valid_from") < self.transition_date
-        )
-        
-        # 結合
-        return pl.concat([pre_transition, post_transition])
+        # 現在のマッピングで既に正しく処理されているため、そのまま返す
+        # （MARKET_TO_SECTIONに旧・新両方のコードが定義済み）
+        return df
     
     def attach_section_to_daily(
         self,
@@ -299,3 +300,23 @@ class SectionMapper:
             }
         
         return stats
+    
+    def get_section_for_trades_spec(self, section: str) -> str:
+        """
+        trades_spec用にSectionを調整
+        
+        JASDAQStandard/JASDAQGrowth を TSEJASDAQ に統合する場合などに使用
+        
+        Args:
+            section: 元のSection名
+        
+        Returns:
+            trades_spec用に調整されたSection名
+        """
+        # JASDAQの統合（必要に応じて）
+        jasdaq_mapping = {
+            "JASDAQStandard": "TSEJASDAQ",
+            "JASDAQGrowth": "TSEJASDAQ",
+        }
+        
+        return jasdaq_mapping.get(section, section)

@@ -250,7 +250,7 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 ## 🔗 関連リソース
 
 ### 内部ドキュメント
-- [📈 ML評価指標](../ml/metrics.md) - IC/RankIC/Decile/Sharpe解説
+- [📈 モデル学習/評価](../ml/model-training.md) - 学習・評価の概要
 - [🛡️ 安全性ガードレール](../ml/safety-guardrails.md) - データリーク防止
 - [🏗️ アーキテクチャ概要](../architecture/overview.md) - システム設計詳細
 - [⚙️ 運用手順](../operations/runbooks.md) - 本番運用ガイド
@@ -266,6 +266,6 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 - 2025-08-28: CLAUDE.md から移行・再構成
 - 2025-08-28: v2.0.0 モダンパッケージ対応
 
-**🇺🇸 [English](contributing.md) | 🇯🇵 [日本語](../../ja/development/contributing.md)**
+ 
 
 *Gogooku3 - 壊れず・強く・速く*

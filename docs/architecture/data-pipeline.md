@@ -303,7 +303,7 @@ normalized_data = normalizer.fit_transform(enhanced_data)
 
 - [🏗️ システム概要](overview.md) - 全体アーキテクチャ
 - [🛡️ ML安全性](../ml/safety-guardrails.md) - データリーク防止詳細
-- [📊 評価メトリクス](../ml/metrics.md) - IC/RankIC/Sharpe計算
+- [📊 モデル学習/評価](../ml/model-training.md) - 学習・評価の概要
 - [⚙️ 運用手順](../operations/runbooks.md) - パイプライン運用ガイド
 
 ---
@@ -312,4 +312,4 @@ normalized_data = normalizer.fit_transform(enhanced_data)
 - 2025-08-28: MODULAR_ETL_DESIGN.md + ML_DATASET_COLUMNS.md 統合
 - 2025-08-28: v2.0.0 パフォーマンス検証結果反映
 
-**🇺🇸 [English](data-pipeline.md) | 🇯🇵 [日本語](../../ja/architecture/data-pipeline.md)**
+ 

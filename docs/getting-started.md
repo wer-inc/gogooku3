@@ -357,7 +357,7 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 1. **[👥 開発貢献ガイド](development/contributing.md)** - 詳細な開発フロー
 2. **[🏗️ アーキテクチャ概要](architecture/overview.md)** - システム設計理解
 3. **[🛡️ 安全性ガードレール](ml/safety-guardrails.md)** - データリーク防止詳細
-4. **[📊 評価メトリクス](ml/metrics.md)** - IC/RankIC/Sharpe解説
+4. **[📊 モデル学習/評価](ml/model-training.md)** - 学習・評価の概要
 
 ### 🔧 カスタマイズ
 - **設定変更**: `configs/` 配下の設定ファイル編集
@@ -377,7 +377,7 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 - **[📋 メインポータル](index.md)** - 全体ナビゲーション
 - **[❓ FAQ](faq.md)** - よくある質問  
 - **[📚 用語集](glossary.md)** - 専門用語解説
-- **[🔄 移行ガイド](migration.md)** - v1→v2移行手順
+- **[🔄 移行ガイド](../MIGRATION.md)** - v1→v2移行手順
 
 ### 📞 問題解決
 1. **ドキュメント検索**: 該当セクション参照
@@ -390,6 +390,6 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 **🎉 セットアップ完了！**  
 **次は [👥 開発貢献ガイド](development/contributing.md) で詳細な開発フローを確認してください。**
 
-**🇺🇸 [English](getting-started.md) | 🇯🇵 [日本語](ja/getting-started.md)**
+ 
 
 *Gogooku3 - 壊れず・強く・速く*

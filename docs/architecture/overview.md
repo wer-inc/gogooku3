@@ -145,8 +145,7 @@ graph TB
 計画中のドキュメント：
 - [**model.md**](model.md) - ATFT-GAT-FAN詳細設計 🚧
 - [**orchestration.md**](orchestration.md) - Dagster ワークフロー 🚧
-- [**feature-store.md**](feature-store.md) - Feast統合設計 🚧
-- [**storage.md**](storage.md) - データストレージ戦略 🚧
+ 
 
 ---
 

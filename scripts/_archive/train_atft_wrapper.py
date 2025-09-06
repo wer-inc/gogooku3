@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04. Use internal trainer:
+#   python scripts/integrated_ml_training_pipeline.py
 """
 Complete ATFT-GAT-FAN Training Wrapper for gogooku3
 ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する学習ラッパー

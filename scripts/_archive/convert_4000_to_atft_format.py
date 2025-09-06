@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 4000銘柄データをATFT形式に変換するスクリプト
 632銘柄データと同じ形式に変換

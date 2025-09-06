@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED: Moved to scripts/_archive on 2025-09-04
 """
 ATFT-GAT-FAN Model Evaluation Script
 632銘柄モデルの性能評価を実施
