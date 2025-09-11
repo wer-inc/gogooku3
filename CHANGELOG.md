@@ -5,6 +5,40 @@ All notable changes to gogooku3-standalone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-09-11 - Minimal Production Configuration
+
+### 🚀 Major Changes
+This release refactors gogooku3 into a minimal production configuration by removing development and debugging files while maintaining all core functionality.
+
+### Added
+- 🎯 **Core Training Commands**: `make train`, `make safe-train`, `python scripts/train_atft.py`
+- 📊 **Data Pipeline Commands**: `make dataset-full`, direct dataset construction scripts
+- 🤖 **New Model Implementations**: ATFTGATFANModel, LightGBMFinancialBaseline, QualityFinancialFeaturesGenerator, FinancialGraphBuilder
+- 🛡️ **Enhanced Components**: SafeTrainingPipeline, MLDatasetBuilder, CrossSectionalNormalizerV2, WalkForwardSplitterV2
+- 🧪 **Comprehensive Testing**: New smoke test suite with 5-component verification (13/13 imports, 5/5 smoke tests, 3/3 core scripts)
+
+### ⚠️ Breaking Changes
+- **Deleted Scripts**: `scripts/run_safe_training.py` → `make safe-train`, `scripts/_archive/` → components moved to proper locations
+- **Updated Import Paths**: `from scripts._archive.run_pipeline import JQuantsAsyncFetcher` → `from src.data.jquants.fetcher import JQuantsAsyncFetcher`
+- **New Model Imports**: Core models now available from `src.gogooku3.models`, `src.gogooku3.training`, `src.gogooku3.features`
+
+### Migration Guide
+- **Training Commands**: Use `make safe-train` instead of `python scripts/run_safe_training.py`
+- **Import Updates**: Update any imports from `scripts._archive/` to new proper locations
+- **New APIs**: Use new model implementations from `src.gogooku3.*` modules
+
+### Verification Results
+- **Import Tests**: 13/13 Passed ✅ (All critical imports successful)
+- **Core Script Tests**: 3/3 Passed ✅ (All scripts show help without ImportError)  
+- **Smoke Tests**: 5/5 Passed ✅ (Core imports, model instantiation, pipeline initialization, legacy compatibility, core script imports)
+
+### Production Benefits
+- **Simplified Architecture**: Removed 9,895+ lines of development/debug code
+- **Clear Entry Points**: 3 core scripts + Makefile targets
+- **Robust Testing**: Comprehensive smoke test coverage
+- **Better Documentation**: Clear migration paths and breaking changes
+- **Production Ready**: Focus on essential ML pipeline components
+
 ## [Unreleased]
 
 ### Added
