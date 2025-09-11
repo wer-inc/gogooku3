@@ -781,11 +781,12 @@ def main():
                     print(f"   - 銘柄数: {unique_count}")
                 except Exception:
                     print(f"   - 銘柄数: N/A")
-                if "metadata" in result and isinstance(result.get("metadata"), dict):
-                    metadata = result.get("metadata", {})
-                    if "features" in metadata and isinstance(metadata.get("features"), dict):
-                        features_dict = metadata.get("features", {})
-                        count_value = features_dict.get('count', 'N/A') if hasattr(features_dict, 'get') else 'N/A'
+                if "metadata" in result and isinstance(getattr(result, 'get', lambda x: None)("metadata"), dict):
+                    metadata = getattr(result, 'get', lambda x, d=None: d)("metadata", {})
+                    if "features" in metadata and isinstance(getattr(metadata, 'get', lambda x: None)("features"), dict):
+                        features_dict = getattr(metadata, 'get', lambda x, d=None: d)("features", {})
+                        get_method = getattr(features_dict, 'get', None)
+                        count_value = get_method('count', 'N/A') if callable(get_method) else 'N/A'
                         print(f"   - 特徴量数: {count_value}")
             else:
                 print(f"📊 データセット構築結果: {result}")
