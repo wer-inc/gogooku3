@@ -15,7 +15,7 @@ scikit-learn>=1.3.0         # 機械学習ユーティリティ
 lightgbm>=4.0.0             # GBMベースライン学習
 
 # ============= TECHNICAL ANALYSIS =============
-pandas-ta>=0.3.14b0         # テクニカル分析指標 (Python 3.10 compatible)
+# pandas-ta>=0.4.67b0         # テクニカル分析指標 (requires Python >=3.12, incompatible with CI Python 3.10)
 PyWavelets>=1.4.0           # PyWavelets（時系列変換）
 
 # ============= DATA SOURCES & APIs =============
