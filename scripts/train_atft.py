@@ -1008,184 +1008,184 @@ def train_epoch(
             else:
                 valid_masks = None
 
-        # （旧train_epoch経路）GAT融合α下限の設定はrun_training側で実施
+            # （旧train_epoch経路）GAT融合α下限の設定はrun_training側で実施
 
-        # Mixed Precision Training (最適化設定)
-        with torch.amp.autocast(
-            "cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False
-        ):
-            # Forward pass (no channels_last: 3D tensor)
-            features = features.contiguous()
-
-            # Optional: add small Gaussian noise to features for warmup
-            if (
-                feature_noise_std > 0.0
-                and epoch <= noise_warmup_epochs
-                and model.training
+            # Mixed Precision Training (最適化設定)
+            with torch.amp.autocast(
+                "cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False
             ):
-                try:
-                    features = features + torch.randn_like(features) * feature_noise_std
-                except Exception:
-                    pass
+                # Forward pass (no channels_last: 3D tensor)
+                features = features.contiguous()
 
-            # 予測前の特徴量統計（デバッグ用）
-            if batch_idx == 0 and epoch <= 2:
-                feat_mean = features.mean().item()
-                feat_std = features.std().item()
-                logger.debug(
-                    f"Input features: mean={feat_mean:.4f}, std={feat_std:.4f}"
-                )
-
-            try:
-                # 時系列Mixup（一定確率）
+                # Optional: add small Gaussian noise to features for warmup
                 if (
-                    use_mixup
-                    and np.random.rand() < mixup_prob
-                    and features.shape[0] >= 2
-                ):
-                    lam = np.random.beta(mixup_alpha, mixup_alpha)
-                    # シャッフルインデックス
-                    idx = torch.randperm(features.size(0), device=features.device)
-                    features = lam * features + (1 - lam) * features[idx]
-                    # ターゲットも各ホライズンで混合
-                    mixed_targets = {}
-                    for k, v in targets.items():
-                        v2 = v[idx]
-                        mixed_targets[k] = lam * v + (1 - lam) * v2
-                    targets = mixed_targets
-                outputs = model(features)
-                # Optional: add small Gaussian noise to outputs for warmup (point heads only)
-                if (
-                    output_noise_std > 0.0
+                    feature_noise_std > 0.0
                     and epoch <= noise_warmup_epochs
                     and model.training
                 ):
                     try:
-                        for k in list(
-                            outputs.keys() if isinstance(outputs, dict) else []
-                        ):
-                            if k.startswith("point_horizon_") and torch.is_tensor(
-                                outputs[k]
-                            ):
-                                outputs[k] = (
-                                    outputs[k]
-                                    + torch.randn_like(outputs[k]) * output_noise_std
-                                )
+                        features = features + torch.randn_like(features) * feature_noise_std
                     except Exception:
                         pass
-            except torch.cuda.OutOfMemoryError:
-                torch.cuda.empty_cache()
-                del features
-                if "targets" in locals():
-                    del targets
-                gc.collect()
-                torch.cuda.empty_cache()
-                raise
 
-        # Loss computation in FP32 for stability
-        with torch.amp.autocast("cuda", enabled=False):
-            # Ensure all outputs and targets are FP32
-            outputs_fp32 = {
-                k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
-            }
-            targets_fp32 = {
-                k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
-            }
-            
+                # 予測前の特徴量統計（デバッグ用）
+                if batch_idx == 0 and epoch <= 2:
+                    feat_mean = features.mean().item()
+                    feat_std = features.std().item()
+                    logger.debug(
+                        f"Input features: mean={feat_mean:.4f}, std={feat_std:.4f}"
+                    )
 
-            # マスク付きマルチホライゾン損失
-            loss_result = criterion(
-                outputs_fp32, targets_fp32, valid_masks=valid_masks
-            )
-            
-            # Handle both single value and tuple return
-            if isinstance(loss_result, tuple):
-                loss, losses = loss_result
-            else:
-                loss = loss_result
-                losses = {}
-
-            # 追加: 各ホライゾンのvalid比率を低頻度でログ
-            if (batch_idx % 200 == 0) and isinstance(valid_masks, dict):
                 try:
-                    ratios = {
-                        k: float(v.float().mean().item())
-                        for k, v in valid_masks.items()
-                        if torch.is_tensor(v)
-                    }
-                    logger.info(
-                        f"[valid-ratio] { {k: f'{r:.2%}' for k,r in ratios.items()} }"
-                    )
-                except Exception:
-                    pass
+                    # 時系列Mixup（一定確率）
+                    if (
+                        use_mixup
+                        and np.random.rand() < mixup_prob
+                        and features.shape[0] >= 2
+                    ):
+                        lam = np.random.beta(mixup_alpha, mixup_alpha)
+                        # シャッフルインデックス
+                        idx = torch.randperm(features.size(0), device=features.device)
+                        features = lam * features + (1 - lam) * features[idx]
+                        # ターゲットも各ホライズンで混合
+                        mixed_targets = {}
+                        for k, v in targets.items():
+                            v2 = v[idx]
+                            mixed_targets[k] = lam * v + (1 - lam) * v2
+                        targets = mixed_targets
+                    outputs = model(features)
+                    # Optional: add small Gaussian noise to outputs for warmup (point heads only)
+                    if (
+                        output_noise_std > 0.0
+                        and epoch <= noise_warmup_epochs
+                        and model.training
+                    ):
+                        try:
+                            for k in list(
+                                outputs.keys() if isinstance(outputs, dict) else []
+                            ):
+                                if k.startswith("point_horizon_") and torch.is_tensor(
+                                    outputs[k]
+                                ):
+                                    outputs[k] = (
+                                        outputs[k]
+                                        + torch.randn_like(outputs[k]) * output_noise_std
+                                    )
+                        except Exception:
+                            pass
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    del features
+                    if "targets" in locals():
+                        del targets
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    raise
 
-            # Variance penalty to prevent collapse
-            variance_penalty = 0.0
-            for h in [1, 2, 3, 5, 10]:
-                key = f"point_horizon_{h}"
-                if key in outputs_fp32:
-                    pred_std = outputs_fp32[key].std()
-                    # Penalize if std is too small (collapse)
-                    if pred_std < 0.1:
-                        variance_penalty += (0.1 - pred_std) * 0.1
+            # Loss computation in FP32 for stability
+            with torch.amp.autocast("cuda", enabled=False):
+                # Ensure all outputs and targets are FP32
+                outputs_fp32 = {
+                    k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
+                }
+                targets_fp32 = {
+                    k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
+                }
+                
 
-            # Add penalty to loss
-            if variance_penalty > 0:
-                loss = loss + variance_penalty
+                # マスク付きマルチホライゾン損失
+                loss_result = criterion(
+                    outputs_fp32, targets_fp32, valid_masks=valid_masks
+                )
+                
+                # Handle both single value and tuple return
+                if isinstance(loss_result, tuple):
+                    loss, losses = loss_result
+                else:
+                    loss = loss_result
+                    losses = {}
 
-            # 予測値の統計チェック（最初のエポック）
-            if batch_idx == 0 and epoch <= 2:
-                for h in criterion.horizons:
-                    key = f"point_horizon_{h}"
-                    if key in outputs:
-                        pred = outputs[key].detach()
-                        pred_mean = pred.mean().item()
-                        pred_std = pred.std().item()
-                        logger.debug(
-                            f"Predictions h={h}: mean={pred_mean:.4f}, std={pred_std:.6f}"
-                        )
-
-        # 1バッチ目のみデバッグ（形状と平均損失）
-        if batch_idx == 0 and epoch == 1:
-            try:
-                logger.info(f"criterion reduction: {criterion.mse.reduction}")
-                for h in criterion.horizons:
-                    pred_key = (
-                        f"point_horizon_{h}"
-                        if any(k.startswith("point_horizon_") for k in outputs.keys())
-                        else f"horizon_{h}"
-                    )
-                    targ_key = f"horizon_{h}"
-                    if pred_key in outputs and targ_key in targets:
-                        pred_t = outputs[pred_key]
-                        targ_t = targets[targ_key]
-                        mse_h = torch.nn.functional.mse_loss(
-                            pred_t.squeeze(-1), targ_t, reduction="mean"
-                        ).detach()
+                # 追加: 各ホライゾンのvalid比率を低頻度でログ
+                if (batch_idx % 200 == 0) and isinstance(valid_masks, dict):
+                    try:
+                        ratios = {
+                            k: float(v.float().mean().item())
+                            for k, v in valid_masks.items()
+                            if torch.is_tensor(v)
+                        }
                         logger.info(
-                            f"h={h} pred_shape={tuple(pred_t.shape)} targ_shape={tuple(targ_t.shape)} mse={mse_h.item():.6f}"
+                            f"[valid-ratio] { {k: f'{r:.2%}' for k,r in ratios.items()} }"
                         )
-            except Exception as _e:
-                logger.warning(f"debug logging failed: {_e}")
+                    except Exception:
+                        pass
 
-        # Backward pass
-        scaler.scale(loss / gradient_accumulation_steps).backward()
+                # Variance penalty to prevent collapse
+                variance_penalty = 0.0
+                for h in [1, 2, 3, 5, 10]:
+                    key = f"point_horizon_{h}"
+                    if key in outputs_fp32:
+                        pred_std = outputs_fp32[key].std()
+                        # Penalize if std is too small (collapse)
+                        if pred_std < 0.1:
+                            variance_penalty += (0.1 - pred_std) * 0.1
 
-        # Gradient accumulation
-        if (batch_idx + 1) % gradient_accumulation_steps == 0:
-            # Gradient clipping
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                # Add penalty to loss
+                if variance_penalty > 0:
+                    loss = loss + variance_penalty
 
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)  # メモリ効率向上
+                # 予測値の統計チェック（最初のエポック）
+                if batch_idx == 0 and epoch <= 2:
+                    for h in criterion.horizons:
+                        key = f"point_horizon_{h}"
+                        if key in outputs:
+                            pred = outputs[key].detach()
+                            pred_mean = pred.mean().item()
+                            pred_std = pred.std().item()
+                            logger.debug(
+                                f"Predictions h={h}: mean={pred_mean:.4f}, std={pred_std:.6f}"
+                            )
 
-        # 統計更新
-        total_loss += loss.item()
-        for k, v in losses.items():
-            horizon_losses[k] += v.item()
-        n_batches += 1
+            # 1バッチ目のみデバッグ（形状と平均損失）
+            if batch_idx == 0 and epoch == 1:
+                try:
+                    logger.info(f"criterion reduction: {criterion.mse.reduction}")
+                    for h in criterion.horizons:
+                        pred_key = (
+                            f"point_horizon_{h}"
+                            if any(k.startswith("point_horizon_") for k in outputs.keys())
+                            else f"horizon_{h}"
+                        )
+                        targ_key = f"horizon_{h}"
+                        if pred_key in outputs and targ_key in targets:
+                            pred_t = outputs[pred_key]
+                            targ_t = targets[targ_key]
+                            mse_h = torch.nn.functional.mse_loss(
+                                pred_t.squeeze(-1), targ_t, reduction="mean"
+                            ).detach()
+                            logger.info(
+                                f"h={h} pred_shape={tuple(pred_t.shape)} targ_shape={tuple(targ_t.shape)} mse={mse_h.item():.6f}"
+                            )
+                except Exception as _e:
+                    logger.warning(f"debug logging failed: {_e}")
+
+            # Backward pass
+            scaler.scale(loss / gradient_accumulation_steps).backward()
+
+            # Gradient accumulation
+            if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                # Gradient clipping
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)  # メモリ効率向上
+
+            # 統計更新
+            total_loss += loss.item()
+            for k, v in losses.items():
+                horizon_losses[k] += v.item()
+            n_batches += 1
 
         # プログレスバー更新
         if batch_idx % 10 == 0:
