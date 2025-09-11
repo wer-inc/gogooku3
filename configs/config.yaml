@@ -32,6 +32,8 @@ debug:
 paths:
   root: ${hydra:runtime.cwd}
   data: ${paths.root}/data
+  # Backward-compat alias expected by some configs/overrides
+  data_dir: ${paths.data}
   models: ${paths.root}/models
   logs: ${paths.root}/logs
   cache: ${paths.root}/cache

@@ -1,0 +1,18 @@
+# JPX Parquet Data Configuration
+# This configuration defines how to load and process JPX market data from parquet files
+# Package under `data` so that references like `config.data.*` work.
+# @package data
+
+data_source:
+  type: "jpx_parquet"
+  format: "parquet"
+  
+raw_data_dir: "${paths.data}/raw"
+
+time_series:
+  lookback_days: 60
+  target_horizons: [1, 2, 3, 5, 10]
+  prediction_horizons: [1, 2, 3, 5, 10]
+  
+source:
+  data_dir: "${paths.data}"
