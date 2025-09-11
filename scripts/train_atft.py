@@ -20,6 +20,7 @@ from tqdm import tqdm
 import gc
 import hydra
 from omegaconf import DictConfig
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import subprocess
@@ -188,6 +189,36 @@ faulthandler.enable()
 # Global run directory
 RUN_DIR = Path(os.getenv("RUN_DIR", "runs/last"))
 RUN_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ---- Target key canonicalization -----------------------------------------
+_TARGET_KEY_PATTERNS = [
+    re.compile(r"^(?:return|returns|ret|target|targets|tgt|y)_(\d+)d$", re.I),
+    re.compile(r"^horizon_(\d+)$", re.I),
+]
+
+
+def _canonicalize_target_key(key: object) -> str | None:
+    """Map various target key forms to 'horizon_{h}'.
+
+    Accepts keys like 1, '1', 'horizon_1', 'return_1d', 'target_5d', etc.
+    Returns canonical string or None if not recognized.
+    """
+    try:
+        # Integer or digit string
+        if isinstance(key, int):
+            return f"horizon_{int(key)}"
+        if isinstance(key, str) and key.isdigit():
+            return f"horizon_{int(key)}"
+        if isinstance(key, str):
+            s = key
+            for pat in _TARGET_KEY_PATTERNS:
+                m = pat.match(s)
+                if m:
+                    return f"horizon_{int(m.group(1))}"
+        return None
+    except Exception:
+        return None
 
 
 # ---- Minimal config export for external tests ----
@@ -953,10 +984,21 @@ def train_epoch(
 
     for batch_idx, batch in enumerate(pbar):
         # データをGPUに転送（非同期）
-        features = batch["features"].to(device, non_blocking=True)
-        targets = {
-            k: v.to(device, non_blocking=True) for k, v in batch["targets"].items()
-        }
+            features = batch["features"].to(device, non_blocking=True)
+            # Canonicalize validation targets as well
+            targets = {}
+            for k, v in batch.get("targets", {}).items():
+                canon = _canonicalize_target_key(k)
+                if canon is not None:
+                    targets[canon] = v.to(device, non_blocking=True)
+            if not targets:
+                try:
+                    raw_keys = list(getattr(batch, "get", lambda *_: {})("targets", {}).keys())
+                except Exception:
+                    raw_keys = []
+                logger.warning(
+                    f"[val-phase] no canonical targets found; raw target keys={raw_keys}"
+                )
         # 有効マスク（任意）
         valid_masks = batch.get("valid_mask", None)
         if isinstance(valid_masks, dict):
@@ -1625,9 +1667,12 @@ def validate(model, dataloader, criterion, device):
         low_var_warns_h1 = 0
         for batch in tqdm(dataloader, desc="Validation"):
             features = batch["features"].to(device, non_blocking=True)
-            targets = {
-                k: v.to(device, non_blocking=True) for k, v in batch["targets"].items()
-            }
+            # Canonicalize validation targets as well
+            targets = {}
+            for k, v in batch.get("targets", {}).items():
+                canon = _canonicalize_target_key(k)
+                if canon is not None:
+                    targets[canon] = v.to(device, non_blocking=True)
             # Move valid masks to correct device if present
             valid_masks = batch.get("valid_mask", None)
             if isinstance(valid_masks, dict):
@@ -2072,10 +2117,12 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     batch.get("edge_attr", None)
                 )
                 
-                # Loss計算（targetsは辞書型）
+                # Loss計算（targetsは辞書型）: 各種キーを正規化して 'horizon_{h}' に統一
                 targets_dict = {}
-                for horizon, target_tensor in batch["targets"].items():
-                    targets_dict[horizon] = target_tensor.to(device)
+                for k, target_tensor in batch.get("targets", {}).items():
+                    canon = _canonicalize_target_key(k)
+                    if canon is not None:
+                        targets_dict[canon] = target_tensor.to(device)
                 
                 
                 # Get loss from criterion - handle both single value and tuple return
