@@ -17,6 +17,9 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict
+from datetime import datetime
+import pandas as pd
+import polars as pl
 
 # パス設定
 sys.path.append(str(Path(__file__).parent))
@@ -116,7 +119,7 @@ class GoGooKu3MainRunner:
             logger.error(f"❌ Dataset expansion failed with exception: {e}")
             return False, {"error": str(e)}
 
-    def run_expand_dataset_by_date(self, date: str, exclude_market_codes: List[str] = None):
+    def run_expand_dataset_by_date(self, date: str, exclude_market_codes: Optional[List[str]] = None):
         """日付ベース全銘柄データ取得の実行（MarketCodeフィルタリング対応）"""
         logger.info("🚀 Starting Date-based Dataset Expansion...")
         logger.info(f"📅 Target Date: {date}")
@@ -167,7 +170,7 @@ class GoGooKu3MainRunner:
             logger.error(f"❌ Range-based dataset expansion failed with exception: {e}")
             return False, {"error": str(e)}
 
-    def run_expand_historical_all_stocks(self, years: int = 5, max_days: int = None, exclude_market_codes: List[str] = None):
+    def run_expand_historical_all_stocks(self, years: int = 5, max_days: Optional[int] = None, exclude_market_codes: Optional[List[str]] = None):
         """取引カレンダーを使った過去N年分の全銘柄データ取得の実行（MarketCodeフィルタリング対応）"""
         logger.info("🚀 Starting Historical All Stocks Dataset Expansion...")
         logger.info(f"📅 Years: {years}")
@@ -214,7 +217,7 @@ class GoGooKu3MainRunner:
             logger.error(f"❌ Historical all stocks dataset expansion failed with exception: {e}")
             return False, {"error": str(e)}
 
-    def create_ml_dataset(self, years: int = 5, exclude_market_codes: List[str] = None, use_existing_data: bool = True):
+    def create_ml_dataset(self, years: int = 5, exclude_market_codes: Optional[List[str]] = None, use_existing_data: bool = True):
         """過去取れる全データを取得してML用データセットを作成"""
         logger.info("🚀 Creating ML Dataset from Historical Data...")
         logger.info(f"📅 Years: {years}")
@@ -281,23 +284,20 @@ class GoGooKu3MainRunner:
             logger.error(f"❌ ML Dataset creation failed with exception: {e}")
             return False, {"error": str(e)}
 
-    def _create_ml_dataset_from_quotes(self, all_quotes: List[Dict]) -> str:
+    def _create_ml_dataset_from_quotes(self, all_quotes: List[Dict]) -> Optional[str]:
         """株価データからML用データセットを作成"""
         logger.info("🔧 MLデータセット作成処理を開始")
 
         try:
-            import pandas as pd
             import numpy as np
-            from pathlib import Path
-            from datetime import datetime
 
-            # データをDataFrameに変換
-            df = pd.DataFrame(all_quotes)
+            df = pl.DataFrame(all_quotes)
 
             # 日付カラムの処理
             if "Date" in df.columns:
-                df["Date"] = pd.to_datetime(df["Date"])
-                df = df.rename(columns={"Date": "date"})
+                df = df.with_columns([
+                    pl.col("Date").str.strptime(pl.Date, format="%Y-%m-%d", strict=False).alias("date")
+                ]).drop("Date")
 
             logger.info(f"📊 元データ: {len(df)}行")
 
@@ -312,7 +312,7 @@ class GoGooKu3MainRunner:
             output_path = Path("data/processed") / f"ml_dataset_{timestamp}.parquet"
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            df.to_parquet(output_path, index=False)
+            df.write_parquet(output_path)
 
             logger.info(f"💾 MLデータセット保存: {output_path}")
             logger.info(f"📊 MLデータセット: {len(df)}行 × {len(df.columns)}列")
@@ -417,27 +417,27 @@ class GoGooKu3MainRunner:
             return []
 
     def _clean_stock_data(self, df):
-        """株価データのクレンジング（緩和版）"""
+        """株価データのクレンジング（Polars最適化版）"""
         logger.info("🧹 データクレンジングを開始")
         original_count = len(df)
 
         # 欠損値処理（必須項目のみ）
-        df = df.dropna(subset=['Close'])  # 終値は必須
+        df = df.filter(pl.col('Close').is_not_null())
 
         # 異常値除去（価格が0以下は除外）
-        df = df[df['Close'] > 0]
+        df = df.filter(pl.col('Close') > 0)
 
         # OHLCデータの整合性チェック（ある場合のみ）
-        if all(col in df.columns for col in ['Open', 'High', 'Low']):
-            df = df[(df['Open'] > 0) & (df['High'] > 0) & (df['Low'] > 0)]
-
-        # 出来高のチェック（ある場合のみ）
-        if 'Volume' in df.columns:
-            # 出来高が0のデータも残す（出来高0でも価格データは有効な場合がある）
-            pass
+        ohlc_cols = ['Open', 'High', 'Low']
+        if all(col in df.columns for col in ohlc_cols):
+            df = df.filter(
+                (pl.col('Open') > 0) & 
+                (pl.col('High') > 0) & 
+                (pl.col('Low') > 0)
+            )
 
         # 日付でソート
-        df = df.sort_values(['Code', 'date']).reset_index(drop=True)
+        df = df.sort(['Code', 'date'])
 
         cleaned_count = len(df)
         removed_count = original_count - cleaned_count
@@ -447,91 +447,81 @@ class GoGooKu3MainRunner:
         return df
 
     def _create_ml_features(self, df):
-        """ML用特徴量の作成"""
+        """ML用特徴量の作成（Polars最適化版）"""
         logger.info("🔧 特徴量エンジニアリングを開始")
 
-        try:
-            import pandas as pd
-        except ImportError:
-            logger.error("❌ pandasがimportできません")
-            return df
-
-        # 銘柄ごとに特徴量を作成
-        df_list = []
-
-        for code in df['Code'].unique():
-            stock_df = df[df['Code'] == code].copy()
-
-            if len(stock_df) < 2:  # 最低2日以上のデータが必要（緩和）
-                continue
-
-            # 価格変動率
-            stock_df['price_change'] = stock_df['Close'].pct_change()
-
-            # データ量に応じた特徴量作成
-            data_length = len(stock_df)
-
-            # 移動平均（データ量に応じてウィンドウサイズ調整）
-            if data_length >= 5:
-                stock_df['ma5'] = stock_df['Close'].rolling(window=min(5, data_length)).mean()
-            if data_length >= 10:
-                stock_df['ma10'] = stock_df['Close'].rolling(window=min(10, data_length)).mean()
-            if data_length >= 20:
-                stock_df['ma20'] = stock_df['Close'].rolling(window=min(20, data_length)).mean()
-            if data_length >= 60:
-                stock_df['ma60'] = stock_df['Close'].rolling(window=min(60, data_length)).mean()
-
-            # ボラティリティ（データ量に応じて調整）
-            if data_length >= 5:
-                vol_window = min(20, data_length)
-                stock_df['volatility'] = stock_df['price_change'].rolling(window=vol_window).std()
-
-            # RSI（データ量に応じて調整）
-            if data_length >= 14:
-                rsi_window = min(14, data_length)
-                delta = stock_df['Close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=rsi_window).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=rsi_window).mean()
-                rs = gain / loss
-                stock_df['rsi'] = 100 - (100 / (1 + rs))
-
-            # MACD（データ量に応じて調整）
-            if data_length >= 26:
-                exp1 = stock_df['Close'].ewm(span=min(12, data_length//2), adjust=False).mean()
-                exp2 = stock_df['Close'].ewm(span=min(26, data_length), adjust=False).mean()
-                stock_df['macd'] = exp1 - exp2
-                if data_length >= 35:  # シグナルライン用
-                    stock_df['macd_signal'] = stock_df['macd'].ewm(span=min(9, data_length//4), adjust=False).mean()
-
-            # 目的変数: 翌日の価格変動（データが2日以上ある場合のみ）
-            if data_length >= 2:
-                stock_df['target'] = stock_df['Close'].shift(-1) / stock_df['Close'] - 1
-
-            df_list.append(stock_df)
-
-        if df_list:
-            result_df = pd.concat(df_list, ignore_index=True)
-
-            # 利用可能な特徴量を動的に取得
-            potential_features = ['price_change', 'ma5', 'ma10', 'ma20', 'ma60',
-                                'volatility', 'rsi', 'macd', 'macd_signal']
-            available_features = [col for col in potential_features if col in result_df.columns]
-
-            # 特徴量の欠損値を埋める（前値補完）
-            if available_features:
-                result_df[available_features] = result_df[available_features].fillna(method='ffill')
-
-            # targetがNaNの行を除外
-            if 'target' in result_df.columns:
-                result_df = result_df.dropna(subset=['target'])
-
-            logger.info(f"✅ 特徴量作成完了: {len(result_df)}行")
-            logger.info(f"📊 利用可能特徴量: {available_features}")
-
-            return result_df
-        else:
+        stock_counts = df.group_by('Code').len().filter(pl.col('len') >= 2)
+        valid_codes = stock_counts.select('Code').to_series().to_list()
+        
+        if not valid_codes:
             logger.warning("⚠️ 特徴量作成対象の銘柄がありません")
             return df
+        
+        df = df.filter(pl.col('Code').is_in(valid_codes))
+
+        df = df.sort(['Code', 'date']).with_columns([
+            # 価格変動率
+            pl.col('Close').pct_change().over('Code').alias('price_change'),
+            
+            pl.col('Close').rolling_mean(window_size=5, min_periods=1).over('Code').alias('ma5'),
+            pl.col('Close').rolling_mean(window_size=10, min_periods=1).over('Code').alias('ma10'),
+            pl.col('Close').rolling_mean(window_size=20, min_periods=1).over('Code').alias('ma20'),
+            pl.col('Close').rolling_mean(window_size=60, min_periods=1).over('Code').alias('ma60'),
+            
+            pl.col('Close').pct_change().rolling_std(window_size=20, min_periods=5).over('Code').alias('volatility'),
+            
+            # 目的変数: 翌日の価格変動
+            (pl.col('Close').shift(-1).over('Code') / pl.col('Close') - 1).alias('target')
+        ])
+
+        df = df.with_columns([
+            pl.col('Close').diff().over('Code').alias('price_diff')
+        ]).with_columns([
+            pl.when(pl.col('price_diff') > 0)
+            .then(pl.col('price_diff'))
+            .otherwise(0)
+            .rolling_mean(window_size=14, min_periods=1)
+            .over('Code')
+            .alias('gain'),
+            
+            pl.when(pl.col('price_diff') < 0)
+            .then(-pl.col('price_diff'))
+            .otherwise(0)
+            .rolling_mean(window_size=14, min_periods=1)
+            .over('Code')
+            .alias('loss')
+        ]).with_columns([
+            (100 - (100 / (1 + pl.col('gain') / (pl.col('loss') + 1e-10)))).alias('rsi')
+        ]).drop(['price_diff', 'gain', 'loss'])
+
+        df = df.with_columns([
+            pl.col('Close').ewm_mean(span=12, adjust=False).over('Code').alias('ema12'),
+            pl.col('Close').ewm_mean(span=26, adjust=False).over('Code').alias('ema26')
+        ]).with_columns([
+            (pl.col('ema12') - pl.col('ema26')).alias('macd')
+        ]).with_columns([
+            pl.col('macd').ewm_mean(span=9, adjust=False).over('Code').alias('macd_signal')
+        ]).drop(['ema12', 'ema26'])
+
+        # 利用可能な特徴量
+        potential_features = ['price_change', 'ma5', 'ma10', 'ma20', 'ma60',
+                            'volatility', 'rsi', 'macd', 'macd_signal']
+        available_features = [col for col in potential_features if col in df.columns]
+
+        # 特徴量の欠損値を埋める（前値補完）
+        if available_features:
+            df = df.with_columns([
+                pl.col(col).forward_fill().over('Code') for col in available_features
+            ])
+
+        # targetがNaNの行を除外
+        if 'target' in df.columns:
+            df = df.filter(pl.col('target').is_not_null())
+
+        logger.info(f"✅ 特徴量作成完了: {len(df)}行")
+        logger.info(f"📊 利用可能特徴量: {available_features}")
+
+        return df.to_pandas()
 
     async def run_direct_api_dataset_builder(self):
         """直接APIデータセット構築の実行"""
@@ -563,7 +553,7 @@ class GoGooKu3MainRunner:
             logger.error(f"❌ Complete ATFT Training Pipeline failed: {result.get('error')}")
             return False, result
 
-    def run_workflow(self, workflow: str, mode: str = "full", stocks: int = 500, date: str = None, start_date: str = None, end_date: str = None, years: int = 5, max_days: int = None, exclude_market_codes: List[str] = None, use_existing_data: bool = True):
+    def run_workflow(self, workflow: str, mode: str = "full", stocks: int = 500, date: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, years: int = 5, max_days: Optional[int] = None, exclude_market_codes: Optional[List[str]] = None, use_existing_data: bool = True):
         """指定されたワークフローを実行"""
         logger.info(f"🎬 Starting workflow: {workflow}")
 
@@ -745,33 +735,105 @@ def main():
         
         # 結果サマリー
         if args.workflow == "safe-training":
-            summary = result.get("summary", {})
-            print(f"📊 学習結果:")
-            print(f"   - エポック数: {summary.get('epochs', 'N/A')}")
-            print(f"   - 最終損失: {summary.get('final_loss', 'N/A')}")
-            print(f"   - 実行時間: {summary.get('elapsed_time', 'N/A'):.2f}秒")
+            if isinstance(result, dict):
+                summary = result.get("summary", {})
+                if isinstance(summary, dict):
+                    print(f"📊 学習結果:")
+                    print(f"   - エポック数: {summary.get('epochs', 'N/A')}")
+                    print(f"   - 最終損失: {summary.get('final_loss', 'N/A')}")
+                    elapsed_time = summary.get('elapsed_time', 'N/A')
+                    if isinstance(elapsed_time, (int, float)):
+                        print(f"   - 実行時間: {elapsed_time:.2f}秒")
+                    else:
+                        print(f"   - 実行時間: {elapsed_time}")
+                else:
+                    print(f"📊 学習結果: {summary}")
+            else:
+                print(f"📊 学習結果: {result}")
         elif args.workflow in ["ml-dataset", "direct-api-dataset"]:
-            if "df" in result:
+            if isinstance(result, dict) and "df" in result:
+                df = result['df']
                 print(f"📊 データセット構築結果:")
-                print(f"   - 行数: {len(result['df']):,}")
-                print(f"   - 銘柄数: {result['df']['Code'].n_unique()}")
-                if "metadata" in result:
-                    print(f"   - 特徴量数: {result['metadata']['features']['count']}")
+                print(f"   - 行数: {len(df):,}")
+                try:
+                    unique_count = "N/A"
+                    df_type = type(df).__name__
+                    if 'DataFrame' in df_type:
+                        if hasattr(df, 'select'):
+                            import polars as pl
+                            try:
+                                select_method = getattr(df, 'select', None)
+                                if callable(select_method):
+                                    result = select_method(pl.col('Code').n_unique())
+                                    unique_count = str(result.item())
+                            except Exception:
+                                unique_count = "N/A"
+                        elif hasattr(df, 'nunique'):
+                            try:
+                                getitem_method = getattr(df, '__getitem__', None)
+                                if callable(getitem_method):
+                                    code_col = getitem_method('Code')
+                                    nunique_method = getattr(code_col, 'nunique', None)
+                                    if callable(nunique_method):
+                                        unique_count = str(nunique_method())
+                            except Exception:
+                                unique_count = "N/A"
+                    print(f"   - 銘柄数: {unique_count}")
+                except Exception:
+                    print(f"   - 銘柄数: N/A")
+                result_get = getattr(result, 'get', None)
+                if callable(result_get) and isinstance(result_get("metadata"), dict):
+                    metadata = result_get("metadata", {})
+                    metadata_get = getattr(metadata, 'get', None)
+                    if callable(metadata_get) and isinstance(metadata_get("features"), dict):
+                        features_dict = getattr(metadata, 'get', lambda x, d=None: d)("features", {})
+                        get_method = getattr(features_dict, 'get', None)
+                        count_value = get_method('count', 'N/A') if callable(get_method) else 'N/A'
+                        print(f"   - 特徴量数: {count_value}")
+            else:
+                print(f"📊 データセット構築結果: {result}")
         elif args.workflow == "complete-atft":
-            validation_info = result.get("validation_info", {})
-            print(f"🎯 ATFT学習結果:")
-            print(f"   - 目標Sharpe: 0.849")
-            if validation_info.get('sharpe_ratio') is not None:
-                print(f"   - 達成Sharpe: {validation_info.get('sharpe_ratio')}")
-            print(f"   - パラメータ数: {validation_info.get('param_count', 'N/A'):,}")
+            if isinstance(result, dict):
+                validation_info = result.get("validation_info", {})
+                print(f"🎯 ATFT学習結果:")
+                print(f"   - 目標Sharpe: 0.849")
+                if isinstance(validation_info, dict):
+                    sharpe_ratio = validation_info.get('sharpe_ratio')
+                    if sharpe_ratio is not None:
+                        print(f"   - 達成Sharpe: {sharpe_ratio}")
+                    param_count = validation_info.get('param_count', 'N/A')
+                    if isinstance(param_count, (int, float)):
+                        print(f"   - パラメータ数: {param_count:,}")
+                    else:
+                        print(f"   - パラメータ数: {param_count}")
+            else:
+                print(f"🎯 ATFT学習結果: {result}")
         elif args.workflow == "create-ml-dataset":
             print(f"🤖 MLデータセット作成結果:")
-            print(f"   - 元データ件数: {result.get('raw_data_records', 'N/A'):,}")
-            print(f"   - 対象年数: {result.get('years', 'N/A')}年")
-            print(f"   - 除外市場: {', '.join(result.get('excluded_markets', []))}")
-            print(f"   - 既存データ活用: {result.get('used_existing_data', 'N/A')}")
-            if "ml_dataset_path" in result:
-                print(f"   - 保存先: {result['ml_dataset_path']}")
+            if isinstance(result, dict):
+                raw_records = result.get('raw_data_records', 'N/A')
+                years = result.get('years', 'N/A')
+                excluded_markets = result.get('excluded_markets', [])
+                used_existing = result.get('used_existing_data', 'N/A')
+                
+                if isinstance(raw_records, (int, float)):
+                    print(f"   - 元データ件数: {raw_records:,}")
+                else:
+                    print(f"   - 元データ件数: {raw_records}")
+                    
+                print(f"   - 対象年数: {years}年")
+                
+                if isinstance(excluded_markets, list):
+                    print(f"   - 除外市場: {', '.join(excluded_markets)}")
+                else:
+                    print(f"   - 除外市場: {excluded_markets}")
+                    
+                print(f"   - 既存データ活用: {used_existing}")
+                
+                if "ml_dataset_path" in result:
+                    print(f"   - 保存先: {result['ml_dataset_path']}")
+            else:
+                print(f"🤖 MLデータセット作成結果: {result}")
 
         print("=" * 80)
         print("✅ 実行完了")

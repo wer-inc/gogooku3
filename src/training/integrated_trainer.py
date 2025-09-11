@@ -8,6 +8,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
+import torch
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
@@ -134,7 +135,6 @@ class IntegratedTrainer:
 
         return model
 
-    @RobustExecutor.with_robust_execution()
     def train(self):
         """トレーニング実行"""
         logger.info("Starting integrated training...")
@@ -207,4 +207,11 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        from omegaconf import DictConfig
+        test_cfg = DictConfig({})
+        main(test_cfg)
+    except Exception as e:
+        print(f"Training test failed: {e}")
+        import traceback
+        traceback.print_exc()
