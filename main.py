@@ -756,14 +756,22 @@ def main():
                 print(f"📊 データセット構築結果:")
                 print(f"   - 行数: {len(df):,}")
                 try:
-                    if hasattr(df, 'n_unique'):
-                        code_col = df.get_column('Code') if hasattr(df, 'get_column') else df['Code']
-                        print(f"   - 銘柄数: {code_col.n_unique()}")
-                    elif hasattr(df, 'nunique'):
-                        print(f"   - 銘柄数: {df['Code'].nunique()}")
+                    if hasattr(df, 'select') and hasattr(df, 'get_column'):
+                        import polars as pl
+                        if hasattr(df, 'select'):
+                            unique_count = df.select(pl.col('Code').n_unique()).item()
+                            print(f"   - 銘柄数: {unique_count}")
+                        else:
+                            print(f"   - 銘柄数: N/A")
+                    elif hasattr(df, 'nunique') and hasattr(df, '__getitem__'):
+                        code_series = df['Code']
+                        if hasattr(code_series, 'nunique'):
+                            print(f"   - 銘柄数: {code_series.nunique()}")
+                        else:
+                            print(f"   - 銘柄数: N/A")
                     else:
                         print(f"   - 銘柄数: N/A")
-                except (KeyError, TypeError, AttributeError):
+                except (KeyError, TypeError, AttributeError, ImportError):
                     print(f"   - 銘柄数: N/A")
                 if "metadata" in result and isinstance(result["metadata"], dict):
                     metadata = result["metadata"]
