@@ -1,0 +1,23 @@
+
+_target_: src.data.loaders.production_loader_v2.ProductionDatasetV2
+
+data_source:
+  type: "jpx_parquet"
+  format: "parquet"
+  
+dataset:
+  name: "jpx_production"
+  version: "v2"
+  
+paths:
+  data_dir: "data"
+  output_dir: "output"
+  
+processing:
+  batch_size: 1000
+  num_workers: 4
+  
+features:
+  include_technical: true
+  include_fundamental: true
+  include_market: true
