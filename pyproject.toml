@@ -38,7 +38,7 @@ dependencies = [
     "lightgbm>=4.0.0",
     
     # Technical Analysis
-    "pandas-ta>=0.3.14b0",
+    "pandas-ta>=0.4.67b0",
     "pywt>=1.4.0",
     
     # Data Sources & APIs

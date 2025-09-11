@@ -13,7 +13,7 @@ redis==4.6.0
 polars>=0.20.0
 pandas>=2.1.0
 pyarrow>=14.0.0
-pandas-ta>=0.3.14b0
+pandas-ta>=0.4.67b0
 
 # ML and Feature Store
 feast[aws,redis,postgres]==0.50.0

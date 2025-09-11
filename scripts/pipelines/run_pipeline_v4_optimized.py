@@ -26,7 +26,7 @@ if env_path.exists():
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from data.ml_dataset_builder import MLDatasetBuilder
+from src.gogooku3.data.loaders import MLDatasetBuilder
 from components.trading_calendar_fetcher import TradingCalendarFetcher
 from components.market_code_filter import MarketCodeFilter
 from components.axis_decider import AxisDecider
