@@ -111,8 +111,9 @@ dev = [
 
 [project.scripts]
 gogooku3 = "gogooku3.cli:main"
-gogooku3-train = "scripts.train_atft:main"
-gogooku3-pipeline = "scripts.pipelines.run_pipeline:main"
+# Broken entry points temporarily disabled - will be integrated into main CLI
+# gogooku3-train = "scripts.train_atft:main"
+# gogooku3-pipeline = "scripts.pipelines.run_pipeline:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -193,24 +194,27 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--verbose",
-    "--cov=src/gogooku3",
-    "--cov-report=term-missing",
-    "--cov-report=xml",
-]
 testpaths = ["tests"]
+addopts = [
+    "-q", "--tb=short", "-ra",
+    "--cov=src/gogooku3", "--cov-report=term-missing",
+    "--strict-markers",
+    "--color=yes",
+    # Skip exploratory tests by default
+    "--ignore=tests/exploratory/"
+]
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
+    "unit: Unit tests for individual components",
+    "integration: Integration tests for workflows", 
+    "slow: Tests that take more than 5 seconds",
+    "requires_api: Tests that require external API access",
+    "exploratory: Manual exploratory tests (not run in CI)",
     "smoke: marks tests as smoke tests",
 ]
 filterwarnings = [
-    "ignore::UserWarning",
+    "error::FutureWarning",
     "ignore::DeprecationWarning",
+    "ignore::UserWarning",
 ]
 
 [tool.coverage.run]
