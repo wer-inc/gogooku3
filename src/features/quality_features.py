@@ -38,8 +38,8 @@ class QualityFinancialFeaturesGenerator:
     def __init__(
         self,
         volatility_column: str = 'volatility_20d',
-        volume_columns: List[str] = None,
-        index_return_column: str = None,
+        volume_columns: Optional[List[str]] = None,
+        index_return_column: Optional[str] = None,
         use_cross_sectional_quantiles: bool = True,
         rolling_window: int = 252,
         flow_window: int = 60,
