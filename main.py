@@ -756,27 +756,37 @@ def main():
                 print(f"📊 データセット構築結果:")
                 print(f"   - 行数: {len(df):,}")
                 try:
-                    if hasattr(df, 'select') and hasattr(df, 'get_column'):
-                        import polars as pl
+                    unique_count = "N/A"
+                    df_type = type(df).__name__
+                    if 'DataFrame' in df_type:
                         if hasattr(df, 'select'):
-                            unique_count = df.select(pl.col('Code').n_unique()).item()
-                            print(f"   - 銘柄数: {unique_count}")
-                        else:
-                            print(f"   - 銘柄数: N/A")
-                    elif hasattr(df, 'nunique') and hasattr(df, '__getitem__'):
-                        code_series = df['Code']
-                        if hasattr(code_series, 'nunique'):
-                            print(f"   - 銘柄数: {code_series.nunique()}")
-                        else:
-                            print(f"   - 銘柄数: N/A")
-                    else:
-                        print(f"   - 銘柄数: N/A")
-                except (KeyError, TypeError, AttributeError, ImportError):
+                            import polars as pl
+                            try:
+                                select_method = getattr(df, 'select', None)
+                                if callable(select_method):
+                                    result = select_method(pl.col('Code').n_unique())
+                                    unique_count = str(result.item())
+                            except Exception:
+                                unique_count = "N/A"
+                        elif hasattr(df, 'nunique'):
+                            try:
+                                getitem_method = getattr(df, '__getitem__', None)
+                                if callable(getitem_method):
+                                    code_col = getitem_method('Code')
+                                    nunique_method = getattr(code_col, 'nunique', None)
+                                    if callable(nunique_method):
+                                        unique_count = str(nunique_method())
+                            except Exception:
+                                unique_count = "N/A"
+                    print(f"   - 銘柄数: {unique_count}")
+                except Exception:
                     print(f"   - 銘柄数: N/A")
-                if "metadata" in result and isinstance(result["metadata"], dict):
-                    metadata = result["metadata"]
-                    if "features" in metadata and isinstance(metadata["features"], dict):
-                        print(f"   - 特徴量数: {metadata['features'].get('count', 'N/A')}")
+                if "metadata" in result and isinstance(result.get("metadata"), dict):
+                    metadata = result.get("metadata", {})
+                    if "features" in metadata and isinstance(metadata.get("features"), dict):
+                        features_dict = metadata.get("features", {})
+                        count_value = features_dict.get('count', 'N/A') if hasattr(features_dict, 'get') else 'N/A'
+                        print(f"   - 特徴量数: {count_value}")
             else:
                 print(f"📊 データセット構築結果: {result}")
         elif args.workflow == "complete-atft":
