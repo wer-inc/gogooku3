@@ -3517,18 +3517,24 @@ def train(config: DictConfig) -> None:
         pass
 
     if train_loader is None:
-        logger.info("Train loader: None (training disabled)")
+        logger.error("❌ CRITICAL ERROR: Train loader is None!")
+        logger.error("This usually means the data directory or split structure is incorrect.")
+        logger.error("Expected structure: <data_dir>/{train,val,test}/")
+        logger.error("Check data.source.data_dir configuration and ensure splits exist.")
+        logger.error("Exiting immediately to avoid wasting time on empty training loops.")
+        sys.exit(1)
     else:
         try:
-            logger.info(f"Train batches: {len(train_loader)}")
+            logger.info(f"✅ Train batches: {len(train_loader)}")
         except Exception:
             logger.info("Train batches: unknown")
+    
     if val_loader is None:
-        logger.info("Val loader: None (validation disabled)")
+        logger.warning("⚠️  Val loader: None (validation disabled)")
     else:
         try:
             val_batches = len(val_loader)
-            logger.info(f"Val batches: {val_batches}")
+            logger.info(f"✅ Val batches: {val_batches}")
             if val_batches == 0:
                 logger.warning(
                     "Validation loader has 0 batches! Check data split configuration."
