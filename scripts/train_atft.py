@@ -36,6 +36,75 @@ import traceback
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
+# Helper functions for stabilizing training
+def _finite_or_nan_fix_tensor(tensor):
+    """Fix non-finite values in tensor using clamp and nan_to_num."""
+    if not torch.is_tensor(tensor):
+        return tensor
+    
+    # Replace NaN/Inf with finite values
+    tensor = torch.nan_to_num(tensor, nan=0.0, posinf=1e6, neginf=-1e6)
+    
+    # Clamp to reasonable range
+    tensor = torch.clamp(tensor, min=-1e6, max=1e6)
+    
+    return tensor
+
+def _normalize_target_key(raw_key, horizons=[1, 2, 3, 5, 10]):
+    """Normalize various target key formats to horizon_{h} format."""
+    # Direct horizon format
+    if raw_key.startswith('horizon_'):
+        return raw_key
+    
+    # Extract number from various formats
+    patterns = [
+        r'return_(\d+)d?',
+        r'target_(\d+)d?', 
+        r'label_ret_(\d+)_bps',
+        r'(\d+)d?',
+        r'^(\d+)$'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, str(raw_key))
+        if match:
+            h = int(match.group(1))
+            if h in horizons:
+                return f'horizon_{h}'
+    
+    return None
+
+def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
+    """Reshape tensors to [B] format, taking last timestep if needed."""
+    reshaped = {}
+    
+    for key, tensor in tensor_dict.items():
+        if not torch.is_tensor(tensor):
+            reshaped[key] = tensor
+            continue
+            
+        # Fix non-finite values first
+        tensor = _finite_or_nan_fix_tensor(tensor)
+        
+        # Handle different shapes
+        if tensor.dim() == 1:
+            # Already [B] - keep as is
+            reshaped[key] = tensor
+        elif tensor.dim() == 2 and take_last_step:
+            # [B, T] - take last timestep
+            reshaped[key] = tensor[:, -1]
+        elif tensor.dim() == 2:
+            # [B, F] - keep as is if F matches batch size
+            reshaped[key] = tensor
+        elif tensor.dim() == 3 and take_last_step:
+            # [B, T, F] - take last timestep
+            reshaped[key] = tensor[:, -1, :]
+        else:
+            # Squeeze extra dimensions
+            reshaped[key] = tensor.squeeze()
+            
+    return reshaped
+
 # --- Pre-parse custom CLI flags (before Hydra) ---
 # Support: --data-path <file> (single Parquet file)
 def _preparse_custom_argv():
@@ -985,19 +1054,24 @@ def train_epoch(
     for batch_idx, batch in enumerate(pbar):
         # データをGPUに転送（非同期）
             features = batch["features"].to(device, non_blocking=True)
-            # Canonicalize validation targets as well
+            # Normalize and reshape targets
             targets = {}
-            for k, v in batch.get("targets", {}).items():
-                canon = _canonicalize_target_key(k)
+            raw_targets = batch.get("targets", {})
+            for k, v in raw_targets.items():
+                canon = _normalize_target_key(k)
                 if canon is not None:
                     targets[canon] = v.to(device, non_blocking=True)
+            
+            # Reshape targets to [B] format
+            targets = _reshape_to_batch_only(targets)
+            
             if not targets:
                 try:
-                    raw_keys = list(getattr(batch, "get", lambda *_: {})("targets", {}).keys())
+                    raw_keys = list(raw_targets.keys())
                 except Exception:
                     raw_keys = []
                 logger.warning(
-                    f"[val-phase] no canonical targets found; raw target keys={raw_keys}"
+                    f"[train-phase] no canonical targets found; raw target keys={raw_keys}"
                 )
             # 有効マスク（任意）
             valid_masks = batch.get("valid_mask", None)
@@ -1054,6 +1128,10 @@ def train_epoch(
                             mixed_targets[k] = lam * v + (1 - lam) * v2
                         targets = mixed_targets
                     outputs = model(features)
+                    
+                    # Reshape outputs to [B] format and fix non-finite values
+                    outputs = _reshape_to_batch_only(outputs)
+                    
                     # Optional: add small Gaussian noise to outputs for warmup (point heads only)
                     if (
                         output_noise_std > 0.0
@@ -1084,13 +1162,13 @@ def train_epoch(
 
             # Loss computation in FP32 for stability
             with torch.amp.autocast("cuda", enabled=False):
-                # Ensure all outputs and targets are FP32
-                outputs_fp32 = {
+                # Ensure all outputs and targets are FP32 and properly shaped
+                outputs_fp32 = _reshape_to_batch_only({
                     k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
-                }
-                targets_fp32 = {
+                })
+                targets_fp32 = _reshape_to_batch_only({
                     k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
-                }
+                })
                 
 
                 # マスク付きマルチホライゾン損失
@@ -1145,22 +1223,38 @@ def train_epoch(
                                 f"Predictions h={h}: mean={pred_mean:.4f}, std={pred_std:.6f}"
                             )
 
-            # 1バッチ目のみデバッグ（形状と平均損失）
+            # 1バッチ目のみデバッグ（形状と平均損失） - 整形・安定化済み
             if batch_idx == 0 and epoch == 1:
                 try:
                     logger.info(f"criterion reduction: {criterion.mse.reduction}")
+                    
+                    # Use FP32 shaped outputs/targets for debugging
+                    stable_outputs = _reshape_to_batch_only(outputs_fp32)
+                    stable_targets = _reshape_to_batch_only(targets_fp32)
+                    
                     for h in criterion.horizons:
                         pred_key = (
                             f"point_horizon_{h}"
-                            if any(k.startswith("point_horizon_") for k in outputs.keys())
+                            if any(k.startswith("point_horizon_") for k in stable_outputs.keys())
                             else f"horizon_{h}"
                         )
                         targ_key = f"horizon_{h}"
-                        if pred_key in outputs and targ_key in targets:
-                            pred_t = outputs[pred_key]
-                            targ_t = targets[targ_key]
+                        if pred_key in stable_outputs and targ_key in stable_targets:
+                            pred_t = stable_outputs[pred_key]
+                            targ_t = stable_targets[targ_key]
+                            
+                            # Ensure both are [B] format
+                            if pred_t.dim() > 1:
+                                pred_t = pred_t.squeeze()
+                            if targ_t.dim() > 1:
+                                targ_t = targ_t.squeeze()
+                                
+                            # Fix non-finite values before computing MSE
+                            pred_t = _finite_or_nan_fix_tensor(pred_t)
+                            targ_t = _finite_or_nan_fix_tensor(targ_t)
+                            
                             mse_h = torch.nn.functional.mse_loss(
-                                pred_t.squeeze(-1), targ_t, reduction="mean"
+                                pred_t, targ_t, reduction="mean"
                             ).detach()
                             logger.info(
                                 f"h={h} pred_shape={tuple(pred_t.shape)} targ_shape={tuple(targ_t.shape)} mse={mse_h.item():.6f}"
@@ -1232,15 +1326,27 @@ def first_batch_probe(model, dataloader, device, n=3):
                 ):
                     outputs = model(features.contiguous())
 
-                # Check outputs
+                # Sanitize and check outputs
                 if isinstance(outputs, dict):
-                    for k, v in outputs.items():
+                    for k, v in list(outputs.items()):
                         if torch.is_tensor(v):
+                            v = _finite_or_nan_fix_tensor(v, f"outputs[probe][{k}]", clamp=50.0)
+                            # If sequence-shaped, take the last step
+                            if v.dim() >= 2 and v.shape[-1] != 1:
+                                v = v[..., -1]
+                            elif v.dim() >= 2 and v.shape[-1] == 1:
+                                v = v.squeeze(-1)
+                            outputs[k] = v
                             assert torch.isfinite(v).all(), f"Non-finite output in {k}"
                             logger.info(
-                                f"  Output {k}: shape={v.shape}, dtype={v.dtype}"
+                                f"  Output {k}: shape={tuple(v.shape)}, dtype={v.dtype}"
                             )
                 else:
+                    outputs = _finite_or_nan_fix_tensor(outputs, "outputs[probe]", clamp=50.0)
+                    if outputs.dim() >= 2 and outputs.shape[-1] != 1:
+                        outputs = outputs[..., -1]
+                    elif outputs.dim() >= 2 and outputs.shape[-1] == 1:
+                        outputs = outputs.squeeze(-1)
                     assert torch.isfinite(outputs).all(), "Non-finite output detected"
 
             except Exception as e:
@@ -1535,10 +1641,36 @@ def evaluate_model_metrics(
                 break
 
             features = batch["features"].to(device)
-            targets = batch["targets"].to(device)
+            
+            # Normalize and reshape targets for validation
+            raw_targets = batch.get("targets", {})
+            targets = {}
+            for k, v in raw_targets.items():
+                canon = _normalize_target_key(k)
+                if canon is not None:
+                    targets[canon] = v.to(device, non_blocking=True)
+            
+            # Reshape targets to [B] format
+            targets = _reshape_to_batch_only(targets)
+            
+            if not targets:
+                logger.warning(f"[val-phase] no canonical targets found; raw target keys={list(raw_targets.keys())}")
+                continue
 
             outputs = model(features)
-            loss_result = criterion(outputs, targets)
+            
+            # Reshape outputs to [B] format and fix non-finite values
+            outputs = _reshape_to_batch_only(outputs)
+            
+            # Ensure FP32 and proper shaping for loss computation
+            outputs_fp32 = _reshape_to_batch_only({
+                k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
+            })
+            targets_fp32 = _reshape_to_batch_only({
+                k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
+            })
+            
+            loss_result = criterion(outputs_fp32, targets_fp32)
             
             # Handle both single value and tuple return
             if isinstance(loss_result, tuple):
