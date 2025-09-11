@@ -39,7 +39,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # Import JQuants fetcher to get trade-spec directly
-from scripts._archive.run_pipeline import JQuantsAsyncFetcher  # type: ignore
+from src.data.jquants.fetcher import JQuantsAsyncFetcher
 from scripts.pipelines.run_pipeline_v4_optimized import JQuantsPipelineV4Optimized
 from src.pipeline.full_dataset import enrich_and_save
 

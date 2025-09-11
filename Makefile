@@ -10,6 +10,7 @@ help:
 	@echo "make run          - Start Dagster UI"
 	@echo "make clean        - Clean up environment"
 	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset"
+	@echo "make train                            - Train ATFT-GAT-FAN model"
 	@echo "make fetch-all    START=YYYY-MM-DD END=YYYY-MM-DD - Fetch prices/topix/trades_spec/statements"
 	@echo "make clean-deprecated                 - Remove deprecated shim scripts (use --apply via VAR APPLY=1)"
 
@@ -75,6 +76,11 @@ minio-create-bucket:
 .PHONY: dataset-full
 dataset-full:
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END}
+
+# Model training
+.PHONY: train
+train:
+	python scripts/integrated_ml_training_pipeline.py
 
 # Fetch all raw components in one shot
 .PHONY: fetch-all

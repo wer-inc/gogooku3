@@ -136,9 +136,7 @@ async def enrich_and_save(
         try:
             import os
 
-            from scripts._archive.run_pipeline import (
-                JQuantsAsyncFetcher,  # type: ignore
-            )
+            from src.data.jquants.fetcher import JQuantsAsyncFetcher
             email = os.getenv("JQUANTS_AUTH_EMAIL", "")
             password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
             if email and password:
@@ -268,9 +266,7 @@ async def enrich_and_save(
 
                 import aiohttp
 
-                from scripts._archive.run_pipeline import (
-                    JQuantsAsyncFetcher,  # type: ignore
-                )
+                from src.data.jquants.fetcher import JQuantsAsyncFetcher
                 email = os.getenv("JQUANTS_AUTH_EMAIL", "")
                 password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
                 if email and password:
