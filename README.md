@@ -46,6 +46,45 @@ ATFT-GAT-FANは、最新の深層学習技術を活用した高性能金融時�
 
 ## 🚀 クイックスタート
 
+### Available Commands
+
+#### Core Training Commands
+- `make train` - Train ATFT-GAT-FAN model using integrated pipeline
+- `make safe-train` - Run safe training pipeline with validation
+- `python scripts/train_atft.py` - Hydra-based training (alternative)
+
+#### Data Pipeline Commands  
+- `make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD` - Build complete enriched dataset
+- `python scripts/pipelines/run_full_dataset.py` - Direct dataset construction
+
+#### Testing Commands
+- `python scripts/smoke_test.py` - Verify core functionality (5 component tests)
+
+### Migration from Development Version
+
+**⚠️ Breaking Changes in Minimal Production Configuration**
+
+#### Deleted Scripts (Use Alternatives)
+- `scripts/run_safe_training.py` → Use `make safe-train`
+- `scripts/smoke_test.py` (dev version) → Use new `scripts/smoke_test.py`
+- `scripts/_archive/` → Components moved to proper locations
+
+#### Updated Import Paths
+```python
+# Old
+from scripts._archive.run_pipeline import JQuantsAsyncFetcher
+
+# New  
+from src.data.jquants.fetcher import JQuantsAsyncFetcher
+```
+
+#### New Model Imports
+```python
+from src.gogooku3.models import ATFTGATFANModel, LightGBMFinancialBaseline
+from src.gogooku3.training import SafeTrainingPipeline
+from src.gogooku3.features import QualityFinancialFeaturesGenerator
+```
+
 ### 1. 環境構築
 
 ```bash
