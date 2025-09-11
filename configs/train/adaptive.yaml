@@ -1,4 +1,4 @@
-# @package _group_
+# @package train
 name: adaptive_training
 
 # トレーナー設定
@@ -17,6 +17,9 @@ trainer:
 
   # 精度設定
   precision: 16-mixed
+
+  # 表示
+  enable_progress_bar: true
 
   # その他
   deterministic: ${project.deterministic}

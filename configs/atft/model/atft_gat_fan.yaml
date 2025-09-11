@@ -1,0 +1,112 @@
+# @package model
+name: ATFT_GAT_FAN
+architecture: atft_gat_fan
+
+# モデル全体設定（グループ直下にフラットに定義）
+hidden_size: 64
+input_projection:
+  use_layer_norm: true
+  dropout: 0.1
+
+input_dims:
+  basic_features: 46
+  historical_features: 260
+  total_features: 306
+
+tft:
+  lstm:
+    layers: 1
+    hidden_size: ${model.hidden_size}
+    dropout: 0.1
+    bidirectional: false
+  attention:
+    heads: 4
+    dropout: 0.1
+    use_scale: true
+  variable_selection:
+    hidden_size: ${model.hidden_size}
+    dropout: 0.1
+    use_sigmoid: true
+    sparsity_coefficient: 0.01
+  grn:
+    hidden_size: ${model.hidden_size}
+    dropout: 0.1
+    use_layer_norm: true
+  temporal:
+    use_positional_encoding: true
+    max_sequence_length: 20
+
+adaptive_normalization:
+  fan:
+    enabled: true
+    window_sizes: [5, 10, 20]
+    aggregation: weighted_mean
+    learn_weights: true
+  san:
+    enabled: true
+    num_slices: 3
+    overlap: 0.5
+    slice_aggregation: learned
+
+gat:
+  enabled: true
+  architecture:
+    num_layers: 2
+    hidden_channels:
+      - ${model.hidden_size}
+      - ${model.hidden_size}
+    heads: [4, 2]
+    concat: [true, false]
+  layer_config:
+    dropout: 0.2
+    edge_dropout: 0.1
+    negative_slope: 0.2
+    add_self_loops: false
+    bias: true
+  edge_features:
+    use_edge_attr: true
+    edge_dim: 3
+    edge_projection: linear
+  regularization:
+    edge_weight_penalty: 0.01
+    attention_entropy_penalty: 0.001
+
+prediction_head:
+  architecture:
+    hidden_layers: [32]
+    activation: relu
+    dropout: 0.2
+    use_batch_norm: false
+  output:
+    point_prediction: true
+    quantile_prediction:
+      enabled: true
+      quantiles: [0.1, 0.25, 0.5, 0.75, 0.9]
+    distribution_prediction:
+      enabled: false
+      type: normal
+    student_t: true  # Enable Student-t distribution heads for heteroscedastic predictions
+
+optimization:
+  compression:
+    gradient_checkpointing: false
+    mixed_precision: true
+    channels_last: true
+  compile:
+    enabled: false
+    mode: default
+    fullgraph: false
+    dynamic: false
+  inference:
+    use_torch_script: false
+    use_onnx: false
+    optimize_for_inference: true
+
+initialization:
+  method: xavier_uniform
+  gain: 1.0
+
+regularization:
+  weight_decay: 1e-4
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm

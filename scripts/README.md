@@ -18,7 +18,7 @@ scripts/
 
 ## Quick Start
 
-### 1. フルパイプライン実行
+### 1. フルパイプライン実行（One‑Shot Full Dataset）
 ```bash
 # サンプルデータで実行（最適化版）
 python scripts/pipelines/run_pipeline_v4_optimized.py --stocks 10 --days 100
@@ -26,6 +26,31 @@ python scripts/pipelines/run_pipeline_v4_optimized.py --stocks 10 --days 100
 # JQuants APIで実行
 python scripts/pipelines/run_pipeline_v4_optimized.py --jquants --stocks 100 --days 300
 ```
+
+#### セクター機能付きのフルデータセット生成
+```bash
+python scripts/pipelines/run_full_dataset.py \
+  --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  # オフライン時の代替入力
+  [--topix-parquet output/topix_history_YYYYMMDD_YYYYMMDD.parquet] \
+  [--statements-parquet output/event_raw_statements_YYYYMMDD_YYYYMMDD.parquet] \
+  [--listed-info-parquet output/listed_info_history_YYYYMMDD.parquet] \
+  # セクター機能トグル
+  [--sector-onehot33] \
+  [--sector-series-mcap auto|always|never] \
+  [--sector-series-levels 33|17|33,17] \
+  [--sector-te-targets target_5d[,target_1d]] \
+  [--sector-te-levels 33|17|33,17]
+```
+
+セクター機能の概要:
+- 基礎列: `sector17/33_code/name/id`（as‑of結合、リークなし）
+- カテゴリ: 17業種 One‑Hot（希少カテゴリはOther）、日別頻度 `sec17/33_daily_freq`
+- 集約系列: `sec_ret_1d/5d/20d_eq`、`sec_mom_20`、`sec_ema_5/20`、`sec_gap_5_20`、`sec_vol_20`、`sec_vol_20_z`
+- 時価総額加重（オプション）: `sec_ret_1d/5d/20d_mcap`（`shares_outstanding` があれば自動）
+- 相対化: `rel_to_sec_5d`、`alpha_vs_sec_1d`、`ret_1d_demeaned`、`z_in_sec_*`
+- ターゲットエンコード: `te_sec_<target>`（K‑fold＋Δラグ＋ベイズ平滑、フォールバックあり）
 
 ### 2. TOPIX特徴量の追加
 ```bash

@@ -13,7 +13,7 @@ import numpy as np
 from ..utils.settings import get_settings
 
 logger = logging.getLogger(__name__)
-config = get_settings()
+# config = get_settings()  # 遅延初期化に変更
 
 
 class HuberLoss(nn.Module):
@@ -157,52 +157,85 @@ class MultiHorizonLoss(nn.Module):
     ) -> torch.Tensor:
         """
         Args:
-            predictions: 予測値 {'h1': tensor, 'h5': tensor, ...}
-            targets: 目標値 {'h1': tensor, 'h5': tensor, ...}
+            predictions: 予測値 {'point_horizon_1': tensor, 'point_horizon_5': tensor, ...}
+            targets: 目標値 {'horizon_1': tensor, 'horizon_5': tensor, ...}
             return_components: 各ホライズンの損失を返す
 
         Returns:
             総合損失または損失コンポーネント
         """
-        total_loss = torch.tensor(0.0, device=next(iter(predictions.values())).device)
+        # デバイスを取得（空の場合はCPU）
+        if predictions:
+            device = next(iter(predictions.values())).device
+        elif targets:
+            device = next(iter(targets.values())).device
+        else:
+            device = torch.device('cpu')
+            
+        losses = []  # 勾配を保持するためリストに収集
         loss_components = {}
 
         for horizon in self.horizons:
-            key = f'h{horizon}'
-            if key not in predictions or key not in targets:
+            # 実際のキー名に合わせる
+            pred_key = f'point_horizon_{horizon}'
+            target_key = f'horizon_{horizon}'
+            
+            # 古いキー名もサポート（後方互換性）
+            if pred_key not in predictions and f'h{horizon}' in predictions:
+                pred_key = f'h{horizon}'
+            if target_key not in targets and f'h{horizon}' in targets:
+                target_key = f'h{horizon}'
+                
+            if pred_key not in predictions or target_key not in targets:
                 continue
 
-            pred = predictions[key]
-            target = targets[key]
+            pred = predictions[pred_key]
+            target = targets[target_key]
             weight = self.weights[horizon]
 
             # Huber損失
             huber_loss = self.huber_loss(pred, target)
             weighted_loss = weight * huber_loss
 
-            total_loss += weighted_loss
+            losses.append(weighted_loss)  # リストに追加
             loss_components[f'huber_{horizon}'] = huber_loss.item()
             loss_components[f'weighted_huber_{horizon}'] = weighted_loss.item()
 
         # 分位点損失（オプション）
-        if self.quantile_loss is not None and 'quantiles' in predictions:
+        if self.quantile_loss is not None:
             for horizon in self.horizons:
-                q_key = f'h{horizon}_quantiles'
-                if q_key in predictions:
+                # 実際のキー名に合わせる
+                q_key = f'quantile_horizon_{horizon}'
+                target_key = f'horizon_{horizon}'
+                
+                # 古いキー名もサポート
+                if q_key not in predictions and f'h{horizon}_quantiles' in predictions:
+                    q_key = f'h{horizon}_quantiles'
+                if target_key not in targets and f'h{horizon}' in targets:
+                    target_key = f'h{horizon}'
+                    
+                if q_key in predictions and target_key in targets:
                     pred_q = predictions[q_key]
-                    target = targets[f'h{horizon}']
+                    target = targets[target_key]
 
                     q_loss = self.quantile_loss(pred_q, target)
-                    total_loss += q_loss
+                    losses.append(q_loss)  # リストに追加
 
                     loss_components[f'quantile_{horizon}'] = q_loss.item()
 
                     # カバレッジペナルティ
                     if self.use_coverage_penalty and self.coverage_penalty is not None:
                         cov_penalty = self.coverage_penalty(pred_q, target)
-                        total_loss += cov_penalty
+                        losses.append(cov_penalty)  # リストに追加
                         loss_components[f'coverage_penalty_{horizon}'] = cov_penalty.item()
 
+        # 勾配を保持したまま合計を計算
+        if losses:
+            total_loss = torch.stack(losses).sum()
+        else:
+            # 損失がない場合のフォールバック
+            total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            
         loss_components['total_loss'] = total_loss.item()
 
         if return_components:

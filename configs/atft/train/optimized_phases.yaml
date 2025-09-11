@@ -1,0 +1,99 @@
+name: optimized_phases
+
+# Batch configuration optimized for financial ML
+batch:
+  train_batch_size: 512     # Optimal for A100 GPU
+  val_batch_size: 1024
+  test_batch_size: 1024
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
+  gradient_accumulation_steps: 4  # Increased for effective batch size 2048
+
+# Optimizer configuration optimized for financial ML
+optimizer:
+  type: adamw
+  lr: 0.0005
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  eps: 1e-7
+
+# Learning rate scheduler with phase-aware scheduling
+scheduler:
+  type: ReduceLROnPlateau
+  factor: 0.5
+  patience: 2               # Very aggressive for financial data
+  min_lr: 1e-6
+  verbose: true
+  threshold: 0.0001
+  threshold_mode: rel
+  warmup_steps: 2000
+  gamma: 0.95
+
+# Training configuration with optimized phases
+trainer:
+  max_epochs: 75
+  gradient_clip_val: 0.5    # Reduced from 0.8 for stability
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 4
+  val_check_interval: 0.5   # Increased from 0.25 for efficiency
+  check_val_every_n_epoch: 1
+  log_every_n_steps: 5      # Reduced from 10 for better monitoring
+  enable_checkpointing: true
+  enable_model_summary: true
+  enable_progress_bar: true
+  detect_anomaly: false
+  benchmark: true
+  deterministic: false
+  precision: bf16-mixed
+
+# Enhanced early stopping
+early_stopping:
+  monitor: val/sharpe_ratio  # Changed from loss to Sharpe ratio
+  mode: max                  # Maximize Sharpe ratio
+  patience: 6                # Reduced from 9
+  min_delta: 0.001          # Increased threshold for Sharpe
+  verbose: true
+
+# Loss configuration optimized for financial prediction
+loss:
+  type: huber_multi_horizon
+  huber_delta: 0.01
+  multi_horizon_weights: [3.0, 2.0, 1.5, 1.0, 0.7]  # Even stronger short-term focus
+  use_coverage_penalty: true
+  coverage_alpha: 0.03      # Further increased
+  rankic_weight: 0.15       # Increased from 0.1
+  sharpe_weight: 0.1        # Doubled from 0.05
+  l2_lambda: 0.002          # Doubled from 0.001
+
+# Model checkpointing optimized for Sharpe ratio
+checkpoint:
+  monitor: val/sharpe_ratio
+  mode: max
+  save_top_k: 5
+  save_last: true
+  save_on_train_epoch_end: false
+  filename: 'sharpe-{epoch:03d}-{val_sharpe_ratio:.6f}'
+
+# Phase-specific training parameters
+phases:
+  phase_0:  # Baseline - shortened for efficiency
+    name: "Baseline"
+    epochs: 3              # Reduced from 5
+    lr_multiplier: 1.0     # Base learning rate
+    
+  phase_1:  # Adaptive Norm - shortened
+    name: "Adaptive Norm"
+    epochs: 5              # Reduced from 10
+    lr_multiplier: 0.4     # 40% of base rate
+    
+  phase_2:  # GAT - optimized
+    name: "GAT"
+    epochs: 15             # Reduced from 20
+    lr_multiplier: 0.2     # 20% of base rate
+    
+  phase_3:  # Fine-tuning - extended
+    name: "Fine-tuning"
+    epochs: 52             # 75 - 3 - 5 - 15 = 52
+    lr_multiplier: 0.1     # 10% of base rate for fine-tuning

@@ -1,17 +1,19 @@
 data:
   graph_builder:
     cache_dir: graph_cache
-    ewm_halflife: 20
+    ewm_halflife: 30
     k: 15
+    edge_threshold: 0.25
     log_mktcap_col: log_mktcap
     lookback: 60
     method: ewm_demean
     min_obs: 40
+    use_in_training: true  # 学習時にも強化版GraphBuilderを使用
     return_cols:
     - return_1d
     - feat_ret_1d
     sector_col: sector33
-    shrinkage_gamma: 0.05
+    shrinkage_gamma: 0.1
     size_tau: 1.0
     source_glob: ${data.source.data_dir}/*.parquet
     symmetric: true

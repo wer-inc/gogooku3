@@ -35,6 +35,45 @@ import traceback
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
+# --- Pre-parse custom CLI flags (before Hydra) ---
+# Support: --data-path <file> (single Parquet file)
+def _preparse_custom_argv():
+    try:
+        import sys as _sys
+        argv = list(_sys.argv)
+        if not argv:
+            return
+        new_argv = []
+        i = 0
+        while i < len(argv):
+            tok = argv[i]
+            if tok in ("--data-path", "--data_path"):
+                # Expect a following value
+                if i + 1 < len(argv):
+                    val = argv[i + 1]
+                    os.environ["DATA_PATH"] = val
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            elif tok.startswith("--data-path="):
+                os.environ["DATA_PATH"] = tok.split("=", 1)[1]
+                i += 1
+                continue
+            elif tok.startswith("--data_path="):
+                os.environ["DATA_PATH"] = tok.split("=", 1)[1]
+                i += 1
+                continue
+            else:
+                new_argv.append(tok)
+                i += 1
+        _sys.argv = new_argv
+    except Exception:
+        pass
+
+_preparse_custom_argv()
+
 # Import unified metrics utilities
 try:
     from src.utils.metrics_utils import (
@@ -88,8 +127,15 @@ else:
         ProductionDatasetV2,
     )
 from src.data.samplers.day_batch_sampler import DayBatchSampler  # noqa: E402
-from src.data.samplers.day_batch_sampler_fixed import DayBatchSamplerFixed  # noqa: E402
+# DayBatchSamplerFixed is not needed, using DayBatchSampler instead
+DayBatchSamplerFixed = DayBatchSampler  # Alias for compatibility
 from src.graph.graph_builder import GBConfig, GraphBuilder  # noqa: E402
+try:
+    from src.data.utils.graph_builder import (  # noqa: E402
+        FinancialGraphBuilder as AdvFinancialGraphBuilder,
+    )
+except Exception:
+    AdvFinancialGraphBuilder = None  # type: ignore
 
 try:
     from src.models.architectures.atft_gat_fan import ATFT_GAT_FAN  # noqa: E402
@@ -100,6 +146,41 @@ from src.utils.config_validator import ConfigValidator  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Attach file logger for live tailing (logs/ml_training.log)
+try:
+    from pathlib import Path as _Path
+    import logging as _logging
+
+    _log_dir = _Path("logs")
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _log_file = (_log_dir / "ml_training.log").resolve()
+
+    _root = _logging.getLogger()
+    # Avoid duplicate file handlers pointing to the same file
+    _has_same = False
+    for _h in list(_root.handlers):
+        try:
+            if isinstance(_h, _logging.FileHandler) and _h.baseFilename == str(_log_file):
+                _has_same = True
+                break
+        except Exception:
+            pass
+    if not _has_same:
+        _fh = _logging.FileHandler(_log_file, mode="a", encoding="utf-8")
+        _fh.setFormatter(
+            _logging.Formatter(
+                fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        _root.addHandler(_fh)
+        _root.info(f"[logger] FileHandler attached: {_log_file}")
+except Exception as _e_attach:
+    try:
+        logger.debug(f"file logger attach skipped: {_e_attach}")
+    except Exception:
+        pass
 
 # Enable fault handler for better crash reports
 faulthandler.enable()
@@ -180,9 +261,19 @@ def collate_day(items):
 
     # features
     x = _torch.stack([it["features"] for it in items], dim=0)
-    # targets: dict of tensors
-    tgt_keys = list(items[0]["targets"].keys())
-    y = {k: _torch.stack([it["targets"][k] for it in items], dim=0) for k in tgt_keys}
+    # targets: dict of tensors (robust to missing keys)
+    tgt_keys = set(items[0]["targets"].keys())
+    for it in items[1:]:
+        try:
+            tgt_keys &= set(it["targets"].keys())
+        except Exception:
+            pass
+    tgt_keys = sorted(list(tgt_keys))
+    if not tgt_keys:
+        # Fallback: build empty dict to avoid crash; upstream will handle
+        y = {}
+    else:
+        y = {k: _torch.stack([it["targets"][k] for it in items], dim=0) for k in tgt_keys}
     # valid masks (optional)
     vm = None
     if "valid_mask" in items[0] and isinstance(items[0]["valid_mask"], dict):
@@ -192,10 +283,24 @@ def collate_day(items):
         }
     # codes/date
     codes = [str(it.get("code")) for it in items]
+    markets = None
+    sectors = None
+    try:
+        if all(("market" in it) for it in items):
+            markets = [None if it.get("market") in (None, "nan") else str(it.get("market")) for it in items]
+        if all(("sector" in it) for it in items):
+            sectors = [None if it.get("sector") in (None, "nan") else str(it.get("sector")) for it in items]
+    except Exception:
+        markets = None
+        sectors = None
     date0 = items[0].get("date", None)
     out = {"features": x, "targets": y, "codes": codes, "date": date0}
     if vm is not None:
         out["valid_mask"] = vm
+    if markets is not None:
+        out["markets"] = markets
+    if sectors is not None:
+        out["sectors"] = sectors
     return out
 
 
@@ -422,7 +527,9 @@ class MultiHorizonLoss(nn.Module):
         targets: Dict[str, Tensor] - 各ホライゾンのターゲット
         valid_masks: Dict[str, Tensor] - 各ホライゾンの有効マスク（オプション）
         """
-        total_loss = 0.0
+        # Initialize as zero (will accumulate loss tensors)
+        device = next(iter(predictions.values())).device if predictions else torch.device('cpu')
+        total_loss = torch.zeros(1, device=device)
         losses = {}
         weights = []
         # 現在のホライズン重み
@@ -542,7 +649,7 @@ class MultiHorizonLoss(nn.Module):
                     weight = 1.0 / np.sqrt(horizon)
                     if int(horizon) == 1 and self.h1_loss_mult != 1.0:
                         weight = weight * self.h1_loss_mult
-                total_loss += weight * loss
+                total_loss = total_loss + weight * loss
                 weights.append(weight)
 
                 # 動的RMSE更新
@@ -608,9 +715,99 @@ class MultiHorizonLoss(nn.Module):
 
         if len(weights) > 0:
             total_loss = total_loss / float(np.sum(weights))
+        
+        # Ensure scalar output
+        total_loss = total_loss.squeeze()
         # ステップ更新（動的重み用）
         self._steps += 1
         return total_loss, losses
+
+    # ===== メトリクス計算 =====
+    @staticmethod
+    def compute_sharpe_ratio(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+        """Compute Sharpe ratio using portfolio return method"""
+        with torch.no_grad():
+            # 予測値の符号でポジションを決定（+1: ロング, -1: ショート）
+            # 符号反転フラグ（環境変数で制御）
+            invert_sign = os.getenv("INVERT_PREDICTION_SIGN", "1") == "1"
+            if invert_sign:
+                positions = -torch.sign(predictions)  # 符号を反転
+            else:
+                positions = torch.sign(predictions)
+            
+            # ポートフォリオリターン = ポジション × 実際のリターン
+            portfolio_returns = positions * targets
+            
+            # Sharpe比 = 平均リターン / リターンの標準偏差
+            if len(portfolio_returns) < 2:
+                return 0.0
+                
+            mean_return = portfolio_returns.mean()
+            std_return = portfolio_returns.std()
+            
+            if std_return < 1e-8:
+                return 0.0
+                
+            sharpe = mean_return / std_return
+            return sharpe.item()
+    
+    @staticmethod
+    def compute_ic(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+        """Compute Information Coefficient (IC)"""
+        with torch.no_grad():
+            # Flatten tensors
+            pred_flat = predictions.flatten()
+            targ_flat = targets.flatten()
+            
+            # Remove NaN/Inf
+            valid_mask = torch.isfinite(pred_flat) & torch.isfinite(targ_flat)
+            if valid_mask.sum() < 2:
+                return 0.0
+            
+            pred_valid = pred_flat[valid_mask]
+            targ_valid = targ_flat[valid_mask]
+            
+            # Pearson correlation
+            pred_mean = pred_valid.mean()
+            targ_mean = targ_valid.mean()
+            
+            pred_centered = pred_valid - pred_mean
+            targ_centered = targ_valid - targ_mean
+            
+            cov = (pred_centered * targ_centered).mean()
+            pred_std = pred_centered.std() + 1e-8
+            targ_std = targ_centered.std() + 1e-8
+            
+            ic = cov / (pred_std * targ_std)
+            return ic.item()
+    
+    @staticmethod
+    def compute_rank_ic(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+        """Compute Rank IC (Spearman correlation)"""
+        with torch.no_grad():
+            # Flatten tensors
+            pred_flat = predictions.flatten()
+            targ_flat = targets.flatten()
+            
+            # Remove NaN/Inf
+            valid_mask = torch.isfinite(pred_flat) & torch.isfinite(targ_flat)
+            if valid_mask.sum() < 2:
+                return 0.0
+            
+            pred_valid = pred_flat[valid_mask]
+            targ_valid = targ_flat[valid_mask]
+            
+            # Compute ranks
+            pred_ranks = pred_valid.argsort().argsort().float()
+            targ_ranks = targ_valid.argsort().argsort().float()
+            
+            # Spearman correlation on ranks
+            n = pred_ranks.shape[0]
+            pred_ranks = (pred_ranks - pred_ranks.mean()) / (pred_ranks.std() + 1e-8)
+            targ_ranks = (targ_ranks - targ_ranks.mean()) / (targ_ranks.std() + 1e-8)
+            
+            rank_ic = (pred_ranks * targ_ranks).mean()
+            return rank_ic.item()
 
     # ===== 重み制御ユーティリティ =====
     def _get_current_weights(self) -> dict | None:
@@ -852,11 +1049,19 @@ def train_epoch(
             targets_fp32 = {
                 k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
             }
+            
 
             # マスク付きマルチホライゾン損失
-            loss, losses = criterion(
+            loss_result = criterion(
                 outputs_fp32, targets_fp32, valid_masks=valid_masks
             )
+            
+            # Handle both single value and tuple return
+            if isinstance(loss_result, tuple):
+                loss, losses = loss_result
+            else:
+                loss = loss_result
+                losses = {}
 
             # 追加: 各ホライゾンのvalid比率を低頻度でログ
             if (batch_idx % 200 == 0) and isinstance(valid_masks, dict):
@@ -1291,9 +1496,18 @@ def evaluate_model_metrics(
             targets = batch["targets"].to(device)
 
             outputs = model(features)
-            loss = criterion(outputs, targets)
+            loss_result = criterion(outputs, targets)
+            
+            # Handle both single value and tuple return
+            if isinstance(loss_result, tuple):
+                loss, _ = loss_result
+            else:
+                loss = loss_result
 
-            total_loss += loss.item()
+            try:
+                total_loss += float(loss.item() if hasattr(loss, "item") else float(loss))
+            except Exception:
+                pass
             n_batches += 1
 
             # 予測とターゲットを保存
@@ -1337,9 +1551,13 @@ def evaluate_model_metrics(
 
         # シャープレシオ（金融指標）
         returns = pred - target
-        sharpe_ratio = (
-            np.mean(returns) / np.std(returns) if np.std(returns) > 0 else 0.0
-        )
+        eps = 0.0
+        try:
+            eps = float(os.getenv("SHARPE_EPS", "0.0"))
+        except Exception:
+            eps = 0.0
+        sd = np.std(returns)
+        sharpe_ratio = (np.mean(returns) / (sd + eps)) if (sd + eps) > 0 else 0.0
 
         metrics["horizon_metrics"][horizon] = {
             "mse": mse,
@@ -1371,6 +1589,12 @@ def evaluate_model_metrics(
     logger.info(f"  Average RMSE: {avg_metrics['avg_rmse']:.4f}")
     logger.info(f"  Average R²: {avg_metrics['avg_r2']:.4f}")
     logger.info(f"  Average Sharpe Ratio: {avg_metrics['avg_sharpe_ratio']:.4f}")
+    # Parser-friendly single-line Sharpe for external pipelines
+    try:
+        sharpe_line = f"Sharpe: {avg_metrics['avg_sharpe_ratio']:.4f}"
+        logger.info(sharpe_line)
+    except Exception:
+        pass
 
     return metrics
 
@@ -1438,7 +1662,14 @@ def validate(model, dataloader, criterion, device):
                             outputs[k] = _finite_or_nan_fix_tensor(
                                 v, f"outputs[val][{k}]", clamp=50.0
                             )
-                loss, losses = criterion(outputs, targets, valid_masks=valid_masks)
+                loss_result = criterion(outputs, targets, valid_masks=valid_masks)
+                
+                # Handle both single value and tuple return
+                if isinstance(loss_result, tuple):
+                    loss, losses = loss_result
+                else:
+                    loss = loss_result
+                    losses = {}
 
             total_loss += loss.item()
             for k, v in losses.items():
@@ -1695,6 +1926,432 @@ def validate(model, dataloader, criterion, device):
     return avg_loss, avg_horizon_losses, linear_calibration
 
 
+def run_phase_training(model, train_loader, val_loader, config, device):
+    """Phase Training実行 (A+アプローチ)"""
+    import torch.nn as nn
+    import torch.optim as optim
+    
+    logger.info("=" * 80)
+    logger.info("Starting Phase Training (A+ Approach)")
+    logger.info("=" * 80)
+    
+    # Phase定義
+    phases = [
+        {
+            "name": "Phase 0: Baseline",
+            "epochs": 5,
+            "toggles": {"use_fan": False, "use_san": False, "use_gat": False},
+            "loss_weights": {"quantile": 1.0, "sharpe": 0.0, "corr": 0.0},
+            "lr": 5e-4,
+            "grad_clip": 1.0
+        },
+        {
+            "name": "Phase 1: Adaptive Norm",
+            "epochs": 10,
+            "toggles": {"use_fan": True, "use_san": True, "use_gat": False},
+            "loss_weights": {"quantile": 1.0, "sharpe": 0.1, "corr": 0.0},
+            "lr": 5e-4,
+            "grad_clip": 1.0
+        },
+        {
+            "name": "Phase 2: GAT",
+            "epochs": 20,
+            "toggles": {"use_fan": True, "use_san": True, "use_gat": True},
+            "loss_weights": {"quantile": 1.0, "sharpe": 0.1, "corr": 0.05},
+            "lr": 2e-4,
+            "grad_clip": 1.0
+        },
+        {
+            "name": "Phase 3: Fine-tuning",
+            "epochs": 10,
+            "toggles": {"use_fan": True, "use_san": True, "use_gat": True},
+            "loss_weights": {"quantile": 1.0, "sharpe": 0.15, "corr": 0.05},
+            "lr": 1e-4,
+            "grad_clip": 0.5
+        }
+    ]
+    
+    # Optimizer初期化
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=phases[0]["lr"],
+        weight_decay=config.train.optimizer.weight_decay
+    )
+    
+    # Loss初期化 - Fixed to use correct constructor
+    criterion = MultiHorizonLoss(
+        horizons=config.data.time_series.prediction_horizons,
+        use_huber=True,
+        huber_delta=0.01,
+        huber_weight=0.3
+    )
+    
+    best_val_loss = float('inf')
+    checkpoint_path = Path("output/checkpoints")
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+    
+    for phase_idx, phase in enumerate(phases):
+        logger.info(f"\n{'='*60}")
+        logger.info(f"{phase['name']}")
+        logger.info(f"{'='*60}")
+        
+        # モデルトグル適用
+        if hasattr(model, 'fan') and hasattr(model, 'san'):
+            if not phase["toggles"]["use_fan"]:
+                model.fan = nn.Identity()
+            if not phase["toggles"]["use_san"]:
+                model.san = nn.Identity()
+        
+        # GAT有効/無効化
+        if hasattr(model, 'use_gat'):
+            model.use_gat = phase["toggles"]["use_gat"]
+        
+        # 学習率調整
+        for g in optimizer.param_groups:
+            g["lr"] = phase["lr"]
+        
+        # 損失重み更新（実装に応じて安全に適用）
+        try:
+            # Phaseに応じて重み調整（正規化はset_preset_weights側で実施）
+            if phase_idx == 0:
+                w = {1: 1.0, 2: 0.0, 3: 0.0, 5: 0.0, 10: 0.0}
+            elif phase_idx == 1:
+                w = {1: 1.0, 2: 0.5, 3: 0.3, 5: 0.2, 10: 0.1}
+            else:
+                w = {1: 1.0, 2: 0.8, 3: 0.6, 5: 0.4, 10: 0.2}
+
+            if hasattr(criterion, "set_preset_weights"):
+                criterion.set_preset_weights(w)
+            elif hasattr(criterion, "weights"):
+                criterion.weights = w
+            elif hasattr(criterion, "horizon_weights"):
+                # 最後の手段として後方互換（将来的に削除予定）
+                criterion.horizon_weights = w
+        except Exception:
+            pass
+        
+        # 早期終了の設定（フェーズ内）
+        try:
+            early_stop_patience = int(os.getenv("EARLY_STOP_PATIENCE", "9"))
+        except Exception:
+            early_stop_patience = 9
+        
+        # Early stopping with min_delta
+        early_stop_min_delta = float(os.getenv("EARLY_STOP_MIN_DELTA", "1e-4"))
+        _phase_best = float("inf")
+        _no_improve = 0
+        
+        # ReduceLROnPlateau scheduler for this phase
+        phase_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 
+            mode='min',
+            factor=0.5,
+            patience=5,
+            min_lr=1e-5,
+            )
+
+        # エポック実行
+        for epoch in range(phase["epochs"]):
+            # Training
+            model.train()
+            train_loss = 0.0
+            train_batches = 0
+            train_metrics = {'sharpe': [], 'ic': [], 'rank_ic': []}
+            
+            for batch_idx, batch in enumerate(train_loader):
+                if batch_idx >= 100:  # 最初の100バッチで様子見
+                    break
+                    
+                optimizer.zero_grad()
+                
+                # Forward pass
+                predictions = model(
+                    batch["features"].to(device),
+                    batch.get("static_features", None),
+                    batch.get("edge_index", None),
+                    batch.get("edge_attr", None)
+                )
+                
+                # Loss計算（targetsは辞書型）
+                targets_dict = {}
+                for horizon, target_tensor in batch["targets"].items():
+                    targets_dict[horizon] = target_tensor.to(device)
+                
+                
+                # Get loss from criterion - handle both single value and tuple return
+                loss_result = criterion(predictions, targets_dict)
+                if isinstance(loss_result, tuple):
+                    loss, losses = loss_result
+                else:
+                    loss = loss_result
+                    losses = {}
+                
+                
+                # Backward pass (skip if loss is not a tensor or has no grad)
+                try:
+                    if hasattr(loss, "requires_grad") and loss.requires_grad:
+                        loss.backward()
+                    else:
+                        logger.warning("[train-phase] loss has no grad; skipping backward")
+                except Exception as _be:
+                    logger.warning(f"[train-phase] backward skipped due to: {_be}")
+                torch.nn.utils.clip_grad_norm_(model.parameters(), phase["grad_clip"])
+                optimizer.step()
+                
+                # Compute metrics for main horizon (1d)
+                # Try multiple key patterns
+                pred_1d, targ_1d = None, None
+                for pred_key in ["point_horizon_1", "horizon_1"]:
+                    if pred_key in predictions:
+                        pred_1d = predictions[pred_key].detach()
+                        break
+                for targ_key in ["horizon_1", "point_horizon_1"]:
+                    if targ_key in targets_dict:
+                        targ_1d = targets_dict[targ_key].detach()
+                        break
+                
+                if pred_1d is not None and targ_1d is not None:
+                    # Compute metrics
+                    sharpe = MultiHorizonLoss.compute_sharpe_ratio(pred_1d, targ_1d)
+                    ic = MultiHorizonLoss.compute_ic(pred_1d, targ_1d)
+                    rank_ic = MultiHorizonLoss.compute_rank_ic(pred_1d, targ_1d)
+                    
+                    train_metrics['sharpe'].append(sharpe)
+                    train_metrics['ic'].append(ic)
+                    train_metrics['rank_ic'].append(rank_ic)
+                else:
+                    # Debug: Log available keys
+                    logger.debug(f"[DEBUG] Prediction keys: {list(predictions.keys())}")
+                    logger.debug(f"[DEBUG] Target keys: {list(targets_dict.keys())}")
+                
+                try:
+                    train_loss += float(loss.item() if hasattr(loss, "item") else float(loss))
+                except Exception:
+                    pass
+                train_batches += 1
+            
+            # Validation
+            model.eval()
+            val_loss = 0.0
+            val_batches = 0
+            val_metrics = {'sharpe': [], 'ic': [], 'rank_ic': []}
+            # Accumulate predictions/targets for Sharpe
+            _val_preds: dict[int, list] = {h: [] for h in criterion.horizons}
+            _val_targs: dict[int, list] = {h: [] for h in criterion.horizons}
+            
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(val_loader):
+                    if batch_idx >= 50:  # 最初の50バッチで評価
+                        break
+                        
+                    predictions = model(
+                        batch["features"].to(device),
+                        batch.get("static_features", None),
+                        batch.get("edge_index", None),
+                        batch.get("edge_attr", None)
+                    )
+                    
+                    # targets are dict tensors; build dict on device
+                    tdict = {k: v.to(device) for k, v in batch.get("targets", {}).items()}
+                    loss_result = criterion(predictions, tdict)
+
+                    # Handle both single value and tuple return from criterion
+                    if isinstance(loss_result, tuple):
+                        _val_total, _ = loss_result
+                    else:
+                        _val_total = loss_result
+
+                    try:
+                        if hasattr(_val_total, "item"):
+                            val_loss += float(_val_total.item())
+                        else:
+                            val_loss += float(_val_total)
+                    except Exception:
+                        pass
+                    val_batches += 1
+                    
+                    # Compute validation metrics for main horizon (1d)
+                    # Try multiple key patterns
+                    pred_1d, targ_1d = None, None
+                    for pred_key in ["point_horizon_1", "horizon_1"]:
+                        if pred_key in predictions:
+                            pred_1d = predictions[pred_key].detach()
+                            break
+                    for targ_key in ["horizon_1", "point_horizon_1"]:
+                        if targ_key in tdict:
+                            targ_1d = tdict[targ_key].detach()
+                            break
+                    
+                    if pred_1d is not None and targ_1d is not None:
+                        # Compute metrics
+                        sharpe = MultiHorizonLoss.compute_sharpe_ratio(pred_1d, targ_1d)
+                        ic = MultiHorizonLoss.compute_ic(pred_1d, targ_1d)
+                        rank_ic = MultiHorizonLoss.compute_rank_ic(pred_1d, targ_1d)
+                        
+                        val_metrics['sharpe'].append(sharpe)
+                        val_metrics['ic'].append(ic)
+                        val_metrics['rank_ic'].append(rank_ic)
+                    else:
+                        # Debug: Log available keys
+                        logger.debug(f"[DEBUG] Val Prediction keys: {list(predictions.keys())}")
+                        logger.debug(f"[DEBUG] Val Target keys: {list(tdict.keys())}")
+                    
+                    # Store for Sharpe computation
+                    try:
+                        for h in criterion.horizons:
+                            hk = f"horizon_{h}"
+                            pk = hk
+                            if isinstance(predictions, dict):
+                                if f"point_horizon_{h}" in predictions:
+                                    pk = f"point_horizon_{h}"
+                                elif hk in predictions:
+                                    pk = hk
+                                else:
+                                    continue
+                                if (pk in predictions) and (hk in tdict):
+                                    _val_preds[h].append(
+                                        predictions[pk].detach().float().view(-1).cpu()
+                                    )
+                                    _val_targs[h].append(
+                                        tdict[hk].detach().float().view(-1).cpu()
+                                    )
+                    except Exception:
+                        pass
+            
+            avg_train_loss = train_loss / max(1, train_batches)
+            avg_val_loss = val_loss / max(1, val_batches)
+            
+            # Compute average metrics
+            avg_train_sharpe = np.mean(train_metrics['sharpe']) if train_metrics['sharpe'] else 0.0
+            avg_train_ic = np.mean(train_metrics['ic']) if train_metrics['ic'] else 0.0
+            avg_train_rank_ic = np.mean(train_metrics['rank_ic']) if train_metrics['rank_ic'] else 0.0
+            
+            avg_val_sharpe = np.mean(val_metrics['sharpe']) if val_metrics['sharpe'] else 0.0
+            avg_val_ic = np.mean(val_metrics['ic']) if val_metrics['ic'] else 0.0
+            avg_val_rank_ic = np.mean(val_metrics['rank_ic']) if val_metrics['rank_ic'] else 0.0
+            
+            logger.info(
+                f"Epoch {epoch+1}/{phase['epochs']}: "
+                f"Train Loss={avg_train_loss:.4f}, Val Loss={avg_val_loss:.4f}, "
+                f"LR={optimizer.param_groups[0]['lr']:.2e}"
+            )
+            logger.info(
+                f"  Train Metrics - Sharpe: {avg_train_sharpe:.4f}, IC: {avg_train_ic:.4f}, RankIC: {avg_train_rank_ic:.4f}"
+            )
+            logger.info(
+                f"  Val Metrics   - Sharpe: {avg_val_sharpe:.4f}, IC: {avg_val_ic:.4f}, RankIC: {avg_val_rank_ic:.4f}"
+            )
+            # Compute and print parser-friendly Sharpe line (portfolio returns)
+            try:
+                import numpy as _np
+                sharpe_vals = []
+                for h in criterion.horizons:
+                    # Portfolio return per sample: standardized prediction * standardized target
+                    if _val_preds[h] and _val_targs[h]:
+                        pv = torch.cat(_val_preds[h], dim=0).numpy()
+                        tv = torch.cat(_val_targs[h], dim=0).numpy()
+
+                        # Standardize to avoid scale effects
+                        p_mean, p_std = float(_np.mean(pv)), float(_np.std(pv) + 1e-12)
+                        t_mean, t_std = float(_np.mean(tv)), float(_np.std(tv) + 1e-12)
+                        pv_z = (pv - p_mean) / p_std
+                        tv_z = (tv - t_mean) / t_std
+
+                        ret = pv_z * tv_z
+                        sd = _np.std(ret) + 1e-12
+                        sharpe_vals.append(float(_np.mean(ret) / sd))
+                if sharpe_vals:
+                    avg_sharpe = float(_np.mean(sharpe_vals))
+                    logger.info(f"Sharpe: {avg_sharpe:.4f}")
+                    # Also write a concise metrics summary JSON (non-conflicting filename)
+                    try:
+                        summary = {
+                            "epoch": int(epoch + 1),
+                            "train_loss": float(avg_train_loss),
+                            "val_loss": float(avg_val_loss),
+                            "avg_sharpe": float(avg_sharpe),
+                            "time": time.time(),
+                            "timestamp": now_jst_iso(),
+                        }
+                        (RUN_DIR / "metrics_summary.json").write_text(
+                            json.dumps(summary, ensure_ascii=False, indent=2)
+                        )
+                    except Exception as _swe:
+                        logger.debug(f"metrics_summary.json write skipped: {_swe}")
+                    # Write latest metrics JSON for downstream parsers
+                    try:
+                        metrics_out = {
+                            "epoch": int(epoch + 1),
+                            "train_loss": float(avg_train_loss),
+                            "val_loss": float(avg_val_loss),
+                            "avg_sharpe": float(avg_sharpe),
+                            "time": time.time(),
+                            "timestamp": now_jst_iso(),
+                        }
+                        (RUN_DIR / "latest_metrics.json").write_text(
+                            json.dumps(metrics_out, ensure_ascii=False, indent=2)
+                        )
+                    except Exception as _we:
+                        logger.debug(f"metrics json write skipped: {_we}")
+            except Exception as _se:
+                logger.debug(f"Sharpe logging skipped: {_se}")
+            # Always write a summary JSON even if Sharpe not available
+            try:
+                summary_path = RUN_DIR / "metrics_summary.json"
+                if not summary_path.exists():
+                    _summary = {
+                        "epoch": int(epoch + 1),
+                        "train_loss": float(avg_train_loss),
+                        "val_loss": float(avg_val_loss),
+                        "avg_sharpe": None,
+                        "time": time.time(),
+                        "timestamp": now_jst_iso(),
+                    }
+                    summary_path.write_text(
+                        json.dumps(_summary, ensure_ascii=False, indent=2)
+                    )
+            except Exception as _swe2:
+                logger.debug(f"metrics_summary.json fallback write skipped: {_swe2}")
+            
+            # Best model保存
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                checkpoint = {
+                    'phase': phase_idx,
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': avg_val_loss,
+                    'config': phase
+                }
+                torch.save(
+                    checkpoint,
+                    checkpoint_path / f"best_model_phase{phase_idx}.pth"
+                )
+                logger.info(f"✅ Saved best model (val_loss={avg_val_loss:.4f})")
+
+            # Update learning rate scheduler
+            phase_scheduler.step(avg_val_loss)
+            
+            # Early stopping (phase scoped)
+            if avg_val_loss < _phase_best - early_stop_min_delta:
+                _phase_best = avg_val_loss
+                _no_improve = 0
+            else:
+                _no_improve += 1
+                if _no_improve >= early_stop_patience:
+                    logger.info(
+                        f"⏹ Early stopping phase {phase_idx} after {epoch+1} epochs (best={_phase_best:.4f})"
+                    )
+                    break
+    
+    logger.info("=" * 80)
+    logger.info(f"Phase Training Complete. Best Val Loss: {best_val_loss:.4f}")
+    logger.info("=" * 80)
+    
+    return model
+
+
 def _apply_env_overrides(cfg):
     """環境変数からHydra設定への反映"""
 
@@ -1719,6 +2376,7 @@ def _apply_env_overrides(cfg):
         enabled = val.lower() in ["1", "true", "yes"]
         # Check if the key exists in the config structure
         if "prediction_head" in cfg.model and "output" in cfg.model.prediction_head:
+            # Set the student_t field - use environment variable to override config
             cfg.model.prediction_head.output.student_t = enabled
             logger.info(
                 f"[EnvOverride] model.prediction_head.output.student_t = {enabled}"
@@ -2054,27 +2712,25 @@ def train(config: DictConfig) -> None:
         final_config.model = config.model
     except Exception:
         pass
-    # Ensure required keys exist (Hydra struct safety)
+    # Ensure required keys exist (Hydra struct safety) using OmegaConf-safe updates
     try:
-        _ = getattr(final_config.model, "gat")
-    except Exception:
-        from types import SimpleNamespace
-
-        final_config.model = getattr(final_config, "model", SimpleNamespace())
-        final_config.model.gat = SimpleNamespace()
-    try:
-        _ = getattr(final_config.model.gat, "alpha_min")
-    except Exception:
-        # Default to 0.2 if missing to avoid Hydra override crashes
-        try:
-            setattr(
-                final_config.model.gat,
-                "alpha_min",
+        # Ensure model exists as mapping
+        if "model" not in final_config or getattr(final_config, "model") is None:
+            final_config.model = OmegaConf.create({})
+        # Ensure model.gat exists as mapping
+        if OmegaConf.select(final_config, "model.gat") is None:
+            OmegaConf.update(final_config, "model.gat", {}, merge=True)
+        # Ensure alpha_min default exists
+        if OmegaConf.select(final_config, "model.gat.alpha_min") is None:
+            OmegaConf.update(
+                final_config,
+                "model.gat.alpha_min",
                 float(os.getenv("ALPHA_MIN_DEFAULT", "0.3")),
+                merge=True,
             )
             logger.info("[Hydra-Struct] Set default model.gat.alpha_min=0.3")
-        except Exception:
-            pass
+    except Exception:
+        pass
     # Hydraのハードウェア設定も反映（channels_last等で参照）
     try:
         final_config.hardware = config.hardware
@@ -2180,8 +2836,12 @@ def train(config: DictConfig) -> None:
     )
     if cv_folds >= 2:
         logger.info(f"Using Purged K-Fold: k={cv_folds}, embargo={embargo_days}d")
-        # 全データから日付リストを作成
-        all_files = sorted(Path(final_config.data.source.data_dir).glob("*.parquet"))
+        # 全データから日付リストを作成（DATA_PATHがあれば単一ファイル優先）
+        data_path_env = os.getenv("DATA_PATH", "").strip()
+        if data_path_env:
+            all_files = [Path(data_path_env)]
+        else:
+            all_files = sorted(Path(final_config.data.source.data_dir).glob("*.parquet"))
         df_dates = []
         for p in all_files:
             try:
@@ -2540,8 +3200,8 @@ def train(config: DictConfig) -> None:
         # Fallback: ensure collate_day even when not using day-batch
         if (
             val_loader is not None
-            and getattr(val_loader, "collate_fn", None) is None
             and hasattr(val_loader, "dataset")
+            and getattr(val_loader, "collate_fn", None) is not collate_day
         ):
             nw = int(os.getenv("NUM_WORKERS", "8"))
             _g2 = torch.Generator()
@@ -2556,21 +3216,31 @@ def train(config: DictConfig) -> None:
                 _np.random.seed(s % (2**32 - 1))
                 torch.manual_seed(s)
 
-            val_loader = DataLoader(
-                val_loader.dataset,
-                batch_size=final_config.train.batch.val_batch_size,
-                shuffle=False,
-                num_workers=max(1, nw // 2),
-                pin_memory=True,
-                persistent_workers=True,
-                collate_fn=collate_day,
-                worker_init_fn=_winit2,
-                generator=_g2,
-            )
+            # Respect sandbox: allow single-process val loader
+            v_nw = max(0, nw // 2)
+            v_kwargs = {
+                "dataset": val_loader.dataset,
+                "batch_size": final_config.train.batch.val_batch_size,
+                "shuffle": False,
+                "num_workers": v_nw,
+                "pin_memory": bool(os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")),
+                "collate_fn": collate_day,
+                "worker_init_fn": _winit2,
+                "generator": _g2,
+            }
+            if v_nw > 0:
+                v_kwargs["persistent_workers"] = True
+                try:
+                    v_kwargs["prefetch_factor"] = int(os.getenv("PREFETCH_FACTOR", "4"))
+                except Exception:
+                    pass
+            else:
+                v_kwargs["persistent_workers"] = False
+            val_loader = DataLoader(**v_kwargs)
         if (
             train_loader is not None
-            and getattr(train_loader, "collate_fn", None) is None
             and hasattr(train_loader, "dataset")
+            and getattr(train_loader, "collate_fn", None) is not collate_day
         ):
             nw = int(os.getenv("NUM_WORKERS", "8"))
             _g3 = torch.Generator()
@@ -2585,19 +3255,28 @@ def train(config: DictConfig) -> None:
                 _np.random.seed(s % (2**32 - 1))
                 torch.manual_seed(s)
 
-            train_loader = DataLoader(
-                train_loader.dataset,
-                batch_size=final_config.train.batch.train_batch_size,
-                shuffle=True,
-                num_workers=nw,
-                pin_memory=True,
-                drop_last=True,
-                prefetch_factor=int(os.getenv("PREFETCH_FACTOR", "4")),
-                persistent_workers=True,
-                collate_fn=collate_day,
-                worker_init_fn=_winit3,
-                generator=_g3,
-            )
+            # Respect sandbox: use single-process when NUM_WORKERS<=0
+            t_nw = max(0, nw)
+            t_kwargs = {
+                "dataset": train_loader.dataset,
+                "batch_size": final_config.train.batch.train_batch_size,
+                "shuffle": True,
+                "num_workers": t_nw,
+                "pin_memory": bool(os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")),
+                "drop_last": True,
+                "collate_fn": collate_day,
+                "worker_init_fn": _winit3,
+                "generator": _g3,
+            }
+            if t_nw > 0:
+                t_kwargs["persistent_workers"] = True
+                try:
+                    t_kwargs["prefetch_factor"] = int(os.getenv("PREFETCH_FACTOR", "4"))
+                except Exception:
+                    pass
+            else:
+                t_kwargs["persistent_workers"] = False
+            train_loader = DataLoader(**t_kwargs)
     except Exception as _e:
         logger.warning(f"DayBatch/collate setup skipped: {_e}")
 
@@ -2765,6 +3444,20 @@ def train(config: DictConfig) -> None:
         if train_loader is not None:
             it_scan = iter(train_loader)
             first_batch = next(it_scan)
+            try:
+                if isinstance(first_batch, dict):
+                    logger.info(
+                        f"[debug-first-batch-keys] {list(first_batch.keys())}"
+                    )
+                    for _k, _v in list(first_batch.items()):
+                        try:
+                            logger.info(
+                                f"[debug-first-batch-type] {_k}: {type(_v)}"
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             import torch as _torch
 
             xb = (
@@ -3272,6 +3965,7 @@ def train(config: DictConfig) -> None:
         logger.info(f"Heartbeat interval: {heartbeat_interval}s")
         # 外部GraphBuilder（使用可能なら優先）。失敗時はNoneでフォールバック
         gb = None
+        gb_adv = None
         try:
             gb_cfg = getattr(final_config.data, "graph_builder", None)
             if gb_cfg is not None:
@@ -3307,6 +4001,65 @@ def train(config: DictConfig) -> None:
                 logger.info(
                     f"[GraphBuilder] initialized from {gbc.source_glob} (lookback={gbc.lookback}, k={gbc.k})"
                 )
+            # Advanced FinancialGraphBuilder for training (optional)
+            use_adv_train = os.getenv("USE_ADV_GRAPH_TRAIN", "0") in ("1", "true", "True")
+            try:
+                if not use_adv_train and gb_cfg is not None:
+                    use_adv_train = bool(getattr(gb_cfg, "use_in_training", False))
+            except Exception:
+                pass
+            if AdvFinancialGraphBuilder is not None and use_adv_train:
+                try:
+                    # Prefer Hydra config if available
+                    try:
+                        gb_cfg = getattr(final_config.data, "graph_builder", None)
+                    except Exception:
+                        gb_cfg = None
+                    corr_method = (
+                        str(getattr(gb_cfg, "method", "ewm_demean")) if gb_cfg is not None else "ewm_demean"
+                    )
+                    ewm_hl = int(
+                        getattr(gb_cfg, "ewm_halflife", int(os.getenv("EWM_HALFLIFE", "20")))
+                        if gb_cfg is not None
+                        else int(os.getenv("EWM_HALFLIFE", "20"))
+                    )
+                    shrink_g = float(
+                        getattr(gb_cfg, "shrinkage_gamma", float(os.getenv("SHRINKAGE_GAMMA", "0.05")))
+                        if gb_cfg is not None
+                        else float(os.getenv("SHRINKAGE_GAMMA", "0.05"))
+                    )
+                    symm = bool(
+                        getattr(gb_cfg, "symmetric", os.getenv("GRAPH_SYMMETRIC", "1") in ("1", "true", "True"))
+                        if gb_cfg is not None
+                        else (os.getenv("GRAPH_SYMMETRIC", "1") in ("1", "true", "True"))
+                    )
+                    k_per = int(
+                        getattr(gb_cfg, "k", int(os.getenv("GRAPH_K", "10")))
+                        if gb_cfg is not None
+                        else int(os.getenv("GRAPH_K", "10"))
+                    )
+                    thr = float(
+                        getattr(gb_cfg, "edge_threshold", float(os.getenv("GRAPH_EDGE_THR", "0.3")))
+                        if gb_cfg is not None
+                        else float(os.getenv("GRAPH_EDGE_THR", "0.3"))
+                    )
+                    gb_adv = AdvFinancialGraphBuilder(
+                        correlation_window=int(getattr(final_config.data.time_series, "sequence_length", 20)),
+                        correlation_threshold=thr,
+                        max_edges_per_node=k_per,
+                        correlation_method=corr_method,
+                        ewm_halflife=ewm_hl,
+                        shrinkage_gamma=shrink_g,
+                        symmetric=symm,
+                        cache_dir="graph_cache",
+                        verbose=True,
+                    )
+                    logger.info(
+                        f"[AdvGraph] Enabled training-time FinancialGraphBuilder (method={corr_method}, k={k_per}, thr={thr})"
+                    )
+                except Exception as _e:
+                    logger.warning(f"[AdvGraph] init failed: {_e}")
+                    gb_adv = None
         except Exception as _e:
             logger.warning(
                 f"[GraphBuilder] unavailable; fallback to dynamic KNN. reason={_e}"
@@ -3520,7 +4273,25 @@ def train(config: DictConfig) -> None:
                                     codes = [str(c) for c in codes]
                                 except Exception:
                                     pass
-                                ei, ea = gb.build_for_day(date, codes)
+                                # Prefer advanced builder if available
+                                if gb_adv is not None:
+                                    try:
+                                        df_pd = None
+                                        try:
+                                            if hasattr(train_loader, "dataset") and hasattr(train_loader.dataset, "data"):
+                                                df_pd = train_loader.dataset.data
+                                        except Exception:
+                                            df_pd = None
+                                        if df_pd is not None:
+                                            res = gb_adv.build_graph(df_pd, codes, date_end=str(date))
+                                            ei, ea = res.get("edge_index"), res.get("edge_attr")
+                                        else:
+                                            ei, ea = None, None
+                                    except Exception as _e:
+                                        logger.warning(f"[AdvGraph] build failed: {_e}")
+                                        ei, ea = None, None
+                                else:
+                                    ei, ea = gb.build_for_day(date, codes)
                                 # Read-side edge timestamp guard with actual asof from builder if available
                                 try:
                                     import pandas as _pd
@@ -3563,6 +4334,85 @@ def train(config: DictConfig) -> None:
                         except Exception:
                             edge_index = None
                             edge_attr = None
+
+                    # Fallback: build correlation-based edges from this day-batch if graph builder unavailable
+                    if (
+                        edge_index is None
+                        and getattr(final_config.model, "gat", None) is not None
+                        and getattr(final_config.model.gat, "enabled", False)
+                        and isinstance(feats_full, torch.Tensor)
+                        and feats_full.dim() == 3
+                    ):
+                        try:
+                            # Resolve per-sample codes (full day-batch) for enrichment
+                            codes_list = None
+                            try:
+                                codes_list = batch.get("codes") if "codes" in batch else batch.get("code")
+                                if hasattr(codes_list, "tolist"):
+                                    codes_list = codes_list.tolist()
+                                if codes_list is not None:
+                                    codes_list = [str(c) for c in codes_list]
+                            except Exception:
+                                codes_list = None
+                            markets_list = None
+                            sectors_list = None
+                            try:
+                                markets_list = batch.get("markets")
+                                sectors_list = batch.get("sectors")
+                            except Exception:
+                                pass
+                            # Determine parameters
+                            try:
+                                k_try = int(getattr(final_config.model.gat, "knn_k", 10))
+                            except Exception:
+                                k_try = 10
+                            # Threshold: prefer graph_builder.edge_threshold, then data.graph.edge_threshold, else env/default
+                            try:
+                                thr = None
+                                try:
+                                    thr = float(getattr(getattr(final_config.data, "graph_builder", {}), "edge_threshold"))
+                                except Exception:
+                                    pass
+                                if thr is None:
+                                    try:
+                                        thr = float(getattr(getattr(final_config.data, "graph", {}), "edge_threshold"))
+                                    except Exception:
+                                        thr = None
+                                if thr is None:
+                                    thr = float(os.getenv("GRAPH_EDGE_THR", "0.3"))
+                            except Exception:
+                                thr = 0.3
+                            # Use local correlation edge builder (batch-level)
+                            from src.graph.graph_builder import GraphBuilder as _GBL, GBConfig as _GBC
+
+                            _gb_local = _GBL(
+                                _GBC(max_nodes=int(feats_full.size(0)), edge_threshold=float(thr))
+                            )
+                            win = int(min(feats_full.size(1), 20))
+                            ei, ea = _gb_local.build_correlation_edges(
+                                feats_full.to(device), window=win, k=int(max(1, k_try))
+                            )
+                            if isinstance(ei, torch.Tensor) and ei.numel() > 0:
+                                edge_index = ei.to(device, non_blocking=True)
+                                # Enrich with market/sector similarity if available
+                                edge_attr = (
+                                    _enrich_edge_attr_with_meta(
+                                        edge_index,
+                                        ea.to(device, non_blocking=True),
+                                        codes_list,
+                                        markets_list,
+                                        sectors_list,
+                                    )
+                                    if isinstance(ea, torch.Tensor)
+                                    else None
+                                )
+                                logger.info(
+                                    f"[edges-fallback] built correlation edges from batch: E={edge_index.size(1)}"
+                                )
+                        except Exception as _e:
+                            logger.warning(
+                                f"[edges-fallback] failed to build correlation edges: {_e}"
+                            )
                     # Iterate micro-batches
                     mb_start = 0
                     while mb_start < n_items:
@@ -3744,6 +4594,72 @@ def train(config: DictConfig) -> None:
                                             sp_loss.detach() * _sp_lambda
                                         )
                         else:
+                            # Fallback: if no external edges, try correlation edges from batch
+                            if (
+                                edge_index is None
+                                and getattr(final_config.model, "gat", None) is not None
+                                and getattr(final_config.model.gat, "enabled", False)
+                                and isinstance(features, torch.Tensor)
+                                and features.dim() == 3
+                            ):
+                                try:
+                                    from src.graph.graph_builder import (
+                                        GraphBuilder as _GBL2,
+                                        GBConfig as _GBC2,
+                                    )
+
+                                    try:
+                                        k_try = int(getattr(final_config.model.gat, "knn_k", 10))
+                                    except Exception:
+                                        k_try = 10
+                                    # Threshold: prefer graph_builder.edge_threshold, then data.graph.edge_threshold, else env/default
+                                    try:
+                                        thr = None
+                                        try:
+                                            thr = float(
+                                                getattr(
+                                                    getattr(final_config.data, "graph_builder", {}),
+                                                    "edge_threshold",
+                                                )
+                                            )
+                                        except Exception:
+                                            pass
+                                        if thr is None:
+                                            try:
+                                                thr = float(
+                                                    getattr(
+                                                        getattr(final_config.data, "graph", {}),
+                                                        "edge_threshold",
+                                                    )
+                                                )
+                                            except Exception:
+                                                thr = None
+                                        if thr is None:
+                                            thr = float(os.getenv("GRAPH_EDGE_THR", "0.3"))
+                                    except Exception:
+                                        thr = 0.3
+                                    _gb_local2 = _GBL2(
+                                        _GBC2(
+                                            max_nodes=int(features.size(0)),
+                                            edge_threshold=float(thr),
+                                        )
+                                    )
+                                    win = int(min(features.size(1), 20))
+                                    ei, ea = _gb_local2.build_correlation_edges(
+                                        features, window=win, k=int(max(1, k_try))
+                                    )
+                                    if isinstance(ei, torch.Tensor) and ei.numel() > 0:
+                                        edge_index = ei.to(device, non_blocking=True)
+                                        edge_attr = (
+                                            ea.to(device, non_blocking=True)
+                                            if isinstance(ea, torch.Tensor)
+                                            else None
+                                        )
+                                except Exception as _e:
+                                    logger.warning(
+                                        f"[edges-fallback/val] failed to build correlation edges: {_e}"
+                                    )
+
                             with torch.amp.autocast(
                                 "cuda",
                                 dtype=amp_dtype,
@@ -4256,9 +5172,26 @@ def train(config: DictConfig) -> None:
                                         codes = [str(c) for c in codes]
                                     except Exception:
                                         pass
-                                    edge_index, edge_attr = gb.build_for_day(
-                                        date, codes
-                                    )
+                                    if gb_adv is not None:
+                                        try:
+                                            df_pd = None
+                                            try:
+                                                if hasattr(val_loader, "dataset") and hasattr(val_loader.dataset, "data"):
+                                                    df_pd = val_loader.dataset.data
+                                            except Exception:
+                                                df_pd = None
+                                            if df_pd is not None:
+                                                res = gb_adv.build_graph(df_pd, codes, date_end=str(date))
+                                                edge_index, edge_attr = res.get("edge_index"), res.get("edge_attr")
+                                            else:
+                                                edge_index, edge_attr = None, None
+                                        except Exception as _e:
+                                            logger.warning(f"[AdvGraph/val] build failed: {_e}")
+                                            edge_index, edge_attr = None, None
+                                    else:
+                                        edge_index, edge_attr = gb.build_for_day(
+                                            date, codes
+                                        )
                                     edge_index = edge_index.to(device)
                                     edge_attr = edge_attr.to(device)
                                     # staleness stats
@@ -4311,6 +5244,74 @@ def train(config: DictConfig) -> None:
                             except Exception:
                                 edge_index = None
                                 edge_attr = None
+                            # Fallback: if no external edges, try correlation edges from batch
+                            if (
+                                edge_index is None
+                                and getattr(final_config.model, "gat", None) is not None
+                                and getattr(final_config.model.gat, "enabled", False)
+                                and isinstance(features, torch.Tensor)
+                                and features.dim() == 3
+                            ):
+                                try:
+                                    from src.graph.graph_builder import (
+                                        GraphBuilder as _GBL2,
+                                        GBConfig as _GBC2,
+                                    )
+                                    # Resolve codes list for this batch (full day-batch might be preferable, but use what we have)
+                                    try:
+                                        codes_list = vb.get("codes") if "codes" in vb else vb.get("code")
+                                        if hasattr(codes_list, "tolist"):
+                                            codes_list = codes_list.tolist()
+                                        if codes_list is not None:
+                                            codes_list = [str(c) for c in codes_list]
+                                    except Exception:
+                                        codes_list = None
+                                    markets_list = None
+                                    sectors_list = None
+                                    try:
+                                        markets_list = vb.get("markets")
+                                        sectors_list = vb.get("sectors")
+                                    except Exception:
+                                        pass
+                                    try:
+                                        k_try = int(getattr(final_config.model.gat, "knn_k", 10))
+                                    except Exception:
+                                        k_try = 10
+                                    try:
+                                        thr = float(
+                                            getattr(
+                                                getattr(final_config.data, "graph", {}),
+                                                "edge_threshold",
+                                                0.0,
+                                            )
+                                        )
+                                    except Exception:
+                                        thr = 0.0
+                                    _gb_local2 = _GBL2(
+                                        _GBC2(max_nodes=int(features.size(0)), edge_threshold=float(thr))
+                                    )
+                                    win = int(min(features.size(1), 20))
+                                    ei, ea = _gb_local2.build_correlation_edges(
+                                        features, window=win, k=int(max(1, k_try))
+                                    )
+                                    if isinstance(ei, torch.Tensor) and ei.numel() > 0:
+                                        edge_index = ei.to(device, non_blocking=True)
+                                        edge_attr = (
+                                            _enrich_edge_attr_with_meta(
+                                                edge_index,
+                                                ea.to(device, non_blocking=True),
+                                                codes_list,
+                                                markets_list,
+                                                sectors_list,
+                                            )
+                                            if isinstance(ea, torch.Tensor)
+                                            else None
+                                        )
+                                except Exception as _e:
+                                    logger.warning(
+                                        f"[edges-fallback/val] failed to build correlation edges: {_e}"
+                                    )
+
                             with torch.amp.autocast(
                                 "cuda",
                                 dtype=amp_dtype,
@@ -4500,6 +5501,102 @@ def train(config: DictConfig) -> None:
                     )
             except Exception as _e:
                 logger.warning(f"SWA evaluation failed/skipped: {_e}")
+        # ===== 予測エクスポート（任意） =====
+        try:
+            if os.getenv("EXPORT_PREDICTIONS", "0") == "1" and val_loader is not None:
+                logger.info("[EXPORT] Exporting validation predictions to file ...")
+                # オプション: ベスト（最終）チェックポイントを読み込んでから推論
+                try:
+                    if os.getenv("USE_BEST_CKPT_FOR_EXPORT", "1") == "1":
+                        ckpt = Path("models/checkpoints/atft_gat_fan_final.pt")
+                        if ckpt.exists():
+                            obj = torch.load(ckpt, map_location=device)
+                            sd = None
+                            if isinstance(obj, dict):
+                                for k in ("state_dict", "model_state_dict"):
+                                    if k in obj and isinstance(obj[k], dict):
+                                        sd = obj[k]
+                                        break
+                            if sd is None and isinstance(obj, dict):
+                                # 直接state_dict相当
+                                if all(isinstance(v, torch.Tensor) for v in obj.values()):
+                                    sd = obj
+                            if sd is not None:
+                                model.load_state_dict(sd, strict=False)
+                                logger.info(f"[EXPORT] Loaded checkpoint weights from {ckpt}")
+                except Exception as _le:
+                    logger.warning(f"[EXPORT] Loading checkpoint for export failed: {_le}")
+
+                model.eval()
+                rows = []
+                with torch.no_grad():
+                    for vb in val_loader:
+                        feats = vb["features"].to(device)
+                        preds = model(
+                            feats,
+                            vb.get("static_features", None),
+                            vb.get("edge_index", None),
+                            vb.get("edge_attr", None),
+                        )
+                        # 予測キーの解決（1日ホライズン）
+                        pred_key = None
+                        for pk in ("point_horizon_1", "horizon_1", "h1"):
+                            if isinstance(preds, dict) and pk in preds:
+                                pred_key = pk
+                                break
+                        if pred_key is None:
+                            continue
+                        yhat = preds[pred_key].detach().float().view(-1).cpu()
+
+                        # 実績キーの解決
+                        tdict = vb.get("targets", {})
+                        targ_key = None
+                        for tk in ("horizon_1", "point_horizon_1", "h1", "target_1d"):
+                            if tk in tdict:
+                                targ_key = tk
+                                break
+                        y = (
+                            tdict[targ_key].detach().float().view(-1).cpu()
+                            if targ_key is not None
+                            else None
+                        )
+
+                        # メタ情報
+                        codes = vb.get("codes") if "codes" in vb else vb.get("code")
+                        if hasattr(codes, "tolist"):
+                            codes = codes.tolist()
+                        if codes is None:
+                            # 長さを合わせるためのフォールバック
+                            codes = [None] * int(yhat.shape[0])
+                        date_val = vb.get("date", None)
+                        # バッチ内の全行に同一日付を適用（day-batch前提）
+                        dates = [str(date_val) if date_val is not None else None] * int(yhat.shape[0])
+
+                        for c, d, p, a in zip(codes, dates, yhat.numpy().tolist(), ([] if y is None else y.numpy().tolist())):
+                            rows.append({
+                                "date": d,
+                                "Code": str(c) if c is not None else None,
+                                "predicted_return": float(p),
+                                **({"actual_return": float(a)} if y is not None else {}),
+                            })
+
+                if rows:
+                    import pandas as _pd
+                    df_pred = _pd.DataFrame(rows)
+                    out_dir = Path("output/predictions")
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    out_path = out_dir / f"predictions_val_{ts}.parquet"
+                    df_pred.to_parquet(out_path, index=False)
+                    # runs/last にも配置
+                    run_out = RUN_DIR / "predictions_val.parquet"
+                    df_pred.to_parquet(run_out, index=False)
+                    logger.info(f"[EXPORT] Saved validation predictions: {out_path}")
+                else:
+                    logger.warning("[EXPORT] No validation predictions collected; skipped writing")
+        except Exception as _e:
+            logger.warning(f"[EXPORT] Export predictions failed: {_e}")
+
         return best_val_loss
 
     # メイン学習（fold設定に依存）
@@ -4510,7 +5607,148 @@ def train(config: DictConfig) -> None:
     logger.info(
         f"Effective batch size: {final_config.train.batch.train_batch_size * final_config.train.batch.gradient_accumulation_steps}"
     )
-    best_val_main = run_training(train_loader, val_loader, tag="main")
+    # Utility: optional code→market/sector maps for edge_attr enrichment in fallbacks
+    code2market: dict[str, str] = {}
+    code2sector: dict[str, str] = {}
+
+    def _load_code_maps():
+        nonlocal code2market, code2sector
+        m_path = os.getenv("MARKET_MAP_CSV", "").strip()
+        s_path = os.getenv("SECTOR_MAP_CSV", "").strip()
+        code_col = os.getenv("CODE_COL", "code")
+        m_col = os.getenv("MARKET_COL", "")
+        s_col = os.getenv("SECTOR_COL", "")
+
+        def _read_table(path: str):
+            import pandas as _pd
+
+            if not path:
+                return None
+            try:
+                if path.lower().endswith(".parquet"):
+                    return _pd.read_parquet(path)
+                return _pd.read_csv(path)
+            except Exception as _e:
+                logger.warning(f"[CodeMap] failed to read {path}: {_e}")
+                return None
+
+        def _resolve_value_col(df, preferred: str, candidates: list[str]):
+            if preferred and preferred in df.columns:
+                return preferred
+            for c in candidates:
+                if c in df.columns:
+                    return c
+            return None
+
+        # Market map
+        if m_path:
+            dfm = _read_table(m_path)
+            if dfm is not None and code_col in dfm.columns:
+                market_candidates = ["MarketCode", "market_code", "market", "Section", "meta_section"]
+                m_use = _resolve_value_col(dfm, m_col, market_candidates)
+                if m_use:
+                    code2market = {str(r[code_col]): str(r[m_use]) for _, r in dfm[[code_col, m_use]].iterrows()}
+                    logger.info(f"[CodeMap] loaded {len(code2market)} market mappings from {m_path} (col={m_use})")
+                else:
+                    logger.warning(f"[CodeMap] no usable market column found in {m_path}")
+        # Sector map
+        if s_path:
+            dfs = _read_table(s_path)
+            if dfs is not None and code_col in dfs.columns:
+                sector_candidates = ["sector33", "SectorCode", "sector", "meta_section", "Section"]
+                s_use = _resolve_value_col(dfs, s_col, sector_candidates)
+                if s_use:
+                    code2sector = {str(r[code_col]): str(r[s_use]) for _, r in dfs[[code_col, s_use]].iterrows()}
+                    logger.info(f"[CodeMap] loaded {len(code2sector)} sector mappings from {s_path} (col={s_use})")
+                else:
+                    logger.warning(f"[CodeMap] no usable sector column found in {s_path}")
+
+    _load_code_maps()
+
+    def _enrich_edge_attr_with_meta(
+        eidx: torch.Tensor,
+        eattr: torch.Tensor,
+        codes_list: list[str] | None,
+        markets_list: list[str] | None = None,
+        sectors_list: list[str] | None = None,
+    ) -> torch.Tensor:
+        try:
+            desired_dim = 1
+            try:
+                desired_dim = int(getattr(final_config.model.gat.edge_features, "edge_dim", 1))
+            except Exception:
+                desired_dim = 1
+
+            # Ensure 2D tensor
+            if eattr is None:
+                eattr = torch.zeros((eidx.size(1), 0), device=eidx.device, dtype=torch.float32)
+            if eattr.dim() == 1:
+                eattr = eattr.unsqueeze(-1)
+
+            # Pad to desired_dim with zeros first
+            if eattr.size(-1) < desired_dim:
+                pad = torch.zeros((eattr.size(0), desired_dim - eattr.size(-1)), device=eattr.device, dtype=eattr.dtype)
+                eattr = torch.cat([eattr, pad], dim=-1)
+
+            if desired_dim >= 3:
+                # Compute market/sector similarity per edge if mappings available
+                m_sim = []
+                s_sim = []
+                # Build per-edge values
+                for k in range(eidx.size(1)):
+                    i = int(eidx[0, k])
+                    j = int(eidx[1, k])
+                    if markets_list is not None and sectors_list is not None:
+                        # Prefer direct batch metadata if available
+                        if i >= len(markets_list) or j >= len(markets_list):
+                            m_sim.append(0.0)
+                            s_sim.append(0.0)
+                        else:
+                            mi = markets_list[i]
+                            mj = markets_list[j]
+                            si = sectors_list[i] if i < len(sectors_list) else None
+                            sj = sectors_list[j] if j < len(sectors_list) else None
+                            m_sim.append(1.0 if (mi is not None and mj is not None and mi == mj) else 0.0)
+                            s_sim.append(1.0 if (si is not None and sj is not None and si == sj) else 0.0)
+                    else:
+                        # Fall back to code->meta maps
+                        if codes_list is None or i >= len(codes_list) or j >= len(codes_list):
+                            m_sim.append(0.0)
+                            s_sim.append(0.0)
+                        else:
+                            ci = str(codes_list[i])
+                            cj = str(codes_list[j])
+                            # Market
+                            mi = code2market.get(ci)
+                            mj = code2market.get(cj)
+                            m_sim.append(1.0 if (mi is not None and mj is not None and mi == mj) else 0.0)
+                            # Sector
+                            si = code2sector.get(ci)
+                            sj = code2sector.get(cj)
+                            s_sim.append(1.0 if (si is not None and sj is not None and si == sj) else 0.0)
+                m_sim_t = torch.tensor(m_sim, device=eattr.device, dtype=eattr.dtype).unsqueeze(-1)
+                s_sim_t = torch.tensor(s_sim, device=eattr.device, dtype=eattr.dtype).unsqueeze(-1)
+                # Column 0 is correlation (already present), fill 1 and 2
+                if eattr.size(-1) >= 2:
+                    eattr[:, 1:2] = m_sim_t
+                if eattr.size(-1) >= 3:
+                    eattr[:, 2:3] = s_sim_t
+            return eattr
+        except Exception as _e:
+            logger.warning(f"[edges-fallback] enrich meta failed: {_e}")
+            return eattr
+
+    # Phase Training (A+ minimal) if enabled; otherwise standard training
+    try:
+        _pt_cfg = getattr(config.train, "phase_training", None)
+        if _pt_cfg is not None and bool(getattr(_pt_cfg, "enabled", False)):
+            logger.info("[PhaseTraining] enabled; running phase-wise training")
+            _ = run_phase_training(model, train_loader, val_loader, config, device)
+        else:
+            best_val_main = run_training(train_loader, val_loader, tag="main")
+    except Exception as _e:
+        logger.error(f"[PhaseTraining] failed or disabled: {_e}; falling back to standard training")
+        best_val_main = run_training(train_loader, val_loader, tag="main")
 
     # CV評価（学習後に全foldを現行モデルで評価）
     if cv_folds >= 2 and "fold_ranges" in locals() and fold_ranges:
@@ -4604,6 +5842,10 @@ def train(config: DictConfig) -> None:
 
     # 最終モデルを保存
     final_path = Path("models/checkpoints/atft_gat_fan_final.pt")
+    try:
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
     torch.save(
         {
             "epoch": int(final_config.train.scheduler.total_epochs),
@@ -4616,6 +5858,69 @@ def train(config: DictConfig) -> None:
         final_path,
     )
     logger.info(f"Final model saved to {final_path}")
+
+    # Optional: Run Safe Walk-Forward + Embargo evaluation after training
+    def _maybe_run_safe_eval(_cfg):
+        try:
+            if os.getenv("RUN_SAFE_EVAL", "0") != "1":
+                return
+            logger.info("[SafeEval] RUN_SAFE_EVAL=1 → starting SafeTrainingPipeline evaluation")
+            # Locate evaluation data
+            data_hint = os.getenv("SAFE_EVAL_DATA", "")
+            if data_hint:
+                dp = Path(data_hint)
+            else:
+                # Common default used by SafeTrainingPipeline
+                dp = Path("data/raw/large_scale/ml_dataset_full.parquet")
+            if not dp.exists():
+                logger.warning(f"[SafeEval] data file not found: {dp}; skipping SafeEvaluation")
+                return
+            # Outputs
+            out_dir = Path(os.getenv("SAFE_EVAL_OUT", "output/safe_eval"))
+            out_dir.mkdir(parents=True, exist_ok=True)
+            # Splits and embargo
+            try:
+                n_splits = int(os.getenv("SAFE_EVAL_SPLITS", "5"))
+            except Exception:
+                n_splits = 5
+            try:
+                horizons = list(getattr(_cfg.data.time_series, "prediction_horizons", [1, 2, 3, 5, 10]))
+                embargo_days = int(max(horizons)) if horizons else 20
+            except Exception:
+                embargo_days = 20
+            try:
+                mem_gb = float(os.getenv("SAFE_EVAL_MEM_GB", "6.0"))
+            except Exception:
+                mem_gb = 6.0
+            # Import pipeline
+            try:
+                from gogooku3.training.safe_training_pipeline import SafeTrainingPipeline
+            except Exception:
+                try:
+                    from src.gogooku3.training.safe_training_pipeline import SafeTrainingPipeline
+                except Exception as _ie:
+                    logger.warning(f"[SafeEval] SafeTrainingPipeline import failed: {_ie}")
+                    return
+            try:
+                pipeline = SafeTrainingPipeline(
+                    data_path=dp, output_dir=out_dir, experiment_name="wf_pe_evaluation", verbose=True
+                )
+                res = pipeline.run_pipeline(
+                    n_splits=n_splits, embargo_days=embargo_days, memory_limit_gb=mem_gb, save_results=True
+                )
+                # Save a small marker
+                summary_path = out_dir / "safe_eval_summary.json"
+                summary_path.write_text(json.dumps(res.get("final_report", res), ensure_ascii=False, indent=2))
+                logger.info(
+                    f"[SafeEval] Completed WF+Embargo evaluation → results saved to {out_dir}"
+                )
+                print(f"\n✅ SafeEval summary: {summary_path.resolve()}\n")
+            except Exception as _e:
+                logger.warning(f"[SafeEval] pipeline run failed: {_e}")
+        except Exception:
+            pass
+
+    _maybe_run_safe_eval(final_config)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,51 @@
+# @package _global_
+# Streaming inference configuration for real-time predictions
+
+defaults:
+  - batch
+  - _self_
+
+# Override batch settings for streaming
+inference:
+  batch_size: 1  # Process one sample at a time
+  num_workers: 0  # No multiprocessing for streaming
+  
+  # Streaming specific
+  mode: streaming
+  buffer_size: 100
+  update_frequency: 1  # Update every sample
+  
+  # Low latency settings
+  use_amp: false  # Disable AMP for lowest latency
+  calculate_metrics: false  # Skip metrics calculation
+  
+  # Real-time output
+  output_format: json
+  publish_to_redis: false
+  redis_host: localhost
+  redis_port: 6379
+  
+  # Minimal post-processing
+  apply_ranking: false
+  apply_sigmoid: true
+
+# Data configuration for streaming
+data:
+  streaming:
+    enabled: true
+    source: kafka  # or 'redis', 'websocket'
+    topic: stock_features
+    
+  time_series:
+    sequence_length: 60
+    rolling_window: true
+
+# Model configuration for streaming
+model:
+  eval_mode: true
+  compile_model: true  # Compile for faster inference
+
+# Hardware configuration for streaming
+hardware:
+  device: cuda
+  num_threads: 1  # Single thread for consistency

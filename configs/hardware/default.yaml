@@ -1,0 +1,37 @@
+# @package hardware
+
+# Thin wrapper to expose hardware/default at the root config group
+# Mirrors configs/atft/hardware/default.yaml to satisfy references like
+# `- /hardware: default` from various configs (e.g., atft/inference/batch).
+
+name: default
+
+# Hardware policy with environment-controlled fallbacks
+device: ${oc.env:DEVICE, cuda}
+gpu_id: ${oc.env:GPU_ID, 0}
+
+# DataLoader workers
+num_workers: ${oc.env:NUM_WORKERS, 8}
+pin_memory: ${oc.env:PIN_MEMORY, true}
+
+# JIT compile hint for PyTorch 2.x (not used unless explicitly enabled)
+compile_model: ${oc.env:COMPILE_MODEL, false}
+
+# Mixed precision and memory format
+mixed_precision: ${oc.env:MIXED_PRECISION, true}
+channels_last: ${oc.env:CHANNELS_LAST, true}
+
+a100_optimizations:
+  tf32: true
+  cudnn_benchmark: true
+  gradient_checkpointing: false
+
+memory:
+  max_memory_allocated: ${oc.env:MAX_MEMORY_ALLOCATED, 0.9}
+  memory_fraction: ${oc.env:MEMORY_FRACTION, 0.8}
+  allow_growth: ${oc.env:ALLOW_GROWTH, true}
+
+performance:
+  prefetch_factor: ${oc.env:PREFETCH_FACTOR, 4}
+  persistent_workers: ${oc.env:PERSISTENT_WORKERS, true}
+  drop_last: ${oc.env:DROP_LAST, false}

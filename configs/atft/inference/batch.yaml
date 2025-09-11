@@ -1,0 +1,77 @@
+# @package _global_
+# Inference batch configuration
+
+defaults:
+  - /data: jpx_parquet
+  - /model: atft_gat_fan
+  - /hardware: default
+  - _self_
+
+# Inference specific settings
+inference:
+  # Data loading
+  batch_size: 2048
+  num_workers: 8
+  
+  # Model loading
+  checkpoint_path: null  # Will be set dynamically
+  use_ema: true
+  
+  # Output settings
+  output_dir: output/predictions
+  save_raw_predictions: true
+  save_aggregated: true
+  
+  # Performance
+  use_amp: true
+  amp_dtype: bf16
+  
+  # Evaluation
+  calculate_metrics: true
+  metrics:
+    - IC
+    - RankIC
+    - Sharpe
+    - Calmar
+    - MaxDrawdown
+  
+  # Time horizons
+  prediction_horizons: [1, 5, 10, 20]
+  
+  # Post-processing
+  apply_ranking: true
+  apply_sigmoid: false
+  clip_predictions: true
+  clip_range: [-3.0, 3.0]
+
+# Data configuration for inference
+data:
+  time_series:
+    sequence_length: 60
+    use_tensor_sequences: true
+  
+  split:
+    method: test_only  # Only use test data for inference
+    test_ratio: 1.0
+
+# Model configuration
+model:
+  load_strict: false  # Allow loading with minor mismatches
+  eval_mode: true
+
+# Hardware configuration
+hardware:
+  device: cuda
+  precision: bf16-mixed
+
+# Hydra configuration
+hydra:
+  run:
+    dir: outputs/inference/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/inference/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  
+  job_logging:
+    formatters:
+      simple:
+        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'

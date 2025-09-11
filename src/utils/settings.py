@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 if PYDANTIC_AVAILABLE:
     class ModelSettings(BaseSettings):
         """Pydantic-based configuration management"""
-        model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False}
+        model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "case_sensitive": False, "extra": "allow"}
 
         # GPU/メモリ設定
         mixed_precision: bool = Field(default=True)
@@ -206,4 +206,4 @@ def set_reproducibility(seed: int = 42, deterministic: bool = True):
 
 # 後方互換性のためのエイリアス
 Settings = ModelSettings
-config = get_settings()
+# config = get_settings()  # インポート時の初期化を避ける

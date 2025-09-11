@@ -761,7 +761,8 @@ def main():
             validation_info = result.get("validation_info", {})
             print(f"🎯 ATFT学習結果:")
             print(f"   - 目標Sharpe: 0.849")
-            print(f"   - 達成Sharpe: {validation_info.get('sharpe_ratio', 'N/A')}")
+            if validation_info.get('sharpe_ratio') is not None:
+                print(f"   - 達成Sharpe: {validation_info.get('sharpe_ratio')}")
             print(f"   - パラメータ数: {validation_info.get('param_count', 'N/A'):,}")
         elif args.workflow == "create-ml-dataset":
             print(f"🤖 MLデータセット作成結果:")

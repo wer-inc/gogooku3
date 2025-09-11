@@ -11,26 +11,26 @@ batch:
   pin_memory: true
   gradient_accumulation_steps: 2
 
-# Optimizer configuration with stability focus
+# Optimizer configuration optimized for financial ML
 optimizer:
   type: adamw
-  lr: 0.001
-  weight_decay: 0.01
+  lr: 0.0005            # Reduced from 0.001 for stability
+  weight_decay: 0.05    # Increased from 0.01 for stronger regularization
   betas: [0.9, 0.999]
   eps: 1e-7
 
-# Learning rate scheduler with plateau detection (optimized)
+# Learning rate scheduler with aggressive plateau detection
 scheduler:
   type: ReduceLROnPlateau
-  factor: 0.5           # 最適化: 0.5 (変更なし)
-  patience: 5           # 最適化: 5 (変更なし)
-  min_lr: 1e-5          # 最適化: 1e-5 (変更なし)
+  factor: 0.5           
+  patience: 3           # Reduced from 5 for faster adaptation
+  min_lr: 1e-6          # Lowered from 1e-5 for finer tuning
   verbose: true
   threshold: 0.0001
   threshold_mode: rel
-  # Optimized parameters from hyperparameter tuning
-  warmup_steps: 1500    # 最適化: 1500
-  gamma: 0.98           # 最適化: 0.98
+  # Enhanced parameters for better convergence
+  warmup_steps: 2000    # Increased from 1500 for gradual warmup
+  gamma: 0.95           # Reduced from 0.98 for faster decay
 
 # Training configuration
 trainer:
@@ -51,32 +51,31 @@ trainer:
 
 # Early stopping configuration
 early_stopping:
-  monitor: val/total_loss
-  mode: min
+  monitor: val/sharpe_ratio
+  mode: max
   patience: 9
-  min_delta: 0.0001
+  min_delta: 0.001
   verbose: true
 
-# Loss configuration (improved - default OFF for backward compatibility)
+# Loss configuration (optimized for financial prediction)
 loss:
-  type: mse  # Default: original MSE loss
-  # Improved options (enable by changing type to 'huber_multi_horizon')
-  huber_delta: 0.01  # Only used when type='huber_multi_horizon'
-  multi_horizon_weights: [1.0, 0.8, 0.7, 0.5, 0.3]  # 短期重視
-  use_coverage_penalty: false
-  coverage_alpha: 0.01
-  rankic_weight: 0.0  # Default OFF
-  sharpe_weight: 0.0  # Default OFF
-  l2_lambda: 0.0  # Default OFF
+  type: huber_multi_horizon  # Changed from MSE to Huber for robustness
+  huber_delta: 0.01  # Optimized for financial returns
+  multi_horizon_weights: [2.0, 1.5, 1.0, 0.7, 0.5]  # Enhanced short-term focus
+  use_coverage_penalty: true  # Enable coverage penalty
+  coverage_alpha: 0.02  # Increased from 0.01
+  rankic_weight: 0.1  # Enable RankIC loss
+  sharpe_weight: 0.05  # Enable Sharpe loss
+  l2_lambda: 0.001  # Enable L2 regularization
 
 # Model checkpointing
 checkpoint:
-  monitor: val/total_loss
-  mode: min
+  monitor: val/sharpe_ratio
+  mode: max
   save_top_k: 3
   save_last: false
   save_on_train_epoch_end: false
-  filename: 'production-{epoch:03d}-{val_total_loss:.4f}'
+  filename: 'production-{epoch:03d}-{val_sharpe_ratio:.6f}'
 
 # Logging
 logging:

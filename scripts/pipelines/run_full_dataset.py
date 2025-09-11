@@ -38,12 +38,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.pipelines.run_pipeline_v4_optimized import JQuantsPipelineV4Optimized
-from src.pipeline.full_dataset import enrich_and_save
-
 # Import JQuants fetcher to get trade-spec directly
 from scripts._archive.run_pipeline import JQuantsAsyncFetcher  # type: ignore
-
+from scripts.pipelines.run_pipeline_v4_optimized import JQuantsPipelineV4Optimized
+from src.pipeline.full_dataset import enrich_and_save
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,6 +88,43 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Optional statements parquet for offline enrichment",
     )
+    parser.add_argument(
+        "--listed-info-parquet",
+        type=Path,
+        default=None,
+        help="Optional listed_info parquet (for sector/market enrichment)",
+    )
+    # Sector feature toggles
+    parser.add_argument(
+        "--sector-onehot33",
+        action="store_true",
+        help="Enable 33-sector one-hot encodings (default: off)",
+    )
+    parser.add_argument(
+        "--sector-series-mcap",
+        type=str,
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="Compute market-cap weighted sector series (auto when shares_outstanding present)",
+    )
+    parser.add_argument(
+        "--sector-te-targets",
+        type=str,
+        default="target_5d",
+        help="Comma-separated target cols for sector TE (e.g., target_5d,target_1d)",
+    )
+    parser.add_argument(
+        "--sector-series-levels",
+        type=str,
+        default="33",
+        help="Comma-separated sector levels for series (choices: 33,17)",
+    )
+    parser.add_argument(
+        "--sector-te-levels",
+        type=str,
+        default="33",
+        help="Comma-separated sector levels for TE (choices: 33,17)",
+    )
     return parser.parse_args()
 
 
@@ -119,6 +154,7 @@ async def main() -> int:
 
     logger.info("=== STEP 0: Prepare trade-spec for flow features ===")
     trades_spec_path: Path | None = None
+    listed_info_path: Path | None = args.listed_info_parquet
     if args.jquants:
         # Fetch trade-spec and save to Parquet
         email = os.getenv("JQUANTS_AUTH_EMAIL", "")
@@ -132,6 +168,13 @@ async def main() -> int:
             await fetcher.authenticate(session)
             logger.info(f"Fetching trade-spec from {start_date} to {end_date}")
             trades_df = await fetcher.get_trades_spec(session, start_date, end_date)
+            # Also fetch listed_info for sector/market enrichment
+            try:
+                logger.info("Fetching listed_info for sector/market enrichment")
+                info_df = await fetcher.get_listed_info(session)
+            except Exception as e:
+                logger.warning(f"Failed to fetch listed_info: {e}")
+                info_df = pl.DataFrame()
         if trades_df is None or trades_df.is_empty():
             logger.warning("No trade-spec data fetched; will try local fallback for flow features")
         else:
@@ -140,6 +183,17 @@ async def main() -> int:
             trades_spec_path = output_dir / f"trades_spec_history_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
             trades_df.write_parquet(trades_spec_path)
             logger.info(f"Saved trade-spec: {trades_spec_path}")
+        # Save listed_info if fetched (even if trade-spec failed)
+        if listed_info_path is None:
+            # Name by end date for reproducibility
+            listed_info_path = (Path("output") / f"listed_info_history_{end_dt.strftime('%Y%m%d')}.parquet")
+        if 'info_df' in locals() and info_df is not None and not info_df.is_empty():
+            try:
+                listed_info_path.parent.mkdir(parents=True, exist_ok=True)
+                info_df.write_parquet(listed_info_path)
+                logger.info(f"Saved listed_info: {listed_info_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save listed_info parquet: {e}")
     else:
         # Offline fallback: look for a local trades_spec parquet
         trades_spec_path = _find_latest("trades_spec_history_*.parquet")
@@ -147,6 +201,13 @@ async def main() -> int:
             logger.info(f"Using local trade-spec parquet: {trades_spec_path}")
         else:
             logger.warning("No local trades_spec parquet found; flow features may be skipped")
+        # Offline listed_info fallback
+        if listed_info_path is None:
+            listed_info_path = _find_latest("listed_info_history_*.parquet")
+        if listed_info_path:
+            logger.info(f"Using listed_info parquet: {listed_info_path}")
+        else:
+            logger.warning("No listed_info parquet provided/found; sector enrichment will be skipped")
 
     logger.info("=== STEP 1: Run base optimized pipeline (prices + TA + statements) ===")
     pipeline = JQuantsPipelineV4Optimized()
@@ -165,6 +226,9 @@ async def main() -> int:
             pass
 
     logger.info("=== STEP 2: Enrich with TOPIX + statements + flow (trade-spec) ===")
+    te_targets = [s.strip() for s in (args.sector_te_targets or "").split(",") if s.strip()]
+    series_levels = [s.strip() for s in (getattr(args, 'sector_series_levels', '33') or "").split(",") if s.strip()]
+    te_levels = [s.strip() for s in (getattr(args, 'sector_te_levels', '33') or "").split(",") if s.strip()]
     pq_path, meta_path = await enrich_and_save(
         df_base,
         output_dir=output_dir,
@@ -174,6 +238,12 @@ async def main() -> int:
         trades_spec_path=trades_spec_path,
         topix_parquet=args.topix_parquet,
         statements_parquet=args.statements_parquet,
+        listed_info_parquet=listed_info_path,
+        sector_onehot33=args.sector_onehot33,
+        sector_series_mcap=args.sector_series_mcap,
+        sector_te_targets=te_targets,
+        sector_series_levels=series_levels,
+        sector_te_levels=te_levels,
     )
     logger.info("Full enriched dataset saved")
     logger.info(f"  Dataset : {pq_path}")

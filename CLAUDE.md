@@ -4,239 +4,391 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-Gogooku3-standalone is an advanced financial ML system for Japanese stock market prediction featuring ATFT-GAT-FAN (Adaptive Temporal Fusion Transformer + Graph Attention Networks) architecture with robust safety features and modern Python package structure (v2.0.0).
+Advanced financial ML system for Japanese stock market prediction using ATFT-GAT-FAN architecture. Modern Python package (v2.0.0) with focus on safety (壊れず), strength (強く), and speed (速く).
 
-## Key Commands
+## Essential Commands
 
-### Installation & Setup
+### Quick Start
 ```bash
-# Install package
+# Install package in development mode
 pip install -e .
 
-# Or use requirements
-pip install -r requirements.txt
-
-# Setup environment variables
+# Set up environment and credentials
 cp .env.example .env
-# Edit .env with JQuants credentials: JQUANTS_AUTH_EMAIL, JQUANTS_AUTH_PASSWORD
-```
+# Edit .env with your JQuants API credentials:
+# JQUANTS_AUTH_EMAIL, JQUANTS_AUTH_PASSWORD
 
-### Docker Services
-```bash
-make docker-up    # Start MinIO, ClickHouse, Redis, Dagster
-make docker-down  # Stop all services
-make docker-logs  # View service logs
-```
-
-### Data Pipeline Commands
-```bash
-# Full 5-year dataset with all features (recommended)
-python scripts/pipelines/run_full_dataset.py \
-  --jquants \
-  --start-date 2020-09-06 \
-  --end-date 2025-09-06
-
-# Or using Make
-make dataset-full START=2020-09-06 END=2025-09-06
-
-# Basic pipeline (without full enrichment)
-python scripts/pipelines/run_pipeline_v4_optimized.py --jquants
-
-# Fetch specific components
-make fetch-all START=2020-09-06 END=2025-09-06
-```
-
-### Model Training
-```bash
-# Complete ATFT-GAT-FAN training pipeline
-python scripts/integrated_ml_training_pipeline.py
-
-# Hydra-configured training
-python scripts/train_atft.py --config-path configs/atft --config-name config
-
-# Safe training pipeline (7-step validation)
-python scripts/run_safe_training.py --verbose --n-splits 2 --memory-limit 6
-
-# Hyperparameter tuning
-python scripts/hyperparameter_tuning.py --trials 20
+# Verify installation
+python -c "import gogooku3; print(f'✅ Gogooku3 v{gogooku3.__version__}')"
 ```
 
 ### Testing & Validation
 ```bash
-# All tests
-make test
-pytest tests/ -v
+# Full test suite
+pytest tests/ -v                # All tests
+pytest tests/unit/ -v           # Unit tests only  
+pytest tests/integration/ -v    # Integration tests only
+pytest tests/ -k "smoke" -v     # Smoke tests only
 
-# Specific test suites
-pytest tests/integration/test_migration_smoke.py -v  # Migration validation
-pytest tests/integration/test_safety_components.py   # Safety components
-pytest tests/unit/ -v                                # Unit tests only
-
-# Quick functionality test
+# Quick smoke test (basic functionality)
 python scripts/smoke_test.py
 
-# Performance validation
-python scripts/validate_improvements.py --detailed
-
-# Production validation
-python scripts/production_validation.py --scenario medium_scale
+# Migration compatibility tests
+pytest tests/integration/test_migration_smoke.py -v
 ```
 
-### Code Quality
+### Data Pipeline
 ```bash
-# Pre-commit hooks (auto-configured)
+# Recommended: Full dataset with JQuants API
+python scripts/pipelines/run_full_dataset.py --jquants --start-date 2020-09-06 --end-date 2025-09-06
+
+# Alternative: Make command
+make dataset-full START=2020-09-06 END=2025-09-06
+
+# Raw data fetching only
+make fetch-all START=2020-09-06 END=2025-09-06
+
+# Build ML dataset from existing data
+python scripts/data/ml_dataset_builder.py
+```
+
+### Model Training
+```bash
+# 🚀 RECOMMENDED: Safe training pipeline (7-step validation)
+python scripts/run_safe_training.py --verbose --n-splits 2 --memory-limit 6
+
+# Complete ATFT-GAT-FAN training with integrated pipeline
+python scripts/integrated_ml_training_pipeline.py
+
+# Hydra-configured training with config management
+python scripts/train_atft.py --config-path configs/atft --config-name config
+
+# Quick start training script (shows available commands)
+python start_training.py
+```
+
+### Modern CLI Interface (New v2.0.0)
+```bash
+# Use the new CLI (framework ready, implementation in progress)
+gogooku3 --version
+gogooku3 train --config configs/training/production.yaml
+gogooku3 data --build-dataset
+gogooku3 infer --model-path models/best_model.pth
+
+# Legacy script execution (maintained for compatibility)
+python -m gogooku3.compat.script_wrappers train_atft
+```
+
+### Code Quality & Development
+```bash
+# Automated code quality (pre-commit hooks configured)
 pre-commit run --all-files
+ruff check src/ --fix           # Linting and auto-fixes
+ruff format src/                # Code formatting
+mypy src/gogooku3              # Type checking
+bandit -r src/                 # Security scanning
 
-# Manual checks
-ruff check src/ --fix
-mypy src/gogooku3
+# Manual install of pre-commit hooks
+pre-commit install
 ```
 
-### Monitoring
+### Docker Services
 ```bash
-# Start monitoring dashboard
-python scripts/monitoring_dashboard.py --start-tensorboard
+# Start all services (MinIO, ClickHouse, Redis, Dagster)
+make docker-up
+# Access points:
+# - MinIO Console: http://localhost:9001 (minioadmin/minioadmin123)
+# - Dagster UI: http://localhost:3001  
+# - Grafana: http://localhost:3000 (admin/gogooku123)
+# - Prometheus: http://localhost:9090
 
-# Setup monitoring system
-python scripts/setup_monitoring.py --install-deps --create-config --create-alerts
+make docker-down              # Stop all services
+make docker-logs              # View service logs
 ```
 
-## Architecture & Structure
+## High-Level Architecture
 
-### Package Architecture (v2.0.0)
+### Package Structure Overview
+The repository has undergone a major migration (v2.0.0) from scripts to a modern Python package structure while maintaining backward compatibility.
+
+### Core Package (src/gogooku3/)
 ```
-src/gogooku3/             # Modern Python package (main development)
-├── cli.py               # CLI interface (gogooku3 command)
-├── utils/               # Settings (Pydantic), deduplication utilities
-├── data/                # Data loaders, scalers, safety components
-│   ├── loaders/        # ProductionDatasetV3, MLDatasetBuilder
-│   └── safety/         # CrossSectionalNormalizerV2, WalkForwardSplitterV2
-├── features/            # Feature engineering
-│   ├── market_features.py      # TOPIX market features
-│   ├── flow_joiner.py         # Investment flow features
-│   └── safe_joiner.py         # Statement features with T+1 safety
-├── models/              # Model architectures
-│   ├── architectures/   # ATFT-GAT-FAN implementation
-│   └── baseline/        # LightGBM baseline
-├── graph/               # Financial graph construction
-├── training/            # SafeTrainingPipeline (7-step integrated)
-└── compat/              # Backward compatibility layer
+src/gogooku3/
+├── __init__.py              # Public API exports
+├── cli.py                   # Modern command-line interface  
+├── data/                    # Data processing layer
+│   ├── loaders/            # ProductionDatasetV3, MLDatasetBuilder
+│   ├── safety/             # CrossSectionalNormalizerV2, WalkForwardSplitterV2
+│   └── samplers/           # DayBatchSampler, temporal sampling
+├── features/               # Feature engineering
+│   ├── quality_features.py # QualityFinancialFeaturesGenerator
+│   └── sector_mappings.py  # Industry sector classification
+├── models/                 # ML architecture
+│   ├── atft_gat_fan.py    # ATFT-GAT-FAN model architecture
+│   └── lightgbm_baseline.py # Financial baseline models  
+├── graph/                  # Graph neural networks
+│   └── graph_builder.py   # Financial correlation graphs
+├── training/               # Training pipeline
+│   └── safe_training_pipeline.py # 7-step integrated pipeline
+├── utils/                  # Core utilities
+│   ├── settings.py         # Pydantic settings management
+│   └── deduplication.py    # Safe data deduplication
+├── inference/              # Model inference (future)
+└── compat/                 # 🆕 Backward compatibility layer
+    ├── aliases.py          # Legacy component aliases  
+    └── script_wrappers.py  # Script compatibility wrappers
 ```
 
-### Key Components & Design Patterns
+### Legacy Scripts Directory
+```
+scripts/
+├── run_safe_training.py              # ✅ 7-step safe training pipeline
+├── integrated_ml_training_pipeline.py # ✅ Complete ATFT-GAT-FAN training
+├── train_atft.py                     # ✅ Hydra-configured training
+├── data/
+│   ├── ml_dataset_builder.py        # Enhanced dataset construction
+│   └── fetch_jquants_history.py     # JQuants API data fetching
+├── pipelines/
+│   └── run_full_dataset.py          # Full data pipeline execution
+└── maintenance/
+    └── cleanup_deprecated.py        # Legacy cleanup utilities
+```
+
+### Critical Data Safety Architecture
+The system implements strict temporal validation to prevent data leakage in financial ML:
+
+**Data Layer** (`data/`)
+- **ProductionDatasetV3**: Polars-based lazy loading with memory efficiency
+- **CrossSectionalNormalizerV2**: Daily Z-score normalization with fit-transform separation
+- **WalkForwardSplitterV2**: Time-series validation with 20-day embargo periods
+- **JQuants Integration**: Real-time Japanese stock data with rate limiting
+
+**Feature Engineering** (`features/`)  
+- **Technical Indicators**: 50+ indicators via pandas-ta (RSI, MACD, Bollinger Bands, ATR)
+- **Market Features**: TOPIX correlation (26 mkt_* features)
+- **Investment Flows**: Institutional flow analysis (17 flow_* features)  
+- **Financial Statements**: T+1 as-of joins with 15:00 cutoff safety (17 stmt_* features)
+
+**Model Architecture** (`models/`)
+- **ATFT-GAT-FAN**: Multi-horizon prediction (1d, 5d, 10d, 20d horizons)
+- **Graph Attention**: Stock correlation networks with dynamic attention
+- **Model Scale**: ~5.6M parameters optimized for financial Sharpe ratio
+
+**Training Pipeline** (`training/`)
+- **SafeTrainingPipeline**: 7-step integrated validation pipeline
+- **Walk-Forward Validation**: Strict temporal splitting with embargo enforcement
+- **Cross-Sectional Normalization**: Daily standardization to prevent lookahead bias
+
+### Critical Design Patterns
 
 **Data Safety (壊れず)**
-- Walk-Forward validation with 20-day embargo
-- Cross-sectional normalization (daily Z-score)
-- T+1 as-of joins for statements (15:00 cutoff)
-- No BatchNorm in time-series models (prevents data leakage)
-
-**Feature Engineering Pipeline**
-1. `MLDatasetBuilder.create_technical_features()` - Core price features
-2. `MLDatasetBuilder.add_pandas_ta_features()` - Technical indicators
-3. `MLDatasetBuilder.add_topix_features()` - Market features (26 mkt_* features)
-4. `MLDatasetBuilder.add_flow_features()` - Investment flow (17 flow_* features)
-5. `MLDatasetBuilder.add_statements_features()` - Financial statements (17 stmt_* features)
-
-**ATFT-GAT-FAN Model**
-- Multi-horizon prediction (1d, 5d, 10d, 20d)
-- Graph attention for stock relationships
-- ~5.6M parameters, target Sharpe 0.849
-- Frequency Adaptive Normalization
-- EMA Teacher for stability
-
-### Configuration (Hydra Framework)
-
-Main configs in `configs/atft/`:
-- `config.yaml` - Main configuration
-- `train/production.yaml` - Production training settings
-- `data/jpx_safe.yaml` - Safe data configuration
-
-Key parameters:
-- `batch_size`: 256-2048 (GPU memory dependent)
-- `embargo_days`: 20 (match max prediction horizon)
-- `memory_limit_gb`: 4-8 (system dependent)
-- `max_concurrent_fetch`: 75 (JQuants API limit)
-
-## Data Flow & Pipelines
-
-### Complete Data Pipeline
-```
-1. JQuants API → Raw data fetch (prices, statements, trades_spec, TOPIX)
-2. run_pipeline_v4_optimized.py → Base features (157 columns)
-3. run_full_dataset.py → Full enrichment (239+ columns)
-4. Output: ml_dataset_latest_full.parquet
-```
-
-### Feature Coverage (DATASET.md compliance)
-- **Current**: 97.2% (140/142 documented features)
-- **Missing**: shares_outstanding, turnover_rate (external data required)
-- **Extra**: 100+ additional features (Sharpe ratios, momentum crosses, etc.)
-
-## Critical Constraints & Safety
-
-### Resource Requirements
-- **Memory**: 8-16GB for training, up to 200GB for batch processing
-- **GPU**: A100/V100 recommended for production
-- **Storage**: 100GB+ for data and models
-- **API Rate Limits**: 75 concurrent requests (JQuants)
-
-### Data Safety Rules
-- Always use Walk-Forward validation with 20-day embargo
-- Never use BatchNorm in time-series models
+- No BatchNorm in time-series models (prevents leakage)
 - Fit normalizers on training data only
-- Validate no temporal overlap between train/test splits
+- T+1 as-of joins for statements (15:00 cutoff)
+- Temporal overlap validation between train/test splits
 
-### Common Issues & Solutions
+**Configuration Management**
+- Hydra framework for hierarchical configs
+- Main configs in `configs/atft/`
+- Environment-specific settings via `.env`
 
-**CUDA OOM**
+**Performance Optimization**
+- Polars for 3-5x faster data processing
+- GPU memory management with expandable segments
+- Batch size auto-adjustment for OOM prevention
+
+## Key Configuration Files
+
+- `configs/atft/config.yaml`: Main model configuration
+- `configs/atft/train/production.yaml`: Production training settings
+- `configs/atft/data/jpx_safe.yaml`: Safe data handling
+- `pyproject.toml`: Package dependencies and tools configuration
+- `.pre-commit-config.yaml`: Code quality automation
+
+## Common Workflows & Patterns
+
+### Development Workflow
+1. **Environment Setup**: `pip install -e .` → `cp .env.example .env` → configure credentials
+2. **Code Changes**: Make changes → `pre-commit run --all-files` → run tests
+3. **Testing**: `python scripts/smoke_test.py` → `pytest tests/integration/ -v` for validation
+4. **Training**: `python scripts/run_safe_training.py --verbose --n-splits 2 --memory-limit 6`
+
+### Data Processing Workflow
+1. **Raw Data**: `make fetch-all START=2020-09-06 END=2025-09-06`
+2. **Dataset Build**: `python scripts/pipelines/run_full_dataset.py --jquants --start-date 2020-09-06 --end-date 2025-09-06`
+3. **Validation**: `pytest tests/integration/test_migration_smoke.py -v`
+4. **ML Ready**: Output in `output/` directory as `.parquet` files
+
+### Training Workflow
+1. **Quick Test**: `python scripts/smoke_test.py` (1-epoch validation)
+2. **Safe Pipeline**: `python scripts/run_safe_training.py` (7-step validation)
+3. **Full Training**: `python scripts/integrated_ml_training_pipeline.py`
+4. **Monitor**: Check logs in `logs/` directory and TensorBoard/W&B dashboards
+
+## Common Issues & Solutions
+
+### Environment & Installation Issues
+**Package Import Errors**
 ```bash
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-# Reduce batch size in training config
-```
+# Ensure package is installed in development mode
+pip install -e .
 
-**Import Errors**
-```bash
+# Add to Python path if needed
 export PYTHONPATH="/home/ubuntu/gogooku3-standalone:$PYTHONPATH"
-pip install -e .  # Reinstall package
+
+# Verify installation
+python -c "import gogooku3; print(f'✅ Version: {gogooku3.__version__}')"
 ```
 
-**Data Loading Issues**
+**Missing Dependencies**
 ```bash
-# Check data exists
-ls -la output/*.parquet
-# Verify with Polars
-python -c "import polars as pl; print(pl.scan_parquet('output/*.parquet').collect().shape)"
+# Reinstall with dev dependencies  
+pip install -e ".[dev]"
+
+# Check specific dependencies
+pip list | grep -E "(torch|polars|pandas)"
 ```
+
+### CUDA & GPU Issues
+**CUDA Out of Memory (OOM)**
+```bash
+# Set expandable segments (recommended)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# Alternative: Clear GPU cache
+python -c "import torch; torch.cuda.empty_cache()"
+
+# Reduce batch size in config files
+# Edit configs/atft/train/production.yaml: batch_size: 256
+```
+
+**GPU Not Detected**
+```bash
+# Check CUDA availability
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, Devices: {torch.cuda.device_count()}')"
+
+# Check GPU memory
+nvidia-smi
+```
+
+### Data Issues
+**Data Files Not Found**
+```bash
+# Check output directory
+ls -la output/*.parquet
+
+# Validate data shape
+python -c "import polars as pl; print(pl.scan_parquet('output/*.parquet').collect().shape)"
+
+# Run data pipeline if missing
+make dataset-full START=2020-09-06 END=2025-09-06
+```
+
+**JQuants API Issues**
+```bash
+# Verify credentials in .env file
+cat .env | grep JQUANTS
+
+# Test API connection
+python -c "
+import os
+from dotenv import load_dotenv
+load_dotenv()
+print('Email:', os.getenv('JQUANTS_AUTH_EMAIL'))
+print('Password configured:', bool(os.getenv('JQUANTS_AUTH_PASSWORD')))
+"
+```
+
+### Memory & Performance Issues
+**High Memory Usage**
+```bash
+# Check system memory
+free -h
+
+# Monitor during execution
+python scripts/run_safe_training.py --memory-limit 4 --verbose
+
+# Use smaller data samples for testing
+python scripts/smoke_test.py
+```
+
+**Slow Performance**  
+```bash
+# Enable performance optimizations
+export PERF_POLARS_STREAM=1
+export PERF_MEMORY_OPTIMIZATION=1
+
+# Check number of CPU cores for parallel processing
+nproc
+```
+
+## Resource Requirements
+
+- **Memory**: 8-16GB (training), up to 200GB (batch processing)
+- **GPU**: A100/V100 recommended for production
+- **API Limits**: 75 concurrent JQuants requests
+- **Storage**: 100GB+ for data and models
 
 ## Performance Benchmarks
 
-### Latest Results (Production Data)
 - **Dataset**: 10.6M samples, 3,973 stocks, 5 years
 - **Pipeline Speed**: 1.9s for 7-component pipeline
-- **Memory Usage**: 7GB peak (optimized with Polars)
+- **Memory Usage**: 7GB peak (Polars optimized)
 - **Training**: RankIC@1d: 0.180 (+20% improvement)
 - **GPU Throughput**: 5130 samples/sec
 
-### Model Performance
-- **Target Sharpe**: 0.849
-- **Parameters**: 5.6M
-- **Training Time**: 9.8s/epoch
-- **Inference**: <100ms per batch
+## Migration Status & Compatibility
 
-## Development Workflow
+### v2.0.0 Migration Complete ✅
+The repository has successfully migrated from a script-based architecture to a modern Python package:
 
-1. **Feature Development**: Add to `MLDatasetBuilder` in `scripts/data/ml_dataset_builder.py`
-2. **Model Changes**: Update `src/models/architectures/atft_gat_fan.py`
-3. **Testing**: Run `pytest tests/unit/` then `tests/integration/`
-4. **Validation**: `python scripts/smoke_test.py`
-5. **Quality Check**: `pre-commit run --all-files`
-6. **Full Pipeline**: `make dataset-full` to regenerate dataset
+**✅ Completed (Production Ready)**
+- Modern package structure in `src/gogooku3/`
+- CLI interface with `gogooku3` command
+- Pydantic settings management
+- Pre-commit hooks and code quality automation
+- Comprehensive test suite with pytest markers
+- Compatibility layer for smooth transition
 
-## Migration Notes
+**🔄 Backward Compatibility Maintained**
+- Legacy scripts in `scripts/` directory fully functional
+- Compatibility aliases in `gogooku3.compat.aliases`
+- Script wrappers for gradual migration
+- No breaking changes for existing workflows
 
-The repository underwent major migration from scripts to modern Python package (v2.0.0):
-- Legacy scripts in `scripts/` maintain backward compatibility
-- New development should use `gogooku3.*` imports
-- Compatibility layer in `gogooku3.compat` for gradual migration
-- See `MIGRATION.md` for complete migration guide
+**🚀 New Features (v2.0.0)**
+```bash
+# Modern imports (recommended for new code)
+from gogooku3.training import SafeTrainingPipeline
+from gogooku3.data.loaders import ProductionDatasetV3
+from gogooku3.utils.settings import settings
+
+# Legacy compatibility (deprecated but functional)
+from scripts.run_safe_training import SafeTrainingPipeline  # Still works
+```
+
+**⚠️ Migration Guidelines for Developers**
+1. **New Development**: Use `gogooku3.*` imports and modern CLI
+2. **Existing Scripts**: Continue to work, but consider gradual migration
+3. **Testing**: Use `pytest tests/integration/test_migration_smoke.py` to validate compatibility
+4. **Configuration**: Prefer environment variables and `settings` over hardcoded paths
+
+### Key Architectural Insights
+
+**Financial ML Safety Design**
+- **No BatchNorm**: Prevents cross-sample information leakage in time series
+- **Walk-Forward Validation**: Temporal splitting with 20-day embargo periods
+- **Fit-Transform Separation**: Normalizers trained only on historical data
+- **T+1 As-Of Joins**: Financial statements use 15:00 cutoff for realistic availability
+
+**Performance Optimization Stack**
+- **Polars Engine**: 3-5x faster data processing vs pandas
+- **Lazy Loading**: Memory-mapped files with columnar projection
+- **GPU Memory Management**: Expandable segments for CUDA OOM prevention
+- **Mixed Precision**: bf16 training for memory efficiency
+
+**Production Safety Features**  
+- **Data Quality Gates**: Great Expectations integration
+- **Automated Testing**: Unit, integration, E2E, and smoke tests
+- **Security Scanning**: Bandit, pre-commit hooks, dependency audits
+- **Monitoring**: Prometheus metrics, health checks, log rotation

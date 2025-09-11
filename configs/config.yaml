@@ -8,7 +8,8 @@ defaults:
   - train: adaptive
   - experiment: baseline
   - inference: batch
-  - override hydra/launcher: joblib
+  - /hardware: default
+  - override hydra/launcher: basic
 
 # プロジェクト設定
 project:
@@ -36,14 +37,7 @@ paths:
   cache: ${paths.root}/cache
   experiments: ${paths.root}/experiments
 
-# ハードウェア設定
-hardware:
-  device: ${oc.env:DEVICE,cuda}
-  gpu_id: 0
-  num_workers: ${oc.env:NUM_WORKERS,8}
-  pin_memory: true
-  mixed_precision: true
-  compile_model: true  # PyTorch 2.0+
+# ハードウェア設定は /hardware: default のグループで管理
 
 # ログ設定
 logging:

@@ -314,10 +314,30 @@ class SafeTrainingPipeline:
         
         df_pd = df.to_pandas()
         
+        # Advanced graph configuration with env overrides
+        try:
+            corr_method = os.getenv("GRAPH_CORR_METHOD", "ewm_demean")
+            ewm_halflife = int(os.getenv("EWM_HALFLIFE", "20"))
+            shrink_gamma = float(os.getenv("SHRINKAGE_GAMMA", "0.05"))
+            k_per_node = int(os.getenv("GRAPH_K", "10"))
+            corr_thr = float(os.getenv("GRAPH_EDGE_THR", "0.3"))
+            symmetric = os.getenv("GRAPH_SYMMETRIC", "1") in ("1", "true", "True")
+        except Exception:
+            corr_method = "ewm_demean"
+            ewm_halflife = 20
+            shrink_gamma = 0.05
+            k_per_node = 10
+            corr_thr = 0.3
+            symmetric = True
+
         graph_builder = FinancialGraphBuilder(
             correlation_window=60,
             include_negative_correlation=True,
-            max_edges_per_node=10
+            max_edges_per_node=k_per_node,
+            correlation_method=corr_method,
+            ewm_halflife=ewm_halflife,
+            shrinkage_gamma=shrink_gamma,
+            symmetric=symmetric,
         )
         
         # Use subset for speed

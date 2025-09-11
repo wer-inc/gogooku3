@@ -7,14 +7,12 @@ Provides reusable functions so that CLI wrappers under scripts/ remain thin.
 
 from __future__ import annotations
 
-from pathlib import Path
-from datetime import datetime
 import json
 import logging
-from typing import Optional
+from datetime import datetime
+from pathlib import Path
 
 import polars as pl
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +53,6 @@ def save_with_symlinks(
 
     # Write parquet with metadata where possible
     try:
-        import pyarrow as pa  # type: ignore
         import pyarrow.parquet as pq  # type: ignore
         table = df.to_arrow()
         schema = table.schema
@@ -106,17 +103,24 @@ async def enrich_and_save(
     jquants: bool,
     start_date: str,
     end_date: str,
-    trades_spec_path: Optional[Path] = None,
-    topix_parquet: Optional[Path] = None,
-    statements_parquet: Optional[Path] = None,
+    trades_spec_path: Path | None = None,
+    topix_parquet: Path | None = None,
+    statements_parquet: Path | None = None,
+    listed_info_parquet: Path | None = None,
+    sector_onehot33: bool = False,
+    sector_series_mcap: str = "auto",
+    sector_te_targets: list[str] | None = None,
+    sector_series_levels: list[str] | None = None,
+    sector_te_levels: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Attach TOPIX + statements + flow then save with symlinks.
 
     Includes an assurance step to guarantee mkt_* presence by discovering
     or fetching TOPIX parquet when needed.
     """
-    from scripts.data.ml_dataset_builder import MLDatasetBuilder
     import aiohttp
+
+    from scripts.data.ml_dataset_builder import MLDatasetBuilder
 
     builder = MLDatasetBuilder(output_dir=output_dir)
 
@@ -131,7 +135,10 @@ async def enrich_and_save(
     if topix_df is None and jquants:
         try:
             import os
-            from scripts._archive.run_pipeline import JQuantsAsyncFetcher  # type: ignore
+
+            from scripts._archive.run_pipeline import (
+                JQuantsAsyncFetcher,  # type: ignore
+            )
             email = os.getenv("JQUANTS_AUTH_EMAIL", "")
             password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
             if email and password:
@@ -197,11 +204,56 @@ async def enrich_and_save(
             except Exception as e:
                 logger.warning(f"Failed to attach statements: {e}")
 
+    # Optional sector enrichment (listed_info)
+    listed_info_df = None
+    if listed_info_parquet and Path(listed_info_parquet).exists():
+        try:
+            listed_info_df = pl.read_parquet(listed_info_parquet)
+            df = builder.add_sector_features(df, listed_info_df)
+            # Sector series (eq-median by level list)
+            levels = sector_series_levels or ["33"]
+            for lvl in levels:
+                try:
+                    df = builder.add_sector_series(df, level=lvl, windows=(1, 5, 20), series_mcap=sector_series_mcap)
+                except Exception as e:
+                    logger.warning(f"Sector series attach failed for level {lvl}: {e}")
+            # Sector encodings (one-hot for 17, daily freqs)
+            try:
+                df = builder.add_sector_encodings(df, onehot_17=True, onehot_33=sector_onehot33, freq_daily=True)
+            except Exception as e:
+                logger.warning(f"Sector encodings failed: {e}")
+            # Relative-to-sector features (rel/alpha/z-in-sec)
+            try:
+                df = builder.add_relative_to_sector(df, level="33", x_cols=("returns_5d", "ma_gap_5_20"))
+            except Exception as e:
+                logger.warning(f"Relative-to-sector features failed: {e}")
+            # Sector target encoding with cross-fit + lag
+            te_targets = sector_te_targets or ["target_5d"]
+            te_levels = sector_te_levels or ["33"]
+            for lvl in te_levels:
+                for tcol in te_targets:
+                    try:
+                        df = builder.add_sector_target_encoding(df, target_col=tcol, level=lvl, k_folds=5, lag_days=1, m=100.0)
+                    except Exception as e:
+                        logger.warning(f"Sector target encoding failed for level {lvl}, target {tcol}: {e}")
+            # Back-compat: if only 33-level TE requested, alias te33_* → te_* for consumers
+            if te_levels == ["33"]:
+                import polars as _pl
+                for tcol in te_targets:
+                    src = f"te33_sec_{tcol}"
+                    dst = f"te_sec_{tcol}"
+                    if src in df.columns and dst not in df.columns:
+                        df = df.with_columns(_pl.col(src).alias(dst))
+            logger.info("Sector enrichment completed (sector33/MarketCode/CompanyName)")
+        except Exception as e:
+            logger.warning(f"Failed sector enrichment: {e}")
+
     # Flow attach
     if trades_spec_path and Path(trades_spec_path).exists():
         try:
             trades_spec_df = pl.read_parquet(trades_spec_path)
-            df = builder.add_flow_features(df, trades_spec_df, listed_info_df=None)
+            # Pass listed_info_df (if available) for accurate Section mapping
+            df = builder.add_flow_features(df, trades_spec_df, listed_info_df=listed_info_df)
         except Exception as e:
             logger.warning(f"Skipping flow enrichment due to error: {e}")
 
@@ -213,8 +265,12 @@ async def enrich_and_save(
         if (topo is None or not Path(topo).exists()) and jquants:
             try:
                 import os
-                from scripts._archive.run_pipeline import JQuantsAsyncFetcher  # type: ignore
+
                 import aiohttp
+
+                from scripts._archive.run_pipeline import (
+                    JQuantsAsyncFetcher,  # type: ignore
+                )
                 email = os.getenv("JQUANTS_AUTH_EMAIL", "")
                 password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
                 if email and password:
@@ -225,7 +281,6 @@ async def enrich_and_save(
                         if topo_df is not None and not topo_df.is_empty():
                             topo = output_dir / f"topix_history_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
                             try:
-                                import pyarrow as pa
                                 import pyarrow.parquet as pq
                                 table = topo_df.to_arrow()
                                 meta = (table.schema.metadata or {}) | {
@@ -255,8 +310,8 @@ async def enrich_and_save(
 
     # Align to DATASET.md (strict schema) just before saving
     try:
+
         import polars as _pl
-        import math as _math
         eps = 1e-12
 
         # Canonical, ordered schema from docs/DATASET.md
