@@ -1,9 +1,0 @@
-{
-  "method": "random_search",
-  "n_trials": 10,
-  "best_params": {
-    "freq_dropout_p": 0.1,
-    "ema_decay": 0.999,
-    "gat_temperature": 0.8,
-    "huber_delta": 0.05,
-    "lr_scheduler_warmup_steps": 

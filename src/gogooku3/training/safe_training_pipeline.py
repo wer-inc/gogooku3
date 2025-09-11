@@ -2,11 +2,11 @@
 Safe Training Pipeline for Gogooku3
 統合実行スクリプト - 実データでの安全な学習実行
 
-7-step pipeline:
+7-step pipeline (CORRECTED ORDER - prevents data leakage):
 1. データ読み込み（ProductionDatasetV3）
 2. 高品質特徴量生成（QualityFinancialFeaturesGenerator）
-3. Cross-sectional正規化（CrossSectionalNormalizerV2）
-4. Walk-Forward分割（WalkForwardSplitterV2）
+3. Walk-Forward分割（WalkForwardSplitterV2）
+4. Cross-sectional正規化（fold内でfit→transform）
 5. GBMベースライン学習（LightGBMFinancialBaseline）
 6. グラフ構築（FinancialGraphBuilder）
 7. 性能レポート生成
@@ -30,8 +30,8 @@ from tqdm import tqdm
 
 # Import components from the new structure
 try:
-    from gogooku3.data.scalers.cross_sectional_v2 import CrossSectionalNormalizerV2
-    from gogooku3.data.scalers.walk_forward_v2 import WalkForwardSplitterV2
+    from gogooku3.data.normalization import CrossSectionalNormalizer
+    from gogooku3.training.split import WalkForwardSplitterV2
     from gogooku3.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
     from gogooku3.graph.financial_graph_builder import FinancialGraphBuilder
     from gogooku3.models.lightgbm_baseline import LightGBMFinancialBaseline
@@ -40,7 +40,7 @@ try:
 except ImportError as e:
     # Fallback to original imports during migration
     try:
-        from src.data.safety.cross_sectional_v2 import CrossSectionalNormalizerV2
+        from src.data.safety.cross_sectional_v2 import CrossSectionalNormalizerV2 as CrossSectionalNormalizer
         from src.data.safety.walk_forward_v2 import WalkForwardSplitterV2
         from src.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
         from src.data.utils.graph_builder import FinancialGraphBuilder
@@ -214,9 +214,9 @@ class SafeTrainingPipeline:
         # Convert to pandas for normalization (temporary)
         df_pd = df.to_pandas()
         
-        normalizer = CrossSectionalNormalizerV2(
-            cache_stats=True,
-            robust_clip=5.0
+        normalizer = CrossSectionalNormalizer(
+            date_col="date",
+            code_col="code"
         )
         
         df_normalized_pd = normalizer.fit_transform(df_pd)
