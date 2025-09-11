@@ -735,33 +735,84 @@ def main():
         
         # 結果サマリー
         if args.workflow == "safe-training":
-            summary = result.get("summary", {})
-            print(f"📊 学習結果:")
-            print(f"   - エポック数: {summary.get('epochs', 'N/A')}")
-            print(f"   - 最終損失: {summary.get('final_loss', 'N/A')}")
-            print(f"   - 実行時間: {summary.get('elapsed_time', 'N/A'):.2f}秒")
+            if isinstance(result, dict):
+                summary = result.get("summary", {})
+                if isinstance(summary, dict):
+                    print(f"📊 学習結果:")
+                    print(f"   - エポック数: {summary.get('epochs', 'N/A')}")
+                    print(f"   - 最終損失: {summary.get('final_loss', 'N/A')}")
+                    elapsed_time = summary.get('elapsed_time', 'N/A')
+                    if isinstance(elapsed_time, (int, float)):
+                        print(f"   - 実行時間: {elapsed_time:.2f}秒")
+                    else:
+                        print(f"   - 実行時間: {elapsed_time}")
+                else:
+                    print(f"📊 学習結果: {summary}")
+            else:
+                print(f"📊 学習結果: {result}")
         elif args.workflow in ["ml-dataset", "direct-api-dataset"]:
-            if "df" in result:
+            if isinstance(result, dict) and "df" in result:
+                df = result['df']
                 print(f"📊 データセット構築結果:")
-                print(f"   - 行数: {len(result['df']):,}")
-                print(f"   - 銘柄数: {result['df']['Code'].n_unique()}")
-                if "metadata" in result:
-                    print(f"   - 特徴量数: {result['metadata']['features']['count']}")
+                print(f"   - 行数: {len(df):,}")
+                try:
+                    if hasattr(df, 'n_unique'):
+                        code_col = df.get_column('Code') if hasattr(df, 'get_column') else df['Code']
+                        print(f"   - 銘柄数: {code_col.n_unique()}")
+                    elif hasattr(df, 'nunique'):
+                        print(f"   - 銘柄数: {df['Code'].nunique()}")
+                    else:
+                        print(f"   - 銘柄数: N/A")
+                except (KeyError, TypeError, AttributeError):
+                    print(f"   - 銘柄数: N/A")
+                if "metadata" in result and isinstance(result["metadata"], dict):
+                    metadata = result["metadata"]
+                    if "features" in metadata and isinstance(metadata["features"], dict):
+                        print(f"   - 特徴量数: {metadata['features'].get('count', 'N/A')}")
+            else:
+                print(f"📊 データセット構築結果: {result}")
         elif args.workflow == "complete-atft":
-            validation_info = result.get("validation_info", {})
-            print(f"🎯 ATFT学習結果:")
-            print(f"   - 目標Sharpe: 0.849")
-            if validation_info.get('sharpe_ratio') is not None:
-                print(f"   - 達成Sharpe: {validation_info.get('sharpe_ratio')}")
-            print(f"   - パラメータ数: {validation_info.get('param_count', 'N/A'):,}")
+            if isinstance(result, dict):
+                validation_info = result.get("validation_info", {})
+                print(f"🎯 ATFT学習結果:")
+                print(f"   - 目標Sharpe: 0.849")
+                if isinstance(validation_info, dict):
+                    sharpe_ratio = validation_info.get('sharpe_ratio')
+                    if sharpe_ratio is not None:
+                        print(f"   - 達成Sharpe: {sharpe_ratio}")
+                    param_count = validation_info.get('param_count', 'N/A')
+                    if isinstance(param_count, (int, float)):
+                        print(f"   - パラメータ数: {param_count:,}")
+                    else:
+                        print(f"   - パラメータ数: {param_count}")
+            else:
+                print(f"🎯 ATFT学習結果: {result}")
         elif args.workflow == "create-ml-dataset":
             print(f"🤖 MLデータセット作成結果:")
-            print(f"   - 元データ件数: {result.get('raw_data_records', 'N/A'):,}")
-            print(f"   - 対象年数: {result.get('years', 'N/A')}年")
-            print(f"   - 除外市場: {', '.join(result.get('excluded_markets', []))}")
-            print(f"   - 既存データ活用: {result.get('used_existing_data', 'N/A')}")
-            if "ml_dataset_path" in result:
-                print(f"   - 保存先: {result['ml_dataset_path']}")
+            if isinstance(result, dict):
+                raw_records = result.get('raw_data_records', 'N/A')
+                years = result.get('years', 'N/A')
+                excluded_markets = result.get('excluded_markets', [])
+                used_existing = result.get('used_existing_data', 'N/A')
+                
+                if isinstance(raw_records, (int, float)):
+                    print(f"   - 元データ件数: {raw_records:,}")
+                else:
+                    print(f"   - 元データ件数: {raw_records}")
+                    
+                print(f"   - 対象年数: {years}年")
+                
+                if isinstance(excluded_markets, list):
+                    print(f"   - 除外市場: {', '.join(excluded_markets)}")
+                else:
+                    print(f"   - 除外市場: {excluded_markets}")
+                    
+                print(f"   - 既存データ活用: {used_existing}")
+                
+                if "ml_dataset_path" in result:
+                    print(f"   - 保存先: {result['ml_dataset_path']}")
+            else:
+                print(f"🤖 MLデータセット作成結果: {result}")
 
         print("=" * 80)
         print("✅ 実行完了")
