@@ -402,7 +402,7 @@ gogooku3-standalone/
 ├── 📦 requirements.txt                 # 統合依存関係
 ├── 📋 README.md                        # このファイル
 ├── 🔧 scripts/                         # コア処理
-│   ├── 🛡️ run_safe_training.py               # 7段階安全パイプライン  
+│   ├── 🛡️ [DELETED] run_safe_training.py     # 7段階安全パイプライン → `make safe-train`  
 │   ├── 🎯 integrated_ml_training_pipeline.py  # ATFT完全統合（内製）
 │   ├── 📊 data/
 │   │   ├── ml_dataset_builder.py             # 強化データセット構築
@@ -429,11 +429,11 @@ gogooku3-standalone/
 - complete_atft_training.sh → 代替: `python scripts/integrated_ml_training_pipeline.py`
 - convert_4000_to_atft_format.py → 代替: `python scripts/data/ml_dataset_builder.py`
 - create_full_historical_dataset.py / create_historical_dataset.py → 代替: `python scripts/pipelines/run_pipeline_v4_optimized.py`
-- data_optimizer.py → 代替: `python scripts/run_safe_training.py --memory-limit 6`、`python scripts/validate_data.py`
+- data_optimizer.py → 代替: `make safe-train`、`python scripts/validate_data.py`
 - evaluate_atft_model.py → 代替: `python scripts/integrated_ml_training_pipeline.py`（評価内包）
 - generate_full_dataset.py → 代替: `python scripts/pipelines/run_full_dataset.py`
 - production_deployment.py → 代替: `make docker-up` + `gogooku3 train ...`（CLI運用）
-- production_training.py → 代替: `python scripts/run_safe_training.py`
+- production_training.py → 代替: `make safe-train`
 - run_jquants_pipeline.py → 代替: `python scripts/pipelines/run_pipeline_v4_optimized.py`
 - test_optimized_pipeline.py → 代替: `pytest tests/integration/`、`python scripts/smoke_test.py`
 
@@ -506,7 +506,7 @@ python main.py complete-atft
 
 ```bash
 # 7段階安全パイプライン
-python scripts/run_safe_training.py
+make safe-train
 
 # MLデータセット構築  
 python scripts/data/ml_dataset_builder.py
@@ -518,10 +518,10 @@ python scripts/integrated_ml_training_pipeline.py
 ### 設定カスタマイズ
 
 ```python
-# scripts/run_safe_training.py 内
-MIN_COVERAGE_FRAC = 0.98  # 特徴量品質閾値
-OUTLIER_CLIP_QUANTILE = 0.01  # 外れ値クリップ
-WALK_FORWARD_EMBARGO_DAYS = 20  # エンバーゴ日数
+# Safe training configuration (accessible via make safe-train)
+# MIN_COVERAGE_FRAC = 0.98  # 特徴量品質閾値
+# OUTLIER_CLIP_QUANTILE = 0.01  # 外れ値クリップ
+# WALK_FORWARD_EMBARGO_DAYS = 20  # エンバーゴ日数
 ```
 
 ## 📊 データ仕様

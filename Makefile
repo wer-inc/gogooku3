@@ -82,6 +82,11 @@ dataset-full:
 train:
 	python scripts/integrated_ml_training_pipeline.py
 
+safe-train: ## Run safe training pipeline (alternative to deleted run_safe_training.py)
+	@echo "Running safe training pipeline..."
+	python -c "from src.gogooku3.training.safe_training_pipeline import SafeTrainingPipeline; pipeline = SafeTrainingPipeline(); result = pipeline.run_pipeline(); print('Safe training completed:', result.get('status', 'unknown'))"
+	@echo "Safe training pipeline complete!"
+
 # Fetch all raw components in one shot
 .PHONY: fetch-all
 fetch-all:

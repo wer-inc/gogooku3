@@ -24,7 +24,7 @@ import polars as pl
 # パス設定
 sys.path.append(str(Path(__file__).parent))
 
-from scripts.run_safe_training import SafeTrainingPipeline
+from src.gogooku3.training.safe_training_pipeline import SafeTrainingPipeline
 from scripts.data.ml_dataset_builder import MLDatasetBuilder
 from scripts.data.direct_api_dataset_builder import DirectAPIDatasetBuilder
 from scripts.integrated_ml_training_pipeline import CompleteATFTTrainingPipeline

@@ -30,26 +30,17 @@ from tqdm import tqdm
 
 # Import components from the new structure
 try:
-    from gogooku3.data.normalization import CrossSectionalNormalizer
-    from gogooku3.training.split import WalkForwardSplitterV2
-    from gogooku3.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
-    from gogooku3.graph.financial_graph_builder import FinancialGraphBuilder
-    from gogooku3.models.lightgbm_baseline import LightGBMFinancialBaseline
-    from gogooku3.features.quality_features import QualityFinancialFeaturesGenerator
-    from gogooku3.utils.settings import settings
+    from src.gogooku3.data.scalers import CrossSectionalNormalizerV2 as CrossSectionalNormalizer
+    from src.gogooku3.data.scalers import WalkForwardSplitterV2
+    from src.gogooku3.data.loaders import ProductionDatasetV3 as ProductionDatasetOptimized
+    from src.gogooku3.graph.builder import FinancialGraphBuilder
+    from src.gogooku3.models.lightgbm_baseline import LightGBMFinancialBaseline
+    from src.gogooku3.features.quality_generator import QualityFinancialFeaturesGenerator
+    IMPORTS_OK = True
 except ImportError as e:
-    # Fallback to original imports during migration
-    try:
-        from src.data.safety.cross_sectional_v2 import CrossSectionalNormalizerV2 as CrossSectionalNormalizer
-        from src.data.safety.walk_forward_v2 import WalkForwardSplitterV2
-        from src.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
-        from src.data.utils.graph_builder import FinancialGraphBuilder
-        from src.models.baseline.lightgbm_baseline import LightGBMFinancialBaseline
-        from src.features.quality_features import QualityFinancialFeaturesGenerator
-    except ImportError as e2:
-        print(f"❌ Component loading failed: {e2}")
-        print("Please ensure all components are properly migrated")
-        sys.exit(1)
+    print(f"❌ Component loading failed: {e}")
+    print("Please ensure all components are properly migrated")
+    IMPORTS_OK = False
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +237,6 @@ class SafeTrainingPipeline:
         df_pd = df.to_pandas()
         
         splitter = WalkForwardSplitterV2(
-            n_splits=n_splits,
             embargo_days=embargo_days,
             min_train_days=252
         )
