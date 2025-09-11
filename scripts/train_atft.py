@@ -999,14 +999,14 @@ def train_epoch(
                 logger.warning(
                     f"[val-phase] no canonical targets found; raw target keys={raw_keys}"
                 )
-        # 有効マスク（任意）
-        valid_masks = batch.get("valid_mask", None)
-        if isinstance(valid_masks, dict):
-            valid_masks = {
-                k: v.to(device, non_blocking=True) for k, v in valid_masks.items()
-            }
-        else:
-            valid_masks = None
+            # 有効マスク（任意）
+            valid_masks = batch.get("valid_mask", None)
+            if isinstance(valid_masks, dict):
+                valid_masks = {
+                    k: v.to(device, non_blocking=True) for k, v in valid_masks.items()
+                }
+            else:
+                valid_masks = None
 
         # （旧train_epoch経路）GAT融合α下限の設定はrun_training側で実施
 
