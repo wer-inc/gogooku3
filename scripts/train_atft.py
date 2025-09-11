@@ -1187,14 +1187,14 @@ def train_epoch(
                 horizon_losses[k] += v.item()
             n_batches += 1
 
-        # プログレスバー更新
-        if batch_idx % 10 == 0:
-            avg_loss = total_loss / n_batches
-            pbar.set_postfix({"loss": f"{avg_loss:.4f}"})
+            # プログレスバー更新
+            if batch_idx % 10 == 0:
+                avg_loss = total_loss / n_batches
+                pbar.set_postfix({"loss": f"{avg_loss:.4f}"})
 
-        # メモリ管理（100バッチごと）
-        if batch_idx % 100 == 0:
-            torch.cuda.empty_cache()
+            # メモリ管理（100バッチごと）
+            if batch_idx % 100 == 0:
+                torch.cuda.empty_cache()
 
     # エポック平均
     avg_loss = total_loss / n_batches
