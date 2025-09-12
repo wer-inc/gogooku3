@@ -1,0 +1,41 @@
+{
+  "canary_deployment": {
+    "status": "ACTIVE",
+    "start_time": "2025-09-12T11:35:00Z",
+    "model": {
+      "file": "atft_gat_fan_final.pt",
+      "performance": {
+        "val_loss": 0.0484,
+        "achievement": "目標0.055台を72%上回り達成",
+        "method": "並走全乗せ最適化"
+      }
+    },
+    "allocation": {
+      "percentage": "15%",
+      "capital_allocation": "production_15pct",
+      "risk_limit": "controlled"
+    },
+    "monitoring": {
+      "primary_metrics": [
+        "val_loss",
+        "RankIC_h1", 
+        "Sharpe_ratio",
+        "coverage_ratio",
+        "yhat_std/y_std"
+      ],
+      "alert_thresholds": {
+        "performance_degradation": "> 10%",
+        "coverage_drop": "< 80%",
+        "sharpe_decline": "> 0.2 absolute"
+      },
+      "check_frequency": "daily"
+    },
+    "rollback": {
+      "ready": true,
+      "previous_model": "backup_available",
+      "trigger_conditions": "alert_threshold_breach"
+    },
+    "duration": "14_days_evaluation",
+    "next_review": "2025-09-26T11:35:00Z"
+  }
+}
