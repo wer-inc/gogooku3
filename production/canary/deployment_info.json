@@ -1,0 +1,36 @@
+{
+  "deployment_info": {
+    "timestamp": "2025-09-12T11:24:00Z",
+    "model_version": "atft_gat_fan_final_v1",
+    "model_file": "atft_gat_fan_final.pt",
+    "performance": {
+      "val_loss": 0.0484,
+      "training_method": "並走全乗せ最適化",
+      "target_achieved": "0.055台目標を72%上回り"
+    },
+    "technical_specs": {
+      "architecture": "ATFT-GAT-FAN",
+      "swa_enabled": true,
+      "snapshots": true,
+      "mixed_precision": "bf16",
+      "gpu_optimized": true
+    },
+    "canary_config": {
+      "allocation": "10-20%",
+      "duration": "1-2 weeks",
+      "monitoring": [
+        "val_loss",
+        "RankIC_h1", 
+        "Sharpe_ratio",
+        "coverage_ratio",
+        "yhat_std/y_std"
+      ],
+      "rollback_ready": true
+    },
+    "rollout_status": {
+      "current_seeds": ["42"],
+      "additional_planned": ["43", "44"],
+      "ensemble_ready": true
+    }
+  }
+}

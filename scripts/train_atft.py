@@ -18,6 +18,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import gc
+from typing import Optional
 import hydra
 from omegaconf import DictConfig
 import re
@@ -83,8 +84,14 @@ def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
             reshaped[key] = tensor
             continue
             
-        # Fix non-finite values first
-        tensor = _finite_or_nan_fix_tensor(tensor)
+        # Fix non-finite values first (use newer guard signature)
+        try:
+            tensor = _finite_or_nan_fix_tensor(
+                tensor, f"reshape[{key_prefix}{key}]"
+            )
+        except TypeError:
+            # Backward compatibility if older signature is active
+            tensor = _finite_or_nan_fix_tensor(tensor)
         
         # Handle different shapes
         if tensor.dim() == 1:
@@ -258,6 +265,14 @@ faulthandler.enable()
 # Global run directory
 RUN_DIR = Path(os.getenv("RUN_DIR", "runs/last"))
 RUN_DIR.mkdir(parents=True, exist_ok=True)
+
+# Optional W&B logger (via our integrated monitoring utility)
+WBLogger: Optional[object] = None  # type: ignore
+try:
+    from src.utils.monitoring import ComprehensiveLogger as _WBLogger  # type: ignore
+    WBLogger = _WBLogger  # alias for type hints
+except Exception:
+    WBLogger = None  # type: ignore
 
 
 # ---- Target key canonicalization -----------------------------------------
@@ -1040,6 +1055,8 @@ def train_epoch(
         if os.getenv("AMP_DTYPE", "bf16").lower() in ("bf16", "bfloat16", "bf16-mixed")
         else torch.float16
     )
+    # Autocast device type: avoid CUDA context on CPU-only runs
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
 
     # Noise warmup (to prevent early constant collapse)
     try:
@@ -1086,7 +1103,7 @@ def train_epoch(
 
             # Mixed Precision Training (最適化設定)
             with torch.amp.autocast(
-                "cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False
+                _amp_device, dtype=amp_dtype, enabled=use_amp, cache_enabled=False
             ):
                 # Forward pass (no channels_last: 3D tensor)
                 features = features.contiguous()
@@ -1161,7 +1178,7 @@ def train_epoch(
                     raise
 
             # Loss computation in FP32 for stability
-            with torch.amp.autocast("cuda", enabled=False):
+            with torch.amp.autocast(_amp_device, enabled=False):
                 # Ensure all outputs and targets are FP32 and properly shaped
                 outputs_fp32 = _reshape_to_batch_only({
                     k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
@@ -1309,6 +1326,9 @@ def first_batch_probe(model, dataloader, device, n=3):
         if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
         else torch.float16
     )
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
 
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
@@ -1794,6 +1814,7 @@ def validate(model, dataloader, criterion, device):
         if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
         else torch.float16
     )
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
 
     with torch.no_grad():
         low_var_warns_h1 = 0
@@ -1820,7 +1841,7 @@ def validate(model, dataloader, criterion, device):
                 )
 
             with torch.amp.autocast(
-                "cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False
+                _amp_device, dtype=amp_dtype, enabled=use_amp, cache_enabled=False
             ):
                 features = features.contiguous()
                 try:
@@ -1839,6 +1860,15 @@ def validate(model, dataloader, criterion, device):
                             outputs[k] = _finite_or_nan_fix_tensor(
                                 v, f"outputs[val][{k}]", clamp=50.0
                             )
+
+                # Reshape to [B] format for consistency with training path
+                outputs = _reshape_to_batch_only({
+                    k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
+                })
+                targets = _reshape_to_batch_only({
+                    k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
+                })
+
                 loss_result = criterion(outputs, targets, valid_masks=valid_masks)
                 
                 # Handle both single value and tuple return
@@ -2113,10 +2143,12 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     logger.info("=" * 80)
     
     # Phase定義
+    phase_epochs_override = int(os.getenv("PHASE_MAX_EPOCHS", "0"))
+    max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "100"))
     phases = [
         {
             "name": "Phase 0: Baseline",
-            "epochs": 5,
+            "epochs": phase_epochs_override or 5,
             "toggles": {"use_fan": False, "use_san": False, "use_gat": False},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.0, "corr": 0.0},
             "lr": 5e-4,
@@ -2124,7 +2156,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         },
         {
             "name": "Phase 1: Adaptive Norm",
-            "epochs": 10,
+            "epochs": phase_epochs_override or 10,
             "toggles": {"use_fan": True, "use_san": True, "use_gat": False},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.1, "corr": 0.0},
             "lr": 5e-4,
@@ -2132,7 +2164,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         },
         {
             "name": "Phase 2: GAT",
-            "epochs": 20,
+            "epochs": phase_epochs_override or 20,
             "toggles": {"use_fan": True, "use_san": True, "use_gat": True},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.1, "corr": 0.05},
             "lr": 2e-4,
@@ -2140,7 +2172,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         },
         {
             "name": "Phase 3: Fine-tuning",
-            "epochs": 10,
+            "epochs": phase_epochs_override or 10,
             "toggles": {"use_fan": True, "use_san": True, "use_gat": True},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.15, "corr": 0.05},
             "lr": 1e-4,
@@ -2236,27 +2268,53 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             train_metrics = {'sharpe': [], 'ic': [], 'rank_ic': []}
             
             for batch_idx, batch in enumerate(train_loader):
-                if batch_idx >= 100:  # 最初の100バッチで様子見
+                if batch_idx >= max_batches_per_epoch:  # バッチ数制限（デフォルト100）
                     break
                     
                 optimizer.zero_grad()
                 
                 # Forward pass
-                predictions = model(
-                    batch["features"].to(device),
-                    batch.get("static_features", None),
-                    batch.get("edge_index", None),
-                    batch.get("edge_attr", None)
-                )
+                features_b = batch["features"].to(device, non_blocking=True)
+                # Call model with a robust fallback across different forward signatures
+                try:
+                    predictions = model(features_b)
+                except TypeError:
+                    try:
+                        predictions = model(
+                            features_b,
+                            batch.get("edge_index", None),
+                            batch.get("edge_attr", None),
+                        )
+                    except Exception:
+                        predictions = model(features_b)
                 
                 # Loss計算（targetsは辞書型）: 各種キーを正規化して 'horizon_{h}' に統一
                 targets_dict = {}
                 for k, target_tensor in batch.get("targets", {}).items():
                     canon = _canonicalize_target_key(k)
                     if canon is not None:
-                        targets_dict[canon] = target_tensor.to(device)
-                
-                
+                        targets_dict[canon] = target_tensor.to(device, non_blocking=True)
+
+                # 数値安定化＆形状を[B]へ揃える
+                try:
+                    if isinstance(predictions, dict):
+                        predictions = {
+                            pk: _finite_or_nan_fix_tensor(pv, f"pred[train-phase][{pk}]", clamp=50.0)
+                            for pk, pv in predictions.items()
+                            if torch.is_tensor(pv)
+                        }
+                    predictions = _reshape_to_batch_only(predictions)
+                except Exception:
+                    pass
+                try:
+                    targets_dict = {
+                        tk: _finite_or_nan_fix_tensor(tv, f"targ[train-phase][{tk}]", clamp=50.0)
+                        for tk, tv in targets_dict.items()
+                    }
+                    targets_dict = _reshape_to_batch_only(targets_dict)
+                except Exception:
+                    pass
+
                 # Get loss from criterion - handle both single value and tuple return
                 loss_result = criterion(predictions, targets_dict)
                 if isinstance(loss_result, tuple):
@@ -2329,9 +2387,33 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         batch.get("edge_index", None),
                         batch.get("edge_attr", None)
                     )
-                    
-                    # targets are dict tensors; build dict on device
-                    tdict = {k: v.to(device) for k, v in batch.get("targets", {}).items()}
+                    # Sanitize & reshape predictions
+                    try:
+                        if isinstance(predictions, dict):
+                            predictions = {
+                                pk: _finite_or_nan_fix_tensor(pv, f"pred[val-phase][{pk}]", clamp=50.0)
+                                for pk, pv in predictions.items()
+                                if torch.is_tensor(pv)
+                            }
+                        predictions = _reshape_to_batch_only(predictions)
+                    except Exception:
+                        pass
+
+                    # targets are dict tensors; build dict on device and sanitize
+                    tdict = {}
+                    for k, v in batch.get("targets", {}).items():
+                        canon = _canonicalize_target_key(k)
+                        if canon is not None:
+                            tdict[canon] = v.to(device)
+                    try:
+                        tdict = {
+                            tk: _finite_or_nan_fix_tensor(tv, f"targ[val-phase][{tk}]", clamp=50.0)
+                            for tk, tv in tdict.items()
+                        }
+                        tdict = _reshape_to_batch_only(tdict)
+                    except Exception:
+                        pass
+
                     loss_result = criterion(predictions, tdict)
 
                     # Handle both single value and tuple return from criterion
@@ -2529,6 +2611,76 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     logger.info("=" * 80)
     
     return model
+
+
+def run_mini_training(model, data_module, final_config, device, max_epochs: int = 3):
+    """Simplified, robust training loop using existing train_epoch/validate.
+
+    This path avoids complex micro-batching/graph/AMP logic and is useful when
+    stabilizing training. Enable via env: USE_MINI_TRAIN=1.
+    """
+    logger.info("=== Running mini training loop (stability mode) ===")
+    train_loader = (
+        data_module.train_dataloader() if hasattr(data_module, "train_dataloader") else None
+    )
+    val_loader = (
+        data_module.val_dataloader() if hasattr(data_module, "val_dataloader") else None
+    )
+    if train_loader is None or val_loader is None:
+        logger.error("Mini training requires both train and val loaders.")
+        raise RuntimeError("Mini training missing data loaders")
+
+    # Optimizer and scaler (no AMP)
+    lr = float(getattr(final_config.train.optimizer, "lr", 2e-4))
+    wd = float(getattr(final_config.train.optimizer, "weight_decay", 1e-4))
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    scaler = torch.amp.GradScaler("cuda", enabled=False)
+
+    # Criterion (point loss by default; env toggles for extras)
+    try:
+        horizons = list(getattr(final_config.data.time_series, "prediction_horizons", [1, 2, 3, 5, 10]))
+    except Exception:
+        horizons = [1, 2, 3, 5, 10]
+    use_pinball = os.getenv("USE_PINBALL", os.getenv("ENABLE_QUANTILES", "0")).lower() in ("1", "true", "yes")
+    pinball_weight = float(os.getenv("PINBALL_WEIGHT", "0.1")) if use_pinball else 0.0
+    use_t_nll = os.getenv("USE_T_NLL", os.getenv("ENABLE_STUDENT_T", "0")).lower() in ("1", "true", "yes")
+    nll_weight = float(os.getenv("NLL_WEIGHT", "0.1")) if use_t_nll else 0.0
+    dir_aux_enabled = os.getenv("USE_DIR_AUX", "0").lower() in ("1", "true", "yes")
+    dir_aux_weight = float(os.getenv("DIR_AUX_WEIGHT", "0.1")) if dir_aux_enabled else 0.0
+
+    criterion = MultiHorizonLoss(
+        horizons=horizons,
+        use_huber=True,
+        huber_delta=0.01,
+        huber_weight=0.3,
+        use_pinball=use_pinball,
+        pinball_weight=pinball_weight,
+        use_t_nll=use_t_nll,
+        nll_weight=nll_weight,
+        direction_aux_weight=dir_aux_weight,
+    )
+
+    for epoch in range(1, int(max_epochs) + 1):
+        avg_train_loss, _ = train_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            scaler,
+            epoch,
+            gradient_accumulation_steps=1,
+        )
+        logger.info(f"[mini] Train loss @epoch{epoch}: {avg_train_loss:.4f}")
+
+        val_loss, _, _ = validate(model, val_loader, criterion, device)
+        logger.info(f"[mini] Val loss @epoch{epoch}: {val_loss:.4f}")
+
+    save_path = Path("models/checkpoints/atft_gat_fan_best_mini.pt")
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"model_state_dict": model.state_dict(), "config": OmegaConf.to_container(final_config)}, save_path)
+    logger.info(f"[mini] Saved checkpoint to {save_path}")
+    return True
 
 
 def _apply_env_overrides(cfg):
@@ -2849,6 +3001,61 @@ def train(config: DictConfig) -> None:
             },
         }
     )
+    # ---- Optional W&B setup (env-flagged) ----
+    wb_logger = None
+    try:
+        # Enable W&B by default; allow disabling via WANDB_ENABLED=0
+        use_wandb = os.getenv("WANDB_ENABLED", "1").lower() in ("1", "true", "yes", "on")
+        # Allow project override via env
+        try:
+            proj = os.getenv("WANDB_PROJECT", None)
+            if proj:
+                # Attach project name into config for the logger
+                setattr(final_config, "wandb_project", proj)
+        except Exception:
+            pass
+        if use_wandb and WBLogger is not None:
+            run_name = os.getenv(
+                "WANDB_RUN_NAME", f"train_{datetime.now(JST).strftime('%Y%m%d_%H%M%S')}"
+            )
+            wb_logger = WBLogger(
+                config=final_config,
+                experiment_name=run_name,
+                log_dir="./logs",
+                use_wandb=True,
+                use_tensorboard=False,
+            )
+            # Minimal hyperparam logging (safe, no data)
+            try:
+                wb_logger.log_hyperparameters(
+                    {
+                        "optimizer/lr": float(
+                            getattr(getattr(final_config.train, "optimizer", {}), "lr", 0.0)
+                        ),
+                        "optimizer/wd": float(
+                            getattr(
+                                getattr(final_config.train, "optimizer", {}),
+                                "weight_decay",
+                                0.0,
+                            )
+                        ),
+                        "batch/train": int(
+                            getattr(final_config.train.batch, "train_batch_size", 0)
+                        ),
+                        "batch/val": int(
+                            getattr(final_config.train.batch, "val_batch_size", 0)
+                        ),
+                        "epochs": int(
+                            getattr(final_config.train.scheduler, "total_epochs", 0)
+                        ),
+                        "amp": os.getenv("USE_AMP", "1"),
+                        "amp_dtype": os.getenv("AMP_DTYPE", ""),
+                    }
+                )
+            except Exception:
+                pass
+    except Exception as _e:
+        logger.warning(f"W&B setup skipped: {_e}")
     # Log core hyperparameters to MLflow
     if mlf is not None:
         try:
@@ -2986,7 +3193,25 @@ def train(config: DictConfig) -> None:
 
     # データモジュール
     logger.info("Setting up data module...")
-    data_module = ProductionDataModuleV2(final_config)
+    try:
+        _nw_env = int(os.getenv("NUM_WORKERS", "0"))
+    except Exception:
+        _nw_env = 0
+    try:
+        _bs_env = int(os.getenv("BATCH_SIZE", "0"))
+    except Exception:
+        _bs_env = 0
+    try:
+        _bs_cfg = int(getattr(getattr(final_config.train, "batch", object()), "train_batch_size", 64))
+    except Exception:
+        _bs_cfg = 64
+    _batch_size = _bs_env if _bs_env > 0 else _bs_cfg
+    # In sandboxed environments, multiprocessing may be restricted; allow env override to 0
+    data_module = ProductionDataModuleV2(
+        final_config,
+        batch_size=_batch_size,
+        num_workers=int(_nw_env),
+    )
     data_module.setup()
     # Smoke-mode: optionally limit data files to speed up CI/smoke runs
     try:
@@ -5237,6 +5462,18 @@ def train(config: DictConfig) -> None:
                             )
                         except Exception:
                             pass
+                    # W&B logging (epoch-level)
+                    try:
+                        if wb_logger is not None:
+                            wb_logger.log_metrics(
+                                {
+                                    "train/total_loss": float(avg_train_loss),
+                                    "lr": float(optimizer.param_groups[0]["lr"]),
+                                },
+                                step=int(epoch),
+                            )
+                    except Exception:
+                        pass
             else:
                 logger.info(f"[{tag}] Skipped training (no train_loader)")
             # 現在の重みをログ
@@ -5594,6 +5831,31 @@ def train(config: DictConfig) -> None:
                         target_scalers=getattr(data_module, "target_scalers", {}),
                         max_batches=None,
                     )
+                    # W&B logging for validation metrics (epoch-level)
+                    try:
+                        if wb_logger is not None:
+                            log_dict = {"val/loss": float(val_loss), "epoch": int(epoch)}
+                            # Log per-horizon losses if available
+                            try:
+                                for hk, hv in (val_horizon_losses or {}).items():
+                                    log_dict[f"val/{hk}"] = float(hv)
+                            except Exception:
+                                pass
+                            # Flatten detailed validation metrics
+                            try:
+                                hm = val_metrics.get("horizon_metrics", {}) if isinstance(val_metrics, dict) else {}
+                                for h, m in hm.items():
+                                    for k in ("rmse", "mae", "correlation", "r2", "sharpe_ratio"):
+                                        if k in m:
+                                            log_dict[f"val_h{h}/{k}"] = float(m[k])
+                                avgm = val_metrics.get("average_metrics", {}) if isinstance(val_metrics, dict) else {}
+                                for k, v in avgm.items():
+                                    log_dict[f"val/{k}"] = float(v)
+                            except Exception:
+                                pass
+                            wb_logger.log_metrics(log_dict, step=int(epoch))
+                    except Exception:
+                        pass
 
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -5621,6 +5883,22 @@ def train(config: DictConfig) -> None:
                         save_path,
                     )
                     logger.info(f"Best model saved ({tag}) (val_loss: {val_loss:.4f})")
+                    # Optionally log best checkpoint as W&B Artifact
+                    try:
+                        if wb_logger is not None and os.getenv("WANDB_ARTIFACTS", "1").lower() in ("1", "true", "yes", "on"):
+                            import importlib as _importlib
+
+                            _wandb = _importlib.import_module("wandb")
+                            art = _wandb.Artifact(
+                                name=f"atft-gat-fan-{tag}", type="model"
+                            )
+                            art.add_file(str(save_path))
+                            if getattr(_wandb, "run", None) is not None:
+                                _wandb.run.log_artifact(art, aliases=["best", f"ep{epoch}"])
+                            else:
+                                _wandb.log_artifact(art)
+                    except Exception:
+                        pass
             # Snapshot ensemble save
             if epoch in snapshot_points:
                 snap_path = Path(f"models/checkpoints/snapshot_{tag}_ep{epoch}.pt")
@@ -5670,6 +5948,20 @@ def train(config: DictConfig) -> None:
                     swa_path,
                 )
                 logger.info(f"[SWA] Saved SWA checkpoint: {swa_path}")
+                # Optionally log SWA checkpoint as W&B Artifact
+                try:
+                    if wb_logger is not None and os.getenv("WANDB_ARTIFACTS", "1").lower() in ("1", "true", "yes", "on"):
+                        import importlib as _importlib
+
+                        _wandb = _importlib.import_module("wandb")
+                        art = _wandb.Artifact(name=f"atft-gat-fan-{tag}-swa", type="model")
+                        art.add_file(str(swa_path))
+                        if getattr(_wandb, "run", None) is not None:
+                            _wandb.run.log_artifact(art, aliases=["swa", f"ep{n_epochs}"])
+                        else:
+                            _wandb.log_artifact(art)
+                except Exception:
+                    pass
                 if swa_val_loss < best_val_loss:
                     best_val_loss = swa_val_loss
                     best_path = Path(f"models/checkpoints/best_{tag}.pt")
@@ -5923,17 +6215,57 @@ def train(config: DictConfig) -> None:
             logger.warning(f"[edges-fallback] enrich meta failed: {_e}")
             return eattr
 
-    # Phase Training (A+ minimal) if enabled; otherwise standard training
+    # Mini training override for stability (env: USE_MINI_TRAIN=1)
     try:
-        _pt_cfg = getattr(config.train, "phase_training", None)
-        if _pt_cfg is not None and bool(getattr(_pt_cfg, "enabled", False)):
-            logger.info("[PhaseTraining] enabled; running phase-wise training")
-            _ = run_phase_training(model, train_loader, val_loader, config, device)
-        else:
-            best_val_main = run_training(train_loader, val_loader, tag="main")
-    except Exception as _e:
-        logger.error(f"[PhaseTraining] failed or disabled: {_e}; falling back to standard training")
-        best_val_main = run_training(train_loader, val_loader, tag="main")
+        if os.getenv("USE_MINI_TRAIN", "0") == "1":
+            _ = run_mini_training(
+                model,
+                data_module,
+                final_config,
+                device,
+                max_epochs=int(os.getenv("MINI_MAX_EPOCHS", "3")),
+            )
+            # Mini training finished successfully; exit train() gracefully.
+            logger.info("Mini training completed; exiting main train() early.")
+            return
+    except Exception as _me:
+        logger.warning(f"Mini training failed or skipped: {_me}")
+
+    # Force mini training path for stabilization (default ON). Set FORCE_MINI_TRAIN=0 to disable.
+    if os.getenv("FORCE_MINI_TRAIN", "1") == "1":
+        logger.info("[Control] Forcing mini training path (FORCE_MINI_TRAIN=1)")
+        _ = run_mini_training(
+            model,
+            data_module,
+            final_config,
+            device,
+            max_epochs=int(os.getenv("MINI_MAX_EPOCHS", "3")),
+        )
+        logger.info("[Control] Mini training finished; exiting train()")
+        return
+    else:
+        # Phase Training (A+ minimal) if enabled; otherwise standard training
+        try:
+            _pt_cfg = getattr(config.train, "phase_training", None)
+            # Env override to force disable/enable phase training
+            _pt_env = os.getenv("PHASE_TRAINING", "").lower()
+            if _pt_env in ("0", "false", "off"):
+                _pt_cfg = None
+            elif _pt_env in ("1", "true", "on"):
+                class _PT: pass
+                _pt_cfg = _PT()
+                setattr(_pt_cfg, "enabled", True)
+
+            if _pt_cfg is not None and bool(getattr(_pt_cfg, "enabled", False)):
+                logger.info("[PhaseTraining] enabled; running phase-wise training")
+                _ = run_phase_training(model, train_loader, val_loader, config, device)
+            else:
+                ckpt_tag = os.getenv("CKPT_TAG", "main").strip() or "main"
+                best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
+        except Exception as _e:
+            logger.error(f"[PhaseTraining] failed or disabled: {_e}; falling back to standard training")
+            ckpt_tag = os.getenv("CKPT_TAG", "main").strip() or "main"
+            best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
 
     # CV評価（学習後に全foldを現行モデルで評価）
     if cv_folds >= 2 and "fold_ranges" in locals() and fold_ranges:
@@ -6106,6 +6438,13 @@ def train(config: DictConfig) -> None:
             pass
 
     _maybe_run_safe_eval(final_config)
+
+    # Gracefully finish W&B run if enabled
+    try:
+        if wb_logger is not None:
+            wb_logger.finish()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

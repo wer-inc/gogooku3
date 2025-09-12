@@ -75,60 +75,93 @@ def compute_rank_ic(predictions: np.ndarray, targets: np.ndarray) -> float:
 
 
 def load_model(model_path: str, device: str = 'cuda') -> torch.nn.Module:
-    """学習済みモデルを読み込み"""
+    """学習済みモデルを読み込み（チェックポイント内の構成を優先）。
+
+    目的: 300次元で学習→64次元でロードのような入力次元不一致を解消。
+    チェックポイントに保存された構成（config）からモデルを再構築し、state_dictをnon-strictで適用。
+    """
     logger.info(f"Loading model from {model_path}")
-    
-    # モデルアーキテクチャのインポート
+
     from src.models.architectures.atft_gat_fan import ATFT_GAT_FAN
     from omegaconf import OmegaConf
 
-    # 設定読み込み（必要最小限のdataセクションを補完）
-    config_path = project_root / "configs" / "model" / "atft_gat_fan_v1.yaml"
+    # 先にチェックポイントを読み込む
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
+
+    # 1) チェックポイントに埋め込まれたconfigを優先
+    cfg = None
     try:
-        base_cfg = OmegaConf.load(config_path)
+        raw = None
+        if isinstance(ckpt, dict):
+            for k in ("config", "final_config", "cfg"):
+                if k in ckpt and ckpt[k] is not None:
+                    raw = ckpt[k]
+                    break
+        if raw is not None:
+            cfg = OmegaConf.create(raw)
+            in_dim = getattr(getattr(getattr(cfg, 'data', {}), 'features', {}), 'input_dim', 'unknown')
+            logger.info(f"Using config from checkpoint (input_dim={in_dim})")
     except Exception as e:
-        logger.warning(f"Failed to load model YAML ({config_path}): {e}. Using minimal fallback config.")
-        base_cfg = OmegaConf.create({})
-    # 補完: data.features.input_dim と prediction_horizons
-    data_stub = OmegaConf.create(
-        {
-            "data": {
-                "features": {"input_dim": 64},
-                "time_series": {"prediction_horizons": [1, 2, 3, 5, 10]},
-            },
-            "model": {
-                "hidden_size": 64,
-                "input_projection": {"use_layer_norm": True, "dropout": 0.1},
-                "adaptive_normalization": {
-                    "fan": {"enabled": False, "window_sizes": [5, 10, 20], "aggregation": "weighted_mean", "learn_weights": True},
-                    "san": {"enabled": False, "num_slices": 1, "overlap": 0.0, "slice_aggregation": "mean"},
+        logger.warning(f"Failed to parse config from checkpoint: {e}")
+        cfg = None
+
+    # 2) フォールバック（最小構成）
+    if cfg is None:
+        config_path = project_root / "configs" / "model" / "atft_gat_fan_v1.yaml"
+        try:
+            base_cfg = OmegaConf.load(config_path)
+        except Exception as e:
+            logger.warning(f"Failed to load YAML ({config_path}): {e}; using minimal fallback")
+            base_cfg = OmegaConf.create({})
+        stub = OmegaConf.create(
+            {
+                "data": {
+                    "features": {"input_dim": 64},
+                    "time_series": {"prediction_horizons": [1, 2, 3, 5, 10]},
                 },
-                "tft": {
-                    "variable_selection": {"dropout": 0.1, "use_sigmoid": True, "sparsity_coefficient": 0.0},
-                    "attention": {"heads": 2},
-                    "lstm": {"layers": 1, "dropout": 0.1},
-                    "temporal": {"use_positional_encoding": True, "max_sequence_length": 20},
+                "model": {
+                    "hidden_size": 64,
+                    "input_projection": {"use_layer_norm": True, "dropout": 0.1},
+                    "adaptive_normalization": {
+                        "fan": {"enabled": False, "window_sizes": [5, 10, 20], "aggregation": "weighted_mean", "learn_weights": True},
+                        "san": {"enabled": False, "num_slices": 1, "overlap": 0.0, "slice_aggregation": "mean"},
+                    },
+                    "tft": {
+                        "variable_selection": {"dropout": 0.1, "use_sigmoid": True, "sparsity_coefficient": 0.0},
+                        "attention": {"heads": 2},
+                        "lstm": {"layers": 1, "dropout": 0.1},
+                        "temporal": {"use_positional_encoding": True, "max_sequence_length": 20},
+                    },
+                    "gat": {"enabled": False},
+                    "prediction_head": {"architecture": {"hidden_layers": [], "dropout": 0.0}, "output": {"point_prediction": True, "quantile_prediction": {"enabled": False, "quantiles": [0.1, 0.5, 0.9]}}},
                 },
-                "gat": {"enabled": False},
-                "prediction_head": {"architecture": {"hidden_layers": [], "dropout": 0.0}, "output": {"point_prediction": True, "quantile_prediction": {"enabled": False, "quantiles": [0.1, 0.5, 0.9]}}},
-            },
-        }
-    )
-    config = OmegaConf.merge(base_cfg, data_stub)
+            }
+        )
+        cfg = OmegaConf.merge(base_cfg, stub)
+        logger.info("Using fallback config (input_dim=64)")
 
     # モデル初期化
-    model = ATFT_GAT_FAN(config)
-    
-    # チェックポイント読み込み
-    checkpoint = torch.load(model_path, map_location=device)
-    if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
-    else:
-        model.load_state_dict(checkpoint)
-    
+    model = ATFT_GAT_FAN(cfg)
+    # 期待入力次元のヒントを保持（推論時のパディング/切詰めに使用）
+    try:
+        exp_dim = int(getattr(getattr(getattr(cfg, 'data', {}), 'features', {}), 'input_dim', 0))
+        if exp_dim and exp_dim > 0:
+            setattr(model, "_expected_input_dim", exp_dim)
+    except Exception:
+        pass
+
+    # 重みの適用（strict=Falseでshape差異を許容）
+    try:
+        sd = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
+        missing, unexpected = model.load_state_dict(sd, strict=False)
+        if missing or unexpected:
+            logger.warning(f"Non-strict load: missing={len(missing)} unexpected={len(unexpected)}")
+    except Exception as e:
+        logger.error(f"Failed to load state_dict: {e}")
+        raise
+
     model.to(device)
     model.eval()
-    
     return model
 
 
@@ -163,9 +196,22 @@ def infer_batch(model: torch.nn.Module, batch_data: pl.DataFrame, device: str = 
 
     with torch.no_grad():
         # 入力次元をモデルの期待次元に合わせる（切詰め/ゼロパディング）
+        target_dim = None
+        # 1) モデルに保持した期待次元ヒント
         try:
-            target_dim = int(getattr(model.dynamic_projection, 'in_features'))
+            td = int(getattr(model, '_expected_input_dim'))
+            if td > 0:
+                target_dim = td
         except Exception:
+            pass
+        # 2) dynamic_projectionから取得
+        if target_dim is None:
+            try:
+                target_dim = int(getattr(model.dynamic_projection, 'in_features'))
+            except Exception:
+                target_dim = None
+        # 3) 最終手段として現状のfeatures次元
+        if target_dim is None:
             target_dim = features_3d.shape[-1]
         cur_dim = features_3d.shape[-1]
         if cur_dim > target_dim:
