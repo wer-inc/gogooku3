@@ -1,0 +1,188 @@
+name: jpx_safe
+description: "安全性重視設定（データリーク防止・L=60テンソル系列）"
+
+# データソース設定
+source:
+  type: parquet
+  data_dir: data/raw/large_scale
+  file_pattern: "*.parquet"
+
+# 安全性重視の時系列設定
+time_series:
+  sequence_length: 60                    # 20→60に拡張
+  prediction_horizons: [1, 5, 10, 20]   # 多ホライズン対応
+  
+  # 履歴列を廃止してテンソル系列化
+  drop_historical_columns: true         # rsi14_1d..20d等を無効化
+  use_tensor_sequences: true            # L=60のスライディング窓でX∈ℝ^{N×L×F}生成
+  
+  # Walk-Forward分割（安全性最優先）
+  split:
+    method: walk_forward               # time_based→walk_forward
+    n_splits: 5                       # 5-fold Walk-Forward
+    embargo_days: 20                  # 最大ホライズン=20に合わせる
+    purge_days: 0                     # embargo内で処理
+    min_train_days: 252               # 最小1年間の訓練データ
+    min_test_days: 63                 # 最小3ヶ月のテスト期間
+
+# 特徴量設定（簡潔化）
+features:
+  # 基本特徴量（現在値のみ）
+  basic:
+    price_volume:
+      - adjustment_close
+      - adjustment_open  
+      - adjustment_high
+      - adjustment_low
+      - adjustment_volume
+      - turnover_value
+
+  # テクニカル指標（現在値のみ、履歴列は廃止）
+  technical:
+    momentum:
+      - rsi2
+      - rsi7
+      - rsi14
+      - rsi20
+    
+    moving_averages:
+      - ema5
+      - ema10
+      - ema20
+      - ema50
+    
+    volatility:
+      - atr14
+      - volatility_20d
+    
+    trend:
+      - macd
+      - macd_signal
+      - macd_histogram
+  
+  # ml_dataset特徴量（優先使用）
+  ml_features:
+    - feat_ret_1d
+    - feat_pk_vol
+    - feat_gk_vol
+    - feat_rs_vol
+    - feat_yz_vol
+    - feat_cs_spread
+    - feat_amihud_illiq
+    - feat_ewm_vol_20d
+
+  # TOPIX市場特徴量（新規追加）
+  market_features:
+    # 市場リターン系（24個）
+    - mkt_ret_1d
+    - mkt_ret_5d
+    - mkt_ret_10d
+    - mkt_ret_20d
+    - mkt_ema_5
+    - mkt_ema_20
+    - mkt_ema_60
+    - mkt_ema_200
+    - mkt_dev_20
+    - mkt_gap_5_20
+    - mkt_ema20_slope_3
+    - mkt_vol_20d
+    - mkt_atr_14
+    - mkt_natr_14
+    - mkt_bb_pct_b
+    - mkt_bb_bw
+    - mkt_dd_from_peak
+    - mkt_big_move_flag
+    - mkt_squeeze_flag
+    - mkt_ret_1d_z
+    - mkt_vol_20d_z
+    - mkt_bb_bw_z
+    - mkt_dd_z
+    - mkt_bull_200
+    - mkt_trend_up
+    - mkt_high_vol
+    - mkt_squeeze
+
+    # 銘柄×市場クロス特徴（8個）
+    - beta_60d
+    - alpha_1d
+    - alpha_5d
+    - beta_stability_60d
+    - rel_strength_5d
+    - trend_align_mkt
+    - alpha_vs_regime
+    - idio_vol_ratio
+
+  # 除外対象（データリーク防止）
+  exclude_patterns:
+    - "*_1d_*"      # 履歴系列パターン
+    - "*_2d_*"
+    - "*_5d_*"
+    - "*_10d_*"
+    - "*_20d_*"
+    - "row_idx"     # インデックス列
+    - "*_isna"      # 欠損フラグ（0埋めで対応）
+
+# データ品質・安全性設定
+data_quality:
+  # Cross-sectional正規化
+  cross_sectional_normalize: true
+  cs_normalize_features: "auto"        # 自動検出
+  min_stocks_per_day: 20
+  
+  # 外れ値処理
+  outlier_clip: 5.0                    # ±5σでクリップ
+  return_clip: [-1.0, 1.0]            # リターンクリッピング
+  
+  # 欠損値処理
+  fillna_method: "forward_fill"
+  
+  # Sharpe分母の明示化
+  explicit_sharpe_denominator: true
+  daily_vol_column: "daily_vol"        # volatility_20d / √252
+
+# メモリ・パフォーマンス最適化
+performance:
+  # Polars設定
+  use_polars_lazy: true                # Lazy scanを有効
+  memory_limit_gb: 8.0                 # メモリ制限
+  
+  # 列射影（必要列のみ読み込み）
+  column_projection: true
+  
+  # 日付フィルタ（predicate pushdown）
+  date_predicate: true
+  
+  # バッチサイズ
+  max_batch_size: 2048
+  min_nodes_per_day: 20
+  
+  # 並列処理
+  num_workers: 4
+  prefetch_factor: 2
+
+# 検証・テスト設定
+validation:
+  # 統計検証
+  validate_normalization: true
+  check_data_leakage: true
+  overlap_detection: true
+  
+  # メトリクス
+  primary_metrics: ["rank_ic", "ic", "decile_analysis"]
+  monitor_metric: "rank_ic_5d"         # 早期停止用
+  
+  # ログ設定
+  log_daily_stats: true
+  save_fold_results: true
+
+# 互換性設定
+compatibility:
+  legacy_mode: false                   # 履歴列モードを無効
+  pandas_fallback: true               # Polars失敗時のフォールバック
+  
+# デバッグ設定
+debug:
+  log_memory_usage: true
+  profile_loading: false
+  sample_validation: true
+  verbose_preprocessing: false

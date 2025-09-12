@@ -34,49 +34,56 @@ env/
 *~
 .DS_Store
 
-# Project specific
-output/
-output_smoke/
-output_offline_full*/
-runs/
-tuning_results/
-*.csv
+# Project specific (anchor runtime dirs to repo root)
+/output/
+/output_smoke/
+/output_offline_full*/
+/runs/
+/tuning_results/
+
+# Data artifacts (narrow scope; allow configs/tests fixtures)
+/data/
+/cache/
+/graph_cache/
+/artifacts/
+*.npz
 *.parquet
-.env
-!.env.example
+*.csv
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.parquet
+!tests/fixtures/**/*.npz
+!configs/**/*.csv
+
+# Environment files
+/.env*
+!/.env.example
+!/.env.*.example
 
 # Models and checkpoints
-models/
+/models/
 *.pth
 *.pt
 *.pkl
 *.joblib
 
-# Data
-data/
-cache/
-graph_cache/
-*.npz
-
 # MLflow
-mlruns/
-artifacts/
+/mlruns/
 
 # Monitoring
 monitoring.db
 *.db
 
 # Logs (unified structure)
-_logs/**
-logs/
+/_logs/**
+/logs/
 *.log
 *.out
 *.err
 
 # Legacy log locations (deprecated)
-dagster_home/logs/
-mlruns/**/logs/
-output/**/logs/
+/dagster_home/logs/
+/mlruns/**/logs/
+/output/**/logs/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -89,11 +96,14 @@ htmlcov/
 .tox/
 
 # Dagster
-dagster_home/
-.dagster/
+/dagster_home/
+/.dagster/
+
+# Weights & Biases local run artifacts
+/wandb/
 
 # Archive and cleanup
-_archive/**
+/_archive/**
 *.backup
 *_backup.*
 backup/
