@@ -121,7 +121,7 @@ from gogooku3.data.loaders import ProductionDatasetV3
 from gogooku3.data.scalers import CrossSectionalNormalizerV2
 
 # New CLI execution
-python -m gogooku3.cli train --config configs/training/production.yaml
+python -m gogooku3.cli train --config configs/atft/train/production.yaml
 ```
 
 #### Transition (Compatibility Layer)
@@ -159,7 +159,7 @@ pip install -r requirements.txt
 #### CLI Usage
 ```bash
 # New CLI interface
-gogooku3 train --config configs/training/production.yaml
+gogooku3 train --config configs/atft/train/production.yaml
 gogooku3 data --build-dataset
 gogooku3 infer --model-path models/best_model.pth
 

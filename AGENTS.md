@@ -10,7 +10,7 @@
 
 ## Build, Test, and Development Commands
 - Install: `pip install -e ".[dev]"` or `make setup`.
-- CLI train: `gogooku3 train --config configs/atft/train/safe_production.yaml`.
+- CLI train: `gogooku3 train --config configs/atft/train/production.yaml`.
 - Pipelines: `python scripts/run_safe_training.py --n-splits 2 --memory-limit 6`.
 - Tests: `pytest -m "not slow"`.
 - Coverage: `pytest --cov=src/gogooku3 --cov-report=term-missing`.

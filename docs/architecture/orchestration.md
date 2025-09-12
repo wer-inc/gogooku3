@@ -17,7 +17,7 @@
 ### 学習パイプライン
 ```bash
 # SafeTrainingPipeline による統合実行
-gogooku3 train --config configs/training/production.yaml
+gogooku3 train --config configs/atft/train/production.yaml
 
 # または従来方式
 python scripts/run_safe_training.py --n-splits 5
