@@ -1,0 +1,156 @@
+name: jpx_large_scale
+
+# バッファー付きローダーを使用（ファイル境界を跨いだシーケンス生成）
+use_buffered_loader: true  # 20日シーケンスのため必須
+
+# データソース（大規模データ用）
+source:
+  type: parquet  # parquet推奨（高速・高圧縮）
+  data_dir: data/raw/large_scale
+  file_pattern: "*.parquet"  # または "train_*.parquet"
+
+# メモリ管理
+memory:
+  chunk_size: 50000  # GPUへのデータ供給を高速化
+  cache_size_gb: 15  # キャッシュサイズを増やしてI/O待機を削減
+  use_memory_map: true  # メモリマップファイルの使用
+
+# 分散処理設定
+distributed:
+  enabled: true
+  num_workers: 4  # GPU効率を優先（メモリ制約を考慮）
+  prefetch_factor: 2  # プリフェッチ倍率を下げてメモリ使用量を削減
+
+# サンプリング設定（スケーラー作成用）
+sampling:
+  n_files_for_scaler: 10  # スケーラー作成に使うファイル数
+  rows_per_file: 10000  # 各ファイルからのサンプル行数
+
+# 時系列設定
+time_series:
+  sequence_length: 20  # specification_lite.mdに準拠
+  prediction_horizons: [1, 2, 3, 5, 10]  # specification_lite.mdに準拠
+
+  # データ分割（時系列を考慮）
+  split:
+    method: time_based
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    gap_days: 5
+
+# 特徴量設定（ML_DATASET_COLUMNS.md準拠）
+features:
+  # 基本特徴量（現在値）
+  basic:
+    price_volume:
+      - close          # ML_DATASET_COLUMNS.md準拠
+      - open
+      - high
+      - low
+      - volume
+
+    flags:
+      - upper_limit
+      - volume_spike
+      - high_break_20d
+
+  # テクニカル指標（現在値）
+  technical:
+    momentum:
+      - rsi_2         # ML_DATASET_COLUMNS.md準拠
+      - rsi_14
+      - rsi_delta
+
+    volatility:
+      - volatility_20d    # ML_DATASET_COLUMNS.md準拠
+      - volatility_ratio
+      - volatility_change
+      - sharpe_1d
+      - sharpe_5d
+      - sharpe_20d
+      - high_vol_flag
+      - low_vol_flag
+
+    trend:
+      - adx3
+      - adx7
+      - adx14
+
+    moving_averages:
+      - ema_5         # ML_DATASET_COLUMNS.md準拠
+      - ema_10
+      - ema_20
+      - ema_60
+      - ema_200
+
+    macd:
+      - macd_signal      # ML_DATASET_COLUMNS.md準拠
+      - macd_histogram
+
+    bollinger_bands:    # ML_DATASET_COLUMNS.md準拠
+      - bb_pct_b
+      - bb_bandwidth
+
+  # MA派生特徴量（現在値）
+  ma_derived:
+    price_deviations:
+      - price_ema5_dev
+      - price_ema10_dev
+      - price_ema20_dev
+      - price_ema200_dev
+
+    ma_gaps:
+      - ma_gap_5_20
+      - ma_gap_20_60
+      - ma_gap_60_200
+
+    ma_slopes:
+      - ema5_slope
+      - ema20_slope
+      - ema60_slope
+
+    ma_crosses:
+      - ema_cross_5_20
+      - ema_cross_20_60
+      - ema_cross_60_200
+
+    ma_ribbon:
+      - ma_ribbon_bullish
+      - ma_ribbon_bearish
+      - ma_ribbon_spread
+      - dist_to_200ema
+
+  # リターン×MA相互作用特徴量
+  returns_ma_interaction:
+    momentum:
+      - momentum_5_20
+      - momentum_1_5
+      - momentum_10_20
+
+    interactions:
+      - ret1d_x_ema20dev
+      - ret5d_x_ema20dev
+      - ret1d_x_ema200dev
+      - mom5d_x_ema20slope
+      - mom20d_x_ema60slope
+
+  # フロー特徴量（将来拡張用）
+  flow:
+    - smart_money_index
+    - smart_money_change
+    - flow_high_flag
+    - flow_low_flag
+
+  # リターン特徴量
+  returns:
+    columns: [returns_1d, returns_5d, returns_10d, returns_20d]  # ML_DATASET_COLUMNS.md準拠
+
+  # 成熟度フラグ
+  maturity_flags:
+    - is_rsi2_valid
+    - is_ema5_valid
+    - is_ema10_valid
+    - is_ema20_valid
+    - is_ema200_valid
+    - is_valid_ma
