@@ -71,7 +71,7 @@ python start_training.py
 ```bash
 # Use the new CLI (framework ready, implementation in progress)
 gogooku3 --version
-gogooku3 train --config configs/training/production.yaml
+gogooku3 train --config configs/atft/train/production.yaml
 gogooku3 data --build-dataset
 gogooku3 infer --model-path models/best_model.pth
 

@@ -289,7 +289,7 @@ class FrequencyAdaptiveNorm(nn.Module):
 
 ### Hydra Configuration Files
 
-#### Main Training Config (`configs/model/atft/train.yaml`)
+#### Main Training Config (`configs/atft/train/production.yaml`)
 ```yaml
 # ATFT-GAT-FAN Training Configuration
 model:
@@ -371,13 +371,13 @@ cd /home/ubuntu/gogooku3-standalone
 pip install -e .
 
 # Train with production configuration
-gogooku3 train --config configs/model/atft/train.yaml
+gogooku3 train --config configs/atft/train/production.yaml
 
 # Quick training (2 epochs)
-gogooku3 train --config configs/model/atft/train.yaml --epochs 2
+gogooku3 train --config configs/atft/train/production.yaml --epochs 2
 
 # Memory-constrained training
-gogooku3 train --config configs/model/atft/train.yaml --memory-limit 4
+gogooku3 train --config configs/atft/train/production.yaml --memory-limit 4
 ```
 
 ### Method 2: Python API (Programmatic)
@@ -389,7 +389,7 @@ from gogooku3 import settings
 pipeline = SafeTrainingPipeline(
     experiment_name="atft_production",
     data_path=settings.data_dir / "raw/large_scale/ml_dataset_full.parquet",
-    model_config="configs/model/atft/train.yaml",
+    model_config="configs/atft/train/production.yaml",
     verbose=True
 )
 
@@ -535,7 +535,7 @@ class MultiHorizonFinancialLoss(nn.Module):
 
 # Memory-efficient training
 gogooku3 train \
-  --config configs/model/atft/train.yaml \
+  --config configs/atft/train/production.yaml \
   --batch-size 256 \
   --gradient-checkpointing \
   --memory-limit 6

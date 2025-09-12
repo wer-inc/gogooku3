@@ -209,7 +209,7 @@ normalized_data = normalizer.fit_transform(enhanced_data)
 pip install -e .
 
 # 統一CLI使用
-gogooku3 train --config configs/training/production.yaml
+gogooku3 train --config configs/atft/train/production.yaml
 gogooku3 data --build-dataset
 gogooku3 infer --model-path models/best_model.pth
 gogooku3 --version

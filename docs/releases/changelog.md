@@ -219,7 +219,7 @@ output/
 2. **既存スクリプト移行**:
    ```python
    # 旧: scripts/run_safe_training.py
-   # 新: gogooku3 train --config configs/training/production.yaml
+   # 新: gogooku3 train --config configs/atft/train/production.yaml
    ```
 
 3. **設定移行**:

@@ -19,7 +19,7 @@
 make docker-up
 
 # 学習パイプライン実行
-gogooku3 train --config configs/training/production.yaml
+gogooku3 train --config configs/atft/train/production.yaml
 
 # システム停止
 make docker-down
@@ -636,4 +636,3 @@ To regenerate, run the appropriate script or pipeline.
 ## Regenerate data_metadata_20250827_145519.json
 Original path: `output/metadata/data_metadata_20250827_145519.json`
 To regenerate, run the appropriate script or pipeline.
-

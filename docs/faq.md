@@ -117,7 +117,7 @@ gogooku3 train --memory-limit 4
 **Step 2: バッチサイズ削減**
 ```bash
 # ATFT学習時
-gogooku3 train --config configs/model/atft/train.yaml --batch-size 256
+gogooku3 train --config configs/atft/train/production.yaml --batch-size 256
 ```
 
 **Step 3: データサンプリング**
@@ -229,7 +229,7 @@ python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 nvidia-smi
 
 # CPU学習に切り替え
-gogooku3 train --config configs/model/atft/train.yaml --accelerator cpu
+gogooku3 train --config configs/atft/train/production.yaml --accelerator cpu
 ```
 
 **メモリ確認:**
@@ -244,7 +244,7 @@ gogooku3 train --memory-limit 4 --batch-size 256
 **チェックポイント復旧:**
 ```bash
 # 途中から再開
-gogooku3 train --config configs/model/atft/train.yaml --resume checkpoints/last.ckpt
+gogooku3 train --config configs/atft/train/production.yaml --resume checkpoints/last.ckpt
 ```
 
 ## 🔄 移行・アップデート
@@ -320,7 +320,7 @@ export GOGOOKU3_MEMORY_LIMIT_GB=8
 gogooku3 train --save-path models/production/atft_$(date +%Y%m%d).pth
 
 # 設定バックアップ
-cp configs/model/atft/train.yaml backups/
+cp configs/atft/train/production.yaml backups/
 ```
 
 ### Q: API制限やレート制限はありますか？
