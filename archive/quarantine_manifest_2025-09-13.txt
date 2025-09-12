@@ -1,0 +1,33 @@
+# Quarantine Manifest 2025-09-13
+# Generated from unused_report_2025-09-13.md
+# Python modules (unimported candidates)
+src/gogooku3/compat/aliases.py
+src/gogooku3/compat/script_wrappers.py
+src/gogooku3/contracts/schemas.py
+src/gogooku3/features/cross_features.py
+src/gogooku3/features/financial_features.py
+src/gogooku3/features/flow_features.py
+src/gogooku3/features/ta_core.py
+src/gogooku3/joins/intervals.py
+src/gogooku3/utils/calendar_utils.py
+
+# Non-Python files (maybe-unreferenced candidates)
+configs/atft/best_hyperparameters.json
+configs/atft/config_phase1.yaml
+configs/atft/config_phase2.yaml
+configs/atft/config_phase3.yaml
+configs/atft/hydra/job_logging/jst.yaml
+configs/atft/inference/streaming.yaml
+configs/atft/train/profiles/robust.yaml
+configs/atft/train/safe_production.yaml
+configs/atft/variance_fix_config.json
+configs/atft_success_env.sh
+configs/experiment/baseline.yaml
+configs/features/market.yaml
+configs/inference/batch.yaml
+configs/joins/settings.yaml
+configs/jquants_api_config.yaml
+configs/market_code_config.yaml
+configs/sector_mappings/sector17_map.example.json
+configs/sector_mappings/sector33_map.example.json
+scripts/_archive/complete_atft_training.sh
