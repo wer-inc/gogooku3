@@ -197,50 +197,144 @@ def infer_batch(model: torch.nn.Module, batch_data: pl.DataFrame, device: str = 
     with torch.no_grad():
         # 入力次元をモデルの期待次元に合わせる（切詰め/ゼロパディング）
         target_dim = None
-        # 1) モデルに保持した期待次元ヒント
+        # 1) モデルに保持した期待次元ヒント（最優先）
         try:
-            td = int(getattr(model, '_expected_input_dim'))
+            if isinstance(model, list):
+                td = int(getattr(model[0], '_expected_input_dim', 0))
+            else:
+                td = int(getattr(model, '_expected_input_dim', 0))
             if td > 0:
                 target_dim = td
-        except Exception:
+                print(f"DEBUG: Using _expected_input_dim={target_dim}")
+        except Exception as e:
+            print(f"DEBUG: Failed to get _expected_input_dim: {e}")
             pass
-        # 2) dynamic_projectionから取得
+        # 2) dynamic_projectionから取得（フォールバック）
         if target_dim is None:
             try:
-                target_dim = int(getattr(model.dynamic_projection, 'in_features'))
+                target_dim = int(getattr(model.dynamic_projection, 'in_features', 0))
             except Exception:
                 target_dim = None
         # 3) 最終手段として現状のfeatures次元
-        if target_dim is None:
+        if target_dim is None or target_dim <= 0:
             target_dim = features_3d.shape[-1]
         cur_dim = features_3d.shape[-1]
+        print(f"DEBUG: current_dim={cur_dim}, target_dim={target_dim}")
         if cur_dim > target_dim:
             features_3d = features_3d[:, :, :target_dim]
+            print(f"DEBUG: Truncated to {features_3d.shape[-1]}")
         elif cur_dim < target_dim:
             pad = torch.zeros(features_3d.size(0), features_3d.size(1), target_dim - cur_dim, device=features_3d.device)
             features_3d = torch.cat([features_3d, pad], dim=-1)
+            print(f"DEBUG: Padded to {features_3d.shape[-1]}")
 
-        # GraphBuilderによるエッジ構築（最後のタイムステップ表現でKNN）
-        from src.graph.graph_builder import GraphBuilder, GBConfig
-        graph_builder = GraphBuilder(GBConfig())
-        last_step_feats = features_3d[:, -1, :]  # (N, F)
-        edge_index, edge_attr = graph_builder.build_graph(last_step_feats)
-        edge_index = edge_index.to(device)
-        edge_attr = edge_attr.to(device)
-        
-        # モデル推論
-        predictions = model(features_3d, edge_index, edge_attr)
+        # GraphBuilderによるエッジ構築（最後のタイムステップ表現でKNN）。
+        # 失敗時はノーグラフにフォールバック。
+        edge_index = None
+        edge_attr = None
+        try:
+            from src.graph.graph_builder import GraphBuilder, GBConfig
+            graph_builder = GraphBuilder(GBConfig())
+            last_step_feats = features_3d[:, -1, :]
+            ei, ea = graph_builder.build_graph(last_step_feats)
+            edge_index = ei.to(device)
+            edge_attr = ea.to(device) if ea is not None else None
+        except Exception as _e:
+            logger.warning(f"Graph build failed; fallback to no-graph inference: {_e}")
+
+        def _predict_with(model_single):
+            # edge_attrの次元が期待と異なる場合は調整
+            ei_local = edge_index
+            ea_local = edge_attr
+            try:
+                exp_ed = int(getattr(getattr(getattr(model_single, 'gat', None), 'edge_features', None), 'edge_dim', 0))
+            except Exception:
+                exp_ed = 0
+            if ei_local is not None and isinstance(ea_local, torch.Tensor) and exp_ed:
+                if ea_local.dim() == 1:
+                    ea_local = ea_local.unsqueeze(-1)
+                cur_ed = ea_local.size(-1)
+                if cur_ed < exp_ed:
+                    pad = torch.zeros(ea_local.size(0), exp_ed - cur_ed, device=ea_local.device, dtype=ea_local.dtype)
+                    ea_local = torch.cat([ea_local, pad], dim=-1)
+                elif cur_ed > exp_ed:
+                    ea_local = ea_local[:, :exp_ed]
+            # 推論
+            try:
+                if ei_local is not None:
+                    out = model_single(features_3d, ei_local, ea_local)
+                else:
+                    out = model_single(features_3d)
+            except Exception as _f:
+                logger.warning(f"Graph forward failed; retry no-graph: {_f}")
+                out = model_single(features_3d)
+            return out
+
+        # モデル推論（リストなら平均アンサンブル）
+        if isinstance(model, list):
+            agg = None
+            for m in model:
+                out = _predict_with(m)
+                # 辞書出力から[Batch]-長のベクトルを堅牢に抽出
+                def _extract_vec(o):
+                    if not isinstance(o, dict):
+                        return o.detach().cpu()
+                    B = features_3d.size(0)
+                    # キー優先順
+                    pref = [
+                        'point_horizon_1', 'horizon_1', 'pred_1', 'output_1',
+                    ]
+                    for k in pref:
+                        if k in o and isinstance(o[k], torch.Tensor) and o[k].shape[0] == B:
+                            return o[k].detach().cpu()
+                    # 次に、バッチ次元が一致し、かつスカラーでないテンソルを探す
+                    for k, v in o.items():
+                        if isinstance(v, torch.Tensor) and v.shape[:1] == (B,) and v.numel() >= B:
+                            # 余分な次元は潰す
+                            vv = v
+                            while vv.dim() > 1:
+                                vv = vv.squeeze(-1)
+                            return vv.detach().cpu()
+                    # 最後に、Tensor値を持つ最初の要素を返す（スカラーは除外）
+                    for v in o.values():
+                        if isinstance(v, torch.Tensor) and v.numel() >= B:
+                            vv = v
+                            while vv.dim() > 1:
+                                vv = vv.squeeze(-1)
+                            return vv.detach().cpu()
+                    raise RuntimeError('could not extract batch vector from model output')
+                val = _extract_vec(out)
+                agg = val if agg is None else (agg + val)
+            predictions = agg / max(1, len(model))
+        else:
+            out = _predict_with(model)
+            def _extract_vec_single(o):
+                if not isinstance(o, dict):
+                    return o.detach().cpu()
+                B = features_3d.size(0)
+                for k in ('point_horizon_1', 'horizon_1', 'pred_1', 'output_1'):
+                    if k in o and isinstance(o[k], torch.Tensor) and o[k].shape[0] == B:
+                        return o[k].detach().cpu()
+                for k, v in o.items():
+                    if isinstance(v, torch.Tensor) and v.shape[:1] == (B,) and v.numel() >= B:
+                        vv = v
+                        while vv.dim() > 1:
+                            vv = vv.squeeze(-1)
+                        return vv.detach().cpu()
+                for v in o.values():
+                    if isinstance(v, torch.Tensor) and v.numel() >= B:
+                        vv = v
+                        while vv.dim() > 1:
+                            vv = vv.squeeze(-1)
+                        return vv.detach().cpu()
+                raise RuntimeError('could not extract batch vector from model output')
+            predictions = _extract_vec_single(out)
         
         # 予測値取得（horizon=1のみ）
-        if isinstance(predictions, dict):
-            if 'point_horizon_1' in predictions:
-                pred_values = predictions['point_horizon_1'].cpu().numpy()
-            else:
-                # 最初のキーを使用
-                first_key = list(predictions.keys())[0]
-                pred_values = predictions[first_key].cpu().numpy()
-        else:
-            pred_values = predictions.cpu().numpy()
+        pred_values = predictions.numpy()
+        # 定数予測の検出（デバッグ用）
+        if np.std(pred_values) < 1e-12:
+            logger.warning('Predictions appear constant for this batch (std≈0). Check output head selection and features.')
     
     # パディング部分を除去
     actual_size = min(len(batch_data), len(pred_values))
@@ -313,7 +407,14 @@ def evaluate_fold(
 
 def main():
     parser = argparse.ArgumentParser(description="Walk-Forward評価")
-    parser.add_argument("--model-path", type=str, required=True, help="モデルチェックポイントパス")
+    parser.add_argument("--model-path", type=str, required=False, help="モデルチェックポイントパス（単体評価）")
+    parser.add_argument(
+        "--model-paths",
+        type=str,
+        nargs="+",
+        required=False,
+        help="複数モデルのチェックポイントパス（アンサンブル評価: 予測平均）",
+    )
     parser.add_argument("--data-path", type=str, required=True, help="データセットパス")
     parser.add_argument("--n-splits", type=int, default=3, help="WF分割数")
     parser.add_argument("--embargo-days", type=int, default=20, help="Embargo期間")
@@ -342,8 +443,17 @@ def main():
     df = pl.read_parquet(args.data_path)
     logger.info(f"Dataset shape: {df.shape}")
     
-    # モデル読み込み
-    model = load_model(args.model_path, args.device)
+    # モデル読み込み（単体 or アンサンブル）
+    model_paths: list[str]
+    if args.model_paths:
+        model_paths = args.model_paths
+    elif args.model_path:
+        model_paths = [args.model_path]
+    else:
+        parser.error("--model-path もしくは --model-paths を指定してください")
+        return
+
+    models = [load_model(p, args.device) for p in model_paths]
     
     # Walk-Forward分割器
     splitter = WalkForwardSplitterV2(
@@ -361,7 +471,7 @@ def main():
         train_data = df[train_idx]
         test_data = df[test_idx]
         
-        fold_metrics = evaluate_fold(model, train_data, test_data, fold, args.device, args.max_dates)
+        fold_metrics = evaluate_fold(models, train_data, test_data, fold, args.device, args.max_dates)
         results.append(fold_metrics)
     
     # 結果集計

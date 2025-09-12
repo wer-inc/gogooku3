@@ -1595,3 +1595,52 @@ ckptは確実に伸びています）。
 
   🏁 「並走全乗せ」戦略により、Val Loss 
   0.0484という極めて優秀な性能を達成。ATFT-GAT-FANモデルの潜在能力を完全に引き出しました！
+
+  ----
+
+  ● 【理解しました！シンプルに行きましょう】
+
+  🎯 あなたの目的: 明日上がる株を予測したい
+
+  これだけです。システム構築とか配備とか不要ですね。
+
+  📊 今すぐできること
+
+  方法1: 最新データで予測 (推奨)
+
+  # 最新データで予測生成（明日の予測）
+  python scripts/generate_daily_predictions.py \
+    --model-path models/checkpoints/atft_gat_fan_final.pt \
+    --data-path /home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet \
+    --output output/tomorrow_predictions.csv \
+    --max-dates 1
+
+  方法2: 予測結果を見やすく表示
+
+  # CSVで確認
+  python -c "
+  import pandas as pd
+  df = pd.read_csv('output/tomorrow_predictions.csv')
+  # 予測値でソート（上位20銘柄）
+  top20 = df.nlargest(20, 'predicted_return')
+  print('🚀 明日上がりそうな株 TOP20:')
+  print(top20[['Code', 'predicted_return']])
+  "
+
+  🏆 出力イメージ
+
+  🚀 明日上がりそうな株 TOP20:
+     Code  predicted_return
+  1  7203         0.0234    # トヨタ
+  2  6758         0.0198    # ソニー
+  3  9983         0.0187    # ファストリ
+  ...
+
+  ⚠️ 注意点
+
+  - 予測は参考程度に（投資は自己責任）
+  - 実際の株式コードと企業名の対応は別途確認が必要
+  - 予測値は日次リターン（例: 0.02 = 2%上昇予測）
+
+  ---
+  これでよろしいですか？ 単純に予測を出力して、上位銘柄を確認するだけです。
