@@ -18,8 +18,13 @@ import torch
 import numpy as np
 import subprocess
 
-# パスを追加
-sys.path.append(str(Path(__file__).parent.parent))
+# パスを追加（repo root と src を import path へ）
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+SRC_PATH = REPO_ROOT / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
 
 # ログ設定
 logging.basicConfig(
@@ -829,6 +834,7 @@ async def main():
     parser.add_argument("--batch-size", type=int, default=2048, help="Batch size")
     parser.add_argument("--lr", type=float, default=None, help="Learning rate override (e.g., 2e-4)")
     parser.add_argument("--sample-size", type=int, help="Sample size for testing")
+    parser.add_argument("--dry-run", action="store_true", help="Show planned steps and exit")
     parser.add_argument(
         "--adv-graph-train",
         action="store_true",
@@ -836,6 +842,20 @@ async def main():
     )
     args = parser.parse_args()
     
+    if args.dry_run:
+        print("=" * 60)
+        print("[DRY-RUN] Complete ATFT-GAT-FAN Training Pipeline")
+        print("Steps:")
+        print(" 1) Setup ATFT-GAT-FAN environment")
+        print(" 2) Load and validate ML dataset")
+        print(" 3) Convert ML features to ATFT format")
+        print(" 4) Prepare ATFT training data")
+        print(" 5) Execute ATFT training (epochs configurable)")
+        print(" 6) Validate results against target metrics")
+        print(" 7) Save results and optional portfolio optimization")
+        print("=" * 60)
+        return True, {"dry_run": True}
+
     pipeline = CompleteATFTTrainingPipeline(data_path=args.data_path, sample_size=args.sample_size)
     
     # 引数で設定を上書き（0も有効値として扱う）
