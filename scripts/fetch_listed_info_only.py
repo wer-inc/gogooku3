@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts._archive.run_pipeline import JQuantsAsyncFetcher  # type: ignore
+from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
 
 
 async def fetch_listed_info(date: str | None) -> pl.DataFrame:
@@ -62,4 +62,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

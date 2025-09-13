@@ -25,8 +25,12 @@ if env_path.exists():
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
+# Ensure project root is importable (so we can import src.* modules)
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from data.ml_dataset_builder import MLDatasetBuilder
+from src.gogooku3.pipeline.builder import MLDatasetBuilder
 from components.trading_calendar_fetcher import TradingCalendarFetcher
 from components.market_code_filter import MarketCodeFilter
 from components.axis_decider import AxisDecider
@@ -799,6 +803,20 @@ class JQuantsPipelineV4Optimized:
         except Exception as e:
             logger.warning(f"  Skipped flow integration due to error: {e}")
 
+        # Margin weekly (existing style): auto-discover under output/, skip if missing
+        try:
+            cands = sorted(self.output_dir.glob("weekly_margin_interest_*.parquet"))
+            wdf = pl.read_parquet(cands[-1]) if cands else None
+            if wdf is not None and not wdf.is_empty():
+                df = self.builder.add_margin_weekly_block(
+                    df, wdf, lag_bdays_weekly=3, adv_window_days=20
+                )
+                logger.info("  Added weekly margin features")
+            else:
+                logger.info("  No weekly margin parquet found; skipping margin features")
+        except Exception as e:
+            logger.warning(f"  Skipped margin weekly integration due to error: {e}")
+
         # Finalize dataset for spec conformance (column set + names)
         try:
             df = self.builder.finalize_for_spec(df)
@@ -829,15 +847,18 @@ class JQuantsPipelineV4Optimized:
         if events:
             logger.info(f"  Events detected: {len(events)}")
 
-        # Save dataset
-        parquet_path, meta_path = self.builder.save_dataset(df, metadata)
+        # Save dataset (builder returns parquet, csv (optional), metadata)
+        parquet_path, csv_path, meta_path = self.builder.save_dataset(df, metadata)
         
         self.tracker.end_component(metric, records=len(df))
         
-        return df, metadata, (parquet_path, None, meta_path)
+        return df, metadata, (parquet_path, csv_path, meta_path)
 
     async def run(
-        self, use_jquants: bool = True, start_date: str = None, end_date: str = None
+        self,
+        use_jquants: bool = True,
+        start_date: str = None,
+        end_date: str = None,
     ):
         """Run the optimized pipeline."""
         start_time = time.time()
@@ -845,6 +866,7 @@ class JQuantsPipelineV4Optimized:
         logger.info("=" * 60)
         logger.info("OPTIMIZED ML DATASET PIPELINE V4")
         logger.info("With axis selection, diff detection, and event tracking")
+        logger.info("(Note) For full enriched dataset builds, prefer run_full_dataset.py")
         logger.info("=" * 60)
 
         # Step 1: Get data
@@ -989,6 +1011,7 @@ async def main():
         default=1,
         help="Lag to use for market returns in beta calc (0=no lag, 1=t-1)"
     )
+    # (No enable flags for margin; integration is attempted automatically like other enrichments)
 
     args = parser.parse_args()
 

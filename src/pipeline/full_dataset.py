@@ -72,7 +72,7 @@ def save_with_symlinks(
         df.write_parquet(parquet_path)
 
     # Build metadata json via builder (to keep consistent shape)
-    from scripts.data.ml_dataset_builder import MLDatasetBuilder
+    from src.gogooku3.pipeline.builder import MLDatasetBuilder
     builder = MLDatasetBuilder(output_dir=output_dir)
     metadata = builder.create_metadata(df)
     with open(meta_path, 'w', encoding='utf-8') as f:
@@ -107,6 +107,11 @@ async def enrich_and_save(
     topix_parquet: Path | None = None,
     statements_parquet: Path | None = None,
     listed_info_parquet: Path | None = None,
+    # Margin weekly integration (optional)
+    enable_margin_weekly: bool = False,
+    margin_weekly_parquet: Path | None = None,
+    margin_weekly_lag: int = 3,
+    adv_window_days: int = 20,
     sector_onehot33: bool = False,
     sector_series_mcap: str = "auto",
     sector_te_targets: list[str] | None = None,
@@ -120,7 +125,7 @@ async def enrich_and_save(
     """
     import aiohttp
 
-    from scripts.data.ml_dataset_builder import MLDatasetBuilder
+    from src.gogooku3.pipeline.builder import MLDatasetBuilder
 
     builder = MLDatasetBuilder(output_dir=output_dir)
 
@@ -136,9 +141,7 @@ async def enrich_and_save(
         try:
             import os
 
-            from scripts._archive.run_pipeline import (
-                JQuantsAsyncFetcher,  # type: ignore
-            )
+            from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
             email = os.getenv("JQUANTS_AUTH_EMAIL", "")
             password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
             if email and password:
@@ -238,12 +241,11 @@ async def enrich_and_save(
                         logger.warning(f"Sector target encoding failed for level {lvl}, target {tcol}: {e}")
             # Back-compat: if only 33-level TE requested, alias te33_* → te_* for consumers
             if te_levels == ["33"]:
-                import polars as _pl
                 for tcol in te_targets:
                     src = f"te33_sec_{tcol}"
                     dst = f"te_sec_{tcol}"
                     if src in df.columns and dst not in df.columns:
-                        df = df.with_columns(_pl.col(src).alias(dst))
+                        df = df.with_columns(pl.col(src).alias(dst))
             logger.info("Sector enrichment completed (sector33/MarketCode/CompanyName)")
         except Exception as e:
             logger.warning(f"Failed sector enrichment: {e}")
@@ -257,6 +259,34 @@ async def enrich_and_save(
         except Exception as e:
             logger.warning(f"Skipping flow enrichment due to error: {e}")
 
+    # Margin weekly attach (leak-safe as-of)
+    # Be tolerant: if a weekly margin parquet exists, attach it even if the flag wasn't set.
+    try:
+        w_path: Path | None = None
+        if margin_weekly_parquet and Path(margin_weekly_parquet).exists():
+            w_path = margin_weekly_parquet
+        else:
+            # Auto-discover under output/
+            cands = sorted(output_dir.glob("weekly_margin_interest_*.parquet"))
+            if cands:
+                w_path = cands[-1]
+        if enable_margin_weekly or (w_path and w_path.exists()):
+            if w_path and w_path.exists():
+                wdf = pl.read_parquet(w_path)
+                df = builder.add_margin_weekly_block(
+                    df,
+                    wdf,
+                    lag_bdays_weekly=margin_weekly_lag,
+                    adv_window_days=adv_window_days,
+                )
+                logger.info(f"Margin weekly features attached from: {w_path}")
+            else:
+                logger.info("Margin weekly requested but no parquet provided/found; skipping")
+        else:
+            logger.info("Margin weekly not enabled and no parquet found; skipping")
+    except Exception as e:
+        logger.warning(f"Margin weekly attach skipped: {e}")
+
     # Assurance: guarantee mkt_*
     if not any(c.startswith("mkt_") for c in df.columns):
         logger.warning("mkt_* missing; attempting offline attach (assurance)...")
@@ -268,9 +298,7 @@ async def enrich_and_save(
 
                 import aiohttp
 
-                from scripts._archive.run_pipeline import (
-                    JQuantsAsyncFetcher,  # type: ignore
-                )
+                from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
                 email = os.getenv("JQUANTS_AUTH_EMAIL", "")
                 password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
                 if email and password:
@@ -311,7 +339,6 @@ async def enrich_and_save(
     # Align to DATASET.md (strict schema) just before saving
     try:
 
-        import polars as _pl
         eps = 1e-12
 
         # Canonical, ordered schema from docs/DATASET.md
@@ -357,6 +384,13 @@ async def enrich_and_save(
             "stmt_change_in_est","stmt_nc_flag","stmt_imp_statement","stmt_days_since_statement",
             # 6) Flags (8)
             "is_rsi2_valid","is_ema5_valid","is_ema10_valid","is_ema20_valid","is_ema200_valid","is_valid_ma","is_flow_valid","is_stmt_valid",
+            # 7) Optional: Margin weekly block (kept if present; not added as Nulls)
+            "margin_long_tot","margin_short_tot","margin_total_gross",
+            "margin_credit_ratio","margin_imbalance",
+            "margin_d_long_wow","margin_d_short_wow","margin_d_net_wow","margin_d_ratio_wow",
+            "long_z52","short_z52","margin_gross_z52","ratio_z52",
+            "margin_long_to_adv20","margin_short_to_adv20","margin_d_long_to_adv20","margin_d_short_to_adv20",
+            "margin_impulse","margin_days_since","is_margin_valid","margin_issue_type","is_borrowable",
             # 7) Targets (7)
             "target_1d","target_5d","target_10d","target_20d","target_1d_binary","target_5d_binary","target_10d_binary",
         ]
@@ -390,8 +424,8 @@ async def enrich_and_save(
         need_returns = [c for c in ["returns_1d","returns_5d"] if c not in df.columns]
         if need_returns:
             df = df.with_columns([
-                _pl.col("Close").pct_change().over("Code").alias("returns_1d") if "returns_1d" in need_returns else _pl.lit(0),
-                _pl.col("Close").pct_change(5).over("Code").alias("returns_5d") if "returns_5d" in need_returns else _pl.lit(0),
+                pl.col("Close").pct_change().over("Code").alias("returns_1d") if "returns_1d" in need_returns else pl.lit(0),
+                pl.col("Close").pct_change(5).over("Code").alias("returns_5d") if "returns_5d" in need_returns else pl.lit(0),
             ])
             # Drop filler 0 columns that are not needed (the lit(0) placeholders)
             drop_tmp = [c for c in ["literal"] if c in df.columns]
@@ -399,23 +433,23 @@ async def enrich_and_save(
                 df = df.drop(drop_tmp)
 
         # Extend returns if missing
-        add_more_returns: list[_pl.Expr] = []
+        add_more_returns: list[pl.Expr] = []
         if "returns_10d" not in df.columns:
-            add_more_returns.append(_pl.col("Close").pct_change(10).over("Code").alias("returns_10d"))
+            add_more_returns.append(pl.col("Close").pct_change(10).over("Code").alias("returns_10d"))
         if "returns_20d" not in df.columns:
-            add_more_returns.append(_pl.col("Close").pct_change(20).over("Code").alias("returns_20d"))
+            add_more_returns.append(pl.col("Close").pct_change(20).over("Code").alias("returns_20d"))
         if "returns_60d" not in df.columns:
-            add_more_returns.append(_pl.col("Close").pct_change(60).over("Code").alias("returns_60d"))
+            add_more_returns.append(pl.col("Close").pct_change(60).over("Code").alias("returns_60d"))
         if "returns_120d" not in df.columns:
-            add_more_returns.append(_pl.col("Close").pct_change(120).over("Code").alias("returns_120d"))
+            add_more_returns.append(pl.col("Close").pct_change(120).over("Code").alias("returns_120d"))
         if "log_returns_1d" not in df.columns:
-            add_more_returns.append((_pl.col("Close").log() - _pl.col("Close").log().shift(1).over("Code")).alias("log_returns_1d"))
+            add_more_returns.append((pl.col("Close").log() - pl.col("Close").log().shift(1).over("Code")).alias("log_returns_1d"))
         if "log_returns_5d" not in df.columns:
-            add_more_returns.append((_pl.col("Close").log() - _pl.col("Close").log().shift(5).over("Code")).alias("log_returns_5d"))
+            add_more_returns.append((pl.col("Close").log() - pl.col("Close").log().shift(5).over("Code")).alias("log_returns_5d"))
         if "log_returns_10d" not in df.columns:
-            add_more_returns.append((_pl.col("Close").log() - _pl.col("Close").log().shift(10).over("Code")).alias("log_returns_10d"))
+            add_more_returns.append((pl.col("Close").log() - pl.col("Close").log().shift(10).over("Code")).alias("log_returns_10d"))
         if "log_returns_20d" not in df.columns:
-            add_more_returns.append((_pl.col("Close").log() - _pl.col("Close").log().shift(20).over("Code")).alias("log_returns_20d"))
+            add_more_returns.append((pl.col("Close").log() - pl.col("Close").log().shift(20).over("Code")).alias("log_returns_20d"))
         if add_more_returns:
             df = df.with_columns(add_more_returns)
 
@@ -423,11 +457,11 @@ async def enrich_and_save(
         ema_needed = [c for c in ["ema_5","ema_10","ema_20","ema_60","ema_200"] if c not in df.columns]
         if ema_needed:
             df = df.with_columns([
-                _pl.col("Close").ewm_mean(span=5, adjust=False, ignore_nulls=True).over("Code").alias("ema_5") if "ema_5" in ema_needed else _pl.lit(0),
-                _pl.col("Close").ewm_mean(span=10, adjust=False, ignore_nulls=True).over("Code").alias("ema_10") if "ema_10" in ema_needed else _pl.lit(0),
-                _pl.col("Close").ewm_mean(span=20, adjust=False, ignore_nulls=True).over("Code").alias("ema_20") if "ema_20" in ema_needed else _pl.lit(0),
-                _pl.col("Close").ewm_mean(span=60, adjust=False, ignore_nulls=True).over("Code").alias("ema_60") if "ema_60" in ema_needed else _pl.lit(0),
-                _pl.col("Close").ewm_mean(span=200, adjust=False, ignore_nulls=True).over("Code").alias("ema_200") if "ema_200" in ema_needed else _pl.lit(0),
+                pl.col("Close").ewm_mean(span=5, adjust=False, ignore_nulls=True).over("Code").alias("ema_5") if "ema_5" in ema_needed else pl.lit(0),
+                pl.col("Close").ewm_mean(span=10, adjust=False, ignore_nulls=True).over("Code").alias("ema_10") if "ema_10" in ema_needed else pl.lit(0),
+                pl.col("Close").ewm_mean(span=20, adjust=False, ignore_nulls=True).over("Code").alias("ema_20") if "ema_20" in ema_needed else pl.lit(0),
+                pl.col("Close").ewm_mean(span=60, adjust=False, ignore_nulls=True).over("Code").alias("ema_60") if "ema_60" in ema_needed else pl.lit(0),
+                pl.col("Close").ewm_mean(span=200, adjust=False, ignore_nulls=True).over("Code").alias("ema_200") if "ema_200" in ema_needed else pl.lit(0),
             ])
             # Remove any lit(0) placeholders that might have been added
             for col in df.columns:
@@ -435,84 +469,84 @@ async def enrich_and_save(
                     df = df.drop(col)
 
         if "ma_gap_5_20" not in df.columns and all(c in df.columns for c in ["ema_5","ema_20"]):
-            df = df.with_columns(((_pl.col("ema_5") - _pl.col("ema_20")) / (_pl.col("ema_20") + eps)).alias("ma_gap_5_20"))
+            df = df.with_columns(((pl.col("ema_5") - pl.col("ema_20")) / (pl.col("ema_20") + eps)).alias("ma_gap_5_20"))
         if "ma_gap_20_60" not in df.columns and all(c in df.columns for c in ["ema_20","ema_60"]):
-            df = df.with_columns(((_pl.col("ema_20") - _pl.col("ema_60")) / (_pl.col("ema_60") + eps)).alias("ma_gap_20_60"))
+            df = df.with_columns(((pl.col("ema_20") - pl.col("ema_60")) / (pl.col("ema_60") + eps)).alias("ma_gap_20_60"))
 
         # SMAs and price positions
         sma_spans = [5, 10, 20, 60, 120]
-        sma_exprs: list[_pl.Expr] = []
+        sma_exprs: list[pl.Expr] = []
         for w in sma_spans:
             name = f"sma_{w}"
             if name not in df.columns:
-                sma_exprs.append(_pl.col("Close").rolling_mean(window_size=w, min_periods=w).over("Code").alias(name))
+                sma_exprs.append(pl.col("Close").rolling_mean(window_size=w, min_periods=w).over("Code").alias(name))
         if sma_exprs:
             df = df.with_columns(sma_exprs)
         if "price_to_sma5" not in df.columns and "sma_5" in df.columns:
-            df = df.with_columns((_pl.col("Close") / (_pl.col("sma_5") + eps)).alias("price_to_sma5"))
+            df = df.with_columns((pl.col("Close") / (pl.col("sma_5") + eps)).alias("price_to_sma5"))
         if "price_to_sma20" not in df.columns and "sma_20" in df.columns:
-            df = df.with_columns((_pl.col("Close") / (_pl.col("sma_20") + eps)).alias("price_to_sma20"))
+            df = df.with_columns((pl.col("Close") / (pl.col("sma_20") + eps)).alias("price_to_sma20"))
         if "price_to_sma60" not in df.columns and "sma_60" in df.columns:
-            df = df.with_columns((_pl.col("Close") / (_pl.col("sma_60") + eps)).alias("price_to_sma60"))
+            df = df.with_columns((pl.col("Close") / (pl.col("sma_60") + eps)).alias("price_to_sma60"))
 
         # Range/position metrics
         if "high_low_ratio" not in df.columns and all(c in df.columns for c in ["High","Low"]):
-            df = df.with_columns((_pl.col("High") / (_pl.col("Low") + eps)).alias("high_low_ratio"))
+            df = df.with_columns((pl.col("High") / (pl.col("Low") + eps)).alias("high_low_ratio"))
         if "close_to_high" not in df.columns and all(c in df.columns for c in ["High","Low","Close"]):
-            df = df.with_columns(((_pl.col("High") - _pl.col("Close")) / ((_pl.col("High") - _pl.col("Low")) + eps)).alias("close_to_high"))
+            df = df.with_columns(((pl.col("High") - pl.col("Close")) / ((pl.col("High") - pl.col("Low")) + eps)).alias("close_to_high"))
         if "close_to_low" not in df.columns and all(c in df.columns for c in ["High","Low","Close"]):
-            df = df.with_columns(((_pl.col("Close") - _pl.col("Low")) / ((_pl.col("High") - _pl.col("Low")) + eps)).alias("close_to_low"))
+            df = df.with_columns(((pl.col("Close") - pl.col("Low")) / ((pl.col("High") - pl.col("Low")) + eps)).alias("close_to_low"))
 
         # Volume moving averages and ratios
         if "volume_ma_5" not in df.columns:
-            df = df.with_columns(_pl.col("Volume").rolling_mean(window_size=5, min_periods=5).over("Code").alias("volume_ma_5"))
+            df = df.with_columns(pl.col("Volume").rolling_mean(window_size=5, min_periods=5).over("Code").alias("volume_ma_5"))
         if "volume_ma_20" not in df.columns:
-            df = df.with_columns(_pl.col("Volume").rolling_mean(window_size=20, min_periods=20).over("Code").alias("volume_ma_20"))
+            df = df.with_columns(pl.col("Volume").rolling_mean(window_size=20, min_periods=20).over("Code").alias("volume_ma_20"))
         if "volume_ratio_5" not in df.columns and "volume_ma_5" in df.columns:
-            df = df.with_columns((_pl.col("Volume") / (_pl.col("volume_ma_5") + eps)).alias("volume_ratio_5"))
+            df = df.with_columns((pl.col("Volume") / (pl.col("volume_ma_5") + eps)).alias("volume_ratio_5"))
         if "volume_ratio_20" not in df.columns and "volume_ma_20" in df.columns:
-            df = df.with_columns((_pl.col("Volume") / (_pl.col("volume_ma_20") + eps)).alias("volume_ratio_20"))
+            df = df.with_columns((pl.col("Volume") / (pl.col("volume_ma_20") + eps)).alias("volume_ratio_20"))
 
         # Dollar volume
         if "dollar_volume" not in df.columns:
-            df = df.with_columns((_pl.col("Close") * _pl.col("Volume")).alias("dollar_volume"))
+            df = df.with_columns((pl.col("Close") * pl.col("Volume")).alias("dollar_volume"))
 
         # Volatilities
         if "volatility_5d" not in df.columns and "returns_1d" in df.columns:
-            df = df.with_columns(_pl.col("returns_1d").rolling_std(window_size=5, min_periods=5).over("Code").map_elements(lambda x: x * (252 ** 0.5) if x is not None else None).alias("volatility_5d"))
+            df = df.with_columns(pl.col("returns_1d").rolling_std(window_size=5, min_periods=5).over("Code").map_elements(lambda x: x * (252 ** 0.5) if x is not None else None).alias("volatility_5d"))
         if "volatility_10d" not in df.columns and "returns_1d" in df.columns:
-            df = df.with_columns(_pl.col("returns_1d").rolling_std(window_size=10, min_periods=10).over("Code").map_elements(lambda x: x * (252 ** 0.5) if x is not None else None).alias("volatility_10d"))
+            df = df.with_columns(pl.col("returns_1d").rolling_std(window_size=10, min_periods=10).over("Code").map_elements(lambda x: x * (252 ** 0.5) if x is not None else None).alias("volatility_10d"))
         if "volatility_60d" not in df.columns and "returns_1d" in df.columns:
-            df = df.with_columns(_pl.col("returns_1d").rolling_std(window_size=60, min_periods=60).over("Code").map_elements(lambda x: x * (252 ** 0.5) if x is not None else None).alias("volatility_60d"))
+            df = df.with_columns(pl.col("returns_1d").rolling_std(window_size=60, min_periods=60).over("Code").map_elements(lambda x: x * (252 ** 0.5) if x is not None else None).alias("volatility_60d"))
 
         # Reconstruct MACD line if signal+histogram exist
         if "macd" not in df.columns and all(c in df.columns for c in ["macd_signal","macd_histogram"]):
-            df = df.with_columns((_pl.col("macd_signal") + _pl.col("macd_histogram")).alias("macd"))
+            df = df.with_columns((pl.col("macd_signal") + pl.col("macd_histogram")).alias("macd"))
 
         # ATR(14) and Stochastic %K (14)
         if "atr_14" not in df.columns and all(c in df.columns for c in ["High","Low","Close"]):
-            tr = _pl.max_horizontal([
-                _pl.col("High") - _pl.col("Low"),
-                (_pl.col("High") - _pl.col("Close").shift(1).over("Code")).abs(),
-                (_pl.col("Low") - _pl.col("Close").shift(1).over("Code")).abs(),
+            tr = pl.max_horizontal([
+                pl.col("High") - pl.col("Low"),
+                (pl.col("High") - pl.col("Close").shift(1).over("Code")).abs(),
+                (pl.col("Low") - pl.col("Close").shift(1).over("Code")).abs(),
             ])
             df = df.with_columns(tr.alias("_tr"))
-            df = df.with_columns(_pl.col("_tr").ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code").alias("atr_14")).drop("_tr")
+            df = df.with_columns(pl.col("_tr").ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code").alias("atr_14")).drop("_tr")
         if "stoch_k" not in df.columns and all(c in df.columns for c in ["High","Low","Close"]):
-            ll = _pl.col("Low").rolling_min(window_size=14, min_periods=14).over("Code")
-            hh = _pl.col("High").rolling_max(window_size=14, min_periods=14).over("Code")
-            df = df.with_columns(((_pl.col("Close") - ll) / ((hh - ll) + eps) * 100.0).alias("stoch_k"))
+            ll = pl.col("Low").rolling_min(window_size=14, min_periods=14).over("Code")
+            hh = pl.col("High").rolling_max(window_size=14, min_periods=14).over("Code")
+            df = df.with_columns(((pl.col("Close") - ll) / ((hh - ll) + eps) * 100.0).alias("stoch_k"))
 
         # ADX(14) (simplified Wilder smoothing using EWM span)
         if "adx_14" not in df.columns and all(c in df.columns for c in ["High","Low","Close"]):
-            up_move = (_pl.col("High") - _pl.col("High").shift(1).over("Code")).clip_min(0)
-            down_move = (_pl.col("Low").shift(1).over("Code") - _pl.col("Low")).clip_min(0)
-            plus_dm = _pl.when((up_move > down_move) & (up_move > 0)).then(up_move).otherwise(0.0)
-            minus_dm = _pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
-            tr2 = _pl.max_horizontal([
-                _pl.col("High") - _pl.col("Low"),
-                (_pl.col("High") - _pl.col("Close").shift(1).over("Code")).abs(),
-                (_pl.col("Low") - _pl.col("Close").shift(1).over("Code")).abs(),
+            up_move = (pl.col("High") - pl.col("High").shift(1).over("Code")).clip_min(0)
+            down_move = (pl.col("Low").shift(1).over("Code") - pl.col("Low")).clip_min(0)
+            plus_dm = pl.when((up_move > down_move) & (up_move > 0)).then(up_move).otherwise(0.0)
+            minus_dm = pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
+            tr2 = pl.max_horizontal([
+                pl.col("High") - pl.col("Low"),
+                (pl.col("High") - pl.col("Close").shift(1).over("Code")).abs(),
+                (pl.col("Low") - pl.col("Close").shift(1).over("Code")).abs(),
             ])
             atr14 = tr2.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code")
             plus_di = (plus_dm.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code") / (atr14 + eps)) * 100.0
@@ -523,31 +557,53 @@ async def enrich_and_save(
 
         # Section normalization fallback
         if "section_norm" not in df.columns and "Section" in df.columns:
-            df = df.with_columns(_pl.col("Section").alias("section_norm"))
+            df = df.with_columns(pl.col("Section").alias("section_norm"))
 
         # Validity flags fallback
         if "row_idx" in df.columns:
             if "is_rsi2_valid" not in df.columns:
-                df = df.with_columns((_pl.col("row_idx") >= 5).cast(_pl.Int8).alias("is_rsi2_valid"))
+                df = df.with_columns((pl.col("row_idx") >= 5).cast(pl.Int8).alias("is_rsi2_valid"))
             if "is_valid_ma" not in df.columns:
-                df = df.with_columns((_pl.col("row_idx") >= 60).cast(_pl.Int8).alias("is_valid_ma"))
+                df = df.with_columns((pl.col("row_idx") >= 60).cast(pl.Int8).alias("is_valid_ma"))
         # Statement validity fallback
         if "is_stmt_valid" not in df.columns and "stmt_days_since_statement" in df.columns:
-            df = df.with_columns((_pl.col("stmt_days_since_statement") >= 0).cast(_pl.Int8).alias("is_stmt_valid"))
+            df = df.with_columns((pl.col("stmt_days_since_statement") >= 0).cast(pl.Int8).alias("is_stmt_valid"))
 
         # Add any missing spec columns as nulls (safe defaults)
         existing = set(df.columns)
-        to_add_nulls = [c for c in DOC_COLUMNS if c not in existing]
+        # Keep optional blocks (e.g., margin_*) truly optional: don't add Nulls for them
+        to_add_nulls = [
+            c for c in DOC_COLUMNS if c not in existing and not c.startswith("margin_")
+        ]
         if to_add_nulls:
-            df = df.with_columns([_pl.lit(None).alias(c) for c in to_add_nulls])
+            df = df.with_columns([pl.lit(None).alias(c) for c in to_add_nulls])
 
         # Fill conservative defaults for statement flags when statements are absent
         fill_zero_flags = []
         for c in ["stmt_change_in_est", "stmt_nc_flag", "is_stmt_valid"]:
             if c in df.columns:
-                fill_zero_flags.append(_pl.col(c).fill_null(0).cast(_pl.Int8).alias(c))
+                fill_zero_flags.append(pl.col(c).fill_null(0).cast(pl.Int8).alias(c))
         if fill_zero_flags:
             df = df.with_columns(fill_zero_flags)
+
+        # Cast common boolean/int flags to Int8 for stable schema
+        flag_like = [
+            c for c in df.columns if c.startswith("is_") or c.endswith("_impulse")
+        ]
+        if flag_like:
+            # Handle mixed bool/int types by first converting booleans to integers
+            cast_exprs = []
+            for c in flag_like:
+                if c in df.columns:
+                    # Convert boolean True/False to 1/0, then cast to Int8
+                    cast_exprs.append(
+                        pl.when(pl.col(c).is_null()).then(None)
+                        .when(pl.col(c).is_boolean()).then(pl.col(c).cast(pl.Int32))
+                        .otherwise(pl.col(c))
+                        .cast(pl.Int8).alias(c)
+                    )
+            if cast_exprs:
+                df = df.with_columns(cast_exprs)
 
         # Finally, project to the exact schema (drops all non-spec columns)
         keep_cols = [c for c in DOC_COLUMNS if c in df.columns]
@@ -555,6 +611,13 @@ async def enrich_and_save(
         logger.info(f"Aligned dataset to DATASET.md exact schema (n={len(keep_cols)})")
     except Exception as _e:
         logger.warning(f"DATASET.md strict alignment skipped: {_e}")
+
+    # Ensure (Code, Date) uniqueness (keep last occurrence)
+    try:
+        df = df.unique(subset=["Code", "Date"], keep="last")
+        logger.info("De-duplicated (Code, Date) pairs with keep=last")
+    except Exception:
+        pass
 
     pq_path, meta_path = save_with_symlinks(df, output_dir, tag="full", start_date=start_date, end_date=end_date)
     return pq_path, meta_path

@@ -1,0 +1,14 @@
+features:
+  margin_weekly:
+    enabled: true
+    eps: 1e-12
+    # PublishedDate が無い weekly に対する保守ラグ（営業日）
+    lag_bdays_weekly: 3
+    z_window_weeks: 52
+    scale:
+      use_adjustment_volume: true
+      adv_window_days: 20
+    outputs:
+      minimal: true
+      extended: false
+

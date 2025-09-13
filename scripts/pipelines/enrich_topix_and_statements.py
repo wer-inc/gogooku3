@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.data.ml_dataset_builder import MLDatasetBuilder
+from src.gogooku3.pipeline.builder import MLDatasetBuilder
 
 
 def find_latest(path_glob: str) -> Path | None:
@@ -117,4 +117,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

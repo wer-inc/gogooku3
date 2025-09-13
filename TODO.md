@@ -1768,6 +1768,165 @@ ckptは確実に伸びています）。
   - 成果: 目標を大幅に上回る性能達成
   - 準備完了: 明日から株価予測に使用可能
 
-  ---
+---
   お疲れ様でした！ 素晴らしい成果です。Val Loss
   0.0484という優秀な結果を達成し、実用的な予測システムが整いました。🎉
+---
+
+Must‑Have Datasets
+
+- 信用取引残高（Margin Interest）: J-Quants /markets/daily_margin_interest, /markets/
+weekly_margin_interest; Key=Date, Code（週次は区分に応じ展開）; Effective=T+1（公表翌営業
+日）; 目的=信用買い残/売り残・貸借倍率・増減率・比率Z。
+- 空売り（Short Selling）: /markets/short_selling, /markets/short_selling_positions;
+Key=Date, Code or Date, Section（提供粒度に依存）; Effective=T+1; 目的=空売り比率/残高・極
+値フラグ・増減ペース。
+- 先物（指数先物・ベーシス）: （J-Quantsの先物日次）TOPIX/Nikkei先物終値; Key=Date;
+Effective=同日または夜間は翌営業日; 目的=ベーシス＝先物−現物、ONシグナル（夜間先物変動）。
+- オプション（指数IV）: 日経225オプションIV（J-Quants options系）; Key=Date; Effective=同
+日; 目的=ATM IV・IV変化・レジーム指標。
+- コーポレートアクション（配当・株式分割）: J-Quants配当/分割エンドポイント; Key=Date,
+Code（ex-date基準）; Effective=配当落ち日/分割日; 目的=配当落ち・分割フラグ/ドリフト補正・
+イベント回避。
+
+Should‑Have Datasets
+
+Effective=同日/T+1整合; 目的=外部レジーム・オーバーナイト影響。
+- 公式セクター指数系列: 可能なら業種別指数（日次OHLC）; Key=Date, Sector; Effective=同日;
+目的=セクター相対化の外部参照（内部集計の補強）。
+- インデックス採用/除外イベント: JPX公開情報等; Key=Date, Code; Effective=公告/実施日に応
+じ設定; 目的=組入れ/除外ショックのイベントフラグ。
+
+Already Covered（追加実装は不要）
+
+- 日次株価OHLCV（/prices/daily_quotes）、市場指数TOPIX、投資部門別フロー（/markets/
+trades_spec）、財務（/fins/statements with DisclosedTime/as-of）、銘柄マスター/市場区分（/
+listed/info）、取引日カレンダーは既存コードで対応済み。
+
+Implementation Notes
+
+- 結合キー: 原則(Date, Code)、フローは(Date, Section)、指数/先物/IVはDateで横持ち。
+- 有効日ルール: 公表ベースはeffective_dateを持たせas-of結合（15時以降は翌営業日）、週次は
+期間展開（effective_start/end）。
+- 出力例: output/event_raw_margin_daily.parquet, event_raw_short_selling.parquet,
+topix_futures_history_*.parquet, nikkei_options_iv_*.parquet,
+event_corporate_actions.parquet。
+- 追加機能フック: MLDatasetBuilder.add_margin_features/add_short_selling_features/
+add_derivatives_features/add_corporate_actions_featuresを用意し、safe_joiner_v2のas-of/
+リーク検査に組み込み。
+
+これらP0の5種（信用残・空売り・先物・オプションIV・コーポレートアクション）が、短期〜中期
+ホライズンの改善インパクトと再現性の観点で最優先です。必要であれば、この順でフェッチャー/
+ジョイナーの雛形も用意します。
+
+python scripts/pipelines/run_full_dataset.py --jquants --start-date 2023-01-01 --end-date 2023-12-31
+2025-09-13 15:37:45,832 - run_full_dataset - INFO - === STEP 0: Prepare trade-spec for flow features ===
+2025-09-13 15:37:46,942 - run_full_dataset - INFO - Fetching trade-spec from 2023-01-01 to 2023-12-31
+2025-09-13 15:37:47,889 - run_full_dataset - INFO - Fetching weekly margin interest for margin features
+2025-09-13 15:37:48,114 - run_full_dataset - INFO - Fetching listed_info for sector/market enrichment
+2025-09-13 15:37:49,598 - scripts.components.market_code_filter - INFO - Market Codeフィルタリング: 4411 → 3800 銘柄
+2025-09-13 15:37:49,599 - scripts.components.market_code_filter - INFO - 市場別銘柄数:
+2025-09-13 15:37:49,599 - scripts.components.market_code_filter - INFO -   0111: プライム - 1620銘柄
+2025-09-13 15:37:49,599 - scripts.components.market_code_filter - INFO -   0112: スタンダード - 1573銘柄
+2025-09-13 15:37:49,599 - scripts.components.market_code_filter - INFO -   0113: グロース - 607銘柄
+2025-09-13 15:37:49,619 - run_full_dataset - INFO - Saved trade-spec: output/trades_spec_history_20230101_20231231.parquet
+2025-09-13 15:37:49,626 - run_full_dataset - INFO - Saved listed_info: output/listed_info_history_20231231.parquet
+2025-09-13 15:37:49,626 - run_full_dataset - INFO - === STEP 1: Run base optimized pipeline (prices + TA + statements) ===
+2025-09-13 15:37:49,626 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-13 15:37:49,626 - scripts.pipelines.run_pipeline_v4_optimized - INFO - OPTIMIZED ML DATASET PIPELINE V4
+2025-09-13 15:37:49,626 - scripts.pipelines.run_pipeline_v4_optimized - INFO - With axis selection, diff detection, and event tracking
+2025-09-13 15:37:49,626 - scripts.pipelines.run_pipeline_v4_optimized - INFO - (Note) For full enriched dataset builds, prefer run_full_dataset.py
+2025-09-13 15:37:49,626 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-13 15:37:49,626 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Fetching data from JQuants API (optimized)...
+2025-09-13 15:37:50,702 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ JQuants authentication successful
+2025-09-13 15:37:50,709 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 1: Fetching trading calendar (2023-01-01 - 2023-12-31)...
+2025-09-13 15:37:50,709 - components.trading_calendar_fetcher - INFO - 営業日カレンダーを取得中: 2023-01-01 - 2023-12-31
+2025-09-13 15:37:51,001 - components.trading_calendar_fetcher - INFO - 営業日: 257日, 休日: 108日, 半休日: 0日
+2025-09-13 15:37:51,002 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Business days: 257
+2025-09-13 15:37:51,002 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 2: Fetching listed info (monthly + diff)...
+2025-09-13 15:37:51,002 - components.listed_info_manager - INFO - Fetching 12 monthly snapshots...
+2025-09-13 15:37:51,171 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Listed info: 12 snapshots, 0 events detected
+2025-09-13 15:37:51,180 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Target stocks: 3895 (filtered by market)
+2025-09-13 15:37:51,180 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 3: Fetching daily quotes (optimized axis)...
+2025-09-13 15:37:51,180 - components.axis_decider - INFO - Using cached axis decision: by_date
+2025-09-13 15:37:51,180 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Selected axis: by_date (reason: Date axis is more efficient (6 <= 0.9 * 1800))
+2025-09-13 15:37:51,180 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Fetching by date axis for 257 days...
+2025-09-13 15:38:40,038 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Filtered: 1052339 → 939562 records
+2025-09-13 15:38:40,049 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Price data: 939562 records, 3895 stocks
+2025-09-13 15:38:40,049 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 4: Fetching statements (date axis)...
+2025-09-13 15:40:20,709 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Statements: 19137 records
+2025-09-13 15:40:20,709 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 5: Fetching TOPIX index data...
+2025-09-13 15:40:21,003 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ TOPIX: 246 records from 2023-01-01 to 2023-12-31
+2025-09-13 15:40:21,003 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 6: Fetching trades_spec (flow data)...
+2025-09-13 15:40:23,525 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ trades_spec: 208 records
+2025-09-13 15:40:23,599 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Data loaded: 939562 rows, 3895 stocks
+2025-09-13 15:40:23,600 - scripts.pipelines.run_pipeline_v4_optimized - INFO - 
+Step 2: Processing ML features...
+2025-09-13 15:40:23,600 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-13 15:40:23,600 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Processing ML Dataset Pipeline
+2025-09-13 15:40:23,600 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-13 15:40:24,246 - scripts.pipelines.run_pipeline_v4_optimized - WARNING -   Failed to attach Section: the name: 'Code' is duplicate
+
+It's possible that multiple expressions are returning the same default column name. If this is the case, try renaming the columns with `.alias("new_name")` to avoid duplicate column names.
+2025-09-13 15:40:24,249 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Adding statement features: 19137 records
+2025-09-13 15:40:24,250 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Statements key dtypes: {'LocalCode': 'String', 'DisclosedDate': 'String', 'DisclosedTime': 'String', 'NetSales': 'String', 'OperatingProfit': 'String', 'Profit': 'String', 'ForecastOperatingProfit': 'String', 'ForecastProfit': 'String', 'Equity': 'String', 'TotalAssets': 'String'}
+2025-09-13 15:40:24,251 - src.features.safe_joiner_v2 - INFO - Joining statements with deduplication and half-day handling...
+2025-09-13 15:40:24,283 - src.features.code_normalizer - INFO - Normalized code columns: ['LocalCode', 'Code'] → Code
+2025-09-13 15:40:24,287 - src.features.safe_joiner_v2 - INFO -   Before dedup: 19137 statements
+2025-09-13 15:40:24,298 - src.features.safe_joiner_v2 - INFO -   After dedup: 18354 statements
+2025-09-13 15:40:24,301 - src.features.safe_joiner_v2 - WARNING - Failed to add strict YoY: No module named 'features.statements_yoy'
+2025-09-13 15:40:24,345 - src.features.validity_flags - INFO - Statement validity: 0/939562 (0.0%)
+2025-09-13 15:40:24,348 - src.features.safe_joiner_v2 - INFO -   Statements coverage: 0.0%
+2025-09-13 15:40:24,348 - src.features.safe_joiner_v2 - INFO -   Valid statements: 0.0%
+2025-09-13 15:40:24,350 - scripts.data.ml_dataset_builder - WARNING - [builder] TOPIX integration failed: No module named 'utils'
+2025-09-13 15:40:24,351 - scripts.data.ml_dataset_builder - WARNING - [builder] flow integration failed: No module named 'utils'
+2025-09-13 15:40:24,351 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Flow features integrated from trades_spec
+2025-09-13 15:40:24,352 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   No weekly margin parquet found; skipping margin features
+2025-09-13 15:40:24,365 - scripts.pipelines.run_pipeline_v4_optimized - INFO - 
+Dataset Summary:
+2025-09-13 15:40:24,365 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Shape: 939562 rows × 21 columns
+2025-09-13 15:40:24,365 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Features: 17
+2025-09-13 15:40:24,365 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Stocks: 3895
+2025-09-13 15:40:24,365 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Date range: 2023-01-04 to 2023-12-29
+2025-09-13 15:40:25,117 - scripts.pipelines.run_pipeline_v4_optimized - INFO - 
+Step 3: Generating performance report...
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Performance report saved to /home/ubuntu/gogooku3-standalone/output/performance_report_20250913_154025.json
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - 
+============================================================
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - PERFORMANCE SUMMARY
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Total time: 155.49 seconds
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Total API calls: 529
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Total records: 2,838,080
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Average memory: 587 MB
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - 
+Component breakdown:
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   authentication: 1.08s, 2 calls, 0 records
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   trading_calendar: 0.29s, 1 calls, 257 records
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   listed_info_optimized: 0.17s, 12 calls, 0 records
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   daily_quotes_optimized: 48.86s, 257 calls, 939,562 records
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   statements_by_date: 100.64s, 257 calls, 19,137 records
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   total_fetch: 153.96s, 0 calls, 939,562 records
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   process_pipeline: 1.52s, 0 calls, 939,562 records
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - 
+============================================================
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - PIPELINE COMPLETED SUCCESSFULLY
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Total time: 155.49 seconds
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Processing speed: 6043 rows/second
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO - 
+Output files:
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Dataset: /home/ubuntu/gogooku3-standalone/output/ml_dataset_20250913_154024_full.parquet
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Metadata: /home/ubuntu/gogooku3-standalone/output/ml_dataset_20250913_154024_full_metadata.json
+2025-09-13 15:40:25,118 - scripts.pipelines.run_pipeline_v4_optimized - INFO -   Performance: /home/ubuntu/gogooku3-standalone/output/performance_report_20250913_154025.json
+2025-09-13 15:40:25,362 - run_full_dataset - INFO - === STEP 2: Enrich with TOPIX + statements + flow (trade-spec) + margin weekly ===
+2025-09-13 15:40:26,511 - src.pipeline.full_dataset - INFO - Fetching TOPIX 2023-01-01 → 2023-12-31
+2025-09-13 15:40:26,762 - scripts.data.ml_dataset_builder - WARNING - [builder] TOPIX integration failed: No module named 'utils'
+2025-09-13 15:40:26,763 - src.pipeline.full_dataset - INFO - Sector enrichment completed (sector33/MarketCode/CompanyName)
+2025-09-13 15:40:26,765 - scripts.data.ml_dataset_builder - WARNING - [builder] flow integration failed: No module named 'utils'
+2025-09-13 15:40:27,817 - src.pipeline.full_dataset - WARNING - DATASET.md strict alignment skipped: could not determine supertype of: [bool, dyn int]
+2025-09-13 15:40:28,125 - src.pipeline.full_dataset - INFO - De-duplicated (Code, Date) pairs with keep=last
+2025-09-13 15:40:32,067 - run_full_dataset - INFO - Full enriched dataset saved
+2025-09-13 15:40:32,067 - run_full_dataset - INFO -   Dataset : /home/ubuntu/gogooku3-standalone/output/ml_dataset_20230101_20231231_20250913_154028_full.parquet
+2025-09-13 15:40:32,067 - run_full_dataset - INFO -   Metadata: /home/ubuntu/gogooku3-standalone/output/ml_dataset_20230101_20231231_20250913_154028_full_metadata.json
+2025-09-13 15:40:32,067 - run_full_dataset - INFO -   Symlink : /home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet

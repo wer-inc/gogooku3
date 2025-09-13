@@ -38,8 +38,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Import JQuants fetcher to get trade-spec directly
-from scripts._archive.run_pipeline import JQuantsAsyncFetcher  # type: ignore
+# Import JQuants fetcher to get trade-spec directly (moved out of _archive)
+from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
 from scripts.pipelines.run_pipeline_v4_optimized import JQuantsPipelineV4Optimized
 from src.pipeline.full_dataset import enrich_and_save
 
@@ -93,6 +93,24 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional listed_info parquet (for sector/market enrichment)",
+    )
+    parser.add_argument(
+        "--weekly-margin-parquet",
+        type=Path,
+        default=None,
+        help="Path to weekly_margin_interest parquet (Code/Date/PublishedDate + volumes)",
+    )
+    parser.add_argument(
+        "--margin-weekly-lag",
+        type=int,
+        default=3,
+        help="Publish lag (business days) if PublishedDate is missing (default=3)",
+    )
+    parser.add_argument(
+        "--adv-window-days",
+        type=int,
+        default=20,
+        help="ADV window (days) for scaling margin stocks (default=20)",
     )
     # Sector feature toggles
     parser.add_argument(
@@ -185,6 +203,13 @@ async def main() -> int:
             await fetcher.authenticate(session)
             logger.info(f"Fetching trade-spec from {start_date} to {end_date}")
             trades_df = await fetcher.get_trades_spec(session, start_date, end_date)
+            # Fetch weekly margin interest for auto-attach (optional)
+            try:
+                logger.info("Fetching weekly margin interest for margin features")
+                wmi_df = await fetcher.get_weekly_margin_interest(session, start_date, end_date)
+            except Exception as e:
+                logger.warning(f"Failed to fetch weekly margin interest: {e}")
+                wmi_df = pl.DataFrame()
             # Also fetch listed_info for sector/market enrichment
             try:
                 logger.info("Fetching listed_info for sector/market enrichment")
@@ -211,6 +236,16 @@ async def main() -> int:
                 logger.info(f"Saved listed_info: {listed_info_path}")
             except Exception as e:
                 logger.warning(f"Failed to save listed_info parquet: {e}")
+        # Save weekly margin interest if fetched
+        wmi_path: Path | None = None
+        if 'wmi_df' in locals() and wmi_df is not None and not wmi_df.is_empty():
+            try:
+                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                wmi_path = outdir / f"weekly_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                wmi_df.write_parquet(wmi_path)
+                logger.info(f"Saved weekly margin interest: {wmi_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save weekly margin parquet: {e}")
     else:
         # Offline fallback: look for a local trades_spec parquet
         trades_spec_path = _find_latest("trades_spec_history_*.parquet")
@@ -233,16 +268,21 @@ async def main() -> int:
         logger.error("Base pipeline failed")
         return 1
 
-    # Load base latest parquet for consistent schema before enrichment
+    # Use freshly built base frame; avoid overriding with older ml_dataset_latest.parquet
     output_dir = pipeline.output_dir if hasattr(pipeline, "output_dir") else Path("output")
-    base_latest = output_dir / "ml_dataset_latest.parquet"
-    if base_latest.exists():
-        try:
-            df_base = pl.read_parquet(base_latest)
-        except Exception:
-            pass
 
-    logger.info("=== STEP 2: Enrich with TOPIX + statements + flow (trade-spec) ===")
+    logger.info("=== STEP 2: Enrich with TOPIX + statements + flow (trade-spec) + margin weekly ===")
+    # Resolve weekly margin parquet (existing style: auto-discover if not provided; skip gracefully if missing)
+    margin_weekly_parquet: Path | None = None
+    if args.weekly_margin_parquet is not None and args.weekly_margin_parquet.exists():
+        margin_weekly_parquet = args.weekly_margin_parquet
+    else:
+        # prefer the one we just saved (if any)
+        if 'wmi_path' in locals() and wmi_path and wmi_path.exists():
+            margin_weekly_parquet = wmi_path
+        else:
+            margin_weekly_parquet = _find_latest("weekly_margin_interest_*.parquet")
+
     te_targets = [s.strip() for s in (args.sector_te_targets or "").split(",") if s.strip()]
     series_levels = [s.strip() for s in (getattr(args, 'sector_series_levels', '33') or "").split(",") if s.strip()]
     te_levels = [s.strip() for s in (getattr(args, 'sector_te_levels', '33') or "").split(",") if s.strip()]
@@ -256,6 +296,10 @@ async def main() -> int:
         topix_parquet=args.topix_parquet,
         statements_parquet=args.statements_parquet,
         listed_info_parquet=listed_info_path,
+        enable_margin_weekly=bool(margin_weekly_parquet is not None and margin_weekly_parquet.exists()),
+        margin_weekly_parquet=margin_weekly_parquet,
+        margin_weekly_lag=getattr(args, "margin_weekly_lag", 3),
+        adv_window_days=getattr(args, "adv_window_days", 20),
         sector_onehot33=args.sector_onehot33,
         sector_series_mcap=args.sector_series_mcap,
         sector_te_targets=te_targets,
