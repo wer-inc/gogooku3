@@ -163,6 +163,56 @@ pre-commit run --all-files        # 全品質チェック
 
 ---
 
+## 📊 完全データセット構築
+
+### 🚀 run_full_dataset.py（推奨）
+
+#### 基本実行
+```bash
+# 5年間の完全統合データセット構築
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06
+```
+
+#### Margin Weekly機能付き
+```bash
+# 信用取引残高特徴量を含むデータセット構築
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  --weekly-margin-parquet output/weekly_margin_interest_*.parquet \
+  --margin-weekly-lag 3 \
+  --adv-window-days 20
+```
+
+#### 完全機能セット
+```bash
+# TOPIX・フロー・文書・Margin全機能統合
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  --topix-parquet output/topix_history_*.parquet \
+  --statements-parquet output/event_raw_statements_*.parquet \
+  --weekly-margin-parquet output/weekly_margin_interest_*.parquet \
+  --sector-onehot33 \
+  --sector-te-targets target_5d,target_1d
+```
+
+### 📁 出力ファイル
+```bash
+# 結果確認
+ls -la output/ml_dataset_latest_full.parquet
+ls -la output/ml_dataset_latest_full_metadata.json
+
+# データ概要
+python -c "
+import polars as pl
+df = pl.read_parquet('output/ml_dataset_latest_full.parquet')
+print(f'データ形状: {df.shape}')
+print(f'Margin機能: {\"margin_short_to_adv20\" in df.columns}')
+"
+```
+
+---
+
 ## 🧠 ML学習・実行
 
 ### 🎯 基本学習実行
@@ -234,11 +284,12 @@ print(f"期間: {df['Date'].min()} - {df['Date'].max()}")
 print(f"銘柄数: {df['Code'].n_unique()}")   # 632銘柄
 ```
 
-### 🔧 特徴量構成（145列）
+### 🔧 特徴量構成（145+列）
 - **識別子** (2列): Code, Date
 - **OHLCV** (6列): Open, High, Low, Close, Volume, row_idx
 - **技術指標** (131列): SMA, EMA, MACD, RSI, Stoch, BB, ADX, etc.  
 - **品質特徴量** (+6列): Cross-sectional quantiles, sigma-threshold features
+- **📊 Margin Weekly** (任意): 信用取引残高由来の需給特徴量（margin_short_to_adv20等）
 
 ### 🛡️ データ安全性確認
 ```python

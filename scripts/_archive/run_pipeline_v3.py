@@ -725,12 +725,17 @@ class JQuantsPipelineV3:
             return price_df, topix_df, trades_df, statements_df, listed_info_df
 
     def process_pipeline(
-        self, 
-        price_df: pl.DataFrame, 
+        self,
+        price_df: pl.DataFrame,
         topix_df: Optional[pl.DataFrame] = None,
         trades_df: Optional[pl.DataFrame] = None,
         statements_df: Optional[pl.DataFrame] = None,
-        listed_info_df: Optional[pl.DataFrame] = None
+        listed_info_df: Optional[pl.DataFrame] = None,
+        *,
+        weekly_margin_df: Optional[pl.DataFrame] = None,
+        enable_margin_weekly: bool = False,
+        margin_weekly_lag: int = 3,
+        adv_window_days: int = 20,
     ) -> tuple:
         """Process the complete pipeline with technical indicators."""
         logger.info("=" * 60)
@@ -781,6 +786,19 @@ class JQuantsPipelineV3:
             logger.info(f"  財務諸表データを結合中: {len(statements_df)}レコード")
             df = self.builder.add_statements_features(df, statements_df)
 
+        # Optional: margin weekly block（リークなしで日次へas‑of貼付）
+        if enable_margin_weekly:
+            if weekly_margin_df is not None and not weekly_margin_df.is_empty():
+                logger.info("  Adding margin weekly features (as‑of, T+lag)...")
+                df = self.builder.add_margin_weekly_block(
+                    df,
+                    weekly_margin_df,
+                    lag_bdays_weekly=margin_weekly_lag,
+                    adv_window_days=adv_window_days,
+                )
+            else:
+                logger.warning("  --enable-margin-weekly was set but no weekly margin data was provided")
+
         # 仕様エイリアスを適用（必須列名の保証）
         try:
             from gogooku3.features.alias_registry import apply_spec_aliases
@@ -802,13 +820,19 @@ class JQuantsPipelineV3:
         )
 
         # Save dataset
-        parquet_path, meta_path = self.builder.save_dataset(df, metadata)
-        csv_path = None  # CSV保存はオプション
-
+        parquet_path, csv_path, meta_path = self.builder.save_dataset(df, metadata)
         return df, metadata, (parquet_path, csv_path, meta_path)
 
     async def run(
-        self, use_jquants: bool = True, start_date: str = None, end_date: str = None
+        self,
+        use_jquants: bool = True,
+        start_date: str = None,
+        end_date: str = None,
+        *,
+        enable_margin_weekly: bool = False,
+        weekly_margin_parquet: Optional[str] = None,
+        margin_weekly_lag: int = 3,
+        adv_window_days: int = 20,
     ):
         """Run the optimized pipeline."""
         start_time = time.time()
@@ -849,7 +873,30 @@ class JQuantsPipelineV3:
         if statements_df is not None and not statements_df.is_empty():
             logger.info(f"  Including financial statements: {len(statements_df)} records")
             
-        df, metadata, file_paths = self.process_pipeline(price_df, topix_df, trades_df, statements_df, listed_info_df)
+        # Weekly margin parquet (optional)
+        weekly_margin_df = None
+        if weekly_margin_parquet:
+            try:
+                p = Path(weekly_margin_parquet)
+                if p.exists():
+                    weekly_margin_df = pl.read_parquet(p)
+                    logger.info(f"Loaded weekly margin parquet: {p} ({len(weekly_margin_df)} rows)")
+                else:
+                    logger.warning(f"weekly margin parquet not found: {p}")
+            except Exception as e:
+                logger.warning(f"Failed to read weekly margin parquet: {e}")
+
+        df, metadata, file_paths = self.process_pipeline(
+            price_df,
+            topix_df,
+            trades_df,
+            statements_df,
+            listed_info_df,
+            weekly_margin_df=weekly_margin_df,
+            enable_margin_weekly=enable_margin_weekly,
+            margin_weekly_lag=margin_weekly_lag,
+            adv_window_days=adv_window_days,
+        )
 
         # Step 3: Validate results
         logger.info("\nStep 3: Validating results...")
@@ -927,6 +974,30 @@ async def main():
         default=None,
         help="End date (YYYY-MM-DD, default: today)",
     )
+    # Margin weekly options
+    parser.add_argument(
+        "--enable-margin-weekly",
+        action="store_true",
+        help="Attach weekly margin interest features (requires parquet via --weekly-margin-parquet)",
+    )
+    parser.add_argument(
+        "--weekly-margin-parquet",
+        type=str,
+        default=None,
+        help="Path to weekly_margin_interest parquet (Code/Date/PublishedDate + volumes)",
+    )
+    parser.add_argument(
+        "--margin-weekly-lag",
+        type=int,
+        default=3,
+        help="Conservative publish lag in business days when PublishedDate is missing (default=3)",
+    )
+    parser.add_argument(
+        "--adv-window-days",
+        type=int,
+        default=20,
+        help="ADV window (days) for scaling the margin stocks (default=20)",
+    )
 
     args = parser.parse_args()
 
@@ -949,7 +1020,13 @@ async def main():
     # Run pipeline
     pipeline = JQuantsPipelineV3()
     df, metadata = await pipeline.run(
-        use_jquants=args.jquants, start_date=args.start_date, end_date=args.end_date
+        use_jquants=args.jquants,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        enable_margin_weekly=args.enable_margin_weekly,
+        weekly_margin_parquet=args.weekly_margin_parquet,
+        margin_weekly_lag=args.margin_weekly_lag,
+        adv_window_days=args.adv_window_days,
     )
 
     return df, metadata
