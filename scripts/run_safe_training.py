@@ -1,406 +1,78 @@
 #!/usr/bin/env python3
 """
-Gogooku3 Safe Training Pipeline
-統合実行スクリプト - 実データでの安全な学習実行
+Thin wrapper to run the modern SafeTrainingPipeline from gogooku3.
 
-実行内容:
-1. データ読み込み（ProductionDatasetOptimized）
-2. 高品質特徴量生成（QualityFinancialFeaturesGenerator）
-3. Cross-sectional正規化（CrossSectionalNormalizerV2）
-4. Walk-Forward分割（WalkForwardSplitterV2）
-5. GBMベースライン学習（LightGBMFinancialBaseline）
-6. グラフ構築（FinancialGraphBuilder）
-7. 性能レポート生成
+This script preserves the legacy CLI while delegating to
+gogooku3.training.safe_training_pipeline.SafeTrainingPipeline.
 """
 
+from __future__ import annotations
+
 import sys
-import os
 from pathlib import Path
-import pandas as pd
-import polars as pl
-import numpy as np
-import torch
-import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional
-import json
-import warnings
-import gc
-import psutil
-from tqdm import tqdm
-
-# プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root))
-
-# 改善コンポーネントをインポート
-try:
-    from src.data.safety.cross_sectional_v2 import CrossSectionalNormalizerV2
-    from src.data.safety.walk_forward_v2 import WalkForwardSplitterV2
-    from src.data.loaders.production_loader_v2_optimized import ProductionDatasetOptimized
-    from src.data.utils.graph_builder import FinancialGraphBuilder
-    from src.models.baseline.lightgbm_baseline import LightGBMFinancialBaseline
-    from src.features.quality_features import QualityFinancialFeaturesGenerator
-    from src.metrics.financial_metrics import FinancialMetrics
-    COMPONENTS_AVAILABLE = True
-    print("✅ All enhanced components loaded successfully")
-except ImportError as e:
-    print(f"❌ Component loading failed: {e}")
-    print("Please install required dependencies: pip install -r requirements.txt")
-    sys.exit(1)
-
-# ログ設定
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('safe_training.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# 警告抑制
-warnings.filterwarnings('ignore', category=FutureWarning)
-warnings.filterwarnings('ignore', category=UserWarning)
+from datetime import datetime
+import argparse
 
 
-class SafeTrainingPipeline:
-    """
-    安全な学習パイプライン
-    
-    データリークゼロを保証し、実データで高性能な金融ML学習を実行
-    """
-    
-    def __init__(
-        self,
-        data_dir: str = "data/raw/large_scale",
-        output_dir: str = "output",
-        experiment_name: str = "safe_training_pipeline",
-        memory_limit_gb: float = 8.0,
-        n_splits: int = 3,  # 実データなので軽量化
-        embargo_days: int = 20,
-        sequence_length: int = 60,
-        prediction_horizons: List[int] = [1, 5, 10, 20],
-        verbose: bool = True
-    ):
-        """
-        Args:
-            data_dir: データディレクトリ
-            output_dir: 出力ディレクトリ
-            experiment_name: 実験名
-            memory_limit_gb: メモリ制限
-            n_splits: Walk-Forward分割数
-            embargo_days: embargo期間
-            sequence_length: 系列長
-            prediction_horizons: 予測ホライズン
-            verbose: 詳細出力
-        """
-        self.data_dir = Path(data_dir)
-        self.output_dir = Path(output_dir)
-        self.experiment_name = experiment_name
-        self.memory_limit_gb = memory_limit_gb
-        self.n_splits = n_splits
-        self.embargo_days = embargo_days
-        self.sequence_length = sequence_length
-        self.prediction_horizons = prediction_horizons
-        self.verbose = verbose
-        
-        # 出力ディレクトリ作成
-        self.experiment_dir = self.output_dir / "experiments" / experiment_name
-        self.experiment_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 実行時間記録
-        self.start_time = datetime.now()
-        self.step_times = {}
-        
-        # 結果格納
-        self.results = {
-            'experiment_info': {
-                'name': experiment_name,
-                'start_time': self.start_time.isoformat(),
-                'config': {
-                    'n_splits': n_splits,
-                    'embargo_days': embargo_days,
-                    'sequence_length': sequence_length,
-                    'prediction_horizons': prediction_horizons,
-                    'memory_limit_gb': memory_limit_gb
-                }
-            },
-            'pipeline_results': {},
-            'performance_metrics': {},
-            'safety_validation': {}
-        }
-        
-        if self.verbose:
-            logger.info(f"SafeTrainingPipeline initialized: {experiment_name}")
-            logger.info(f"Data dir: {self.data_dir}")
-            logger.info(f"Output dir: {self.experiment_dir}")
-    
-    def _log_memory_usage(self, step_name: str):
-        """メモリ使用量をログ"""
-        memory = psutil.virtual_memory()
-        used_gb = memory.used / (1024**3)
-        percent = memory.percent
-        
-        if self.verbose:
-            logger.info(f"{step_name}: Memory usage = {used_gb:.1f}GB ({percent:.1f}%)")
-        
-        return {'used_gb': used_gb, 'percent': percent}
-    
-    def _log_step_time(self, step_name: str, start_time: datetime):
-        """ステップ実行時間をログ"""
-        elapsed = datetime.now() - start_time
-        self.step_times[step_name] = elapsed.total_seconds()
-        
-        if self.verbose:
-            logger.info(f"{step_name} completed in {elapsed.total_seconds():.1f} seconds")
-    
-    def step1_load_data(self) -> pl.DataFrame:
-        """Step 1: データ読み込み"""
-        if self.verbose:
-            logger.info("🔄 Step 1: Loading data with ProductionDatasetOptimized...")
-        
-        step_start = datetime.now()
-        
-        # データファイル検索
-        parquet_files = list(self.data_dir.glob("*.parquet"))
-        if not parquet_files:
-            raise FileNotFoundError(f"No parquet files found in {self.data_dir}")
-        
-        logger.info(f"Found {len(parquet_files)} parquet files")
-        for file in parquet_files:
-            size_mb = file.stat().st_size / (1024 * 1024)
-            logger.info(f"  {file.name}: {size_mb:.1f}MB")
-        
-        # 最大ファイル（通常はml_dataset_full.parquet）を使用
-        target_file = max(parquet_files, key=lambda f: f.stat().st_size)
-        logger.info(f"Using primary dataset: {target_file.name}")
-        
-        # Polarsで直接読み込み（高速化）
-        try:
-            df = pl.read_parquet(target_file)
-            logger.info(f"Data loaded: {len(df)} rows × {len(df.columns)} columns")
-            
-            # 基本統計
-            if 'date' in df.columns:
-                date_range = f"{df['date'].min()} to {df['date'].max()}"
-                unique_dates = df['date'].n_unique()
-                logger.info(f"Date range: {date_range} ({unique_dates} unique dates)")
-            
-            if 'code' in df.columns:
-                unique_codes = df['code'].n_unique()
-                logger.info(f"Unique stocks: {unique_codes}")
-            
-        except Exception as e:
-            logger.error(f"Failed to load data: {e}")
-            raise
-        
-        self._log_memory_usage("Data loading")
-        self._log_step_time("step1_load_data", step_start)
-        
-        return df
-    
-    def step2_generate_quality_features(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Step 2: 高品質特徴量生成"""
-        if self.verbose:
-            logger.info("✨ Step 2: Generating quality features...")
-        
-        step_start = datetime.now()
-        
-        try:
-            generator = QualityFinancialFeaturesGenerator(
-                use_cross_sectional_quantiles=True,
-                sigma_threshold=2.0,
-                verbose=self.verbose
-            )
-            
-            original_cols = len(df.columns)
-            enhanced_df = generator.generate_quality_features(df)
-            final_cols = len(enhanced_df.columns)
-            
-            logger.info(f"Features enhanced: {original_cols} → {final_cols} (+{final_cols - original_cols})")
-            
-            # 品質検証
-            validation = generator.validate_features(enhanced_df)
-            self.results['pipeline_results']['feature_validation'] = validation
-            
-            if validation['zero_variance_features']:
-                logger.warning(f"Found {len(validation['zero_variance_features'])} zero variance features")
-            
-            if validation['high_missing_features']:
-                logger.warning(f"Found {len(validation['high_missing_features'])} high missing features")
-            
-        except Exception as e:
-            logger.error(f"Feature generation failed: {e}")
-            enhanced_df = df  # フォールバック
-        
-        self._log_memory_usage("Feature generation")
-        self._log_step_time("step2_generate_quality_features", step_start)
-        
-        return enhanced_df
-    
-    def step3_normalize_data(self, df: pl.DataFrame) -> Dict[str, pl.DataFrame]:
-        """Step 3: Cross-sectional正規化"""
-        if self.verbose:
-            logger.info("🛡️ Step 3: Cross-sectional normalization...")
-        
-        step_start = datetime.now()
-        
-        try:
-            # 日付でソート
-            df = df.sort('date')
-            
-            # 訓練/テスト分割（時系列順）
-            # Manual date split since quantile doesn't work on datetime in Polars
-            all_dates = df['date'].unique().sort()
-            split_idx = int(len(all_dates) * 0.7)
-            split_date = all_dates[split_idx]
-            
-            train_df = df.filter(pl.col('date') <= split_date)
-            test_df = df.filter(pl.col('date') > split_date)
-            
-            logger.info(f"Split data: train={len(train_df)}, test={len(test_df)}")
-            
-            # 正規化実行
-            normalizer = CrossSectionalNormalizerV2(
-                cache_stats=True,
-                robust_outlier_clip=5.0
-            )
-            
-            train_norm = normalizer.fit_transform(train_df)
-            test_norm = normalizer.transform(test_df)
-            
-            # 検証
-            validation = normalizer.validate_transform(train_norm)
-            self.results['safety_validation']['normalization'] = validation
-            
-            logger.info(f"Normalization completed: {len(validation['warnings'])} warnings")
-            
-            normalized_data = {
-                'train': train_norm,
-                'test': test_norm,
-                'normalizer': normalizer
-            }
-            
-        except Exception as e:
-            logger.error(f"Normalization failed: {e}")
-            # フォールバック: 単純分割
-            split_idx = int(len(df) * 0.7)
-            normalized_data = {
-                'train': df[:split_idx],
-                'test': df[split_idx:],
-                'normalizer': None
-            }
-        
-        self._log_memory_usage("Normalization")
-        self._log_step_time("step3_normalize_data", step_start)
-        
-        return normalized_data
-    
-    def step4_walk_forward_validation(self, data: Dict[str, pl.DataFrame]) -> Dict[str, Any]:
-        """Step 4: Walk-Forward検証"""
-        if self.verbose:
-            logger.info("📅 Step 4: Walk-Forward validation setup...")
-        
-        step_start = datetime.now()
-        
-        try:
-            # 訓練データでWalk-Forward分割を設定
-            train_df = data['train']
-            
-            splitter = WalkForwardSplitterV2(
-                n_splits=self.n_splits,
-                embargo_days=self.embargo_days,
-                min_train_days=365,  # 1年以上の訓練データを確保
-                min_test_days=60,   # より長いテスト期間でデータ重複を防ぐ
-                verbose=self.verbose
-            )
-            
-            # 分割検証
-            validation = splitter.validate_split(train_df)
-            splits = list(splitter.split(train_df))
-            
-            logger.info(f"Generated {len(splits)} valid splits")
-            
-            if validation['overlaps']:
-                logger.warning(f"Found {len(validation['overlaps'])} overlaps (should be 0)")
-            
-            # ギャップ確認
-            avg_gap = np.mean([g['gap_days'] for g in validation['gaps']])
-            logger.info(f"Average embargo gap: {avg_gap:.1f} days")
-            
-            self.results['safety_validation']['walk_forward'] = validation
-            
-            walk_forward_result = {
-                'splitter': splitter,
-                'splits': splits,
-                'validation': validation
-            }
-            
-        except Exception as e:
-            logger.error(f"Walk-Forward setup failed: {e}")
-            walk_forward_result = {'splitter': None, 'splits': [], 'validation': {}}
-        
-        self._log_memory_usage("Walk-Forward setup")
-        self._log_step_time("step4_walk_forward_validation", step_start)
-        
-        return walk_forward_result
-    
-    def step5_gbm_baseline(self, data: Dict[str, pl.DataFrame], wf_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Step 5: GBMベースライン学習"""
-        if self.verbose:
-            logger.info("🌲 Step 5: GBM baseline training...")
-        
-        step_start = datetime.now()
-        
-        try:
-            # データをpandasに変換（LightGBM用）
-            train_df = data['train'].to_pandas()
-            
-            # 軽量設定でGBM学習
-            lgb_params = {
-                'objective': 'regression',
-                'metric': 'rmse',
-                'num_leaves': 31,
-                'learning_rate': 0.1,
-                'n_estimators': 50,  # 実データなので軽量化
-                'verbosity': -1,
-                'seed': 42
-            }
-            
-            # Use only feat_ret_1d which is available in the data
-            baseline = LightGBMFinancialBaseline(
-                prediction_horizons=[1],  # Only use 1d since only feat_ret_1d is available
-                lgb_params=lgb_params,
-                n_splits=min(3, self.n_splits),  # 軽量化
-                embargo_days=self.embargo_days,
-                target_columns=['feat_ret_1d'],  # Use available target column
-                normalize_features=True,
-                verbose=self.verbose
-            )
-            
-            # 学習実行（サンプリングして高速化）
-            sample_size = min(50000, len(train_df))  # 5万行まで
-            if len(train_df) > sample_size:
-                train_sample = train_df.sample(n=sample_size, random_state=42)
-                logger.info(f"Sampled {sample_size} rows for GBM training (from {len(train_df)})")
-            else:
-                train_sample = train_df
-            
-            baseline.fit(train_sample)
-            
-            # 性能評価
-            performance = baseline.evaluate_performance()
-            results_summary = baseline.get_results_summary()
-            
-            logger.info("GBM baseline performance:")
-            for horizon, metrics in performance.items():
-                logger.info(
-                    f"  {horizon}: IC={metrics['mean_ic']:.3f}±{metrics['std_ic']:.3f}, "
-                    f"RankIC={metrics['mean_rank_ic']:.3f}±{metrics['std_rank_ic']:.3f}"
-                )
-            
+def _find_dataset_in_dir(data_dir: Path) -> Path:
+    cands = sorted(data_dir.glob("*.parquet"))
+    if not cands:
+        raise FileNotFoundError(f"No parquet files found in {data_dir}")
+    # Use largest as primary
+    return max(cands, key=lambda p: p.stat().st_size)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run SafeTrainingPipeline")
+    parser.add_argument("--data-dir", default="output", help="Directory containing parquet dataset")
+    parser.add_argument("--output-dir", default="output", help="Output root directory")
+    parser.add_argument(
+        "--experiment-name",
+        default=f"safe_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        help="Experiment name",
+    )
+    parser.add_argument("--memory-limit", type=float, default=8.0, help="Memory limit in GB")
+    parser.add_argument("--n-splits", type=int, default=3, help="Walk-Forward splits")
+    parser.add_argument("--embargo-days", type=int, default=20, help="Embargo days")
+    parser.add_argument("--verbose", action="store_true", help="Verbose output")
+    args = parser.parse_args()
+
+    data_dir = Path(args.data_dir)
+    dataset_path = _find_dataset_in_dir(data_dir)
+
+    try:
+        from gogooku3.training.safe_training_pipeline import SafeTrainingPipeline
+    except Exception as e:
+        print(f"❌ Failed to import modern pipeline: {e}")
+        print("Please install package (pip install -e .) and ensure gogooku3 is importable.")
+        sys.exit(2)
+
+    # Compose output directory under experiments/<experiment_name>
+    output_dir = Path(args.output_dir) / "experiments" / args.experiment_name
+
+    pipeline = SafeTrainingPipeline(
+        data_path=dataset_path,
+        output_dir=output_dir,
+        experiment_name=args.experiment_name,
+        verbose=args.verbose,
+    )
+
+    try:
+        results = pipeline.run_pipeline(
+            n_splits=args.n_splits,
+            embargo_days=args.embargo_days,
+            memory_limit_gb=args.memory_limit,
+            save_results=True,
+        )
+        ok = bool(results)
+        sys.exit(0 if ok else 1)
+    except Exception as e:
+        print(f"❌ Pipeline execution failed: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
             # 特徴量重要度
             feature_importance = {}
             for horizon in self.prediction_horizons:
