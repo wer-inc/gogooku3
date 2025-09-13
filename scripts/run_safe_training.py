@@ -13,6 +13,12 @@ from pathlib import Path
 from datetime import datetime
 import argparse
 
+# Ensure src/ is on sys.path so that 'gogooku3' can be imported without editable install
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_PATH = REPO_ROOT / "src"
+if str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
+
 
 def _find_dataset_in_dir(data_dir: Path) -> Path:
     cands = sorted(data_dir.glob("*.parquet"))
