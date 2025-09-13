@@ -22,8 +22,13 @@ class CrossSectionalNormalizer:
     def _infer_features(self, df: pl.DataFrame) -> list[str]:
         """Infer numeric feature columns automatically."""
         ignore = {self.date_col, self.code_col}
-        return [c for c, dt in zip(df.columns, df.dtypes) 
-                if c not in ignore and pl.datatypes.is_numeric(dt)]
+        numeric_types = {
+            pl.Float64, pl.Float32,
+            pl.Int64, pl.Int32, pl.Int16, pl.Int8,
+            pl.UInt64, pl.UInt32, pl.UInt16, pl.UInt8,
+        }
+        return [c for c, dt in zip(df.columns, df.dtypes)
+                if c not in ignore and dt in numeric_types]
 
     def fit(self, train: pl.DataFrame) -> "CrossSectionalNormalizer":
         """Fit normalizer on training data only."""
