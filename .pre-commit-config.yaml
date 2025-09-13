@@ -45,12 +45,36 @@ repos:
     rev: 1.7.5
     hooks:
       - id: bandit
-        args: ["-c", "pyproject.toml"]
+        args: ["-c", ".bandit"]
         additional_dependencies: ["bandit[toml]"]
 
   # Custom hooks for Gogooku3
   - repo: local
     hooks:
+      - id: markdown-links
+        name: Check Markdown local links/images
+        entry: python scripts/ci/check_markdown_links.py
+        language: python
+        pass_filenames: false
+        always_run: true
+      - id: forbid-env-files-tracked
+        name: Forbid tracked .env* files (except examples)
+        entry: python scripts/ci/check_no_env_files.py
+        language: python
+        pass_filenames: false
+        always_run: true
+      - id: legacy-config-paths
+        name: Forbid legacy config paths in docs/code
+        entry: python scripts/ci/check_config_paths.py
+        language: python
+        pass_filenames: false
+        always_run: true
+      - id: audit-unused-fast
+        name: Audit unused files (fast, strict)
+        entry: python scripts/audit_unused.py --fast --strict --no-output
+        language: python
+        pass_filenames: false
+        always_run: true
       - id: forbid-logs-in-repo
         name: Prevent log files from being committed
         entry: bash -c 'find . -name "*.log" -o -name "*.out" -o -name "*.err" | grep -v ".git" | head -1 | grep -q . && echo "ERROR: Log files detected in repository!" && exit 1 || exit 0'
