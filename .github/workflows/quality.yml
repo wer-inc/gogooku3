@@ -51,3 +51,40 @@ jobs:
           GOGOOKU_LINKCHECK_ALLOW: img.shields.io,github.com,python.org,pytorch.org,developer.nvidia.com,pypi.org,readthedocs.io
         run: |
           python scripts/ci/check_external_links.py
+
+  cli-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install package (dev)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -r requirements.txt
+      - name: gogooku3 train --dry-run
+        run: |
+          gogooku3 train --dry-run
+
+  dataset-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install polars
+        run: |
+          python -m pip install --upgrade pip
+          pip install polars
+      - name: Run dataset sanity (optional)
+        env:
+          ALLOW_MISSING: "1"
+          DATASET_GLOB: output/*.parquet
+        run: |
+          python scripts/ci/dataset_sanity.py

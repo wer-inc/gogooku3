@@ -31,3 +31,4 @@ configs/market_code_config.yaml
 configs/sector_mappings/sector17_map.example.json
 configs/sector_mappings/sector33_map.example.json
 scripts/_archive/complete_atft_training.sh
+scripts/performance_optimizer.py  # moved to archive/2025-09-13/syntax_errors/
