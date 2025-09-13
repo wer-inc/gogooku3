@@ -125,6 +125,11 @@ def _parse_args() -> argparse.Namespace:
         default="33",
         help="Comma-separated sector levels for TE (choices: 33,17)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show planned steps and exit",
+    )
     return parser.parse_args()
 
 
@@ -137,6 +142,18 @@ async def main() -> int:
     Follows the documented 3-step flow and persists artifacts under `output/`.
     """
     args = _parse_args()
+
+    # Dry-run: print planned steps and exit successfully
+    if getattr(args, "dry_run", False):
+        print("=" * 60)
+        print("[DRY-RUN] Build fully enriched 5y dataset")
+        print("Steps:")
+        print(" 0) Prepare trade-spec (JQuants optional or local fallback)")
+        print(" 1) Run base optimized pipeline (prices + TA + statements)")
+        print(" 2) Enrich with TOPIX, flow, and sector features")
+        print(" 3) Save ml_dataset_latest_full.parquet (+ metadata)")
+        print("=" * 60)
+        return 0
 
     # Determine date range (default last ~5 years)
     end_dt = (
