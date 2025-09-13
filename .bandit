@@ -1,0 +1,12 @@
+exclude_dirs:
+  - tests
+  - archive
+  - _logs
+  - output
+  - runs
+  - mlruns
+  - wandb
+skips:
+  - B101  # use of assert (acceptable in tests)
+severity: MEDIUM
+confidence: MEDIUM
