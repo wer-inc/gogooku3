@@ -84,6 +84,29 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Optional TOPIX parquet for offline enrichment",
     )
+    # Indices OHLC integration (spreads/breadth)
+    parser.add_argument(
+        "--enable-indices",
+        action="store_true",
+        help="Enable indices OHLC features (spreads, breadth)",
+    )
+    parser.add_argument(
+        "--indices-parquet",
+        type=Path,
+        default=None,
+        help="Optional indices OHLC parquet (Date, Code, Open, High, Low, Close)",
+    )
+    parser.add_argument(
+        "--indices-codes",
+        type=str,
+        default=None,
+        help="Comma-separated index codes to fetch via API (e.g., 0000,0040,0500,0501,0502,0075,8100,8200,0028,002D,8501,8502,8503)",
+    )
+    parser.add_argument(
+        "--disable-halt-mask",
+        action="store_true",
+        help="Disable special halt-day masking (2020-10-01) for range-derived features",
+    )
     parser.add_argument(
         "--statements-parquet",
         type=Path,
@@ -383,6 +406,25 @@ async def main() -> int:
             om = cfg.get("option_market") or {}
             if isinstance(om, dict) and not args.attach_nk225_option_market and isinstance(om.get("attach"), bool):
                 args.attach_nk225_option_market = bool(om.get("attach"))
+            # Indices (market/sector) features
+            ind = cfg.get("indices") or {}
+            if isinstance(ind, dict):
+                if not args.enable_indices and isinstance(ind.get("enable"), bool):
+                    args.enable_indices = bool(ind.get("enable"))
+                # codes can be list or comma-separated string
+                if not getattr(args, "indices_codes", None) and ind.get("codes"):
+                    codes = ind.get("codes")
+                    if isinstance(codes, (list, tuple)):
+                        args.indices_codes = ",".join(str(c).strip() for c in codes if str(c).strip())
+                    elif isinstance(codes, str):
+                        args.indices_codes = codes
+                # parquet path
+                if not getattr(args, "indices_parquet", None) and ind.get("parquet"):
+                    p = Path(str(ind.get("parquet")))
+                    args.indices_parquet = p
+                # special day mask
+                if not getattr(args, "disable_halt_mask", False) and isinstance(ind.get("disable_halt_mask"), bool):
+                    args.disable_halt_mask = bool(ind.get("disable_halt_mask"))
         except Exception as e:
             logger.warning(f"Failed to load config YAML {args.config}: {e}")
 
@@ -662,6 +704,9 @@ async def main() -> int:
         end_date=end_date,
         trades_spec_path=trades_spec_path,
         topix_parquet=args.topix_parquet,
+        enable_indices=args.enable_indices,
+        indices_parquet=args.indices_parquet,
+        indices_codes=[s.strip() for s in (getattr(args, "indices_codes", None) or "").split(",") if s.strip()] or None,
         statements_parquet=args.statements_parquet,
         listed_info_parquet=listed_info_path,
         enable_futures=not getattr(args, "disable_futures", False),
@@ -711,6 +756,7 @@ async def main() -> int:
         graph_threshold=getattr(args, "graph_threshold", 0.3),
         graph_max_k=getattr(args, "graph_max_k", 10),
         graph_cache_dir=str(args.graph_cache_dir) if args.graph_cache_dir else None,
+        disable_halt_mask=getattr(args, "disable_halt_mask", False),
     )
     logger.info("Full enriched dataset saved")
     logger.info(f"  Dataset : {pq_path}")

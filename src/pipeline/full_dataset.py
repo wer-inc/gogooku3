@@ -106,6 +106,10 @@ async def enrich_and_save(
     end_date: str,
     trades_spec_path: Path | None = None,
     topix_parquet: Path | None = None,
+    # Multi-index OHLC integration (optional)
+    enable_indices: bool = False,
+    indices_parquet: Path | None = None,
+    indices_codes: list[str] | None = None,
     statements_parquet: Path | None = None,
     listed_info_parquet: Path | None = None,
     # Futures integration (optional)
@@ -161,6 +165,8 @@ async def enrich_and_save(
     graph_threshold: float = 0.3,
     graph_max_k: int = 10,
     graph_cache_dir: str | None = None,
+    # Special days handling
+    disable_halt_mask: bool = False,
 ) -> tuple[Path, Path]:
     """Attach TOPIX + statements + flow then save with symlinks.
 
@@ -270,6 +276,70 @@ async def enrich_and_save(
     except Exception:
         pass
 
+    # ----- Optional: indices OHLC fetch/load and attach day-level features -----
+    indices_df = None
+    if enable_indices:
+        # Prefer provided parquet
+        if indices_parquet and Path(indices_parquet).exists():
+            try:
+                indices_df = pl.read_parquet(indices_parquet)
+                logger.info(f"Loaded indices from parquet: {indices_parquet}")
+            except Exception as e:
+                logger.warning(f"Failed to read indices parquet: {e}")
+        # Try API if not present and jquants enabled
+        if indices_df is None and jquants and (indices_codes is not None and len(indices_codes) > 0):
+            try:
+                import os
+                from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+                email = os.getenv("JQUANTS_AUTH_EMAIL", "")
+                password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
+                if email and password:
+                    fetcher_idx = JQuantsAsyncFetcher(email, password)
+                    async with aiohttp.ClientSession() as session:
+                        await fetcher_idx.authenticate(session)
+                        logger.info(
+                            f"Fetching indices OHLC {start_date} → {end_date} for {len(indices_codes)} codes"
+                        )
+                        indices_df = await fetcher_idx.fetch_indices_ohlc(
+                            session, start_date, end_date, codes=indices_codes
+                        )
+                        if indices_df is not None and not indices_df.is_empty():
+                            try:
+                                out = (
+                                    output_dir
+                                    / f"indices_history_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                                )
+                                indices_df.write_parquet(out)
+                                logger.info(f"Saved indices parquet: {out}")
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.warning(f"Indices API fetch failed: {e}")
+        # Auto-discover local indices parquet by coverage
+        if indices_df is None:
+            try:
+                import re
+                best_path = None
+                best_score = -1
+                start_int = int(start_date.replace('-', ''))
+                end_int = int(end_date.replace('-', ''))
+                for cand in sorted((Path('output')).glob('indices_history_*.parquet')):
+                    m = re.search(r"indices_history_(\d{8})_(\d{8})\.parquet$", cand.name)
+                    if not m:
+                        continue
+                    s, e = int(m.group(1)), int(m.group(2))
+                    encloses = (s <= start_int and e >= end_int)
+                    coverage = e - s
+                    score = (coverage + (10000000 if encloses else 0))
+                    if score > best_score:
+                        best_score = score
+                        best_path = cand
+                if best_path is not None:
+                    indices_df = pl.read_parquet(best_path)
+                    logger.info(f"Loaded indices from local: {best_path}")
+            except Exception as e:
+                logger.warning(f"Indices local selection failed: {e}")
+
     # Statements attach if not present
     if not any(c.startswith("stmt_") for c in df.columns):
         stm_path: Path | None = None
@@ -331,6 +401,24 @@ async def enrich_and_save(
             logger.info("Sector enrichment completed (sector33/MarketCode/CompanyName)")
         except Exception as e:
             logger.warning(f"Failed sector enrichment: {e}")
+
+    # Attach indices aggregates if available
+    try:
+        if enable_indices and indices_df is not None and not indices_df.is_empty():
+            df = builder.add_index_features(df, indices_df, mask_halt_day=(not disable_halt_mask))
+            logger.info("Index day-level features attached (spreads, breadth)")
+        elif enable_indices:
+            logger.info("Indices enabled but no data found; skipping")
+    except Exception as e:
+        logger.warning(f"Indices attach skipped: {e}")
+
+    # Sector index join (via listed_info mapping to sector index code)
+    try:
+        if enable_indices and indices_df is not None and not indices_df.is_empty() and listed_info_df is not None and not listed_info_df.is_empty():
+            df = builder.add_sector_index_features(df, indices_df, listed_info_df, prefix="sect_", mask_halt_day=(not disable_halt_mask))
+            logger.info("Sector index features attached (via Sector33 → index mapping)")
+    except Exception as e:
+        logger.warning(f"Sector index attach skipped: {e}")
 
     # Sector cross-sectional features (Phase 2): relies on sector column if present
     try:
@@ -1025,8 +1113,8 @@ async def enrich_and_save(
             "stmt_yoy_sales","stmt_yoy_op","stmt_yoy_np","stmt_opm","stmt_npm","stmt_progress_op","stmt_progress_np",
             "stmt_rev_fore_op","stmt_rev_fore_np","stmt_rev_fore_eps","stmt_rev_div_fore","stmt_roe","stmt_roa",
             "stmt_change_in_est","stmt_nc_flag","stmt_imp_statement","stmt_days_since_statement",
-            # 6) Flags (8)
-            "is_rsi2_valid","is_ema5_valid","is_ema10_valid","is_ema20_valid","is_ema200_valid","is_valid_ma","is_flow_valid","is_stmt_valid",
+            # 6) Flags (+ special market day)
+            "is_rsi2_valid","is_ema5_valid","is_ema10_valid","is_ema20_valid","is_ema200_valid","is_valid_ma","is_flow_valid","is_stmt_valid","is_halt_20201001",
             # 7) Optional: Margin weekly block (kept if present; not added as Nulls)
             "margin_long_tot","margin_short_tot","margin_total_gross",
             "margin_credit_ratio","margin_imbalance",
@@ -1199,6 +1287,18 @@ async def enrich_and_save(
             dx = ((plus_di - minus_di).abs() / ((plus_di + minus_di) + eps)) * 100.0
             adx14 = dx.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code")
             df = df.with_columns(adx14.alias("adx_14"))
+
+        # Mask range-derived features on 2020-10-01 (TSE halt day)
+        if not disable_halt_mask:
+            try:
+                mask_date = pl.date(2020, 10, 1)
+                range_cols = [c for c in ["atr_14", "high_low_ratio", "close_to_high", "close_to_low"] if c in df.columns]
+                if range_cols:
+                    df = df.with_columns([
+                        pl.when(pl.col("Date") == mask_date).then(None).otherwise(pl.col(c)).alias(c) for c in range_cols
+                    ])
+            except Exception:
+                pass
 
         # Section normalization fallback
         if "section_norm" not in df.columns and "Section" in df.columns:

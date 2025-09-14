@@ -185,6 +185,7 @@ class SafeJoinerV2:
         # as-of結合
         stmt_cols = [col for col in stm.columns if col.startswith("stmt_")]
 
+        # Fix column conflicts: exclude "Code" from right DataFrame since it's used in "by" parameter
         result = base_df.join_asof(
             stm.select(["Code", "effective_date"] + stmt_cols),
             left_on="Date",
@@ -192,6 +193,12 @@ class SafeJoinerV2:
             by="Code",
             strategy="backward"
         )
+
+        # Clean up potential column conflicts
+        if "Code_right" in result.columns:
+            result = result.drop("Code_right")
+        if "Date_right" in result.columns:
+            result = result.drop("Date_right")
 
         # インパルスと経過日数
         if "effective_date" in result.columns:
@@ -305,6 +312,12 @@ class SafeJoinerV2:
                     right_on="effective_start",
                     strategy="backward"
                 )
+
+                # Clean up potential column conflicts
+                if "Date_right" in section_df.columns:
+                    section_df = section_df.drop("Date_right")
+                if "effective_start_right" in section_df.columns:
+                    section_df = section_df.drop("effective_start_right")
 
                 # 区間内チェック
                 for col in flow_cols:

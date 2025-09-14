@@ -64,6 +64,7 @@
 **Flags**
 - is_rsi2_valid, is_ema5_valid, is_ema10_valid, is_ema20_valid, is_ema200_valid.
 - is_valid_ma, is_flow_valid, is_stmt_valid.
+- is_halt_20201001: 2020-10-01 (TSE full-day halt) dummy flag. Range-derived features can be masked on that day; see CLI option `--disable-halt-mask` to turn off masking.
 
 **Targets**
 - target_1d/5d/10d/20d: Forward returns.
@@ -121,6 +122,126 @@
   - CLI: `--enable-sector-cs --sector-cs-cols "rsi_14,returns_10d"`
   - YAML: via `--config` (`sector_cs.include_cols`).
 - Module: `src/gogooku3/features/sector_cross_sectional.py`.
+
+**Indices (Market & Sector) Features**
+
+- Description: Multi-index OHLC integration from J-Quants `/indices` endpoint (e.g., TOPIX 0000; 33 industry 0040–0060; market segments 0500/0501/0502; style 8100/8200; size 0028/002D; REIT composite/segments 0075/8501–8503; Topix‑17 0080–008F).
+- Daily market features (joined on Date):
+  - Spreads (default set):
+    - Style/Size/Market: `spread_8100_8200` (Value−Growth), `spread_0028_002D` (Large−Small), `spread_0500_0501` (Prime−Standard), `spread_0500_0502` (Prime−Growth)
+    - Topix‑17 (examples): `spread_0084_0083` (医薬品−素材・化学), `spread_0088_0085` (電機・精密−自動車・輸送機), `spread_0089_0081` (情報通信・サービスその他−エネルギー資源), `spread_0082_0087` (建設・資材−機械), `spread_008E_008F` (銀行−金融(除く銀行)), `spread_008C_008D` (商社・卸売−小売), `spread_008B_008A` (運輸・物流−電力・ガス)
+    - REIT segments: `spread_8501_8502` (オフィス−住宅), `spread_8501_8503` (オフィス−商業・物流等), `spread_8502_8503` (住宅−商業・物流等)
+    - Additional size/style pairs: `spread_002A_002B`, `spread_002E_002F`, `spread_002C_002F`, `spread_0029_002B`, `spread_812C_822C`, `spread_812D_822D`
+    - You can add pairs via `configs/index_mappings/index_spreads.json`.
+  - Breadth: `breadth_sector_gt_ma50` (33 industries above 50D SMA), `breadth_t17_gt_ma50` (Topix‑17 above 50D SMA).
+  - Special day: `is_halt_20201001` (dummy; same value for all rows by Date).
+- Sector index features (joined via `(Date, SectorIndexCode)`):
+  - Prefix `sect_` columns:
+    - Returns/momentum: `sect_r_1d`, `sect_r_5d`, `sect_r_oc` (Open→Close), `sect_r_co` (prev Close→Open), `sect_z_r1d_60`
+    - Volatility/range: `sect_vol_20d`, `sect_atr14`, `sect_natr14`
+    - Positioning: `sect_z_close_20`
+    - Relative to benchmark: `sect_rel_r_5d`, `sect_rel_vol_20d`
+    - Equity vs sector relative: `sect_rel_to_sec_5d` (equity 5D return minus sector 5D return)
+  - Relative to sector: `sect_rel_to_sec_5d` = stock 5D return minus sector 5D return.
+- Volatility estimators (index-level, 20D annualized): `idx_pk_vol_20d`, `idx_gk_vol_20d`, `idx_rs_vol_20d`.
+- Sector mapping: prefers `Sector33Name` → index code via `configs/index_mappings/sector33_name_to_index.json`; falls back to `Sector33Code` → name via `configs/index_mappings/sector33_code_to_name.json`.
+- Enabling (pipeline): `scripts/pipelines/run_full_dataset.py`
+  - `--enable-indices` to attach indices features.
+  - `--indices-parquet` for offline indices parquet.
+  - `--indices-codes` to fetch specific index codes via API.
+  - `--disable-halt-mask` to turn off 2020-10-01 range masking on both index and equity features.
+
+**Sector 33 Index Codes (Quick Reference)**
+
+| Code | Name |
+|------|------|
+| 0040 | 水産・農林業 |
+| 0041 | 鉱業 |
+| 0042 | 建設業 |
+| 0043 | 食料品 |
+| 0044 | 繊維製品 |
+| 0045 | パルプ・紙 |
+| 0046 | 化学 |
+| 0047 | 医薬品 |
+| 0048 | 石油・石炭製品 |
+| 0049 | ゴム製品 |
+| 004A | ガラス・土石製品 |
+| 004B | 鉄鋼 |
+| 004C | 非鉄金属 |
+| 004D | 金属製品 |
+| 004E | 機械 |
+| 004F | 電気機器 |
+| 0050 | 輸送用機器 |
+| 0051 | 精密機器 |
+| 0052 | その他製品 |
+| 0053 | 電気・ガス業 |
+| 0054 | 陸運業 |
+| 0055 | 海運業 |
+| 0056 | 空運業 |
+| 0057 | 倉庫・運輸関連業 |
+| 0058 | 情報・通信業 |
+| 0059 | 卸売業 |
+| 005A | 小売業 |
+| 005B | 銀行業 |
+| 005C | 証券・商品先物取引業 |
+| 005D | 保険業 |
+| 005E | その他金融業 |
+| 005F | 不動産業 |
+| 0060 | サービス業 |
+
+**Topix‑17 Index Codes (Quick Reference)**
+
+| Code | Name |
+|------|------|
+| 0080 | TOPIX‑17 食品 |
+| 0081 | TOPIX‑17 エネルギー資源 |
+| 0082 | TOPIX‑17 建設・資材 |
+| 0083 | TOPIX‑17 素材・化学 |
+| 0084 | TOPIX‑17 医薬品 |
+| 0085 | TOPIX‑17 自動車・輸送機 |
+| 0086 | TOPIX‑17 鉄鋼・非鉄 |
+| 0087 | TOPIX‑17 機械 |
+| 0088 | TOPIX‑17 電機・精密 |
+| 0089 | TOPIX‑17 情報通信・サービスその他 |
+| 008A | TOPIX‑17 電力・ガス |
+| 008B | TOPIX‑17 運輸・物流 |
+| 008C | TOPIX‑17 商社・卸売 |
+| 008D | TOPIX‑17 小売 |
+| 008E | TOPIX‑17 銀行 |
+| 008F | TOPIX‑17 金融（除く銀行） |
+| 0090 | TOPIX‑17 不動産 |
+
+**Market Segment Index Codes (Quick Reference)**
+
+| Code | Name |
+|------|------|
+| 0500 | 東証プライム市場指数 |
+| 0501 | 東証スタンダード市場指数 |
+| 0502 | 東証グロース市場指数 |
+
+**Style/Size Index Codes (Quick Reference)**
+
+| Code | Name |
+|------|------|
+| 8100 | TOPIX バリュー |
+| 8200 | TOPIX グロース |
+| 0028 | TOPIX Core30 |
+| 0029 | TOPIX Large 70 |
+| 002A | TOPIX 100 |
+| 002B | TOPIX Mid400 |
+| 002C | TOPIX 500 |
+| 002D | TOPIX Small |
+| 002E | TOPIX 1000 |
+| 002F | TOPIX Small500 |
+
+**REIT Index Codes (Quick Reference)**
+
+| Code | Name |
+|------|------|
+| 0075 | 東証REIT（総合） |
+| 8501 | 東証REIT オフィス指数 |
+| 8502 | 東証REIT 住宅指数 |
+| 8503 | 東証REIT 商業・物流等指数 |
 
 **Graph (Correlation Network) Features**
 

@@ -22,6 +22,90 @@ import aiohttp
 import polars as pl
 
 
+def enforce_code_column_types(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Systematically enforce Code column type consistency for all dataframes.
+
+    This fixes the issue: "is_in cannot check for String values in Float64 data"
+    by ensuring all Code columns are cast to Utf8 type.
+
+    Args:
+        df: Input DataFrame that may have Code column
+
+    Returns:
+        DataFrame with Code column cast to pl.Utf8 if Code column exists
+    """
+    if df.is_empty():
+        return df
+
+    cols = df.columns
+    if "Code" in cols:
+        df = df.with_columns(pl.col("Code").cast(pl.Utf8))
+
+    # Also handle LocalCode if present (used in some data sources)
+    if "LocalCode" in cols:
+        df = df.with_columns(pl.col("LocalCode").cast(pl.Utf8))
+
+    return df
+
+
+def clean_join_conflicts(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Clean up common column conflicts that occur during join operations.
+
+    This function removes duplicate columns that commonly occur during join_asof
+    and join operations, such as Code_right, Date_right, etc.
+
+    Args:
+        df: DataFrame that may contain join conflict columns
+
+    Returns:
+        DataFrame with conflict columns removed
+    """
+    if df.is_empty():
+        return df
+
+    # Common conflict suffixes from Polars joins
+    conflict_suffixes = ["_right", "_left", "_y"]
+
+    # Common base column names that cause conflicts
+    base_columns = ["Code", "Date", "Section", "effective_date", "effective_start", "effective_end"]
+
+    columns_to_drop = []
+
+    for base_col in base_columns:
+        for suffix in conflict_suffixes:
+            conflict_col = f"{base_col}{suffix}"
+            if conflict_col in df.columns:
+                columns_to_drop.append(conflict_col)
+
+    if columns_to_drop:
+        df = df.drop(columns_to_drop)
+
+    return df
+
+
+def read_parquet_with_consistent_code_types(file_path: str | os.PathLike) -> pl.DataFrame:
+    """
+    Read parquet file and ensure Code column has consistent Utf8 type.
+
+    This wrapper function prevents type inconsistency issues when loading
+    previously saved parquet files that might have Code column as Float64.
+
+    Args:
+        file_path: Path to the parquet file
+
+    Returns:
+        DataFrame with Code column cast to pl.Utf8 if Code column exists
+
+    Usage:
+        # Instead of: df = pl.read_parquet(path)
+        df = read_parquet_with_consistent_code_types(path)
+    """
+    df = pl.read_parquet(file_path)
+    return enforce_code_column_types(df)
+
+
 class JQuantsAsyncFetcher:
     """Asynchronous J-Quants API fetcher with basic pagination handling."""
 
@@ -32,6 +116,42 @@ class JQuantsAsyncFetcher:
         self.id_token: str | None = None
         self.max_concurrent = max_concurrent or int(os.getenv("MAX_CONCURRENT_FETCH", 32))
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
+
+    async def _ensure_session_health(self, session: aiohttp.ClientSession) -> bool:
+        """
+        Check if session is healthy and can be used for API calls.
+
+        Returns:
+            True if session is healthy, False if session is closed/unusable
+        """
+        try:
+            return not session.closed
+        except Exception:
+            return False
+
+    async def _safe_api_call(self, session: aiohttp.ClientSession, api_func, *args, **kwargs):
+        """
+        Safely execute API call with session health checking.
+
+        If session is closed, raises a clear exception that the caller can handle.
+
+        Args:
+            session: aiohttp ClientSession
+            api_func: The API function to call
+            *args, **kwargs: Arguments to pass to api_func
+
+        Returns:
+            Result of api_func call
+
+        Raises:
+            RuntimeError: If session is closed and cannot be used
+        """
+        if not await self._ensure_session_health(session):
+            raise RuntimeError(
+                "Session is closed. The caller should create a new session and re-authenticate."
+            )
+
+        return await api_func(session, *args, **kwargs)
 
     async def authenticate(self, session: aiohttp.ClientSession) -> None:
         """Authenticate and store ID token."""
@@ -75,7 +195,7 @@ class JQuantsAsyncFetcher:
                 df = MarketCodeFilter.filter_stocks(df)
         except Exception:
             pass
-        return df
+        return enforce_code_column_types(df)
 
     async def get_trades_spec(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -126,7 +246,132 @@ class JQuantsAsyncFetcher:
             df = df.with_columns(pl.col("Date").str.strptime(pl.Date, strict=False))
         if "Close" in df.columns:
             df = df.with_columns(pl.col("Close").cast(pl.Float64))
-        return df.sort("Date")
+        return enforce_code_column_types(df.sort("Date"))
+
+    async def fetch_indices_ohlc(
+        self,
+        session: aiohttp.ClientSession,
+        from_date: str,
+        to_date: str,
+        codes: list[str] | None = None,
+    ) -> pl.DataFrame:
+        """Fetch multiple index OHLC series via /indices endpoint.
+
+        Args:
+            session: aiohttp client session (authenticated)
+            from_date: inclusive start (YYYY-MM-DD or YYYYMMDD)
+            to_date: inclusive end (YYYY-MM-DD or YYYYMMDD)
+            codes: optional list of index codes to fetch. If None, attempts
+                   to fetch all available within date range (API dependent).
+
+        Returns:
+            Polars DataFrame with columns: Code, Date, Open, High, Low, Close
+            and any additional fields returned by API. Types are normalized.
+        """
+        if not self.id_token:
+            raise RuntimeError("authenticate() must be called first")
+
+        headers = {"Authorization": f"Bearer {self.id_token}"}
+        base_url = f"{self.base_url}/indices"
+
+        async def _fetch_for_code(code: str) -> list[dict]:
+            rows: list[dict] = []
+            pagination_key: str | None = None
+            while True:
+                params = {"code": code, "from": from_date, "to": to_date}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                async with session.get(base_url, headers=headers, params=params) as resp:
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                # Try common container keys
+                items = (
+                    (data.get("indices") if isinstance(data, dict) else None)
+                    or (data.get("data") if isinstance(data, dict) else None)
+                    or []
+                )
+                if items:
+                    # Ensure Code is set if API omits it in each row
+                    for it in items:
+                        it.setdefault("Code", code)
+                    rows.extend(items)
+                pagination_key = data.get("pagination_key") if isinstance(data, dict) else None
+                if not pagination_key:
+                    break
+            return rows
+
+        async def _fetch_all() -> list[dict]:
+            """Attempt range fetch for all indices if codes not provided."""
+            rows: list[dict] = []
+            pagination_key: str | None = None
+            while True:
+                params = {"from": from_date, "to": to_date}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                async with session.get(base_url, headers=headers, params=params) as resp:
+                    if resp.status != 200:
+                        break
+                    data = await resp.json()
+                items = (
+                    (data.get("indices") if isinstance(data, dict) else None)
+                    or (data.get("data") if isinstance(data, dict) else None)
+                    or []
+                )
+                if items:
+                    rows.extend(items)
+                pagination_key = data.get("pagination_key") if isinstance(data, dict) else None
+                if not pagination_key:
+                    break
+            return rows
+
+        all_rows: list[dict] = []
+        if codes:
+            # Concurrency-limited fan-out by code
+            async def _runner(code: str) -> None:
+                async with self.semaphore:
+                    try:
+                        rows = await _fetch_for_code(code)
+                        if rows:
+                            all_rows.extend(rows)
+                    except Exception:
+                        pass
+
+            tasks = [asyncio.create_task(_runner(c)) for c in codes]
+            if tasks:
+                await asyncio.gather(*tasks)
+        else:
+            try:
+                all_rows = await _fetch_all()
+            except Exception:
+                all_rows = []
+
+        if not all_rows:
+            return pl.DataFrame()
+
+        df = pl.DataFrame(all_rows)
+        cols = df.columns
+
+        def _dtcol(name: str) -> pl.Expr:
+            if name not in cols:
+                return pl.lit(None, dtype=pl.Date).alias(name)
+            return pl.col(name).str.strptime(pl.Date, strict=False).alias(name)
+
+        def _fcol(name: str) -> pl.Expr:
+            if name not in cols:
+                return pl.lit(None, dtype=pl.Float64).alias(name)
+            return pl.col(name).cast(pl.Float64, strict=False).alias(name)
+
+        out = df.with_columns([
+            pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+            _dtcol("Date"),
+            _fcol("Open"),
+            _fcol("High"),
+            _fcol("Low"),
+            _fcol("Close"),
+        ])
+
+        return enforce_code_column_types(out.sort(["Code", "Date"])) if {"Code", "Date"}.issubset(out.columns) else enforce_code_column_types(out)
 
     async def get_weekly_margin_interest(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -207,7 +452,7 @@ class JQuantsAsyncFetcher:
             pl.col("ShortStandardizedMarginTradeVolume").cast(pl.Float64) if "ShortStandardizedMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("ShortStandardizedMarginTradeVolume"),
             (pl.col("IssueType").cast(pl.Int8) if "IssueType" in cols else pl.lit(None, dtype=pl.Int8)).alias("IssueType"),
         ]).drop_nulls(subset=["Code", "Date"]).sort(["Code", "Date"])
-        return out
+        return enforce_code_column_types(out)
 
     async def get_futures_daily(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -442,7 +687,7 @@ class JQuantsAsyncFetcher:
             .sort(["Code", "ApplicationDate"])
         )
 
-        return out
+        return enforce_code_column_types(out)
 
     async def get_futures_daily(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -1254,3 +1499,89 @@ class JQuantsAsyncFetcher:
         )
 
         return deduped
+
+    # ========== Safe Session Management Wrapper Methods ==========
+
+    async def safe_get_futures_daily(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """
+        Safe wrapper for get_futures_daily with session health checking.
+
+        This method handles session closure issues common with futures API calls.
+        """
+        try:
+            if not await self._ensure_session_health(session):
+                raise RuntimeError("Session is closed - requires new session and re-authentication")
+
+            return await self.get_futures_daily(session, from_date, to_date)
+
+        except Exception as e:
+            # Log specific error details for futures API
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Futures API call failed: {e}")
+            raise
+
+    async def safe_get_short_selling(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """
+        Safe wrapper for get_short_selling with session health checking.
+
+        This method handles session closure issues common with short selling API calls.
+        """
+        try:
+            if not await self._ensure_session_health(session):
+                raise RuntimeError("Session is closed - requires new session and re-authentication")
+
+            return await self.get_short_selling(session, from_date, to_date)
+
+        except Exception as e:
+            # Log specific error details for short selling API
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Short selling API call failed: {e}")
+            raise
+
+    async def safe_get_short_selling_positions(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """
+        Safe wrapper for get_short_selling_positions with session health checking.
+
+        This method handles session closure issues common with short selling positions API calls.
+        """
+        try:
+            if not await self._ensure_session_health(session):
+                raise RuntimeError("Session is closed - requires new session and re-authentication")
+
+            return await self.get_short_selling_positions(session, from_date, to_date)
+
+        except Exception as e:
+            # Log specific error details for short selling positions API
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Short selling positions API call failed: {e}")
+            raise
+
+    async def safe_get_sector_short_selling(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """
+        Safe wrapper for get_sector_short_selling with session health checking.
+
+        This method handles session closure issues common with sector short selling API calls.
+        """
+        try:
+            if not await self._ensure_session_health(session):
+                raise RuntimeError("Session is closed - requires new session and re-authentication")
+
+            return await self.get_sector_short_selling(session, from_date, to_date)
+
+        except Exception as e:
+            # Log specific error details for sector short selling API
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Sector short selling API call failed: {e}")
+            raise
