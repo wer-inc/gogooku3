@@ -6897,6 +6897,9 @@ def train(config: DictConfig) -> None:
     )
     logger.info(f"Final model saved to {final_path}")
 
+    # HPO Metrics Output for Optuna Integration
+    _maybe_output_hpo_metrics(final_config, best_val_main, run_manifest)
+
     # Optional: Run Safe Walk-Forward + Embargo evaluation after training
     def _maybe_run_safe_eval(_cfg):
         try:
@@ -6957,6 +6960,128 @@ def train(config: DictConfig) -> None:
                 logger.warning(f"[SafeEval] pipeline run failed: {_e}")
         except Exception:
             pass
+
+    _maybe_run_safe_eval(final_config)
+
+
+def _maybe_output_hpo_metrics(final_config, best_val_loss, run_manifest):
+    """Output HPO metrics for Optuna integration if HPO environment variables are set"""
+    try:
+        # Check if running under HPO optimization
+        trial_number = os.getenv("HPO_TRIAL_NUMBER")
+        trial_dir = os.getenv("HPO_TRIAL_DIR")
+
+        if not trial_number or not trial_dir:
+            return  # Not running under HPO
+
+        trial_dir = Path(trial_dir)
+        trial_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"🎯 HPO Trial {trial_number}: Outputting metrics for Optuna")
+
+        # Extract metrics from run manifest
+        hpo_metrics = {
+            'trial_number': int(trial_number),
+            'best_val_loss': float(best_val_loss) if best_val_loss != float("inf") else None,
+            'training_completed': True,
+            'final_epoch': int(getattr(final_config.train.scheduler, 'total_epochs', 0)),
+            'timestamp': time.time()
+        }
+
+        # Extract multi-horizon metrics if available in run_manifest
+        if run_manifest and 'training_history' in run_manifest:
+            history = run_manifest['training_history']
+
+            # Get final epoch metrics
+            if history:
+                final_epoch_data = history[-1] if isinstance(history, list) else history
+
+                # Extract RankIC and Sharpe metrics for each horizon
+                rank_ic = {}
+                sharpe = {}
+
+                # Look for horizon-specific metrics in the final epoch data
+                if isinstance(final_epoch_data, dict):
+                    for key, value in final_epoch_data.items():
+                        # Extract RankIC metrics
+                        if 'rank_ic' in key.lower() or 'rankic' in key.lower():
+                            # Parse horizon from key (e.g., "val_rank_ic_1d" -> "1d")
+                            for horizon in ['1d', '5d', '10d', '20d']:
+                                if horizon in key:
+                                    rank_ic[horizon] = float(value) if value is not None else 0.0
+                                    break
+
+                        # Extract Sharpe metrics
+                        elif 'sharpe' in key.lower():
+                            for horizon in ['1d', '5d', '10d', '20d']:
+                                if horizon in key:
+                                    sharpe[horizon] = float(value) if value is not None else 0.0
+                                    break
+
+                    # Also extract general validation metrics
+                    for metric_key in ['val_loss', 'val_sharpe', 'val_ic', 'val_rank_ic', 'val_hit_rate']:
+                        if metric_key in final_epoch_data:
+                            hpo_metrics[metric_key] = float(final_epoch_data[metric_key])
+
+                # Store horizon-specific metrics
+                if rank_ic:
+                    hpo_metrics['rank_ic'] = rank_ic
+                if sharpe:
+                    hpo_metrics['sharpe'] = sharpe
+
+        # Look for recent metrics files as fallback
+        if 'rank_ic' not in hpo_metrics or 'sharpe' not in hpo_metrics:
+            try:
+                # Try to find recent metrics from JSON files
+                metrics_files = list(Path("output/metrics").glob("epoch_*.json"))
+                if metrics_files:
+                    # Get the latest metrics file
+                    latest_metrics = max(metrics_files, key=lambda p: p.stat().st_mtime)
+                    with open(latest_metrics, 'r') as f:
+                        metrics_data = json.load(f)
+
+                    # Extract metrics
+                    if isinstance(metrics_data, dict):
+                        for key in ['val_sharpe', 'val_ic', 'val_rank_ic']:
+                            if key in metrics_data:
+                                hpo_metrics[key] = float(metrics_data[key])
+
+            except Exception as e:
+                logger.debug(f"Could not extract fallback metrics: {e}")
+
+        # Save HPO metrics to trial directory
+        hpo_metrics_path = trial_dir / "hpo_metrics.json"
+        with open(hpo_metrics_path, 'w') as f:
+            json.dump(hpo_metrics, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"✅ HPO metrics saved to: {hpo_metrics_path}")
+        logger.info(f"   Best val loss: {hpo_metrics.get('best_val_loss', 'N/A')}")
+        logger.info(f"   RankIC metrics: {len(hpo_metrics.get('rank_ic', {}))}")
+        logger.info(f"   Sharpe metrics: {len(hpo_metrics.get('sharpe', {}))}")
+
+        # Also create a simple summary for quick parsing
+        summary_path = trial_dir / "trial_summary.txt"
+        with open(summary_path, 'w') as f:
+            f.write(f"Trial: {trial_number}\n")
+            f.write(f"Status: {'COMPLETED' if hpo_metrics['training_completed'] else 'FAILED'}\n")
+            f.write(f"Best Val Loss: {hpo_metrics.get('best_val_loss', 'N/A')}\n")
+            f.write(f"Final Epoch: {hpo_metrics['final_epoch']}\n")
+
+            if 'rank_ic' in hpo_metrics:
+                f.write("RankIC:\n")
+                for horizon, value in hpo_metrics['rank_ic'].items():
+                    f.write(f"  {horizon}: {value:.4f}\n")
+
+            if 'sharpe' in hpo_metrics:
+                f.write("Sharpe:\n")
+                for horizon, value in hpo_metrics['sharpe'].items():
+                    f.write(f"  {horizon}: {value:.4f}\n")
+
+        logger.info(f"📋 Trial summary saved to: {summary_path}")
+
+    except Exception as e:
+        logger.warning(f"Failed to output HPO metrics: {e}")
+
 
     _maybe_run_safe_eval(final_config)
 
