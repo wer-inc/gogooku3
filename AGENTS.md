@@ -3,34 +3,34 @@
 ## Project Structure & Module Organization
 - Code: `src/gogooku3/` — CLI, utils, data, features, models, graph, training, compat.
 - Pipelines: `scripts/` (e.g., `run_safe_training.py`, `train_atft.py`, `pipelines/`).
-- Configs: `configs/` for model/data/training/hardware YAMLs.
+- Configs: `configs/` — model/data/training/hardware YAMLs.
 - Tests: `tests/` with fixtures in `tests/fixtures/`.
 - Runtime: `data/`, `output/`, `cache/`, `_logs/` (do not commit `_logs/`).
 - Orchestration: `dagster_repo/`, `docker-compose*.yml`.
 
 ## Build, Test, and Development Commands
-- Setup: `pip install -e ".[dev]"` or `make setup`.
-- Train (CLI): `gogooku3 train --config configs/atft/train/production.yaml`.
-- Safe training: `python scripts/run_safe_training.py --n-splits 2 --memory-limit 6`.
-- Fast tests: `pytest -m "not slow"`.
-- Coverage: `pytest --cov=src/gogooku3 --cov-report=term-missing`.
-- Quality: `pre-commit run --all-files`; `ruff check src/ --fix`; `black .`; `mypy src/gogooku3`; `bandit -r src/`.
+- Setup: `pip install -e ".[dev]"` or `make setup` — install dev deps in editable mode.
+- Train (CLI): `gogooku3 train --config configs/atft/train/production.yaml` — run main training.
+- Safe training: `python scripts/run_safe_training.py --n-splits 2 --memory-limit 6` — CV-safe pipeline.
+- Fast tests: `pytest -m "not slow"` — run unit/integration tests excluding slow.
+- Coverage: `pytest --cov=src/gogooku3 --cov-report=term-missing` — show missing lines.
+- Quality: `pre-commit run --all-files`; `ruff check src/ --fix`; `black .`; `mypy src/gogooku3`; `bandit -r src/` — hooks, lint/format, type, security.
 
 ## Coding Style & Naming Conventions
-- Python 3.10+, 4-space indents, Black (88 chars), isort (`profile=black`), Ruff.
-- Add type annotations; `mypy` is strict on `src/gogooku3/`.
+- Python 3.10+, 4-space indents; Black (88), isort (`profile=black`), Ruff.
+- Type hints required; `mypy` is strict on `src/gogooku3/`.
 - Names: modules `snake_case.py`; classes `CamelCase`; functions/vars `snake_case`.
 
 ## Testing Guidelines
-- Framework: `pytest` with markers `unit`, `integration`, `slow`, `smoke`.
-- Locations: `tests/unit/`, `tests/integration/`; fixtures in `tests/fixtures/`.
+- Framework: `pytest`; markers: `unit`, `integration`, `slow`, `smoke`.
+- Location: tests under `tests/`; fixtures in `tests/fixtures/`.
 - Naming: `test_<module>.py::TestClass::test_case`.
-- Deterministic tests; no network in unit tests; gate external calls with `requires_api`.
-- Before PRs: run coverage and quality commands above.
+- Deterministic; no network in unit tests; gate external calls with `requires_api`.
+- Before PR: run coverage and all quality checks above.
 
 ## Commit & Pull Request Guidelines
 - Commits: Conventional Commits (e.g., `feat(training): add EMA teacher`).
-- PRs: explain what/why, link issues (`Closes #123`), call out config/docs changes, attach key metrics/plots, ensure CI is green.
+- PRs: explain what/why; link issues (`Closes #123`); call out config/docs changes; attach key metrics/plots; ensure CI is green.
 
 ## Security & Configuration Tips (Optional)
 - Secrets via env vars: `JQUANTS_AUTH_EMAIL`, `JQUANTS_AUTH_PASSWORD`, `WANDB_API_KEY` (never commit `.env`).
@@ -39,5 +39,5 @@
 
 ## Architecture Overview (Optional)
 - Core: ATFT-GAT-FAN multi-horizon forecasting.
-- Training: 7-step SafeTrainingPipeline with strict leakage prevention.
+- Training: 7-step `SafeTrainingPipeline` with strict leakage prevention.
 

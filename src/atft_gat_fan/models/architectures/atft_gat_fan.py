@@ -189,10 +189,21 @@ class ATFT_GAT_FAN(pl.LightningModule):
         )
 
     def _build_prediction_head(self):
-        """予測ヘッドの構築（Multi-horizon対応）"""
-        # Multi-horizon prediction headを使用
-        use_multi_horizon = getattr(self.config.training, 'use_multi_horizon_heads', True)
+        """予測ヘッドの構築（Multi-horizon / RegimeMoE 対応）"""
+        # Detect requested head type; default to multi-horizon for backward compatibility
+        head_type = getattr(self.config.model.prediction_head, 'type', 'multi_horizon')
 
+        if head_type == 'regime_moe':
+            # Lazy import to avoid circulars
+            from .regime_moe import RegimeMoEPredictionHeads
+
+            return RegimeMoEPredictionHeads(
+                hidden_size=self.config.model.hidden_size,
+                config=self.config.model
+            )
+
+        # Multi-horizon prediction head（従来）
+        use_multi_horizon = getattr(self.config.training, 'use_multi_horizon_heads', True)
         if use_multi_horizon:
             return MultiHorizonPredictionHeads(
                 hidden_size=self.config.model.hidden_size,
@@ -211,6 +222,14 @@ class ATFT_GAT_FAN(pl.LightningModule):
         quantiles = self.config.model.prediction_head.output.quantile_prediction.quantiles
         self.quantile_loss = QuantileLoss(quantiles)
 
+        # 中央分位点のインデックス（Rank損失用のスコア抽出）
+        try:
+            # 最も0.5に近い分位点を採用
+            q_list = list(float(q) for q in quantiles)
+            self._median_q_idx = min(range(len(q_list)), key=lambda i: abs(q_list[i] - 0.5))
+        except Exception:
+            self._median_q_idx = 0
+
         # 補助損失
         if self.config.train.loss.auxiliary.sharpe_loss.enabled:
             self.sharpe_loss = SharpeLoss(
@@ -218,15 +237,68 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 min_periods=self.config.train.loss.auxiliary.sharpe_loss.min_periods
             )
 
+        # ランキング損失（任意）
+        try:
+            rk_cfg = self.config.train.loss.auxiliary.ranking_loss
+            if getattr(rk_cfg, 'enabled', False):
+                from ....losses.pairwise_rank_loss import PairwiseRankLoss
+
+                scale = float(getattr(rk_cfg, 'scale', getattr(rk_cfg, 'margin', 5.0)))
+                topk = int(getattr(rk_cfg, 'topk', 0))
+                self.rank_loss = PairwiseRankLoss(s=scale, topk=topk)
+                self.rank_loss_weight = float(getattr(rk_cfg, 'weight', 0.1))
+            else:
+                self.rank_loss = None
+                self.rank_loss_weight = 0.0
+        except Exception:
+            self.rank_loss = None
+            self.rank_loss_weight = 0.0
+
+        # 意思決定層（任意）
+        try:
+            dl_cfg = self.config.train.loss.auxiliary.decision_layer
+            if getattr(dl_cfg, 'enabled', False):
+                from ....losses.decision_layer import DecisionLayer, DecisionLossConfig
+
+                self.decision_layer = DecisionLayer(DecisionLossConfig(
+                    alpha=float(getattr(dl_cfg, 'alpha', 2.0)),
+                    method=str(getattr(dl_cfg, 'method', 'tanh')),
+                    sharpe_weight=float(getattr(dl_cfg, 'sharpe_weight', 0.1)),
+                    pos_l2=float(getattr(dl_cfg, 'pos_l2', 1e-3)),
+                    fee_abs=float(getattr(dl_cfg, 'fee_abs', 0.0)),
+                    detach_signal=bool(getattr(dl_cfg, 'detach_signal', True)),
+                ))
+
+                # Decision Layer スケジューラ（有効な場合）
+                sched_cfg = self.config.train.loss.auxiliary.get('decision_layer_schedule', {})
+                if sched_cfg.get('enabled', False):
+                    from ....training.decision_scheduler import create_decision_scheduler_from_config
+                    self.decision_scheduler = create_decision_scheduler_from_config(
+                        self.config, self.decision_layer
+                    )
+                    logger.info("Decision Layer scheduler enabled")
+                else:
+                    self.decision_scheduler = None
+            else:
+                self.decision_layer = None
+                self.decision_scheduler = None
+        except Exception as e:
+            logger.warning(f"Decision Layer initialization failed: {e}")
+            self.decision_layer = None
+            self.decision_scheduler = None
+
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        フォワードパス
+        Enhanced forward pass with regime features support
         """
         # 入力データの展開
         dynamic_features = batch['dynamic_features']  # [batch, seq_len, n_features]
         static_features = batch.get('static_features', None)  # [batch, n_static]
         edge_index = batch.get('edge_index', None)
         edge_attr = batch.get('edge_attr', None)
+
+        # レジーム特徴量（J-UVX + KAMA/VIDYA + market regimes）
+        regime_features = batch.get('regime_features', None)  # [batch, regime_dim]
 
         # 入力投影
         x = self.input_projection(dynamic_features)
@@ -248,8 +320,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
         # 適応正規化
         normalized_features = self.adaptive_norm(combined_features)
 
-        # 予測（Multi-horizon対応）
-        predictions = self.prediction_head(normalized_features)
+        # 予測（Multi-horizon対応 + レジーム特徴量対応）
+        if hasattr(self.prediction_head, 'forward') and 'regime_features' in self.prediction_head.forward.__code__.co_varnames:
+            # Enhanced RegimeMoE prediction head
+            predictions = self.prediction_head(normalized_features, regime_features)
+        else:
+            # Standard prediction head (backward compatibility)
+            predictions = self.prediction_head(normalized_features)
 
         # Multi-horizon vs single-horizon の結果統一
         if isinstance(predictions, dict):
@@ -260,14 +337,39 @@ class ATFT_GAT_FAN(pl.LightningModule):
             output_type = 'single_horizon'
             predictions = {'single': predictions}
 
-        return {
+        # 出力にレジーム特徴量も含める（分析用）
+        output = {
             'predictions': predictions,
             'features': normalized_features,
             'output_type': output_type
         }
 
+        if regime_features is not None:
+            output['regime_features'] = regime_features
+
+        # MoEゲート分析情報（利用可能な場合）
+        if hasattr(self.prediction_head, 'get_gate_analysis'):
+            try:
+                gate_analysis = self.prediction_head.get_gate_analysis()
+                output['gate_analysis'] = gate_analysis
+            except:
+                pass
+
+        return output
+
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int):
         """学習ステップ（Multi-horizon対応）"""
+        # Decision Layer スケジューラ更新（エポック開始時に一度だけ）
+        if (hasattr(self, 'decision_scheduler') and self.decision_scheduler is not None and
+            batch_idx == 0):  # エポックの最初のバッチでのみ更新
+            current_epoch = self.current_epoch if hasattr(self, 'current_epoch') else 0
+            scheduled_params = self.decision_scheduler.step(current_epoch, self.decision_layer)
+
+            # スケジュールされたパラメータをログ
+            for param_name, param_value in scheduled_params.items():
+                self.log(f'decision_schedule/{param_name}', param_value,
+                        on_step=False, on_epoch=True, prog_bar=False)
+
         outputs = self.forward(batch)
         predictions = outputs['predictions']
         output_type = outputs['output_type']
@@ -330,8 +432,50 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 total_loss += sharpe_loss
                 self.log('train_sharpe_loss', sharpe_loss, prog_bar=False)
 
+        # Rank損失（主ホライズンの中央値スコアでペアワイズ）
+        if output_type == 'multi_horizon' and self.rank_loss is not None and self.rank_loss_weight > 0:
+            primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
+            if primary_horizon in predictions and primary_horizon in batch:
+                pred_q = predictions[primary_horizon]  # [B, n_quantiles]
+                if pred_q.dim() == 2 and pred_q.size(1) > self._median_q_idx:
+                    z = pred_q[:, self._median_q_idx]
+                    y = batch[primary_horizon].view(-1)
+                    rk = self.rank_loss(z.view(-1), y.view(-1)) * self.rank_loss_weight
+                    total_loss = total_loss + rk
+                    self.log('train_rank_loss', rk.detach(), prog_bar=False)
+
+        # 意思決定層ロス（主ホライズンの分位点）
+        if output_type == 'multi_horizon' and self.decision_layer is not None:
+            primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
+            if primary_horizon in predictions and primary_horizon in batch:
+                q = predictions[primary_horizon]  # [B, n_quantiles]
+                y = batch[primary_horizon].view(-1)
+                dl_total, comps = self.decision_layer(q, y)
+                total_loss = total_loss + dl_total
+                # 重要メトリクスをログ
+                self.log('train_decision_sharpe', comps['decision_sharpe'], prog_bar=False)
+                self.log('train_pos_l2', comps['decision_pos_l2'], prog_bar=False)
+                self.log('train_fee', comps['decision_fee'], prog_bar=False)
+
         # ログ記録
         self.log('train_loss', total_loss, prog_bar=True)
+
+        # MoE load-balance正則化（オプション）
+        try:
+            moe_cfg = getattr(self.config.model.prediction_head, 'moe', None)
+            lb_lambda = float(getattr(moe_cfg, 'balance_lambda', 0.0)) if moe_cfg is not None else 0.0
+        except Exception:
+            lb_lambda = 0.0
+
+        if lb_lambda > 0 and hasattr(self.prediction_head, 'last_gate_probs'):
+            # Lazy import to avoid cost when not needed
+            try:
+                from .regime_moe import moe_load_balance_penalty
+                lb_loss = lb_lambda * moe_load_balance_penalty(self.prediction_head.last_gate_probs)
+                total_loss = total_loss + lb_loss
+                self.log('train_moe_lb_loss', lb_loss, prog_bar=False)
+            except Exception:
+                pass
 
         return total_loss
 

@@ -1,0 +1,122 @@
+# @package model.prediction_head
+# Enhanced Regime-aware Mixture-of-Experts configuration for ATFT-GAT-FAN
+
+type: regime_moe
+
+# MoE Configuration
+moe:
+  # Number of experts (specialized for different market conditions)
+  experts: 3
+
+  # Expert specialization:
+  # Expert 0: Low volatility specialist (conservative predictions)
+  # Expert 1: High volatility specialist (aggressive predictions)
+  # Expert 2: Balanced specialist (general market conditions)
+
+  # Gating mechanism
+  temperature: 1.0        # Gating temperature (lower = more decisive)
+  dropout: 0.1           # Dropout for regularization
+
+  # Regime Features Enhancement
+  use_regime_features: true
+  regime_feature_dim: 12  # J-UVX(6) + KAMA/VIDYA(2) + Market Regime(4)
+
+  # Load balancing regularization
+  balance_lambda: 0.01   # Weight for load balance penalty
+
+# Output Configuration
+output:
+  quantile_prediction:
+    quantiles: [0.05, 0.25, 0.5, 0.75, 0.95]  # 5 quantiles for risk modeling
+    enforce_ordering: true  # Sort quantiles to prevent crossing
+
+# Architecture Configuration
+architecture:
+  hidden_layers: [128, 64]  # Hidden dimensions for expert heads
+  dropout: 0.15             # Expert-specific dropout
+
+# Expert Initialization
+expert_init:
+  # Different initialization gains for expert specialization
+  low_vol_expert_gain: 0.5   # Conservative weights for low volatility
+  high_vol_expert_gain: 1.5  # Aggressive weights for high volatility
+  balanced_expert_gain: 1.0  # Standard weights for balanced conditions
+
+# Regime Feature Configuration
+regime_features:
+  # J-UVX (Japan Uncertainty & Volatility Index) components
+  juvx:
+    # Volatility structure weights
+    rv_short_weight: 0.1      # Short-term realized volatility
+    rv_medium_weight: 0.15    # Medium-term realized volatility
+    rv_long_weight: 0.1       # Long-term realized volatility
+    rv_slope_weight: 0.05     # Volatility term structure slope
+
+    # Cross-sectional dispersion weights
+    cross_dispersion_weight: 0.2      # Market-wide dispersion
+    dispersion_volatility_weight: 0.1 # Uncertainty of uncertainty
+
+    # Momentum uncertainty weights
+    momentum_uncertainty_weight: 0.1   # Momentum direction consistency
+    momentum_agreement_weight: 0.1     # Multi-timeframe agreement
+
+    # Price efficiency weights (optional, if price data available)
+    price_efficiency_weight: 0.1      # Variance ratio inefficiency
+
+    # J-UVX scaling to VIX-like range [10, 50]
+    min_value: 10.0
+    max_value: 50.0
+
+  # Adaptive Moving Averages
+  adaptive_ma:
+    # KAMA (Kaufman's Adaptive Moving Average)
+    kama:
+      period: 21
+      fast_sc: 2.0   # Fast smoothing constant
+      slow_sc: 30.0  # Slow smoothing constant
+
+    # VIDYA (Variable Index Dynamic Average)
+    vidya:
+      period: 21
+      use_volume: true  # Use volume if available, else price volatility
+
+  # Market Regime Classification
+  market_regime:
+    # Volatility regime threshold (percentile)
+    volatility_threshold: 0.7  # Above 70th percentile = high volatility
+
+    # Trend regime threshold (percentile)
+    trend_threshold: 0.6       # Above 60th percentile = strong trend
+
+    # Windows for regime calculation
+    volatility_window: 21      # Rolling window for volatility calculation
+    trend_window: 21          # Rolling window for trend strength
+
+# Feature Processing
+feature_processing:
+  # Normalization method for regime features
+  normalization: "percentile_rank"  # Options: "z_score", "percentile_rank", "min_max"
+
+  # Handle missing values
+  fill_missing: true
+  missing_value: 0.0
+
+  # Feature smoothing (optional)
+  smoothing:
+    enabled: false
+    window: 5
+    method: "ewm"  # exponential weighted moving average
+
+# Analysis and Interpretation
+interpretability:
+  # Log gate probabilities for analysis
+  log_gate_probs: true
+
+  # Log regime feature contributions
+  log_regime_contributions: true
+
+  # Expert utilization tracking
+  track_expert_usage: true
+
+  # Attention weight logging (if using attention in gate)
+  log_attention_weights: true

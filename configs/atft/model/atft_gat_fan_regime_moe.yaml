@@ -1,0 +1,13 @@
+# @package model
+# Minimal override to enable RegimeMoE prediction head.
+name: ATFT_GAT_FAN
+architecture: atft_gat_fan
+
+prediction_head:
+  type: regime_moe
+  moe:
+    experts: 3
+    temperature: 2.0
+    dropout: 0.1
+    balance_lambda: 0.01  # For external regularization use (not applied by default)
+
