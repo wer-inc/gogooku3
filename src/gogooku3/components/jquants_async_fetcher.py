@@ -193,21 +193,12 @@ class JQuantsAsyncFetcher:
         df = pl.DataFrame(all_rows)
         # Normalize dtypes
         def _dtcol(name: str) -> pl.Expr:
-            col = pl.col(name)
-            return (
-                pl.when(col.dtype == pl.Utf8)
-                .then(col.str.strptime(pl.Date, strict=False))
-                .otherwise(col.cast(pl.Date))
-                .alias(name)
-            )
+            return pl.col(name).str.strptime(pl.Date, strict=False).alias(name)
         cols = df.columns
         out = df.with_columns([
             pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
             _dtcol("Date") if "Date" in cols else pl.lit(None, dtype=pl.Date).alias("Date"),
-            pl.when(pl.col("PublishedDate").is_not_null())
-            .then(_dtcol("PublishedDate"))
-            .otherwise(pl.lit(None, dtype=pl.Date))
-            .alias("PublishedDate"),
+            _dtcol("PublishedDate") if "PublishedDate" in cols else pl.lit(None, dtype=pl.Date).alias("PublishedDate"),
             pl.col("LongMarginTradeVolume").cast(pl.Float64) if "LongMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("LongMarginTradeVolume"),
             pl.col("ShortMarginTradeVolume").cast(pl.Float64) if "ShortMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("ShortMarginTradeVolume"),
             pl.col("LongNegotiableMarginTradeVolume").cast(pl.Float64) if "LongNegotiableMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("LongNegotiableMarginTradeVolume"),
@@ -402,25 +393,16 @@ class JQuantsAsyncFetcher:
 
         # Handle date columns
         def _dtcol(name: str) -> pl.Expr:
-            col = pl.col(name)
-            return (
-                pl.when(col.dtype == pl.Utf8)
-                .then(col.str.strptime(pl.Date, strict=False))
-                .otherwise(col.cast(pl.Date))
-                .alias(name)
-            )
+            return pl.col(name).str.strptime(pl.Date, strict=False).alias(name)
 
         # Handle numeric columns that may contain "-" for missing values
         def _float_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Float64).alias(name)
             return (
-                pl.when(pl.col(name) == "-")
+                pl.when((pl.col(name) == "-") | (pl.col(name) == "*") | (pl.col(name) == "") | (pl.col(name).is_null()))
                 .then(None)
-                .when(pl.col(name) == "*")
-                .then(None)
-                .otherwise(pl.col(name))
-                .cast(pl.Float64)
+                .otherwise(pl.col(name).cast(pl.Float64, strict=False))
                 .alias(name)
             )
 
