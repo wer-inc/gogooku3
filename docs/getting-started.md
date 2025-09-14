@@ -229,6 +229,13 @@ python scripts/pipelines/run_full_dataset.py --jquants \
   --config configs/pipeline/full_dataset.yaml
 ```
 
+```bash
+# 研究用途: フルインデックスセット（Topix-17, Sector33等すべて）を含む設定
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  --config configs/pipeline/research_full_indices.yaml
+```
+
 ### 📁 出力ファイル
 ```bash
 # 結果確認
@@ -335,6 +342,58 @@ validation = splitter.validate_split(df)
 print(f"重複確認: {len(validation['overlaps'])} overlaps detected")
 print(f"embargo確認: {validation['embargo_respected']}")
 ```
+
+### 🧭 Indices Integration (Market/Sector)
+
+```bash
+# Attach indices (daily spreads/breadth, sector index features)
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2024-01-01 --end-date 2024-06-30 \
+  --enable-indices \
+  --indices-codes 0000,0040,0500,0501,0502,0075,8100,8200,0028,002D,8501,8502,8503
+
+# Offline indices parquet (optional)
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2024-01-01 --end-date 2024-06-30 \
+  --enable-indices \
+  --indices-parquet output/indices_history_20240101_20240630.parquet
+
+# Disable special halt-day (2020-10-01) masking for range-derived features
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2024-01-01 --end-date 2024-06-30 \
+  --enable-indices \
+  --indices-codes 0000,0040,0500,0501,0502,0075,8100,8200,0028,002D,8501,8502,8503 \
+  --disable-halt-mask
+```
+
+Options:
+- `--enable-indices`: Attach index features.
+- `--indices-codes`: Comma-separated codes to fetch via API.
+- `--indices-parquet`: Use a pre-saved indices parquet (Date, Code, OHLC).
+- `--disable-halt-mask`: Disable 2020-10-01 halt-day masking for range features.
+
+Quick reference tables for index codes (Sector 33, Topix‑17, Market Segments, Style/Size, REIT) are available in `docs/DATASET.md` under “Indices (Market & Sector) Features”.
+
+#### 📝 Cheat Sheet — Common Index Codes
+
+| Code | Family     | Name                         |
+|------|------------|------------------------------|
+| 0000 | MARKET     | TOPIX                        |
+| 0500 | MARKET     | 東証プライム市場指数         |
+| 0501 | MARKET     | 東証スタンダード市場指数     |
+| 0502 | MARKET     | 東証グロース市場指数         |
+| 0046 | SECTOR33   | 化学                         |
+| 005A | SECTOR33   | 小売業                       |
+| 8100 | STYLE      | TOPIX バリュー               |
+| 8200 | STYLE      | TOPIX グロース               |
+| 0028 | SIZE       | TOPIX Core30                 |
+| 002D | SIZE       | TOPIX Small                  |
+| 0088 | TOPIX‑17   | 電機・精密                   |
+| 0085 | TOPIX‑17   | 自動車・輸送機               |
+| 0075 | REIT       | 東証REIT（総合）             |
+| 8501 | REIT SEG   | オフィス                     |
+| 8502 | REIT SEG   | 住宅                         |
+| 8503 | REIT SEG   | 商業・物流等                 |
 
 ---
 

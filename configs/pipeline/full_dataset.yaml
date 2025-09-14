@@ -1,15 +1,59 @@
+############################################################
+# Full Dataset Pipeline Defaults (one-stop config)
+#
+# Usage:
+#   python scripts/pipelines/run_full_dataset.py --jquants \
+#     --start-date 2024-01-01 --end-date 2024-06-30 \
+#     --config configs/pipeline/full_dataset.yaml
+#
+# CLI args still take precedence over this YAML.
+############################################################
+
+# Sector cross-sectional (T+0) features
 sector_cs:
   enable: true
-  include_cols:
-    - rsi_14
-    - returns_10d
+  include_cols: ["rsi_14", "returns_10d"]
 
+# Graph (correlation network) features
 graph:
   enable: true
   window: 60
   threshold: 0.3
   max_k: 10
-  cache_dir: output/graph_cache
+  cache_dir: "output/graph_cache"
 
+# Indices (market & sector) features
+indices:
+  enable: true
+  # Preferred, compact set for production
+  codes:
+    - "0000"   # TOPIX
+    - "0040"   # SECTOR33: 水産・農林業 (example sector)
+    - "0500"   # Prime
+    - "0501"   # Standard
+    - "0502"   # Growth Market
+    - "0075"   # REIT (composite)
+    - "8100"   # TOPIX Value
+    - "8200"   # TOPIX Growth
+    - "0028"   # TOPIX Core30
+    - "002D"   # TOPIX Small
+    - "8501"   # REIT Office
+    - "8502"   # REIT Residential
+    - "8503"   # REIT Commercial/Logistics
+  # Optional: pre-saved indices parquet instead of API (must have Date, Code, OHLC)
+  # parquet: output/indices_history_20240101_20240630.parquet
+  # Disable 2020-10-01 masking for range-derived features (default: false)
+  disable_halt_mask: false
+
+# Nikkei225 option market aggregates (separate artifact)
 option_market:
   attach: false
+
+# --- Optional expansions/examples ---
+#
+# indices:
+#   enable: true
+#   codes: ["0000","0040","0500","0501","0502","0075","8100","8200","0028","002D","8501","8502","8503",
+#           "0080","0081","0082","0083","0084","0085","0086","0087","0088","0089","008A","008B","008C","008D","008E","008F","0090"]
+#   disable_halt_mask: false
+

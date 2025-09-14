@@ -190,6 +190,12 @@ class SafeJoiner:
             strategy="backward"
         )
 
+        # Clean up potential column conflicts
+        if "Code_right" in result.columns:
+            result = result.drop("Code_right")
+        if "Date_right" in result.columns:
+            result = result.drop("Date_right")
+
         # インパルスと経過日数の計算
         if "effective_date" in result.columns:
             result = result.with_columns([
@@ -318,6 +324,12 @@ class SafeJoiner:
             by="Section",
             strategy="backward"
         )
+
+        # Clean up potential column conflicts
+        if "Section_right" in result.columns:
+            result = result.drop("Section_right")
+        if "Date_right" in result.columns:
+            result = result.drop("Date_right")
 
         # 区間内のみ残す
         result = result.with_columns([

@@ -1,0 +1,27 @@
+indices:
+  enable: true
+  # Preferred indices to fetch via API; comment out to use parquet instead
+  codes:
+    - "0000"   # TOPIX
+    - "0040"   # SECTOR33: 水産・農林業 (use Sector 33 family as needed)
+    - "0500"   # Prime
+    - "0501"   # Standard
+    - "0502"   # Growth Market
+    - "0075"   # REIT (composite)
+    - "8100"   # TOPIX Value
+    - "8200"   # TOPIX Growth
+    - "0028"   # TOPIX Core30
+    - "002D"   # TOPIX Small
+    - "8501"   # REIT Office
+    - "8502"   # REIT Residential
+    - "8503"   # REIT Commercial/Logistics
+  # Optional: pre-saved indices parquet instead of API (Date, Code, OHLC)
+  # parquet: output/indices_history_20240101_20240630.parquet
+  # Disable 2020-10-01 masking for range-derived features
+  disable_halt_mask: false
+
+# Optional expansion example:
+# indices:
+#   enable: true
+#   codes: ["0000","0040","0500","0501","0502","0075","8100","8200","0028","002D","8501","8502","8503",
+#           "0080","0081","0082","0083","0084","0085","0086","0087","0088","0089","008A","008B","008C","008D","008E","008F","0090"]

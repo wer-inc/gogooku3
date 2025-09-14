@@ -234,9 +234,96 @@ class MLDatasetBuilder:
             logger.warning(f"[builder] TOPIX integration failed: {e}")
             return df
 
-    # ---- Sector-related (stubs to keep callers safe) ----
-    def add_sector_features(self, df: pl.DataFrame, listed_info_df: pl.DataFrame) -> pl.DataFrame:  # pragma: no cover - compatibility stub
-        return df
+    def add_index_features(
+        self,
+        df: pl.DataFrame,
+        indices_df: Optional[pl.DataFrame],
+        *,
+        mask_halt_day: bool = True,
+    ) -> pl.DataFrame:
+        """Attach cross-index day-level features (spreads, breadth) to equities.
+
+        This function computes per-index features and daily aggregates and joins
+        only the day-level aggregates (shared across equities) to avoid the need
+        for per-stock mapping. Sector/style/size-specific joins can be added by
+        callers if mapping data is available.
+        """
+        if indices_df is None or indices_df.is_empty():
+            logger.info("[builder] indices enrichment skipped (no indices_df)")
+            return df
+        try:
+            from src.gogooku3.features.index_features import (
+                build_all_index_features,
+                attach_index_features_to_equity,
+            )
+            per_index, daily = build_all_index_features(indices_df, mask_halt_day=mask_halt_day)
+            if daily is None or daily.is_empty():
+                logger.info("[builder] indices: no daily aggregates; skipping attach")
+                return df
+            out = attach_index_features_to_equity(df, per_index, daily)
+            return out
+        except Exception as e:
+            logger.warning(f"[builder] indices integration failed: {e}")
+            return df
+
+    def add_sector_index_features(
+        self,
+        df: pl.DataFrame,
+        indices_df: Optional[pl.DataFrame],
+        listed_info_df: Optional[pl.DataFrame],
+        *,
+        prefix: str = "sect_",
+        mask_halt_day: bool = True,
+    ) -> pl.DataFrame:
+        """Attach sector index features using listed_info mapping.
+
+        Joins a subset of per-index SECTOR-family features onto equities via
+        (Date, SectorIndexCode), with columns prefixed by `prefix`.
+        """
+        if indices_df is None or indices_df.is_empty() or listed_info_df is None or listed_info_df.is_empty():
+            logger.info("[builder] sector index enrichment skipped (missing indices or listed_info)")
+            return df
+        try:
+            from src.gogooku3.features.index_features import attach_sector_index_features
+            out = attach_sector_index_features(df, indices_df, listed_info_df, prefix=prefix, mask_halt_day=mask_halt_day)
+            return out
+        except Exception as e:
+            logger.warning(f"[builder] sector index integration failed: {e}")
+            return df
+
+    # ---- Sector-related (now with actual implementation) ----
+    def add_sector_features(self, df: pl.DataFrame, listed_info_df: pl.DataFrame) -> pl.DataFrame:
+        """Add sector information from listed_info to the dataset"""
+        if listed_info_df is None or listed_info_df.is_empty():
+            logger.warning("[builder] sector enrichment skipped (no listed_info)")
+            return df
+
+        try:
+            from src.features.section_mapper import SectionMapper
+
+            # Create section mapper and mapping table
+            mapper = SectionMapper()
+            mapping_df = mapper.create_section_mapping(listed_info_df)
+
+            logger.info(f"[builder] Creating sector mapping for {mapping_df['Code'].n_unique()} stocks")
+
+            # Attach sections to daily data
+            result = mapper.attach_section_to_daily(df, mapping_df)
+
+            # Validate coverage
+            coverage_stats = mapper.validate_section_coverage(result)
+            logger.info(f"[builder] Sector coverage: {coverage_stats['section_coverage']:.1%}")
+
+            # Log section distribution
+            for section, stats in coverage_stats['sections'].items():
+                if stats['ratio'] > 0.01:  # Only log sections with >1% coverage
+                    logger.info(f"  {section}: {stats['unique_codes']} stocks ({stats['ratio']:.1%})")
+
+            return result
+
+        except Exception as e:
+            logger.warning(f"[builder] sector integration failed: {e}")
+            return df
 
     def add_sector_series(
         self, df: pl.DataFrame, *, level: str = "33", windows: tuple[int, int, int] = (1, 5, 20), series_mcap: str = "auto"
@@ -311,7 +398,17 @@ class MLDatasetBuilder:
             flow_feat = _build_flow_features(intervals)
             bdays = df.select("Date").unique().sort("Date")["Date"].to_list()
             flow_daily = expand_flow_daily(flow_feat, bdays)
-            out = attach_flow_with_fallback(df, flow_daily, section_mapper=None)
+            # Create section mapper if listed_info is available
+            section_mapper = None
+            if listed_info_df is not None and not listed_info_df.is_empty():
+                try:
+                    from src.features.section_mapper import SectionMapper
+                    section_mapper = SectionMapper()
+                    logger.info("[builder] Using section mapper for flow features")
+                except Exception as e:
+                    logger.warning(f"[builder] Failed to create section mapper: {e}")
+
+            out = attach_flow_with_fallback(df, flow_daily, section_mapper=section_mapper)
             return out
         except Exception as e:
             logger.warning(f"[builder] flow integration failed: {e}")

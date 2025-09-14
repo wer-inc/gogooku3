@@ -10,6 +10,9 @@ help:
 	@echo "make run          - Start Dagster UI"
 	@echo "make clean        - Clean up environment"
 	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset"
+	@echo "make dataset-full-prod START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/full_dataset.yaml"
+	@echo "make dataset-full-research START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/research_full_indices.yaml"
+	@echo "make check-indices  DATASET=output/ml_dataset_latest_full.parquet - Validate indices features"
 	@echo "make fetch-all    START=YYYY-MM-DD END=YYYY-MM-DD - Fetch prices/topix/trades_spec/statements"
 	@echo "make clean-deprecated                 - Remove deprecated shim scripts (use --apply via VAR APPLY=1)"
 	@echo "make research-baseline                - Run snapshot, checks, splits, baseline metrics"
@@ -89,6 +92,18 @@ minio-create-bucket:
 .PHONY: dataset-full
 dataset-full:
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END}
+
+.PHONY: dataset-full-prod
+dataset-full-prod:
+	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --config configs/pipeline/full_dataset.yaml
+
+.PHONY: dataset-full-research
+dataset-full-research:
+	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --config configs/pipeline/research_full_indices.yaml
+
+.PHONY: check-indices
+check-indices:
+	python scripts/tools/check_indices_features.py --dataset $(DATASET)
 
 # Fetch all raw components in one shot
 .PHONY: fetch-all
