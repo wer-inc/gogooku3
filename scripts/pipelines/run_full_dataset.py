@@ -498,7 +498,7 @@ async def main() -> int:
                 logger.warning(f"Failed to save daily margin parquet: {e}")
 
         # Fetch futures data for derivatives features (optional)
-        if args.enable_futures or (args.futures_parquet is not None):
+        if not args.disable_futures or (args.futures_parquet is not None):
             try:
                 logger.info("Fetching futures data for derivatives features")
                 futures_df = await fetcher.get_futures_daily(session, start_date, end_date)
