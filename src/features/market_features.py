@@ -11,12 +11,12 @@ TOPIX Market Features Generator
 Author: gogooku3 team
 """
 
-import polars as pl
-import numpy as np
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
 import logging
-from src.utils.dtypes import ensure_date, ensure_code
+
+import numpy as np
+import polars as pl
+
+from src.utils.dtypes import ensure_code, ensure_date
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +55,11 @@ class MarketFeaturesGenerator:
         if topix_df is None or topix_df.is_empty():
             logger.warning("No TOPIX data provided")
             return pl.DataFrame()
-            
+
         df = topix_df.sort("Date")
         # Normalize Date dtype
         df = ensure_date(df, "Date")
-        
+
         # ========== リターン・トレンド ==========
         df = df.with_columns([
             pl.col("Close").pct_change().alias("mkt_ret_1d"),
@@ -71,18 +71,18 @@ class MarketFeaturesGenerator:
             pl.col("Close").ewm_mean(span=60, adjust=False).alias("mkt_ema_60"),
             pl.col("Close").ewm_mean(span=200, adjust=False).alias("mkt_ema_200"),
         ])
-        
+
         df = df.with_columns([
             ((pl.col("Close") - pl.col("mkt_ema_20")) / pl.col("mkt_ema_20")).alias("mkt_dev_20"),
             ((pl.col("mkt_ema_5") - pl.col("mkt_ema_20")) / pl.col("mkt_ema_20")).alias("mkt_gap_5_20"),
             pl.col("mkt_ema_20").pct_change(n=3).alias("mkt_ema20_slope_3"),
         ])
-        
+
         # ========== ボラティリティ・レンジ ==========
         df = df.with_columns([
             (pl.col("mkt_ret_1d").rolling_std(20) * np.sqrt(252)).alias("mkt_vol_20d"),
         ])
-        
+
         # ATR/NATR (Open, High, Low必須)
         if all(col in df.columns for col in ["Open", "High", "Low"]):
             df = df.with_columns([
@@ -103,7 +103,7 @@ class MarketFeaturesGenerator:
                 pl.col("Close").pct_change().abs().rolling_mean(14).alias("mkt_atr_14"),
                 pl.col("Close").pct_change().abs().rolling_mean(14).alias("mkt_natr_14"),
             ])
-        
+
         # Bollinger Bands (20, 2σ)
         df = df.with_columns([
             pl.col("Close").rolling_mean(20).alias("bb_mid"),
@@ -115,35 +115,35 @@ class MarketFeaturesGenerator:
             ((pl.col("Close") - pl.col("bb_dn")) / (pl.col("bb_up") - pl.col("bb_dn") + 1e-12)).clip(0, 1).alias("mkt_bb_pct_b"),
             ((pl.col("bb_up") - pl.col("bb_dn")) / (pl.col("bb_mid") + 1e-12)).alias("mkt_bb_bw")
         ]).drop(["bb_mid", "bb_std", "bb_up", "bb_dn"])
-        
+
         # ========== ドローダウン・インパルス ==========
         df = df.with_columns([
             pl.col("Close").cum_max().alias("cum_peak")
         ]).with_columns([
             ((pl.col("Close") - pl.col("cum_peak")) / pl.col("cum_peak")).alias("mkt_dd_from_peak")
         ]).drop("cum_peak")
-        
+
         # Big move flags
         df = df.with_columns([
             pl.col("mkt_ret_1d").rolling_std(60).alias("ret_std_60")
         ]).with_columns([
             (pl.col("mkt_ret_1d").abs() >= 2.0 * pl.col("ret_std_60")).cast(pl.Int8).alias("mkt_big_move_flag"),
         ]).drop("ret_std_60")
-        
+
         # ========== 時系列Z-score (252日、min_periods=252) ==========
         def z_score(col_name: str, window: int = 252, min_periods: int = 252) -> pl.Expr:
             """時系列Z-scoreを計算"""
             mu = pl.col(col_name).rolling_mean(window, min_periods=min_periods)
             sd = pl.col(col_name).rolling_std(window, min_periods=min_periods) + 1e-12
             return ((pl.col(col_name) - mu) / sd).alias(f"{col_name}_z")
-        
+
         df = df.with_columns([
             z_score("mkt_ret_1d", self.z_score_window, 252),
             z_score("mkt_vol_20d", self.z_score_window, 252),
             z_score("mkt_bb_bw", self.z_score_window, 252),
             z_score("mkt_dd_from_peak", self.z_score_window, 252)
         ])
-        
+
         # ========== レジームフラグ ==========
         df = df.with_columns([
             (pl.col("Close") > pl.col("mkt_ema_200")).cast(pl.Int8).alias("mkt_bull_200"),
@@ -151,12 +151,12 @@ class MarketFeaturesGenerator:
             (pl.col("mkt_vol_20d_z") > 1.0).cast(pl.Int8).alias("mkt_high_vol"),
             (pl.col("mkt_bb_bw_z") < -1.0).cast(pl.Int8).alias("mkt_squeeze"),
         ])
-        
+
         # 必要な列のみ選択（Open, High, Low, Closeは除外）
         keep_cols = [c for c in df.columns if c not in ["Open", "High", "Low", "Close", "Volume"]]
-        
+
         logger.info(f"✅ Generated {len(keep_cols) - 1} market features from TOPIX")
-        
+
         return df.select([pl.col("Date")] + [pl.col(c) for c in keep_cols if c != "Date"])
 
 
@@ -174,16 +174,16 @@ class CrossMarketFeaturesGenerator:
     - idio_vol_ratio: アイディオシンクラティック・ボラ比
     - beta_stability_60d: ベータ安定性
     """
-    
+
     def __init__(self, beta_lag: int = 1):
         """
         Args:
             beta_lag: 市場リターンのラグ（0ならラグなし、1ならt-1。デフォルト1）
         """
         self.beta_lag = int(beta_lag) if beta_lag is not None else 1
-    
+
     def attach_market_and_cross(
-        self, 
+        self,
         stock_df: pl.DataFrame,
         market_df: pl.DataFrame
     ) -> pl.DataFrame:
@@ -201,10 +201,10 @@ class CrossMarketFeaturesGenerator:
         stock_df = ensure_date(stock_df, "Date")
         stock_df = ensure_code(stock_df, "Code")
         market_df = ensure_date(market_df, "Date")
-        
+
         # 市場特徴量を結合（coalesce=Trueを明示して将来のデフォルト変更に備える）
         df = stock_df.join(market_df, on="Date", how="left", coalesce=True)
-        
+
         # P1: β計算 with t-1 lag (60日ローリング)
         # 必要な列が存在するかチェック
         if "returns_1d" in df.columns and "mkt_ret_1d" in df.columns:
@@ -213,12 +213,12 @@ class CrossMarketFeaturesGenerator:
             df = df.with_columns([
                 (pl.col("mkt_ret_1d").shift(lag).over("Code") if lag > 0 else pl.col("mkt_ret_1d")).alias("mkt_ret_lag1")
             ])
-            
+
             df = df.with_columns([
                 # 各銘柄ごとに計算（t-1ラグ付き）
                 (pl.col("returns_1d") * pl.col("mkt_ret_lag1")).alias("xy_prod"),
             ])
-            
+
             # 60日ローリング統計（min_periods適用）
             df = df.with_columns([
                 # E[X], E[Y], E[XY], E[X^2], E[Y^2]
@@ -228,13 +228,13 @@ class CrossMarketFeaturesGenerator:
                 (pl.col("returns_1d") ** 2).rolling_mean(60, min_periods=60).over("Code").alias("x2_mean"),
                 (pl.col("mkt_ret_lag1") ** 2).rolling_mean(60, min_periods=60).over("Code").alias("y2_mean"),
             ])
-            
+
             # Cov, Var計算
             df = df.with_columns([
                 (pl.col("xy_mean") - pl.col("x_mean") * pl.col("y_mean")).alias("cov_xy"),
                 (pl.col("y2_mean") - pl.col("y_mean") ** 2).alias("var_y")
             ])
-            
+
             # β = Cov(X,Y) / Var(Y) with t-1 lag
             df = df.with_columns([
                 (pl.col("cov_xy") / (pl.col("var_y") + 1e-12)).alias("beta_60d_raw")
@@ -257,23 +257,23 @@ class CrossMarketFeaturesGenerator:
                 # 仕様名に合わせた列（互換のためbeta_rollingも残す）
                 pl.col("beta_rolling").alias("beta_60d")
             ]).drop(["x_mean20","y_mean20","xy_mean20","x2_mean20","y2_mean20","cov_xy20","var_y20"])
-            
+
             # 中間変数を削除
             df = df.drop(["mkt_ret_lag1", "xy_prod", "x_mean", "y_mean", "xy_mean", "x2_mean", "y2_mean", "cov_xy", "var_y"])
-            
+
             # ========== 残差・相対強さ・整合性 ==========
             df = df.with_columns([
                 # α (残差リターン)
                 (pl.col("returns_1d") - pl.col("beta_60d") * pl.col("mkt_ret_1d")).alias("alpha_1d"),
             ])
-            
+
             # 5日リターンが存在する場合
             if "returns_5d" in df.columns and "mkt_ret_5d" in df.columns:
                 df = df.with_columns([
                     (pl.col("returns_5d") - pl.col("beta_60d") * pl.col("mkt_ret_5d")).alias("alpha_5d"),
                     (pl.col("returns_5d") - pl.col("mkt_ret_5d")).alias("rel_strength_5d"),
                 ])
-            
+
             # トレンド整合性（ema_gap_5_20が銘柄側の特徴）
             if "ma_gap_5_20" in df.columns and "mkt_gap_5_20" in df.columns:
                 df = df.with_columns([
@@ -284,23 +284,23 @@ class CrossMarketFeaturesGenerator:
                     # 仕様準拠: alpha_vs_regime = alpha_1d * mkt_bull_200
                     (pl.col("alpha_1d") * pl.col("mkt_bull_200").cast(pl.Float64)).alias("alpha_vs_regime"),
                 ])
-            
+
             # アイディオシンクラティック・ボラティリティ比
             # DATASET.md定義: idio_vol_ratio = volatility_20d/(mkt_vol_20d+1e-12)
             if "volatility_20d" in df.columns and "mkt_vol_20d" in df.columns:
                 df = df.with_columns([
-                    (pl.col("volatility_20d") / 
+                    (pl.col("volatility_20d") /
                      (pl.col("mkt_vol_20d") + 1e-12)).alias("idio_vol_ratio"),
                 ])
-            
+
             # β安定性（仕様準拠: 1/(std(beta_60d, 20) + 1e-12)）
             df = df.with_columns([
                 (1.0 / (pl.col("beta_60d").rolling_std(20, min_periods=20).over("Code") + 1e-12))
                 .alias("beta_stability_60d")
             ])
-            
+
             logger.info("✅ Generated cross features (beta, alpha, relative strength)")
         else:
             logger.warning("⚠️ Required columns for cross features not found (returns_1d, mkt_ret_1d)")
-        
+
         return df

@@ -22,12 +22,10 @@ Notes:
  - No time leakage: values become valid starting from effective_start only.
 """
 
-from datetime import timedelta
-from typing import Callable
 import datetime as _dt
+from collections.abc import Callable
 
 import polars as pl
-
 
 EPS = 1e-12
 

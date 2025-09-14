@@ -1930,3 +1930,47 @@ Output files:
 2025-09-13 15:40:32,067 - run_full_dataset - INFO -   Dataset : /home/ubuntu/gogooku3-standalone/output/ml_dataset_20230101_20231231_20250913_154028_full.parquet
 2025-09-13 15:40:32,067 - run_full_dataset - INFO -   Metadata: /home/ubuntu/gogooku3-standalone/output/ml_dataset_20230101_20231231_20250913_154028_full_metadata.json
 2025-09-13 15:40:32,067 - run_full_dataset - INFO -   Symlink : /home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet
+
+---
+
+codex
+Great — I can proceed, but I need two quick inputs to do it right:
+
+- Spot parquets: please share paths (if you have them) for:
+    - Nikkei225 spot: path to a Date,Close parquet
+    - REIT index spot: path to a Date,Close parquet
+    - JPX400 spot: path to a Date,Close parquet
+If you don’t have them, I added auto-discovery under output/ (looks for
+filenames containing nikkei/nk225/nikkei225, reit, jpx400). If they’re present,
+I’ll wire them automatically.
+If you don’t have them, I added auto-discovery under output/ (looks for
+filenames containing nikkei/nk225/nikkei225, reit, jpx400). If they’re present,
+I’ll wire them automatically.
+- 
+Test subset: confirm if this ignore list is acceptable for now:
+    - --ignore=tests/exploratory/ --ignore=tests/unit/test_market_features.py
+--ignore=tests/unit/test_margin_weekly.py
+These are currently broken/unrelated and would otherwise obscure results. I’ll
+run the rest with coverage.
+
+
+- Added --futures-continuous to enable ratio-linked continuous futures series
+(fut_whole_ret_cont_*).
+- Plumbed optional spot parquets for basis mapping via CLI and auto-discovery
+fallback.
+- Wired futures features into run_full_dataset.py and full_dataset.py with the
+new options.
+- Implemented futures data fetch (get_futures_daily) and full ON/EOD features
+build attaching to the equity panel, with leak safety.
+- Unblocked missing modules for tests (ops/health_check, quality/price_checks)
+and verified those tests pass.
+- Installed dev/test deps (non-editable install due to backend), ready to run a
+broader subset locally.
+
+If you confirm or provide spot paths, I’ll:
+
+- Integrate and log basis coverage per category (TOPIXF/NK225F/REITF/JN400F).
+- Run the broader test subset with the above ignores and report results + quick
+coverage.
+- Keep continuous series off by default unless --futures-continuous is passed
+(current behavior). If you want it on by default, say the word and I’ll flip it.

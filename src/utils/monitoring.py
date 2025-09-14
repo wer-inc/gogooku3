@@ -3,15 +3,14 @@ Monitoring System for ATFT-GAT-FAN
 W&B + TensorBoard統合監視システム
 """
 
-import os
 import logging
-from typing import Dict, List, Any, Optional, Union
+from datetime import datetime
 from pathlib import Path
+from typing import Any
+
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
-import json
-from datetime import datetime
 
 # Optional imports
 try:
@@ -32,7 +31,7 @@ class MetricsCollector:
         self.metrics_buffer = []
         self.step_buffer = []
 
-    def add_metrics(self, metrics: Dict[str, Any], step: int):
+    def add_metrics(self, metrics: dict[str, Any], step: int):
         """メトリクスをバッファに追加"""
         self.metrics_buffer.append(metrics)
         self.step_buffer.append(step)
@@ -42,7 +41,7 @@ class MetricsCollector:
             self.metrics_buffer.pop(0)
             self.step_buffer.pop(0)
 
-    def get_batch_metrics(self) -> List[Dict[str, Any]]:
+    def get_batch_metrics(self) -> list[dict[str, Any]]:
         """バッファされたメトリクスを取得"""
         return self.metrics_buffer.copy()
 
@@ -51,7 +50,7 @@ class MetricsCollector:
         self.metrics_buffer = []
         self.step_buffer = []
 
-    def get_latest_metrics(self) -> Optional[Dict[str, Any]]:
+    def get_latest_metrics(self) -> dict[str, Any] | None:
         """最新のメトリクスを取得"""
         return self.metrics_buffer[-1] if self.metrics_buffer else None
 
@@ -116,7 +115,7 @@ class ComprehensiveLogger:
         if self.profiler_enabled:
             self._setup_profiler()
 
-    def _config_to_dict(self, config) -> Dict[str, Any]:
+    def _config_to_dict(self, config) -> dict[str, Any]:
         """設定オブジェクトを辞書に変換"""
         if hasattr(config, '__dict__'):
             return config.__dict__
@@ -128,7 +127,11 @@ class ComprehensiveLogger:
     def _setup_profiler(self):
         """プロファイラー設定"""
         try:
-            from torch.profiler import profile, tensorboard_trace_handler, ProfilerActivity
+            from torch.profiler import (
+                ProfilerActivity,
+                profile,
+                tensorboard_trace_handler,
+            )
 
             self.profiler = profile(
                 activities=[
@@ -148,7 +151,7 @@ class ComprehensiveLogger:
 
     def log_metrics(
         self,
-        metrics: Dict[str, Any],
+        metrics: dict[str, Any],
         step: int,
         prefix: str = ""
     ):
@@ -173,7 +176,7 @@ class ComprehensiveLogger:
             except Exception as e:
                 logger.debug(f"W&B logging failed: {e}")
 
-    def log_hyperparameters(self, params: Dict[str, Any]):
+    def log_hyperparameters(self, params: dict[str, Any]):
         """ハイパーパラメータをログ"""
         # TensorBoard
         if self.use_tensorboard:
@@ -289,8 +292,8 @@ class ComprehensiveLogger:
     def log_system_stats(self, step: int):
         """システム統計をログ"""
         try:
-            import psutil
             import GPUtil
+            import psutil
 
             # CPU使用率
             cpu_percent = psutil.cpu_percent()
@@ -359,7 +362,7 @@ class TrainingMonitor:
             'grad_norm': []
         }
 
-    def update_best_metrics(self, metrics: Dict[str, float], step: int):
+    def update_best_metrics(self, metrics: dict[str, float], step: int):
         """最良メトリクス更新"""
         updated = False
 
@@ -383,7 +386,7 @@ class TrainingMonitor:
                 prefix="best"
             )
 
-    def check_training_stability(self, metrics: Dict[str, float], step: int) -> Dict[str, bool]:
+    def check_training_stability(self, metrics: dict[str, float], step: int) -> dict[str, bool]:
         """トレーニング安定性をチェック"""
         warnings = {}
 
@@ -413,7 +416,7 @@ class TrainingMonitor:
 
         return warnings
 
-    def log_training_summary(self, final_metrics: Dict[str, float]):
+    def log_training_summary(self, final_metrics: dict[str, float]):
         """トレーニングサマリーをログ"""
         summary = {
             'training_duration_hours': (datetime.now() - self.start_time).total_seconds() / 3600,

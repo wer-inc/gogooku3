@@ -5,10 +5,11 @@ Curriculum Learning Scheduler for Financial Time Series
 
 from __future__ import annotations
 
-import numpy as np
-from typing import Dict, List, Optional, Union, Any
 import logging
 from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,9 @@ class CurriculumPhase:
     start_epoch: int
     end_epoch: int
     sequence_length: int
-    prediction_horizons: List[int]
-    horizon_weights: Dict[int, float]
-    difficulty_features: Dict[str, Any]
+    prediction_horizons: list[int]
+    horizon_weights: dict[int, float]
+    difficulty_features: dict[str, Any]
 
 
 class CurriculumScheduler:
@@ -41,8 +42,8 @@ class CurriculumScheduler:
         max_epochs: int = 100,
         base_sequence_length: int = 40,
         target_sequence_length: int = 60,
-        base_horizons: Optional[List[int]] = None,
-        target_horizons: Optional[List[int]] = None,
+        base_horizons: list[int] | None = None,
+        target_horizons: list[int] | None = None,
         enable_difficulty_sampling: bool = True
     ):
         """
@@ -57,24 +58,24 @@ class CurriculumScheduler:
         self.max_epochs = max_epochs
         self.base_sequence_length = base_sequence_length
         self.target_sequence_length = target_sequence_length
-        
+
         self.base_horizons = base_horizons or [1]
         self.target_horizons = target_horizons or [1, 2, 3, 5, 10, 20]
-        
+
         self.enable_difficulty_sampling = enable_difficulty_sampling
-        
+
         # フェーズ定義を構築
         self.phases = self._build_curriculum_phases()
         self.current_phase_idx = 0
-        
+
         logger.info(f"Initialized CurriculumScheduler with {len(self.phases)} phases")
         for i, phase in enumerate(self.phases):
             logger.info(f"Phase {i}: {phase.name} (epochs {phase.start_epoch}-{phase.end_epoch})")
 
-    def _build_curriculum_phases(self) -> List[CurriculumPhase]:
+    def _build_curriculum_phases(self) -> list[CurriculumPhase]:
         """カリキュラムフェーズを構築"""
         phases = []
-        
+
         # Phase 1: シンプルベースライン (0-25%)
         phase1_end = int(self.max_epochs * 0.25)
         phases.append(CurriculumPhase(
@@ -83,7 +84,7 @@ class CurriculumScheduler:
             end_epoch=phase1_end,
             sequence_length=self.base_sequence_length,
             prediction_horizons=self.base_horizons,
-            horizon_weights={h: 1.0 for h in self.base_horizons},
+            horizon_weights=dict.fromkeys(self.base_horizons, 1.0),
             difficulty_features={
                 'peer_features': False,
                 'graph_features': False,
@@ -91,7 +92,7 @@ class CurriculumScheduler:
                 'augmentation': False
             }
         ))
-        
+
         # Phase 2: シーケンス拡張 (25-50%)
         phase2_end = int(self.max_epochs * 0.5)
         intermediate_seq_len = int((self.base_sequence_length + self.target_sequence_length) / 2)
@@ -109,7 +110,7 @@ class CurriculumScheduler:
                 'augmentation': False
             }
         ))
-        
+
         # Phase 3: マルチホライズン展開 (50-75%)
         phase3_end = int(self.max_epochs * 0.75)
         mid_horizons = [1, 2, 3, 5, 10]
@@ -127,7 +128,7 @@ class CurriculumScheduler:
                 'augmentation': False
             }
         ))
-        
+
         # Phase 4: フル複雑性 (75-100%)
         phases.append(CurriculumPhase(
             name="full_complexity",
@@ -143,7 +144,7 @@ class CurriculumScheduler:
                 'augmentation': True
             }
         ))
-        
+
         return phases
 
     def get_phase_config(self, epoch: int) -> CurriculumPhase:
@@ -152,7 +153,7 @@ class CurriculumScheduler:
             if phase.start_epoch <= epoch < phase.end_epoch:
                 self.current_phase_idx = i
                 return phase
-        
+
         # 最終フェーズを返す
         self.current_phase_idx = len(self.phases) - 1
         return self.phases[-1]
@@ -160,7 +161,7 @@ class CurriculumScheduler:
     def should_update_dataset(self, epoch: int) -> bool:
         """データセット更新が必要かチェック"""
         current_phase = self.get_phase_config(epoch)
-        
+
         # フェーズ切り替わりエポックで更新
         phase_starts = [phase.start_epoch for phase in self.phases]
         return epoch in phase_starts
@@ -170,27 +171,27 @@ class CurriculumScheduler:
         phase = self.get_phase_config(epoch)
         return phase.sequence_length
 
-    def get_horizon_weights(self, epoch: int) -> Dict[int, float]:
+    def get_horizon_weights(self, epoch: int) -> dict[int, float]:
         """現在のホライズン重みを取得"""
         phase = self.get_phase_config(epoch)
         return phase.horizon_weights.copy()
 
-    def get_active_horizons(self, epoch: int) -> List[int]:
+    def get_active_horizons(self, epoch: int) -> list[int]:
         """現在のアクティブホライズンを取得"""
         phase = self.get_phase_config(epoch)
         return phase.prediction_horizons.copy()
 
-    def get_difficulty_features(self, epoch: int) -> Dict[str, Any]:
+    def get_difficulty_features(self, epoch: int) -> dict[str, Any]:
         """現在の難易度特徴量設定を取得"""
         phase = self.get_phase_config(epoch)
         return phase.difficulty_features.copy()
 
     def get_sampling_weights(
-        self, 
-        epoch: int, 
-        volatilities: Optional[np.ndarray] = None,
-        returns: Optional[np.ndarray] = None
-    ) -> Optional[np.ndarray]:
+        self,
+        epoch: int,
+        volatilities: np.ndarray | None = None,
+        returns: np.ndarray | None = None
+    ) -> np.ndarray | None:
         """
         難易度ベースサンプリング重みを取得
         
@@ -204,36 +205,36 @@ class CurriculumScheduler:
         """
         if not self.enable_difficulty_sampling:
             return None
-            
+
         phase = self.get_phase_config(epoch)
         if not phase.difficulty_features.get('volatility_sampling', False):
             return None
-            
+
         if volatilities is None:
             return None
-        
+
         # ボラティリティベースの重みを計算
         weights = self._compute_volatility_weights(epoch, volatilities)
-        
+
         # 極端リターンの重み調整
         if returns is not None:
             return_weights = self._compute_return_weights(epoch, returns)
             weights = weights * return_weights
-            
+
         return weights / weights.sum()  # 正規化
 
     def _compute_volatility_weights(self, epoch: int, volatilities: np.ndarray) -> np.ndarray:
         """ボラティリティベースの重み計算"""
         # フェーズに応じた重み調整
         phase_progress = (epoch - self.phases[self.current_phase_idx].start_epoch) / \
-                        max(self.phases[self.current_phase_idx].end_epoch - 
+                        max(self.phases[self.current_phase_idx].end_epoch -
                             self.phases[self.current_phase_idx].start_epoch, 1)
-        
+
         # 初期は低ボラティリティを重視、後期は高ボラティリティも含める
         vol_percentile = np.percentile(volatilities, [25, 50, 75])
-        
+
         weights = np.ones_like(volatilities)
-        
+
         if phase_progress < 0.3:
             # 低ボラティリティ重視
             weights[volatilities > vol_percentile[1]] *= 0.5
@@ -246,21 +247,21 @@ class CurriculumScheduler:
             # 高ボラティリティも積極的に
             weights[volatilities > vol_percentile[1]] *= 1.2
             weights[volatilities > vol_percentile[2]] *= 1.5
-        
+
         return weights
 
     def _compute_return_weights(self, epoch: int, returns: np.ndarray) -> np.ndarray:
         """リターンベースの重み計算（極端値の段階導入）"""
         abs_returns = np.abs(returns)
         return_percentile = np.percentile(abs_returns, [90, 95, 99])
-        
+
         weights = np.ones_like(returns)
-        
+
         # 極端リターンの段階導入
         phase_progress = (epoch - self.phases[self.current_phase_idx].start_epoch) / \
-                        max(self.phases[self.current_phase_idx].end_epoch - 
+                        max(self.phases[self.current_phase_idx].end_epoch -
                             self.phases[self.current_phase_idx].start_epoch, 1)
-        
+
         if phase_progress < 0.5:
             # 極端値を抑制
             weights[abs_returns > return_percentile[0]] *= 0.5
@@ -269,19 +270,19 @@ class CurriculumScheduler:
             # 極端値も学習に含める
             weights[abs_returns > return_percentile[0]] *= 1.1
             weights[abs_returns > return_percentile[1]] *= 1.2
-        
+
         return weights
 
-    def get_augmentation_config(self, epoch: int) -> Dict[str, Any]:
+    def get_augmentation_config(self, epoch: int) -> dict[str, Any]:
         """現在のデータ拡張設定を取得"""
         phase = self.get_phase_config(epoch)
-        
+
         if not phase.difficulty_features.get('augmentation', False):
             return {'enabled': False}
-        
+
         # フェーズ進行度に応じた拡張強度
         phase_progress = (epoch - phase.start_epoch) / max(phase.end_epoch - phase.start_epoch, 1)
-        
+
         return {
             'enabled': True,
             'noise_scale': 0.002 + 0.003 * phase_progress,  # 0.002 → 0.005
@@ -293,17 +294,17 @@ class CurriculumScheduler:
     def get_learning_rate_multiplier(self, epoch: int) -> float:
         """フェーズに応じた学習率調整"""
         phase = self.get_phase_config(epoch)
-        
+
         # フェーズ開始時は学習率を少し上げる
         if epoch == phase.start_epoch and epoch > 0:
             return 1.2
-        
+
         return 1.0
 
     def log_phase_info(self, epoch: int):
         """現在のフェーズ情報をログ出力"""
         phase = self.get_phase_config(epoch)
-        
+
         if epoch == phase.start_epoch:
             logger.info(f"Starting curriculum phase: {phase.name}")
             logger.info(f"  Sequence length: {phase.sequence_length}")
@@ -311,7 +312,7 @@ class CurriculumScheduler:
             logger.info(f"  Horizon weights: {phase.horizon_weights}")
             logger.info(f"  Difficulty features: {phase.difficulty_features}")
 
-    def get_phase_summary(self) -> Dict[str, Any]:
+    def get_phase_summary(self) -> dict[str, Any]:
         """カリキュラム全体のサマリー"""
         return {
             'total_phases': len(self.phases),

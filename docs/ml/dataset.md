@@ -46,6 +46,15 @@
   - 算出: `count(Date×sector33_id) / count(Date)` を window 集計で算出（join 不要）。
   - 位置づけ: 任意（必要に応じて生成）。本仕様の必須列ではない。
 
+### 6) 日次マージン（dmi_）ブロックの追加
+
+- ソース: `/markets/daily_margin_interest`（J-Quants）。
+- 補正: `(Code, ApplicationDate)` ごとに **最新の `PublishedDate`** を採用。
+- 有効日: `effective_start = next_business_day(PublishedDate)`（T+1）。
+- 結合: `(Code, Date)` に **as‑of backward** で付与。`dmi_impulse=1` は有効日当日。
+- 主な列: `dmi_long/short/net/total/credit_ratio/imbalance/short_long_ratio`, `dmi_d_*_1d`, `dmi_z26_*`, `dmi_*_to_adv20`, `dmi_reason_*`, `dmi_reason_count`, `dmi_tse_reg_level`, `dmi_days_since_pub/app`, `is_dmi_valid`。
+- 有効化: `scripts/pipelines/run_full_dataset.py --enable-daily-margin [--daily-margin-parquet PATH]`（未指定時は `output/daily_margin_interest_*.parquet` 自動探索）。
+
 ---
 
 ---

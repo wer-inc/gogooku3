@@ -8,17 +8,18 @@ __version__ = "2.0.0"
 __author__ = "Gogooku Team"
 
 import os
+
 from .utils.settings import settings
 
 # Main components (lazy: avoid importing heavy training stack on package import)
 if os.getenv("GOGOOKU3_IMPORT_TRAINING", "0") == "1":
     try:
-        from .training.safe_training_pipeline import SafeTrainingPipeline
-        from .data.loaders import ProductionDatasetV3, MLDatasetBuilder
+        from .data.loaders import MLDatasetBuilder, ProductionDatasetV3
         from .data.scalers import CrossSectionalNormalizerV2, WalkForwardSplitterV2
         from .features import QualityFinancialFeaturesGenerator
-        from .models import ATFTGATFANModel, LightGBMFinancialBaseline
         from .graph import FinancialGraphBuilder
+        from .models import ATFTGATFANModel, LightGBMFinancialBaseline
+        from .training.safe_training_pipeline import SafeTrainingPipeline
     except Exception:
         # Expose names but set to None if training stack is unavailable
         SafeTrainingPipeline = None
@@ -43,7 +44,7 @@ else:
 
 __all__ = [
     "__version__",
-    "__author__", 
+    "__author__",
     "settings",
     "SafeTrainingPipeline",
     "ProductionDatasetV3",

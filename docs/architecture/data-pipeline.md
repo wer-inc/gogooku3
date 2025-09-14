@@ -161,6 +161,33 @@ final_data = add_margin_weekly_block(
 # 145列 → 160+列（+15 margin特徴量）
 ```
 
+## 🧩 Daily Margin (日次信用残高, dmi_)
+日次の信用残高・規制情報を **T+1 as‑of** で安全に日次パネルへ統合します。
+
+**データフロー**:
+```
+J-Quants API
+/markets/daily_margin_interest
+         ↓
+補正集約 (Code, ApplicationDate) ごとに最新 PublishedDate 採用
+         ↓
+effective_start = next_business_day(PublishedDate)  # T+1
+         ↓
+日次特徴量生成（差分・Z-score・ADV正規化・規制フラグ）
+         ↓
+as-of backward 結合 → 日次グリッド（接頭辞 dmi_）
+```
+
+**出力カラム例**:
+- **需給指標**: dmi_long, dmi_short, dmi_net, dmi_total, dmi_credit_ratio, dmi_imbalance, dmi_short_long_ratio
+- **変化/Z**: dmi_d_long_1d, dmi_d_short_1d, dmi_d_net_1d, dmi_d_ratio_1d, dmi_z26_long/short/total/d_short_1d
+- **ADV正規化**: dmi_long_to_adv20, dmi_short_to_adv20, dmi_total_to_adv20, dmi_d_long_to_adv1d, dmi_d_short_to_adv1d, dmi_d_net_to_adv1d
+- **規制/イベント**: dmi_reason_*, dmi_reason_count, dmi_tse_reg_level
+- **メタ情報**: dmi_impulse, dmi_days_since_pub, dmi_days_since_app, is_dmi_valid
+
+**パイプライン有効化**:
+`scripts/pipelines/run_full_dataset.py --enable-daily-margin --daily-margin-parquet output/daily_margin_interest_*.parquet`
+
 ## 🛡️ データ安全性・正規化
 
 ### Cross-sectional正規化 (V2)

@@ -3,18 +3,17 @@ Robust Executor for ATFT-GAT-FAN
 本番環境向けエラーハンドリングと自動回復システム
 """
 
-import os
-import sys
-import signal
+import json
 import logging
+import signal
+import threading
+import time
 import traceback
-from typing import Any, Callable, Optional, Dict, List
-from pathlib import Path
+from collections.abc import Callable
 from contextlib import contextmanager
 from functools import wraps
-import time
-import threading
-import json
+from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -34,10 +33,10 @@ class CheckpointManager:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.emergency_file = self.checkpoint_dir / "emergency_checkpoint.pth"
 
-    def save_emergency_checkpoint(self, model: Optional[nn.Module] = None,
-                                optimizer: Optional[torch.optim.Optimizer] = None,
-                                scaler: Optional[torch.cuda.amp.GradScaler] = None,
-                                extra_data: Optional[Dict[str, Any]] = None):
+    def save_emergency_checkpoint(self, model: nn.Module | None = None,
+                                optimizer: torch.optim.Optimizer | None = None,
+                                scaler: torch.cuda.amp.GradScaler | None = None,
+                                extra_data: dict[str, Any] | None = None):
         """緊急チェックポイント保存"""
         try:
             checkpoint = {
@@ -66,7 +65,7 @@ class CheckpointManager:
         except Exception as e:
             logger.error(f"Failed to save emergency checkpoint: {e}")
 
-    def load_emergency_checkpoint(self) -> Optional[Dict[str, Any]]:
+    def load_emergency_checkpoint(self) -> dict[str, Any] | None:
         """緊急チェックポイント読み込み"""
         if not self.emergency_file.exists():
             return None
@@ -124,7 +123,7 @@ class SignalHandler:
         """シャットダウンが必要かチェック"""
         return self.shutdown_event.is_set()
 
-    def wait_for_shutdown(self, timeout: Optional[float] = None):
+    def wait_for_shutdown(self, timeout: float | None = None):
         """シャットダウン待機"""
         self.shutdown_event.wait(timeout)
 
@@ -135,7 +134,7 @@ class RobustExecutor:
     自動回復・エラーハンドリング・シグナル処理
     """
 
-    def __init__(self, config: Any, checkpoint_manager: Optional[CheckpointManager] = None):
+    def __init__(self, config: Any, checkpoint_manager: CheckpointManager | None = None):
         self.config = config
         self.checkpoint_manager = checkpoint_manager or CheckpointManager()
         self.signal_handler = SignalHandler(self.checkpoint_manager)
@@ -236,7 +235,7 @@ class RobustExecutor:
                         sleep_time = backoff_factor ** attempt
                         time.sleep(sleep_time)
                     else:
-                        logger.error(f"All recovery attempts failed")
+                        logger.error("All recovery attempts failed")
                         break
 
             # 最終的に失敗した場合
@@ -271,7 +270,7 @@ class RobustExecutor:
 
         return new_batch_size
 
-    def get_execution_stats(self) -> Dict[str, Any]:
+    def get_execution_stats(self) -> dict[str, Any]:
         """実行統計取得"""
         stats = self.execution_stats.copy()
 
@@ -300,7 +299,7 @@ class RobustExecutor:
         except Exception as e:
             logger.error(f"Failed to save execution report: {e}")
 
-    def _summarize_config(self) -> Dict[str, Any]:
+    def _summarize_config(self) -> dict[str, Any]:
         """設定のサマリー作成"""
         if hasattr(self.config, '__dict__'):
             return {k: v for k, v in self.config.__dict__.items()
@@ -310,7 +309,7 @@ class RobustExecutor:
         else:
             return {}
 
-    def _get_system_info(self) -> Dict[str, Any]:
+    def _get_system_info(self) -> dict[str, Any]:
         """システム情報取得"""
         import platform
 

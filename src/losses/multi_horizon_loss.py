@@ -3,14 +3,10 @@ Multi-Horizon Loss Functions for ATFT-GAT-FAN
 Huber損失ベースの多ホライズン予測最適化
 """
 
+import logging
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Dict, List, Optional, Tuple, Any
-import logging
-import numpy as np
-
-from ..utils.settings import get_settings
 
 logger = logging.getLogger(__name__)
 # config = get_settings()  # 遅延初期化に変更
@@ -46,7 +42,7 @@ class HuberLoss(nn.Module):
 class QuantileLoss(nn.Module):
     """分位点損失（Quantile Loss）"""
 
-    def __init__(self, quantiles: List[float] = [0.1, 0.5, 0.9]):
+    def __init__(self, quantiles: list[float] = [0.1, 0.5, 0.9]):
         super().__init__()
         self.quantiles = torch.tensor(quantiles)
 
@@ -74,7 +70,7 @@ class QuantileLoss(nn.Module):
 class CoveragePenalty(nn.Module):
     """カバレッジ正則化（Coverage Regularization）"""
 
-    def __init__(self, target_quantiles: List[float] = [0.1, 0.5, 0.9], alpha: float = 0.01):
+    def __init__(self, target_quantiles: list[float] = [0.1, 0.5, 0.9], alpha: float = 0.01):
         super().__init__()
         self.target_quantiles = torch.tensor(target_quantiles)
         self.alpha = alpha
@@ -114,12 +110,12 @@ class MultiHorizonLoss(nn.Module):
 
     def __init__(
         self,
-        horizons: List[int] = [1, 2, 3, 5, 10],
-        weights: Optional[Dict[int, float]] = None,
+        horizons: list[int] = [1, 2, 3, 5, 10],
+        weights: dict[int, float] | None = None,
         huber_delta: float = 0.01,
         use_coverage_penalty: bool = False,
         coverage_alpha: float = 0.01,
-        quantiles: Optional[List[float]] = None,
+        quantiles: list[float] | None = None,
         **kwargs
     ):
         super().__init__()
@@ -151,8 +147,8 @@ class MultiHorizonLoss(nn.Module):
 
     def forward(
         self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
+        predictions: dict[str, torch.Tensor],
+        targets: dict[str, torch.Tensor],
         return_components: bool = False
     ) -> torch.Tensor:
         """
@@ -171,7 +167,7 @@ class MultiHorizonLoss(nn.Module):
             device = next(iter(targets.values())).device
         else:
             device = torch.device('cpu')
-            
+
         losses = []  # 勾配を保持するためリストに収集
         loss_components = {}
 
@@ -179,13 +175,13 @@ class MultiHorizonLoss(nn.Module):
             # 実際のキー名に合わせる
             pred_key = f'point_horizon_{horizon}'
             target_key = f'horizon_{horizon}'
-            
+
             # 古いキー名もサポート（後方互換性）
             if pred_key not in predictions and f'h{horizon}' in predictions:
                 pred_key = f'h{horizon}'
             if target_key not in targets and f'h{horizon}' in targets:
                 target_key = f'h{horizon}'
-                
+
             if pred_key not in predictions or target_key not in targets:
                 continue
 
@@ -207,13 +203,13 @@ class MultiHorizonLoss(nn.Module):
                 # 実際のキー名に合わせる
                 q_key = f'quantile_horizon_{horizon}'
                 target_key = f'horizon_{horizon}'
-                
+
                 # 古いキー名もサポート
                 if q_key not in predictions and f'h{horizon}_quantiles' in predictions:
                     q_key = f'h{horizon}_quantiles'
                 if target_key not in targets and f'h{horizon}' in targets:
                     target_key = f'h{horizon}'
-                    
+
                 if q_key in predictions and target_key in targets:
                     pred_q = predictions[q_key]
                     target = targets[target_key]
@@ -235,7 +231,7 @@ class MultiHorizonLoss(nn.Module):
         else:
             # 損失がない場合のフォールバック
             total_loss = torch.tensor(0.0, device=device, requires_grad=True)
-            
+
         loss_components['total_loss'] = total_loss.item()
 
         if return_components:
@@ -320,8 +316,8 @@ class ComprehensiveLoss(nn.Module):
 
     def __init__(
         self,
-        horizons: List[int] = [1, 2, 3, 5, 10],
-        horizon_weights: Optional[Dict[int, float]] = None,
+        horizons: list[int] = [1, 2, 3, 5, 10],
+        horizon_weights: dict[int, float] | None = None,
         huber_delta: float = 0.01,
         rankic_weight: float = 0.1,
         sharpe_weight: float = 0.05,
@@ -350,9 +346,9 @@ class ComprehensiveLoss(nn.Module):
 
     def forward(
         self,
-        predictions: Dict[str, torch.Tensor],
-        targets: Dict[str, torch.Tensor],
-        model: Optional[nn.Module] = None,
+        predictions: dict[str, torch.Tensor],
+        targets: dict[str, torch.Tensor],
+        model: nn.Module | None = None,
         return_components: bool = False
     ) -> torch.Tensor:
         """

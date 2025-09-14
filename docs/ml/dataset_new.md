@@ -172,6 +172,33 @@
 
 ---
 
+## 8) 日次マージン（/markets/daily_margin_interest）特徴（**接頭辞 `dmi_`**）
+
+### 8.1 キー・結合・リーク防止
+
+* **補正処理**：同一 `(Code, ApplicationDate)` について **最新の `PublishedDate`** を採用（API訂正の吸収）。
+* **有効日**：`effective_start = next_business_day(PublishedDate)`（T+1 ルール）。
+* **結合**：銘柄内 `effective_start` に対して **as‑of backward** で日次格子 `(Code, Date)` に付与。
+* **Null規約**：`effective_start` 前は `null`、有効日に `dmi_impulse=1`、`is_dmi_valid=1`。
+
+### 8.2 指標群
+
+* **水準・比率**：`dmi_long`, `dmi_short`, `dmi_net`, `dmi_total`, `dmi_credit_ratio`, `dmi_imbalance`, `dmi_short_long_ratio`
+* **変化・Z**：`dmi_d_long_1d`, `dmi_d_short_1d`, `dmi_d_net_1d`, `dmi_d_ratio_1d`, `dmi_z26_long/short/total/d_short_1d`
+* **ADV正規化**（有効時）：`dmi_long_to_adv20`, `dmi_short_to_adv20`, `dmi_total_to_adv20`, `dmi_d_long_to_adv1d`, `dmi_d_short_to_adv1d`, `dmi_d_net_to_adv1d`
+* **規制・イベント**：`dmi_reason_restricted`, `dmi_reason_dailypublication`, `dmi_reason_monitoring`, `dmi_reason_restrictedbyjsf`, `dmi_reason_precautionbyjsf`, `dmi_reason_unclearorseconalert`, `dmi_reason_count`, `dmi_tse_reg_level`
+* **タイミング**：`dmi_impulse`, `dmi_days_since_pub`, `dmi_days_since_app`, `is_dmi_valid`
+
+### 8.3 パイプライン有効化
+
+* `scripts/pipelines/run_full_dataset.py` で：
+  * `--enable-daily-margin` で有効化。
+  * `--daily-margin-parquet <path>` 指定可。未指定時は `output/daily_margin_interest_*.parquet` を自動探索。
+
+> 週次マージン（`margin_*`）と日次（`dmi_*`）は併存します。学習で日次を優先する場合は `dmi_*` を選択してください。
+
+---
+
 ## 8) 財務（/fins/statements）特徴（\~17列＋タイミング）
 
 ### 8.1 有効日

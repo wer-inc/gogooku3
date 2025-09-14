@@ -7,13 +7,12 @@ does not include `Sector17Name` / `Sector33Name`.
 
 from __future__ import annotations
 
-from typing import Dict
-from pathlib import Path
 import json
 import os
+from pathlib import Path
 
 # Minimal, extendable maps. Keys are strings to preserve leading zeros.
-SECTOR17_NAME_MAP: Dict[str, str] = {
+SECTOR17_NAME_MAP: dict[str, str] = {
     # Common examples (accept both zero-padded and non-padded keys)
     "01": "食品", "1": "食品",
     "02": "繊維製品", "2": "繊維製品",
@@ -34,7 +33,7 @@ SECTOR17_NAME_MAP: Dict[str, str] = {
     "17": "情報・通信",  # 一部データでは「情報通信」と表記
 }
 
-SECTOR33_NAME_MAP: Dict[str, str] = {
+SECTOR33_NAME_MAP: dict[str, str] = {
     # Frequent examples in our dataset/tests; extend as needed
     "3200": "化学",
     "3300": "医薬品",
@@ -65,10 +64,10 @@ def get_sector33_name(code: str | None) -> str:
     return SECTOR33_NAME_MAP.get(code, "")
 
 
-def _load_json(path: Path) -> Dict[str, str]:
+def _load_json(path: Path) -> dict[str, str]:
     try:
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     # Normalize keys to strings

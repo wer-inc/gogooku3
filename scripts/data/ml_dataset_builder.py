@@ -19,6 +19,12 @@ import polars as pl
 from src.gogooku3.features.margin_weekly import (
     add_margin_weekly_block as _add_margin_weekly_block,
 )
+from src.gogooku3.features.margin_daily import (
+    add_daily_margin_block as _add_daily_margin_block,
+)
+from src.gogooku3.features.short_selling import (
+    add_short_selling_block as _add_short_selling_block,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -94,7 +100,7 @@ class MLDatasetBuilder:
         except Exception:
             return df
 
-    def add_topix_features(self, df: pl.DataFrame, topix_df: Optional[pl.DataFrame], *, beta_lag: int | None = 1) -> pl.DataFrame:
+    def add_topix_features(self, df: pl.DataFrame, topix_df: Optional[pl.DataFrame] = None, *, beta_lag: int | None = 1) -> pl.DataFrame:
         if topix_df is None or topix_df.is_empty():
             logger.info("[builder] TOPIX enrichment skipped (no data)")
             return df
@@ -196,6 +202,104 @@ class MLDatasetBuilder:
             logger.warning(f"[builder] flow integration failed: {e}")
             return df
 
+    def add_futures_block(
+        self,
+        df: pl.DataFrame,
+        futures_df: Optional[pl.DataFrame],
+        *,
+        categories: Optional[list[str]] = None,
+        topix_df: Optional[pl.DataFrame] = None,
+        spot_map: Optional[dict[str, pl.DataFrame]] = None,
+        on_z_window: int = 60,
+        z_window_eod: int = 252,
+        make_continuous_series: bool = False,
+    ) -> pl.DataFrame:
+        """Attach futures ON/EOD features to the equity panel.
+
+        Args:
+            df: Equity panel (Code, Date, ...)
+            futures_df: Raw /derivatives/futures daily dataset
+            categories: Target futures categories (e.g., ["TOPIXF","NK225F"]) 
+            topix_df: Spot TOPIX series for basis (if available)
+            on_z_window: ON z-score window (default=60)
+            z_window_eod: EOD z-score window (default=252)
+
+        Returns:
+            DataFrame with fut_* features joined on Date (ON) and T+1 (EOD)
+        """
+        if futures_df is None or futures_df.is_empty():
+            logger.info("[builder] futures block skipped (no futures_df)")
+            return df
+
+        cats = categories or ["TOPIXF", "NK225F", "JN400F", "REITF"]
+        try:
+            from src.gogooku3.features.futures_features import (
+                attach_to_equity_panel,
+                build_eod_features,
+                build_next_bday_expr_from_quotes,
+                build_on_features,
+                prep_futures,
+            )
+
+            # Prepare raw futures
+            fprep = prep_futures(futures_df, cats)
+            if fprep.is_empty():
+                logger.info("[builder] futures block: no data after filtering; skipping")
+                return df
+
+            # ON features
+            on_df = build_on_features(fprep, on_z_window=on_z_window)
+
+            # Spot mapping (basis)
+            _spot_map: dict[str, pl.DataFrame] = {}
+            if topix_df is not None and not topix_df.is_empty():
+                _spot_map["TOPIXF"] = topix_df.select([
+                    pl.col("Date").cast(pl.Date),
+                    pl.col("Close").cast(pl.Float64).alias("S"),
+                ])
+            # Merge external spot map if provided
+            if spot_map:
+                for k, v in spot_map.items():
+                    if v is None or v.is_empty():
+                        continue
+                    vv = v
+                    if "Close" in vv.columns and "S" not in vv.columns:
+                        vv = vv.rename({"Close": "S"})
+                    if vv["Date"].dtype == pl.Utf8:
+                        vv = vv.with_columns(pl.col("Date").str.strptime(pl.Date, strict=False))
+                    _spot_map[k] = vv.select(["Date", "S"]).with_columns(pl.col("S").cast(pl.Float64))
+
+            # Next business day mapping (from equity dates)
+            next_bd_expr = build_next_bday_expr_from_quotes(df)
+
+            eod_df = build_eod_features(
+                fprep,
+                spot_map=_spot_map,
+                next_bday_expr=next_bd_expr,
+                z_window=z_window_eod,
+                make_continuous_series=make_continuous_series,
+            )
+
+            out = attach_to_equity_panel(df, on_df, eod_df, cats)
+
+            # Coverage logs (best effort)
+            try:
+                for cat in cats:
+                    on_col = f"is_fut_on_valid_{cat.lower()}"
+                    eod_col = f"is_fut_eod_valid_{cat.lower()}"
+                    if on_col in out.columns:
+                        on_cov = float(out.select(pl.col(on_col).mean()).item())
+                        logger.info(f"Futures ON coverage {cat}: {on_cov:.1%}")
+                    if eod_col in out.columns:
+                        eod_cov = float(out.select(pl.col(eod_col).mean()).item())
+                        logger.info(f"Futures EOD coverage {cat}: {eod_cov:.1%}")
+            except Exception:
+                pass
+            return out
+        except Exception as e:
+            logger.warning(f"[builder] futures block failed: {e}")
+            return df
+
     def add_statements_features(self, df: pl.DataFrame, stm_df: Optional[pl.DataFrame]) -> pl.DataFrame:
         if stm_df is None or stm_df.is_empty():
             logger.info("[builder] statements enrichment skipped (no stm_df)")
@@ -233,6 +337,125 @@ class MLDatasetBuilder:
             logger.info(f"Margin feature coverage: {cov:.1%}")
         except Exception:
             pass
+        return out
+
+    def add_daily_margin_block(
+        self,
+        df: pl.DataFrame,
+        daily_df: Optional[pl.DataFrame],
+        *,
+        adv_window_days: int = 20,
+        enable_z_scores: bool = True,
+    ) -> pl.DataFrame:
+        """Add daily margin interest features with leak-safe as-of join.
+
+        Args:
+            df: Base daily quotes DataFrame
+            daily_df: Raw daily margin interest data from API
+            adv_window_days: Window for ADV calculation
+            enable_z_scores: Whether to compute z-score features
+
+        Returns:
+            DataFrame with dmi_* features attached
+        """
+        if daily_df is None or daily_df.is_empty():
+            logger.info("[builder] daily margin skipped (no data)")
+            return df
+
+        # Compute ADV data if not present
+        adv20_df = None
+        if "AdjustmentVolume" in df.columns:
+            try:
+                adv20_df = (
+                    df.select(["Code", "Date", "AdjustmentVolume"])
+                    .with_columns([
+                        pl.col("AdjustmentVolume")
+                        .rolling_mean(adv_window_days)
+                        .over("Code")
+                        .alias("ADV20_shares")
+                    ])
+                    .drop_nulls(subset=["ADV20_shares"])
+                )
+                logger.info(f"[builder] computed ADV{adv_window_days} for daily margin scaling")
+            except Exception as e:
+                logger.warning(f"[builder] ADV computation failed: {e}")
+
+        out = _add_daily_margin_block(
+            quotes=df,
+            daily_df=daily_df,
+            adv20_df=adv20_df,
+            enable_z_scores=enable_z_scores,
+        )
+
+        # Coverage log
+        try:
+            cov = float(out.select(pl.col("is_dmi_valid").mean()).item())
+            logger.info(f"Daily margin feature coverage: {cov:.1%}")
+        except Exception:
+            pass
+
+        return out
+
+    def add_short_selling_block(
+        self,
+        df: pl.DataFrame,
+        short_df: Optional[pl.DataFrame],
+        positions_df: Optional[pl.DataFrame] = None,
+        adv20_df: Optional[pl.DataFrame] = None,
+        *,
+        enable_z_scores: bool = True,
+        z_window: int = 252,
+    ) -> pl.DataFrame:
+        """Add short selling features with leak-safe as-of join.
+
+        Args:
+            df: Base daily quotes DataFrame
+            short_df: Short selling ratio data from API
+            positions_df: Short selling positions data (optional)
+            adv20_df: ADV20 data for liquidity scaling (optional)
+            enable_z_scores: Whether to compute z-score features
+            z_window: Window for Z-score calculation
+
+        Returns:
+            DataFrame with ss_* features attached
+        """
+        if short_df is None or short_df.is_empty():
+            logger.info("[builder] short selling enrichment skipped (no short_df)")
+            return df
+
+        # Compute ADV data if not provided
+        if adv20_df is None and "AdjustmentVolume" in df.columns:
+            try:
+                adv20_df = (
+                    df.select(["Code", "Date", "AdjustmentVolume"])
+                    .with_columns([
+                        pl.col("AdjustmentVolume")
+                        .rolling_mean(20)
+                        .over("Code")
+                        .alias("ADV20_shares")
+                    ])
+                    .drop_nulls(subset=["ADV20_shares"])
+                )
+                logger.info("[builder] computed ADV20 for short selling scaling")
+            except Exception as e:
+                logger.warning(f"[builder] ADV computation failed: {e}")
+
+        out = _add_short_selling_block(
+            quotes=df,
+            short_df=short_df,
+            positions_df=positions_df,
+            adv20_df=adv20_df,
+            enable_z_scores=enable_z_scores,
+            z_window=z_window,
+        )
+
+        # Coverage log
+        try:
+            cov = float(out.select(pl.col("is_ss_valid").mean()).item())
+            logger.info(f"Short selling feature coverage: {cov:.1%}")
+        except Exception:
+            pass
+
         return out
 
     # ========== IO / metadata ==========

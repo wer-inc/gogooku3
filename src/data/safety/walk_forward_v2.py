@@ -11,14 +11,14 @@ Walk-Forward Cross-Validation with Enhanced Embargo (V2)
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterator
+from datetime import date
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import polars as pl
-from typing import Dict, List, Tuple, Iterator, Optional, Union, Any
-from datetime import datetime, timedelta, date
-import logging
-from pathlib import Path
-import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class WalkForwardSplitterV2:
     2. Embargo: train/val境界にgap_days空白期間
     3. Purge: 重複期間の完全排除
     """
-    
+
     def __init__(
         self,
         n_splits: int = 5,
@@ -40,7 +40,7 @@ class WalkForwardSplitterV2:
         purge_days: int = 0,
         min_train_days: int = 252,
         min_test_days: int = 63,
-        test_size_days: Optional[int] = None,
+        test_size_days: int | None = None,
         overlap_check: bool = True,
         date_column: str = 'date',
         verbose: bool = True
@@ -66,18 +66,18 @@ class WalkForwardSplitterV2:
         self.overlap_check = overlap_check
         self.date_column = date_column
         self.verbose = verbose
-        
+
         # 分割結果のキャッシュ
-        self.splits: List[Dict[str, Any]] = []
-        self.date_info: Dict[str, Any] = {}
-        
+        self.splits: list[dict[str, Any]] = []
+        self.date_info: dict[str, Any] = {}
+
         if self.verbose:
             logger.info(
                 f"WalkForwardSplitterV2: n_splits={n_splits}, "
                 f"embargo_days={embargo_days}, purge_days={purge_days}"
             )
-    
-    def _extract_dates(self, data: Union[pd.DataFrame, pl.DataFrame]) -> np.ndarray:
+
+    def _extract_dates(self, data: pd.DataFrame | pl.DataFrame) -> np.ndarray:
         """データから日付配列を抽出"""
         if isinstance(data, pd.DataFrame):
             dates = pd.to_datetime(data[self.date_column]).dt.date
@@ -87,54 +87,54 @@ class WalkForwardSplitterV2:
                 dates = dates.to_pandas().dt.date
             else:
                 dates = [d.date() if hasattr(d, 'date') else d for d in dates.to_list()]
-        
+
         unique_dates = np.array(sorted(set(dates)))
         return unique_dates
-    
-    def _calculate_split_dates(self, unique_dates: np.ndarray) -> List[Dict[str, date]]:
+
+    def _calculate_split_dates(self, unique_dates: np.ndarray) -> list[dict[str, date]]:
         """分割日付を計算"""
         total_days = len(unique_dates)
-        
+
         if self.verbose:
             logger.info(f"Total unique dates: {total_days}")
             logger.info(f"Date range: {unique_dates[0]} to {unique_dates[-1]}")
-        
+
         # テスト期間サイズの決定
         if self.test_size_days:
             test_days = min(self.test_size_days, total_days // (self.n_splits + 1))
         else:
             # 自動計算: 全体をn_splits+1で割った期間
             test_days = max(self.min_test_days, total_days // (self.n_splits + 1))
-        
+
         if self.verbose:
             logger.info(f"Test period size: {test_days} days")
-        
+
         splits = []
-        
+
         for fold in range(self.n_splits):
             # テスト期間の終了日（最新日から逆算）
             test_end_idx = total_days - 1 - fold * (test_days + self.embargo_days + self.purge_days)
             test_start_idx = test_end_idx - test_days + 1
-            
+
             # Embargo適用後の訓練期間終了日
             embargo_end_idx = test_start_idx - self.embargo_days - 1
             purge_end_idx = embargo_end_idx - self.purge_days
-            
+
             # 訓練期間の開始日（最小期間を確保）
             train_end_idx = purge_end_idx
             train_start_idx = max(0, train_end_idx - self.min_train_days + 1)
-            
+
             # インデックス妥当性チェック
-            if (train_start_idx < 0 or 
+            if (train_start_idx < 0 or
                 train_end_idx < train_start_idx or
                 test_start_idx < 0 or
                 test_end_idx < test_start_idx or
                 test_start_idx <= train_end_idx + self.embargo_days + self.purge_days):
-                
+
                 if self.verbose:
                     logger.warning(f"Fold {fold}: Invalid date range, skipping")
                 continue
-            
+
             split_info = {
                 'fold': fold,
                 'train_start': unique_dates[train_start_idx],
@@ -147,57 +147,57 @@ class WalkForwardSplitterV2:
                 'test_days': test_end_idx - test_start_idx + 1,
                 'gap_days': test_start_idx - train_end_idx - 1
             }
-            
+
             splits.append(split_info)
-            
+
             if self.verbose:
                 logger.info(
                     f"Fold {fold}: Train[{split_info['train_start']} - {split_info['train_end']}] "
                     f"Test[{split_info['test_start']} - {split_info['test_end']}] "
                     f"Gap={split_info['gap_days']}d"
                 )
-        
+
         return splits
-    
-    def _check_overlaps(self, splits: List[Dict[str, Any]]) -> List[str]:
+
+    def _check_overlaps(self, splits: list[dict[str, Any]]) -> list[str]:
         """分割間のオーバーラップをチェック"""
         warnings = []
-        
+
         for i, split_i in enumerate(splits):
             for j, split_j in enumerate(splits):
                 if i >= j:
                     continue
-                
+
                 # Train-Train overlap
-                if (split_i['train_start'] <= split_j['train_end'] and 
+                if (split_i['train_start'] <= split_j['train_end'] and
                     split_j['train_start'] <= split_i['train_end']):
                     warnings.append(
                         f"Fold {i} train overlaps with Fold {j} train"
                     )
-                
+
                 # Test-Test overlap
-                if (split_i['test_start'] <= split_j['test_end'] and 
+                if (split_i['test_start'] <= split_j['test_end'] and
                     split_j['test_start'] <= split_i['test_end']):
                     warnings.append(
                         f"Fold {i} test overlaps with Fold {j} test"
                     )
-                
+
                 # Train-Test overlap (critical)
-                if (split_i['train_start'] <= split_j['test_end'] and 
+                if (split_i['train_start'] <= split_j['test_end'] and
                     split_j['test_start'] <= split_i['train_end']):
                     warnings.append(
                         f"CRITICAL: Fold {i} train overlaps with Fold {j} test"
                     )
-        
+
         return warnings
-    
-    def fit(self, data: Union[pd.DataFrame, pl.DataFrame]) -> 'WalkForwardSplitterV2':
+
+    def fit(self, data: pd.DataFrame | pl.DataFrame) -> WalkForwardSplitterV2:
         """データに基づいて分割を準備"""
         unique_dates = self._extract_dates(data)
-        
+
         # 分割日付を計算
         self.splits = self._calculate_split_dates(unique_dates)
-        
+
         # 重複チェック
         if self.overlap_check and self.splits:
             warnings = self._check_overlaps(self.splits)
@@ -205,7 +205,7 @@ class WalkForwardSplitterV2:
                 logger.warning(f"Found {len(warnings)} overlaps:")
                 for warning in warnings:
                     logger.warning(f"  {warning}")
-        
+
         # メタ情報を保存
         self.date_info = {
             'total_dates': len(unique_dates),
@@ -213,16 +213,16 @@ class WalkForwardSplitterV2:
             'date_max': unique_dates[-1],
             'valid_splits': len(self.splits)
         }
-        
+
         if self.verbose:
             logger.info(f"Prepared {len(self.splits)} valid splits")
-        
+
         return self
-    
+
     def split(
-        self, 
-        data: Union[pd.DataFrame, pl.DataFrame]
-    ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+        self,
+        data: pd.DataFrame | pl.DataFrame
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """
         Walk-Forward分割を生成
         
@@ -231,7 +231,7 @@ class WalkForwardSplitterV2:
         """
         if not self.splits:
             self.fit(data)
-        
+
         # 日付列を取得
         if isinstance(data, pd.DataFrame):
             dates = pd.to_datetime(data[self.date_column]).dt.date
@@ -241,56 +241,56 @@ class WalkForwardSplitterV2:
                 dates = dates.to_pandas().dt.date
             else:
                 dates = [d.date() if hasattr(d, 'date') else d for d in dates.to_list()]
-        
+
         dates = np.array(dates)
-        
+
         for split_info in self.splits:
             # 訓練インデックス
-            train_mask = ((dates >= split_info['train_start']) & 
+            train_mask = ((dates >= split_info['train_start']) &
                          (dates <= split_info['train_end']))
             train_indices = np.where(train_mask)[0]
-            
+
             # テストインデックス
-            test_mask = ((dates >= split_info['test_start']) & 
+            test_mask = ((dates >= split_info['test_start']) &
                         (dates <= split_info['test_end']))
             test_indices = np.where(test_mask)[0]
-            
+
             if len(train_indices) == 0 or len(test_indices) == 0:
                 logger.warning(f"Fold {split_info['fold']}: Empty train or test set")
                 continue
-            
+
             if self.verbose:
                 logger.info(
                     f"Fold {split_info['fold']}: "
                     f"Train={len(train_indices)} samples, "
                     f"Test={len(test_indices)} samples"
                 )
-            
+
             yield train_indices, test_indices
-    
-    def get_split_info(self) -> List[Dict[str, Any]]:
+
+    def get_split_info(self) -> list[dict[str, Any]]:
         """分割情報を取得"""
         return self.splits.copy()
-    
-    def get_date_info(self) -> Dict[str, Any]:
+
+    def get_date_info(self) -> dict[str, Any]:
         """日付情報を取得"""
         return self.date_info.copy()
-    
-    def validate_split(self, data: Union[pd.DataFrame, pl.DataFrame]) -> Dict[str, Any]:
+
+    def validate_split(self, data: pd.DataFrame | pl.DataFrame) -> dict[str, Any]:
         """分割の妥当性を検証"""
         if not self.splits:
             self.fit(data)
-        
+
         validation_result = {
             'total_splits': len(self.splits),
             'overlaps': [],
             'gaps': [],
             'coverage': {}
         }
-        
+
         # オーバーラップチェック
         validation_result['overlaps'] = self._check_overlaps(self.splits)
-        
+
         # ギャップ情報
         for split in self.splits:
             validation_result['gaps'].append({
@@ -299,19 +299,19 @@ class WalkForwardSplitterV2:
                 'embargo_days': split['embargo_days'],
                 'purge_days': split['purge_days']
             })
-        
+
         # カバレッジ情報
         if self.splits:
             total_train_days = sum(s['train_days'] for s in self.splits)
             total_test_days = sum(s['test_days'] for s in self.splits)
-            
+
             validation_result['coverage'] = {
                 'total_train_days': total_train_days,
                 'total_test_days': total_test_days,
                 'avg_train_days': total_train_days / len(self.splits),
                 'avg_test_days': total_test_days / len(self.splits)
             }
-        
+
         return validation_result
 
 
@@ -324,7 +324,7 @@ class WalkForwardDateBucketSamplerV2:
     - embargo=20対応
     - 同日バッチングによる統計整合性確保
     """
-    
+
     def __init__(
         self,
         dataset,
@@ -358,17 +358,17 @@ class WalkForwardDateBucketSamplerV2:
         self.seed = seed
         self.current_fold = current_fold
         self.phase = phase
-        
+
         # Walk-Forward分割器を初期化
         self.splitter = WalkForwardSplitterV2(
             n_splits=n_splits,
             embargo_days=embargo_days,
             verbose=False
         )
-        
+
         # バッチ生成用データを準備
         self._prepare_batches()
-    
+
     def _prepare_batches(self):
         """バッチ生成用データを準備"""
         # データセットから日付を取得
@@ -378,25 +378,25 @@ class WalkForwardDateBucketSamplerV2:
             data = self.dataset.df
         else:
             raise ValueError("Dataset must have 'data' or 'df' attribute")
-        
+
         # Walk-Forward分割を実行
         self.splitter.fit(data)
         splits = list(self.splitter.split(data))
-        
+
         if self.current_fold >= len(splits):
             raise ValueError(f"current_fold={self.current_fold} >= n_splits={len(splits)}")
-        
+
         # 現在のfoldのインデックスを取得
         train_indices, test_indices = splits[self.current_fold]
-        
+
         if self.phase == 'train':
             self.indices = train_indices
         else:
             self.indices = test_indices
-        
+
         # 日付ごとにインデックスをグループ化
         self.day_groups = self._group_by_day(self.indices, data)
-        
+
         # 統計情報
         if self.day_groups:
             sizes = [len(g) for g in self.day_groups]
@@ -405,14 +405,14 @@ class WalkForwardDateBucketSamplerV2:
                 f"{len(self.day_groups)} days, sizes: min={min(sizes)}, max={max(sizes)}, "
                 f"mean={np.mean(sizes):.1f}"
             )
-    
-    def _group_by_day(self, indices: np.ndarray, data) -> List[List[int]]:
+
+    def _group_by_day(self, indices: np.ndarray, data) -> list[list[int]]:
         """インデックスを日付ごとにグループ化"""
         if isinstance(data, pd.DataFrame):
             dates = data.iloc[indices]['date'].dt.date if 'date' in data.columns else None
         else:  # polars
             dates = data.slice(indices[0], len(indices))['date'].cast(pl.Date) if 'date' in data.columns else None
-        
+
         if dates is None:
             # 日付がない場合は仮実装
             logger.warning("No date column found, using index-based grouping")
@@ -423,28 +423,28 @@ class WalkForwardDateBucketSamplerV2:
                 if len(group) >= self.min_nodes_per_day:
                     groups.append(group)
             return groups
-        
+
         # 日付でグループ化
         day_to_indices = {}
-        
+
         if isinstance(data, pd.DataFrame):
             dates_list = dates.tolist()
         else:
             dates_list = dates.to_list()
-        
+
         for i, date_val in enumerate(dates_list):
             if date_val not in day_to_indices:
                 day_to_indices[date_val] = []
             day_to_indices[date_val].append(indices[i])
-        
+
         # リストに変換してフィルタ
         day_groups = [
-            group for group in day_to_indices.values() 
+            group for group in day_to_indices.values()
             if len(group) >= self.min_nodes_per_day
         ]
-        
+
         return day_groups
-    
+
     def __iter__(self):
         """バッチのイテレータを返す"""
         # 日の順序を決定
@@ -453,11 +453,11 @@ class WalkForwardDateBucketSamplerV2:
             day_order = rng.permutation(len(self.day_groups))
         else:
             day_order = np.arange(len(self.day_groups))
-        
+
         # 各日のデータを返す
         for day_idx in day_order:
             day_indices = self.day_groups[day_idx]
-            
+
             # バッチサイズを超える場合は分割
             if len(day_indices) > self.max_batch_size:
                 for i in range(0, len(day_indices), self.max_batch_size):
@@ -466,7 +466,7 @@ class WalkForwardDateBucketSamplerV2:
                         yield chunk
             else:
                 yield day_indices
-    
+
     def __len__(self):
         """バッチ数を返す"""
         total_batches = 0

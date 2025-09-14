@@ -3,20 +3,20 @@ Robust Trainer with EMA, GradScaler, and Advanced Scheduling
 ATFT-GAT-FAN向け最適化トレーニング
 """
 
-import os
 import logging
-from typing import Dict, List, Optional, Any, Tuple, Union
+import time
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
-from torch.cuda.amp import GradScaler
-import numpy as np
 from scipy.stats import spearmanr
-import time
+from torch.cuda.amp import GradScaler
+from torch.optim import AdamW
 
-from ..utils.settings import get_settings
 from ..losses.multi_horizon_loss import ComprehensiveLoss
+from ..utils.settings import get_settings
 
 logger = logging.getLogger(__name__)
 config = get_settings()
@@ -25,7 +25,7 @@ config = get_settings()
 class ModelEMA:
     """Exponential Moving Average for Model Parameters"""
 
-    def __init__(self, model: nn.Module, decay: float = 0.999, device: Optional[str] = None):
+    def __init__(self, model: nn.Module, decay: float = 0.999, device: str | None = None):
         """
         Args:
             model: ターゲットモデル
@@ -110,7 +110,7 @@ class AdvancedScheduler:
 
         logger.info(f"AdvancedScheduler initialized: warmup={warmup_steps}, max_steps={max_steps}")
 
-    def step(self, metric: Optional[float] = None):
+    def step(self, metric: float | None = None):
         """スケジューラステップ"""
         self.current_step += 1
 
@@ -181,7 +181,7 @@ class OptimizedOptimizer:
 
         logger.info(f"OptimizedOptimizer initialized with {len(self.param_groups)} param groups")
 
-    def _build_param_groups(self) -> List[Dict[str, Any]]:
+    def _build_param_groups(self) -> list[dict[str, Any]]:
         """ParamGroupの構築"""
         decay_params = []
         no_decay_params = []
@@ -316,7 +316,7 @@ class RobustTrainer:
 
         logger.info("RobustTrainer initialized")
 
-    def train_epoch(self) -> Dict[str, float]:
+    def train_epoch(self) -> dict[str, float]:
         """1エポックトレーニング"""
         self.model.train()
         epoch_loss = 0.0
@@ -351,7 +351,7 @@ class RobustTrainer:
 
         return epoch_metrics
 
-    def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> Tuple[float, Dict[str, float]]:
+    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> tuple[float, dict[str, float]]:
         """トレーニングステップ"""
         features = batch['features']
         targets = batch['targets']
@@ -391,7 +391,7 @@ class RobustTrainer:
 
         return loss.item(), step_metrics
 
-    def validate(self) -> Dict[str, float]:
+    def validate(self) -> dict[str, float]:
         """検証"""
         if self.ema is not None:
             self.ema.apply_shadow()
@@ -451,7 +451,7 @@ class RobustTrainer:
 
         return val_metrics
 
-    def save_checkpoint(self, val_metrics: Dict[str, float], is_best: bool = False):
+    def save_checkpoint(self, val_metrics: dict[str, float], is_best: bool = False):
         """チェックポイント保存"""
         checkpoint = {
             'epoch': self.current_epoch,

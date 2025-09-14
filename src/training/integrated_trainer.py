@@ -3,13 +3,11 @@ Integrated Trainer for ATFT-GAT-FAN
 すべての改善を統合したトレーニングスクリプト
 """
 
-import os
-import sys
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
-import torch
+
 import hydra
+import torch
 from omegaconf import DictConfig, OmegaConf
 
 # ロギング設定
@@ -17,13 +15,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # インポート
-from ..utils.settings import get_settings, set_reproducibility
-from ..utils.monitoring import ComprehensiveLogger, TrainingMonitor
-from ..utils.robust_executor import RobustExecutor, CheckpointManager
-from .robust_trainer import RobustTrainer
-from ..data.loaders.streaming_dataset import StreamingParquetDataset, OptimizedDataLoader
-from ..losses.multi_horizon_loss import ComprehensiveLoss
 from ..atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
+from ..data.loaders.streaming_dataset import (
+    OptimizedDataLoader,
+    StreamingParquetDataset,
+)
+from ..utils.monitoring import ComprehensiveLogger, TrainingMonitor
+from ..utils.robust_executor import CheckpointManager, RobustExecutor
+from ..utils.settings import get_settings, set_reproducibility
+from .robust_trainer import RobustTrainer
 
 config = get_settings()
 
