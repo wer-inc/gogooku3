@@ -196,6 +196,39 @@ python scripts/pipelines/run_full_dataset.py --jquants \
   --sector-te-targets target_5d,target_1d
 ```
 
+#### セクター相対（Sector Cross‑Sectional）
+```bash
+# 例: rsi_14 と returns_10d に対して _vs_sec/_in_sec_z を追加
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  --enable-sector-cs --sector-cs-cols "rsi_14,returns_10d"
+```
+
+#### グラフ特徴（相関ネットワーク）
+```bash
+# 窓60日、相関しきい値0.3、最大次数10、キャッシュディレクトリ指定
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  --enable-graph-features --graph-window 60 --graph-threshold 0.3 \
+  --graph-max-k 10 --graph-cache-dir output/graph_cache
+```
+
+#### Nikkei225 オプション市場アグリゲートの付与（T+1）
+```bash
+# 既存のraw/features parquetが無い場合はAPIから取得して構築
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  --attach-nk225-option-market
+```
+
+#### YAML設定での一括指定（CLI優先）
+```bash
+# configs/pipeline/full_dataset.yaml を読み込み、セクター相対/グラフ等の既定を設定
+python scripts/pipelines/run_full_dataset.py --jquants \
+  --start-date 2020-09-06 --end-date 2025-09-06 \
+  --config configs/pipeline/full_dataset.yaml
+```
+
 ### 📁 出力ファイル
 ```bash
 # 結果確認

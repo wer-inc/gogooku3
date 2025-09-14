@@ -61,13 +61,13 @@ early_stopping:
 prediction:
   horizons: [1, 5, 10, 20]  # Prediction horizons in days
   horizon_specific_architecture: true  # Enable horizon-specific heads
-  horizon_weights: [2.0, 1.5, 1.0, 0.7]  # Weights for each horizon (1d, 5d, 10d, 20d)
+  horizon_weights: [1.0, 1.0, 1.0, 1.0]  # Balanced weights to reduce short-term noise domination
 
 # Loss configuration (optimized for financial prediction)
 loss:
   type: huber_multi_horizon  # Changed from MSE to Huber for robustness
   huber_delta: 0.01  # Optimized for financial returns
-  multi_horizon_weights: [2.0, 1.5, 1.0, 0.7]  # Enhanced short-term focus (4 horizons)
+  multi_horizon_weights: [1.0, 1.0, 1.0, 1.0]  # Balanced weights - fixes short-term noise domination per PDF diagnosis
   use_coverage_penalty: true  # Enable coverage penalty
   coverage_alpha: 0.02  # Increased from 0.01
   rankic_weight: 0.1  # Enable RankIC loss

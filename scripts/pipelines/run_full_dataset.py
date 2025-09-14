@@ -179,6 +179,42 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Optional JPX400 spot parquet for basis mapping (Date, Close)",
     )
+    # Advanced equity features (interactions, cross-section, calendar)
+    parser.add_argument(
+        "--enable-advanced-features",
+        action="store_true",
+        help="Enable advanced T+0 features (RSI×Vol, momentum×volume, MACD slope, cross-sectional ranks, calendar)",
+    )
+    # Graph-structured features (correlation graph)
+    parser.add_argument(
+        "--enable-graph-features",
+        action="store_true",
+        help="Enable graph-structured features (degree, peer corr mean, peer count)",
+    )
+    parser.add_argument(
+        "--graph-window",
+        type=int,
+        default=60,
+        help="Correlation window (days) for graph features (default: 60)",
+    )
+    parser.add_argument(
+        "--graph-threshold",
+        type=float,
+        default=0.3,
+        help="Absolute correlation threshold for edges (default: 0.3)",
+    )
+    parser.add_argument(
+        "--graph-max-k",
+        type=int,
+        default=10,
+        help="Max edges per node (default: 10)",
+    )
+    parser.add_argument(
+        "--graph-cache-dir",
+        type=Path,
+        default=None,
+        help="Optional cache directory for graph artifacts (e.g., output/graph_cache)",
+    )
     # Nikkei225 index option features (optional)
     parser.add_argument(
         "--enable-nk225-option-features",
@@ -192,9 +228,27 @@ def _parse_args() -> argparse.Namespace:
         help="Path to pre-saved /option/index_option raw parquet (optional)",
     )
     parser.add_argument(
+        "--enable-sector-cs",
+        action="store_true",
+        help="Enable sector cross-sectional features (sector-relative deviations, ranks, z-scores)",
+    )
+    parser.add_argument(
+        "--sector-cs-cols",
+        type=str,
+        default=None,
+        help="Comma-separated extra columns to compute sector-relative stats for (e.g., rsi_14,returns_10d)",
+    )
+    parser.add_argument(
         "--attach-nk225-option-market",
         action="store_true",
         help="Attach Nikkei225 option market aggregates (CMAT IV, term slope, flows) to equity panel (default: off)",
+    )
+    # Optional YAML config to override defaults for sector CS / graph / options
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="YAML file to set sector CS include_cols and graph params (CLI overrides config)",
     )
     # Sector feature toggles
     parser.add_argument(
@@ -298,6 +352,39 @@ async def main() -> int:
     Follows the documented 3-step flow and persists artifacts under `output/`.
     """
     args = _parse_args()
+
+    # Load YAML config if provided (CLI takes precedence)
+    if getattr(args, "config", None) is not None and args.config and args.config.exists():
+        try:
+            import yaml  # type: ignore
+            with open(args.config, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            # Sector CS
+            sec = cfg.get("sector_cs") or {}
+            if isinstance(sec, dict):
+                if not args.enable_sector_cs and isinstance(sec.get("enable"), bool):
+                    args.enable_sector_cs = bool(sec.get("enable"))
+                if not args.sector_cs_cols and isinstance(sec.get("include_cols"), (list, tuple)):
+                    args.sector_cs_cols = ",".join(str(s) for s in sec.get("include_cols") if s)
+            # Graph
+            g = cfg.get("graph") or {}
+            if isinstance(g, dict):
+                if not args.enable_graph_features and isinstance(g.get("enable"), bool):
+                    args.enable_graph_features = bool(g.get("enable"))
+                if getattr(args, "graph_window", None) in (None, 60) and isinstance(g.get("window"), int):
+                    args.graph_window = int(g.get("window"))
+                if getattr(args, "graph_threshold", None) in (None, 0.3) and isinstance(g.get("threshold"), (float, int)):
+                    args.graph_threshold = float(g.get("threshold"))
+                if getattr(args, "graph_max_k", None) in (None, 10) and isinstance(g.get("max_k"), int):
+                    args.graph_max_k = int(g.get("max_k"))
+                if getattr(args, "graph_cache_dir", None) in (None,) and g.get("cache_dir"):
+                    args.graph_cache_dir = Path(str(g.get("cache_dir")))
+            # Option market attach
+            om = cfg.get("option_market") or {}
+            if isinstance(om, dict) and not args.attach_nk225_option_market and isinstance(om.get("attach"), bool):
+                args.attach_nk225_option_market = bool(om.get("attach"))
+        except Exception as e:
+            logger.warning(f"Failed to load config YAML {args.config}: {e}")
 
     # Dry-run: print planned steps and exit successfully
     if getattr(args, "dry_run", False):
@@ -613,6 +700,17 @@ async def main() -> int:
         enable_option_market_features=args.attach_nk225_option_market,
         index_option_features_parquet=None,
         index_option_raw_parquet=args.index_option_parquet,
+        # Advanced features
+        enable_advanced_features=args.enable_advanced_features,
+        # Sector cross-sectional features
+        enable_sector_cs=args.enable_sector_cs,
+        sector_cs_cols=[s.strip() for s in (args.sector_cs_cols or '').split(',') if s.strip()],
+        # Graph features
+        enable_graph_features=args.enable_graph_features,
+        graph_window=getattr(args, "graph_window", 60),
+        graph_threshold=getattr(args, "graph_threshold", 0.3),
+        graph_max_k=getattr(args, "graph_max_k", 10),
+        graph_cache_dir=str(args.graph_cache_dir) if args.graph_cache_dir else None,
     )
     logger.info("Full enriched dataset saved")
     logger.info(f"  Dataset : {pq_path}")

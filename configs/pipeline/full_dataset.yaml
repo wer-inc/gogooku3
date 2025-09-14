@@ -1,0 +1,15 @@
+sector_cs:
+  enable: true
+  include_cols:
+    - rsi_14
+    - returns_10d
+
+graph:
+  enable: true
+  window: 60
+  threshold: 0.3
+  max_k: 10
+  cache_dir: output/graph_cache
+
+option_market:
+  attach: false
