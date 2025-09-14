@@ -1,15 +1,15 @@
 """Unified metrics computation utilities."""
 
-import torch
-import numpy as np
-from typing import Dict, List
 import logging
+
+import numpy as np
+import torch
 
 logger = logging.getLogger(__name__)
 
 
 def gather_point_preds(
-    outputs: List[Dict[str, torch.Tensor]], horizon: int
+    outputs: list[dict[str, torch.Tensor]], horizon: int
 ) -> torch.Tensor:
     """
     Gather point predictions from outputs for a specific horizon.
@@ -40,7 +40,7 @@ def gather_point_preds(
     return torch.cat(preds, dim=0)
 
 
-def compute_pred_std(outputs: List[Dict[str, torch.Tensor]], horizon: int) -> float:
+def compute_pred_std(outputs: list[dict[str, torch.Tensor]], horizon: int) -> float:
     """
     Compute standard deviation of predictions for a specific horizon.
     Always uses point predictions, never t-distribution parameters.
@@ -66,7 +66,7 @@ def compute_pred_std(outputs: List[Dict[str, torch.Tensor]], horizon: int) -> fl
     return std_val
 
 
-def compute_pred_std_batch(output: Dict[str, torch.Tensor], horizon: int) -> float:
+def compute_pred_std_batch(output: dict[str, torch.Tensor], horizon: int) -> float:
     """
     Compute standard deviation of predictions for a single batch.
 
@@ -102,10 +102,10 @@ def compute_pred_std_batch(output: Dict[str, torch.Tensor], horizon: int) -> flo
 
 
 def collect_metrics_from_outputs(
-    outputs: Dict[str, torch.Tensor],
-    targets: Dict[str, torch.Tensor],
-    horizons: List[int],
-) -> Dict[int, Dict[str, List]]:
+    outputs: dict[str, torch.Tensor],
+    targets: dict[str, torch.Tensor],
+    horizons: list[int],
+) -> dict[int, dict[str, list]]:
     """
     Collect metrics from model outputs and targets.
 

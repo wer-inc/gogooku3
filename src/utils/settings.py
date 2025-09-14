@@ -3,11 +3,10 @@ ATFT-GAT-FAN Configuration Management System
 Pydanticベースの統一設定管理
 """
 
-import os
-from typing import Dict, List, Optional, Any, Union
-from pathlib import Path
-from functools import lru_cache
 import logging
+import os
+from functools import lru_cache
+from pathlib import Path
 
 # Pydantic設定
 try:
@@ -93,8 +92,8 @@ if PYDANTIC_AVAILABLE:
             }
 else:
     # Fallback to dataclass if pydantic not available
-    from dataclasses import dataclass, field as dataclass_field
-    from typing import get_type_hints
+    from dataclasses import dataclass
+    from dataclasses import field as dataclass_field
 
     def Field(default=None, **kwargs):
         return dataclass_field(default=default)
@@ -138,20 +137,21 @@ else:
         emergency_checkpoint: bool = Field(default=True)
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> ModelSettings:
     """シングルトン設定インスタンス"""
     return ModelSettings()
 
 def save_environment_snapshot(output_dir: str = "."):
     """環境情報のスナップショットを保存"""
-    import sys
-    import torch
-    import numpy as np
     import json
     import random
+    import sys
     from datetime import datetime
-    
+
+    import numpy as np
+    import torch
+
     env_info = {
         "timestamp": datetime.now().isoformat(),
         "python_version": sys.version,
@@ -165,32 +165,33 @@ def save_environment_snapshot(output_dir: str = "."):
         "torch_random_state": torch.get_rng_state().tolist() if 'torch' in globals() else None,
         "cuda_random_state": torch.cuda.get_rng_state_all() if 'torch' in globals() and torch.cuda.is_available() else None,
     }
-    
+
     output_path = Path(output_dir) / "environment_snapshot.json"
     with open(output_path, "w", encoding='utf-8') as f:
         json.dump(env_info, f, indent=2, default=str, ensure_ascii=False)
-    
+
     logger.info(f"Environment snapshot saved to {output_path}")
     return output_path
 
 def set_reproducibility(seed: int = 42, deterministic: bool = True):
     """再現性のための完全なシード設定"""
     import random
+
     import numpy as np
     import torch
-    
+
     # Python random
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
-    
+
     # NumPy
     np.random.seed(seed)
-    
+
     # PyTorch
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    
+
     if deterministic:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
@@ -198,10 +199,10 @@ def set_reproducibility(seed: int = 42, deterministic: bool = True):
     else:
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = False
-    
+
     # cuBLAS workspace config for reproducibility
     os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
-    
+
     logger.info(f"Reproducibility set with seed={seed}, deterministic={deterministic}")
 
 # 後方互換性のためのエイリアス

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+import aiohttp
 import polars as pl
 
 logger = logging.getLogger(__name__)
@@ -107,23 +108,54 @@ async def enrich_and_save(
     topix_parquet: Path | None = None,
     statements_parquet: Path | None = None,
     listed_info_parquet: Path | None = None,
+    # Futures integration (optional)
+    enable_futures: bool = True,
+    futures_parquet: Path | None = None,
+    futures_categories: list[str] | None = None,
+    futures_continuous: bool = False,
+    # Optional spot index parquets for basis mapping
+    nk225_parquet: Path | None = None,
+    reit_parquet: Path | None = None,
+    jpx400_parquet: Path | None = None,
     # Margin weekly integration (optional)
     enable_margin_weekly: bool = False,
     margin_weekly_parquet: Path | None = None,
     margin_weekly_lag: int = 3,
     adv_window_days: int = 20,
+    # Margin daily integration (optional)
+    enable_daily_margin: bool = False,
+    daily_margin_parquet: Path | None = None,
+    # Short selling integration (optional)
+    enable_short_selling: bool = False,
+    short_selling_parquet: Path | None = None,
+    short_positions_parquet: Path | None = None,
+    short_selling_z_window: int = 252,
+    # Earnings events integration (optional)
+    enable_earnings_events: bool = False,
+    earnings_announcements_parquet: Path | None = None,
+    enable_pead_features: bool = True,
+    # Sector short selling integration (optional)
+    enable_sector_short_selling: bool = False,
+    sector_short_selling_parquet: Path | None = None,
+    enable_sector_short_z_scores: bool = True,
     sector_onehot33: bool = False,
     sector_series_mcap: str = "auto",
     sector_te_targets: list[str] | None = None,
     sector_series_levels: list[str] | None = None,
     sector_te_levels: list[str] | None = None,
+    # Advanced volatility
+    enable_advanced_vol: bool = False,
+    adv_vol_windows: list[int] | None = None,
+    # Nikkei225 index option market aggregates (optional)
+    enable_option_market_features: bool = False,
+    index_option_features_parquet: Path | None = None,
+    index_option_raw_parquet: Path | None = None,
 ) -> tuple[Path, Path]:
     """Attach TOPIX + statements + flow then save with symlinks.
 
     Includes an assurance step to guarantee mkt_* presence by discovering
     or fetching TOPIX parquet when needed.
     """
-    import aiohttp
 
     from src.gogooku3.pipeline.builder import MLDatasetBuilder
 
@@ -141,7 +173,9 @@ async def enrich_and_save(
         try:
             import os
 
-            from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+            from src.gogooku3.components.jquants_async_fetcher import (
+                JQuantsAsyncFetcher,  # type: ignore
+            )
             email = os.getenv("JQUANTS_AUTH_EMAIL", "")
             password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
             if email and password:
@@ -250,6 +284,123 @@ async def enrich_and_save(
         except Exception as e:
             logger.warning(f"Failed sector enrichment: {e}")
 
+    # Futures features (ON/EOD, T+0/T+1 leak-safe)
+    futures_df = None
+    if enable_futures:
+        # Resolve parquet first
+        try:
+            if futures_parquet and Path(futures_parquet).exists():
+                futures_df = pl.read_parquet(futures_parquet)
+            else:
+                # Auto-discover under output/
+                cands = sorted(output_dir.glob("futures_daily_*.parquet"))
+                if cands:
+                    futures_df = pl.read_parquet(cands[-1])
+        except Exception as e:
+            logger.warning(f"Failed to read futures parquet: {e}")
+
+        # If missing and jquants available, fetch from API for the requested range
+        if futures_df is None and jquants:
+            try:
+                import os
+
+                from src.gogooku3.components.jquants_async_fetcher import (
+                    JQuantsAsyncFetcher,  # type: ignore
+                )
+
+                email = os.getenv("JQUANTS_AUTH_EMAIL", "")
+                password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
+                if email and password:
+                    fetcher2 = JQuantsAsyncFetcher(email, password)
+                    async with aiohttp.ClientSession() as session:
+                        await fetcher2.authenticate(session)
+                        logger.info(
+                            f"Fetching futures daily {start_date} → {end_date} for enrichment"
+                        )
+                        fut_df = await fetcher2.get_futures_daily(
+                            session, start_date, end_date
+                        )
+                        if fut_df is not None and not fut_df.is_empty():
+                            futures_df = fut_df
+                            # Save for reuse
+                            try:
+                                out = (
+                                    output_dir
+                                    / f"futures_daily_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                                )
+                                fut_df.write_parquet(out)
+                                logger.info(f"Saved futures parquet: {out}")
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.warning(f"Futures API fetch failed: {e}")
+
+    if enable_futures and futures_df is not None and not futures_df.is_empty():
+        try:
+            # Use v3.2 leak-safe attachment via builder
+            spot_map: dict[str, pl.DataFrame] = {}
+            if topix_df is not None and not topix_df.is_empty():
+                spot_map["TOPIXF"] = topix_df
+            # Additional optional spot parquets
+            def _load_spot(path: Path | None) -> pl.DataFrame | None:
+                if path and Path(path).exists():
+                    try:
+                        return pl.read_parquet(path)
+                    except Exception:
+                        return None
+                return None
+            _nk = _load_spot(nk225_parquet)
+            _rt = _load_spot(reit_parquet)
+            _j4 = _load_spot(jpx400_parquet)
+            # Auto-discover spot parquets under output/ if not provided
+            def _auto_find_spot(keywords: list[str]) -> Path | None:
+                cands = []
+                for p in (output_dir or Path("output")).glob("*.parquet"):
+                    name = p.name.lower()
+                    if all(k in name for k in keywords):
+                        cands.append(p)
+                return cands[-1] if cands else None
+            if _nk is None:
+                _nk_path = _auto_find_spot(["nikkei"]) or _auto_find_spot(["nk225"]) or _auto_find_spot(["nikkei225"])  # type: ignore[assignment]
+                _nk = _load_spot(_nk_path)
+            if _rt is None:
+                _rt_path = _auto_find_spot(["reit"])  # type: ignore[assignment]
+                _rt = _load_spot(_rt_path)
+            if _j4 is None:
+                _j4_path = _auto_find_spot(["jpx400"]) or _auto_find_spot(["jp", "400"])  # type: ignore[assignment]
+                _j4 = _load_spot(_j4_path)
+            if _nk is not None and not _nk.is_empty():
+                spot_map["NK225F"] = _nk
+            if _rt is not None and not _rt.is_empty():
+                spot_map["REITF"] = _rt
+            if _j4 is not None and not _j4.is_empty():
+                spot_map["JN400F"] = _j4
+            df = builder.add_futures_block(
+                df,
+                futures_df=futures_df,
+                categories=(futures_categories or ["TOPIXF", "NK225F", "JN400F", "REITF"]),
+                topix_df=topix_df,
+                spot_map=spot_map or None,
+                make_continuous_series=bool(futures_continuous),
+            )
+
+            # Log basis coverage per category
+            categories = futures_categories or ["TOPIXF", "NK225F", "JN400F", "REITF"]
+            logger.info("🚀 Futures features attached (ON/EOD)")
+            logger.info("📊 Basis coverage by category:")
+            for category in categories:
+                spot_available = category in (spot_map or {})
+                futures_cols = [c for c in df.columns if f"fut_{category.lower()}_" in c.lower()]
+                basis_cols = [c for c in futures_cols if "basis" in c.lower()]
+
+                logger.info(f"  - {category}: spot={'✅' if spot_available else '❌'}, "
+                          f"futures_features={len(futures_cols)}, basis_features={len(basis_cols)}")
+
+            continuous_enabled = "✅ ON" if futures_continuous else "❌ OFF"
+            logger.info(f"📈 Continuous series (fut_whole_ret_cont_*): {continuous_enabled}")
+        except Exception as e:
+            logger.warning(f"Futures enrichment skipped: {e}")
+
     # Flow attach
     if trades_spec_path and Path(trades_spec_path).exists():
         try:
@@ -287,6 +438,404 @@ async def enrich_and_save(
     except Exception as e:
         logger.warning(f"Margin weekly attach skipped: {e}")
 
+    # Daily margin attach (leak-safe as-of with T+1 rule)
+    try:
+        d_path: Path | None = None
+        if daily_margin_parquet and Path(daily_margin_parquet).exists():
+            d_path = daily_margin_parquet
+        else:
+            # Auto-discover under output/
+            cands = sorted(output_dir.glob("daily_margin_interest_*.parquet"))
+            if cands:
+                d_path = cands[-1]
+        if enable_daily_margin or (d_path and d_path.exists()):
+            if d_path and d_path.exists():
+                ddf = pl.read_parquet(d_path)
+                df = builder.add_daily_margin_block(
+                    df,
+                    ddf,
+                    adv_window_days=adv_window_days,
+                    enable_z_scores=True,
+                )
+                logger.info(f"Daily margin features attached from: {d_path}")
+            else:
+                logger.info("Daily margin requested but no parquet provided/found; skipping")
+        else:
+            logger.info("Daily margin not enabled and no parquet found; skipping")
+    except Exception as e:
+        logger.warning(f"Daily margin attach skipped: {e}")
+
+    # Short selling attach (leak-safe as-of with T+1 rule)
+    try:
+        ss_path: Path | None = None
+        pos_path: Path | None = None
+
+        if short_selling_parquet and Path(short_selling_parquet).exists():
+            ss_path = short_selling_parquet
+        else:
+            # Auto-discover under output/
+            cands = sorted(output_dir.glob("short_selling_*.parquet"))
+            if cands:
+                ss_path = cands[-1]
+
+        if short_positions_parquet and Path(short_positions_parquet).exists():
+            pos_path = short_positions_parquet
+        else:
+            # Auto-discover under output/
+            cands = sorted(output_dir.glob("short_positions_*.parquet"))
+            if cands:
+                pos_path = cands[-1]
+
+        if enable_short_selling or (ss_path and ss_path.exists()):
+            # Load short selling data
+            short_df = None
+            positions_df = None
+
+            if ss_path and ss_path.exists():
+                try:
+                    short_df = pl.read_parquet(ss_path)
+                    logger.info(f"Loaded short selling data from: {ss_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load short selling data: {e}")
+
+            if pos_path and pos_path.exists():
+                try:
+                    positions_df = pl.read_parquet(pos_path)
+                    logger.info(f"Loaded short positions data from: {pos_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load short positions data: {e}")
+
+            # If missing and jquants available, fetch from API for the requested range
+            if (short_df is None or short_df.is_empty()) and jquants:
+                try:
+                    import os
+
+                    from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+
+                    email = os.getenv("JQUANTS_AUTH_EMAIL", "")
+                    password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
+                    if email and password:
+                        fetcher3 = JQuantsAsyncFetcher(email, password)
+                        async with aiohttp.ClientSession() as session:
+                            await fetcher3.authenticate(session)
+                            logger.info(f"Fetching short selling data {start_date} → {end_date} for enrichment")
+
+                            # Fetch both ratio and positions data
+                            ss_df = await fetcher3.get_short_selling(session, start_date, end_date)
+                            if ss_df is not None and not ss_df.is_empty():
+                                short_df = ss_df
+                                # Save for reuse
+                                try:
+                                    out = output_dir / f"short_selling_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                                    ss_df.write_parquet(out)
+                                    logger.info(f"Saved short selling parquet: {out}")
+                                except Exception:
+                                    pass
+
+                            if positions_df is None:
+                                pos_df = await fetcher3.get_short_selling_positions(session, start_date, end_date)
+                                if pos_df is not None and not pos_df.is_empty():
+                                    positions_df = pos_df
+                                    # Save for reuse
+                                    try:
+                                        out = output_dir / f"short_positions_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                                        pos_df.write_parquet(out)
+                                        logger.info(f"Saved short positions parquet: {out}")
+                                    except Exception:
+                                        pass
+                except Exception as e:
+                    logger.warning(f"Short selling API fetch failed: {e}")
+
+            # Apply short selling features if we have data
+            if short_df is not None and not short_df.is_empty():
+                # Compute ADV20 data if needed for scaling
+                adv20_df = None
+                if "AdjustmentVolume" in df.columns:
+                    try:
+                        adv20_df = (
+                            df.select(["Code", "Date", "AdjustmentVolume"])
+                            .with_columns([
+                                pl.col("AdjustmentVolume")
+                                .rolling_mean(adv_window_days)
+                                .over("Code")
+                                .alias("ADV20_shares")
+                            ])
+                            .drop_nulls(subset=["ADV20_shares"])
+                        )
+                        logger.info(f"Computed ADV{adv_window_days} for short selling scaling")
+                    except Exception as e:
+                        logger.warning(f"ADV computation for short selling failed: {e}")
+
+                # Import and apply short selling features
+                from src.gogooku3.features.short_selling import add_short_selling_block
+
+                df = add_short_selling_block(
+                    quotes=df,
+                    short_df=short_df,
+                    positions_df=positions_df,
+                    adv20_df=adv20_df,
+                    enable_z_scores=True,
+                    z_window=short_selling_z_window,
+                )
+
+                logger.info("Short selling features attached successfully")
+            else:
+                logger.info("Short selling requested but no parquet provided/found; skipping")
+        else:
+            logger.info("Short selling not enabled and no parquet found; skipping")
+    except Exception as e:
+        logger.warning(f"Short selling attach skipped: {e}")
+
+    # ========================================================================
+    # Earnings Events Integration (NEW)
+    # ========================================================================
+    try:
+        earnings_path = None
+
+        if earnings_announcements_parquet and Path(earnings_announcements_parquet).exists():
+            earnings_path = earnings_announcements_parquet
+        else:
+            # Auto-discover under output/
+            cands = sorted(output_dir.glob("earnings_announcements_*.parquet"))
+            if cands:
+                earnings_path = cands[-1]
+
+        if enable_earnings_events or (earnings_path and earnings_path.exists()):
+            # Load earnings announcement data
+            announcements_df = None
+
+            if earnings_path and earnings_path.exists():
+                try:
+                    announcements_df = pl.read_parquet(earnings_path)
+                    logger.info(f"Loaded earnings announcements from: {earnings_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load earnings announcements: {e}")
+
+            # If missing and jquants available, fetch from API for the requested range
+            if (announcements_df is None or announcements_df.is_empty()) and jquants:
+                try:
+                    import os
+
+                    from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+
+                    email = os.getenv("JQUANTS_AUTH_EMAIL", "")
+                    password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
+                    if email and password:
+                        fetcher4 = JQuantsAsyncFetcher(email, password)
+                        async with aiohttp.ClientSession() as session:
+                            await fetcher4.authenticate(session)
+                            logger.info(f"Fetching earnings announcements {start_date} → {end_date} for enrichment")
+
+                            # Fetch earnings announcement data
+                            ea_df = await fetcher4.get_earnings_announcements(session, start_date, end_date)
+                            if ea_df is not None and not ea_df.is_empty():
+                                announcements_df = ea_df
+                                # Save for reuse
+                                try:
+                                    out = (
+                                        output_dir
+                                        / f"earnings_announcements_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                                    )
+                                    ea_df.write_parquet(out)
+                                    logger.info(f"Saved earnings announcements parquet: {out}")
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Earnings announcements API fetch failed: {e}")
+
+            # Apply earnings event features if we have data
+            if announcements_df is not None and not announcements_df.is_empty():
+                # Import and apply earnings event features
+                from src.gogooku3.features.earnings_events import add_earnings_event_block
+
+                # Use statements data if available for EPS growth
+                statements_df = None
+                if statements_parquet and Path(statements_parquet).exists():
+                    try:
+                        statements_df = pl.read_parquet(statements_parquet)
+                        logger.info("Using statements data for EPS growth features")
+                    except Exception as e:
+                        logger.warning(f"Failed to load statements for earnings features: {e}")
+
+                df = add_earnings_event_block(
+                    quotes=df,
+                    announcement_df=announcements_df,
+                    statements_df=statements_df,
+                    enable_pead=enable_pead_features,
+                    enable_volatility=True,
+                )
+
+                logger.info("Earnings event features attached successfully")
+            else:
+                logger.info("Earnings events requested but no data available; adding null features")
+                # Add null earnings features for consistency
+                from src.gogooku3.features.earnings_events import add_earnings_event_block
+                df = add_earnings_event_block(
+                    quotes=df,
+                    announcement_df=None,
+                    statements_df=None,
+                    enable_pead=enable_pead_features,
+                    enable_volatility=True,
+                )
+        else:
+            logger.info("Earnings events not enabled; skipping")
+    except Exception as e:
+        logger.warning(f"Earnings events attach skipped: {e}")
+
+    # ========================================================================
+    # Sector-wise Short Selling Integration (NEW)
+    # ========================================================================
+    try:
+        sector_short_path = None
+
+        if sector_short_selling_parquet and Path(sector_short_selling_parquet).exists():
+            sector_short_path = sector_short_selling_parquet
+        else:
+            # Auto-discover under output/
+            cands = sorted(output_dir.glob("sector_short_selling_*.parquet"))
+            if cands:
+                sector_short_path = cands[-1]
+
+        if enable_sector_short_selling or (sector_short_path and sector_short_path.exists()):
+            # Load sector short selling data
+            sector_short_df = None
+
+            if sector_short_path and sector_short_path.exists():
+                try:
+                    sector_short_df = pl.read_parquet(sector_short_path)
+                    logger.info(f"Loaded sector short selling data from: {sector_short_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load sector short selling data: {e}")
+
+            # If missing and jquants available, fetch from API for the requested range
+            if (sector_short_df is None or sector_short_df.is_empty()) and jquants:
+                try:
+                    import os
+
+                    from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+
+                    email = os.getenv("JQUANTS_AUTH_EMAIL", "")
+                    password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
+                    if email and password:
+                        fetcher5 = JQuantsAsyncFetcher(email, password)
+                        async with aiohttp.ClientSession() as session:
+                            await fetcher5.authenticate(session)
+                            logger.info(f"Fetching sector short selling data {start_date} → {end_date} for enrichment")
+
+                            # Fetch sector short selling data
+                            ss_df = await fetcher5.get_sector_short_selling(session, start_date, end_date)
+                            if ss_df is not None and not ss_df.is_empty():
+                                sector_short_df = ss_df
+                                # Save for reuse
+                                try:
+                                    out = (
+                                        output_dir
+                                        / f"sector_short_selling_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                                    )
+                                    ss_df.write_parquet(out)
+                                    logger.info(f"Saved sector short selling parquet: {out}")
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Sector short selling API fetch failed: {e}")
+
+            # Apply sector short selling features if we have data
+            if sector_short_df is not None and not sector_short_df.is_empty():
+                # Import and apply sector short selling features
+                from src.gogooku3.features.short_selling_sector import add_sector_short_selling_block
+
+                df = add_sector_short_selling_block(
+                    quotes=df,
+                    ss_df=sector_short_df,
+                    listed_info_df=listed_info_df,
+                    enable_z_scores=enable_sector_short_z_scores,
+                    enable_relative_features=True,
+                )
+
+                logger.info("Sector short selling features attached successfully")
+            else:
+                logger.info("Sector short selling requested but no data available; adding null features")
+                # Add null sector short selling features for consistency
+                from src.gogooku3.features.short_selling_sector import add_sector_short_selling_block
+                df = add_sector_short_selling_block(
+                    quotes=df,
+                    ss_df=None,
+                    listed_info_df=listed_info_df,
+                    enable_z_scores=enable_sector_short_z_scores,
+                    enable_relative_features=True,
+                )
+        else:
+            logger.info("Sector short selling not enabled; skipping")
+    except Exception as e:
+        logger.warning(f"Sector short selling attach skipped: {e}")
+
+    # ========================================================================
+    # Nikkei225 Index Option Market Aggregates (T+1 attach)
+    # ========================================================================
+    try:
+        if enable_option_market_features:
+            opt_feats_df = None
+            # 1) Prefer provided features parquet
+            if index_option_features_parquet and Path(index_option_features_parquet).exists():
+                try:
+                    opt_feats_df = pl.read_parquet(index_option_features_parquet)
+                    logger.info(f"Loaded index option features from: {index_option_features_parquet}")
+                except Exception as e:
+                    logger.warning(f"Failed to load option features parquet: {e}")
+
+            # 2) Else, if raw parquet provided, build features
+            if (opt_feats_df is None or opt_feats_df.is_empty()) and index_option_raw_parquet and Path(index_option_raw_parquet).exists():
+                try:
+                    raw = pl.read_parquet(index_option_raw_parquet)
+                    from src.gogooku3.features.index_option import build_index_option_features
+
+                    opt_feats_df = build_index_option_features(raw)
+                    logger.info("Built option features from raw parquet")
+                except Exception as e:
+                    logger.warning(f"Failed to build option features from raw: {e}")
+
+            # 3) Else, try API fetch and build features
+            if (opt_feats_df is None or opt_feats_df.is_empty()) and jquants:
+                try:
+                    import os
+                    from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+
+                    email = os.getenv("JQUANTS_AUTH_EMAIL", "")
+                    password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
+                    if email and password:
+                        fetcher = JQuantsAsyncFetcher(email, password)
+                        async with aiohttp.ClientSession() as session:
+                            await fetcher.authenticate(session)
+                            logger.info(f"Fetching index options {start_date} → {end_date} for market aggregates")
+                            raw = await fetcher.get_index_option(session, start_date, end_date)
+                            if raw is not None and not raw.is_empty():
+                                from src.gogooku3.features.index_option import build_index_option_features
+
+                                opt_feats_df = build_index_option_features(raw)
+                except Exception as e:
+                    logger.warning(f"Index option API fetch failed: {e}")
+
+            if opt_feats_df is not None and not opt_feats_df.is_empty():
+                try:
+                    from src.gogooku3.features.futures_features import build_next_bday_expr_from_quotes
+                    from src.gogooku3.features.index_option import (
+                        build_option_market_aggregates,
+                        attach_option_market_to_equity,
+                    )
+
+                    nb = build_next_bday_expr_from_quotes(df)
+                    mkt = build_option_market_aggregates(opt_feats_df, next_bday_expr=nb)
+                    df = attach_option_market_to_equity(df, mkt)
+                    logger.info("Option market aggregates attached (opt_iv_cmat_*, opt_term_slope_30_60, flows)")
+                except Exception as e:
+                    logger.warning(f"Failed to attach option market aggregates: {e}")
+            else:
+                logger.info("Option market features requested but no data available; skipping attach")
+        else:
+            logger.info("Option market features not enabled; skipping")
+    except Exception as e:
+        logger.warning(f"Index option market aggregates step skipped: {e}")
+
     # Assurance: guarantee mkt_*
     if not any(c.startswith("mkt_") for c in df.columns):
         logger.warning("mkt_* missing; attempting offline attach (assurance)...")
@@ -298,7 +847,9 @@ async def enrich_and_save(
 
                 import aiohttp
 
-                from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+                from src.gogooku3.components.jquants_async_fetcher import (
+                    JQuantsAsyncFetcher,  # type: ignore
+                )
                 email = os.getenv("JQUANTS_AUTH_EMAIL", "")
                 password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
                 if email and password:
@@ -335,6 +886,19 @@ async def enrich_and_save(
                 logger.info(f"Offline TOPIX attach {'succeeded' if ok else 'failed'}")
             except Exception as e:
                 logger.warning(f"Offline TOPIX attach failed: {e}")
+
+    # Advanced volatility (Yang–Zhang + VoV)
+    try:
+        if enable_advanced_vol:
+            from src.gogooku3.features.advanced_volatility import add_advanced_vol_block
+            wins = tuple(int(w) for w in (adv_vol_windows or [20, 60]) if int(w) > 1)
+            if wins:
+                df = add_advanced_vol_block(df, windows=wins, shift_to_next_day=True)
+                logger.info(f"Advanced volatility attached (windows={wins})")
+            else:
+                logger.info("Advanced volatility requested but windows empty; skipping")
+    except Exception as e:
+        logger.warning(f"Advanced volatility attach skipped: {e}")
 
     # Align to DATASET.md (strict schema) just before saving
     try:

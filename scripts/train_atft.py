@@ -112,6 +112,115 @@ def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
             
     return reshaped
 
+# ---- Label clipping helper -------------------------------------------------
+def _parse_label_clip_map(env_val: str | None):
+    """Parse LABEL_CLIP_BPS_MAP like '1:2000,5:3000,10:5000' -> dict{h: clip_value_in_return}
+
+    Values are in basis points. Returns dict mapping horizon(int) -> float clip_abs.
+    """
+    m = {}
+    if not env_val:
+        return m
+    try:
+        parts = [p.strip() for p in str(env_val).split(",") if p.strip()]
+        for p in parts:
+            k, v = p.split(":")
+            h = int(k.strip())
+            bps = float(v.strip())
+            m[h] = abs(bps) / 10000.0  # convert bps to return
+    except Exception:
+        return {}
+    return m
+
+def _clip_targets_by_horizon(targets: dict[str, torch.Tensor], clip_map: dict[int, float]) -> dict[str, torch.Tensor]:
+    if not clip_map:
+        return targets
+    out = {}
+    for k, v in targets.items():
+        try:
+            if isinstance(k, str) and k.startswith("horizon_"):
+                h = int(k.split("_", 1)[1])
+                if h in clip_map and torch.is_tensor(v):
+                    lim = float(clip_map[h])
+                    out[k] = torch.clamp(v, -lim, lim)
+                    continue
+        except Exception:
+            pass
+        out[k] = v
+    return out
+
+# ---- Phase-aware loss schedule --------------------------------------------
+def _parse_phase_loss_schedule(env_val: str | None) -> dict[int, dict[str, float]]:
+    """Parse PHASE_LOSS_WEIGHTS like '0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.1;2:quantile=1.0,sharpe=0.1,rankic=0.05,t_nll=0.7'.
+
+    Returns {phase: {weight_name: value}}. Unknown entries are ignored by the applier.
+    """
+    sched: dict[int, dict[str, float]] = {}
+    if not env_val:
+        return sched
+    try:
+        parts = [p.strip() for p in str(env_val).split(";") if p.strip()]
+        for p in parts:
+            # split phase:weights
+            if ":" not in p:
+                continue
+            phs, items = p.split(":", 1)
+            ph = int(phs.strip())
+            wmap: dict[str, float] = {}
+            for it in [x.strip() for x in items.split(",") if x.strip()]:
+                if "=" not in it:
+                    continue
+                k, v = it.split("=", 1)
+                try:
+                    wmap[k.strip().lower()] = float(v.strip())
+                except Exception:
+                    continue
+            if wmap:
+                sched[ph] = wmap
+    except Exception:
+        return {}
+    return sched
+
+def _apply_phase_loss_weights(criterion, phase_idx: int, sched: dict[int, dict[str, float]]):
+    """Apply phase-specific loss weights/toggles to criterion if attributes exist."""
+    weights = sched.get(phase_idx, {})
+    if not weights:
+        return
+    try:
+        # Huber
+        if "huber" in weights:
+            if hasattr(criterion, "use_huber"):
+                setattr(criterion, "use_huber", weights["huber"] > 0)
+            if hasattr(criterion, "huber_weight"):
+                setattr(criterion, "huber_weight", float(weights["huber"]))
+        # Quantile (pinball)
+        if "quantile" in weights:
+            if hasattr(criterion, "use_pinball"):
+                setattr(criterion, "use_pinball", weights["quantile"] > 0)
+            if hasattr(criterion, "pinball_weight"):
+                setattr(criterion, "pinball_weight", float(weights["quantile"]))
+        # RankIC
+        if "rankic" in weights or "rank_ic" in weights:
+            w = weights.get("rankic", weights.get("rank_ic", 0.0))
+            if hasattr(criterion, "use_rankic"):
+                setattr(criterion, "use_rankic", w > 0)
+            if hasattr(criterion, "rankic_weight"):
+                setattr(criterion, "rankic_weight", float(w))
+        # Sharpe (portfolio returns)
+        if "sharpe" in weights:
+            # Some implementations include sharpe_weight; if present, set it
+            if hasattr(criterion, "sharpe_weight"):
+                setattr(criterion, "sharpe_weight", float(weights["sharpe"]))
+        # Student-t NLL
+        if "t_nll" in weights or "nll" in weights:
+            w = weights.get("t_nll", weights.get("nll", 0.0))
+            if hasattr(criterion, "use_t_nll"):
+                setattr(criterion, "use_t_nll", w > 0)
+            if hasattr(criterion, "nll_weight"):
+                setattr(criterion, "nll_weight", float(w))
+    except Exception:
+        pass
+
 # --- Pre-parse custom CLI flags (before Hydra) ---
 # Support: --data-path <file> (single Parquet file)
 def _preparse_custom_argv():
@@ -142,6 +251,68 @@ def _preparse_custom_argv():
                 os.environ["DATA_PATH"] = tok.split("=", 1)[1]
                 i += 1
                 continue
+            elif tok in ("--early-stopping-metric", "--early_stopping_metric"):
+                if i + 1 < len(argv):
+                    val = argv[i + 1]
+                    os.environ["EARLY_STOP_METRIC"] = val
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            elif tok.startswith("--early-stopping-metric="):
+                os.environ["EARLY_STOP_METRIC"] = tok.split("=", 1)[1]
+                i += 1
+                continue
+            elif tok in ("--early-stopping-maximize", "--early_stopping_maximize"):
+                # boolean flag; presence implies true unless explicit value provided
+                if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                    os.environ["EARLY_STOP_MAXIMIZE"] = argv[i + 1]
+                    i += 2
+                else:
+                    os.environ["EARLY_STOP_MAXIMIZE"] = "1"
+                    i += 1
+                continue
+            elif tok.startswith("--early-stopping-maximize="):
+                os.environ["EARLY_STOP_MAXIMIZE"] = tok.split("=", 1)[1]
+                i += 1
+                continue
+            elif tok in ("--scheduler",):
+                if i + 1 < len(argv):
+                    os.environ["SCHEDULER"] = argv[i + 1]
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            elif tok.startswith("--scheduler="):
+                os.environ["SCHEDULER"] = tok.split("=", 1)[1]
+                i += 1
+                continue
+            elif tok in ("--label-clip-bps", "--label_clip_bps"):
+                if i + 1 < len(argv):
+                    os.environ["LABEL_CLIP_BPS_MAP"] = argv[i + 1]
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            elif tok.startswith("--label-clip-bps="):
+                os.environ["LABEL_CLIP_BPS_MAP"] = tok.split("=", 1)[1]
+                i += 1
+                continue
+            elif tok in ("--train-profile", "--train_profile"):
+                if i + 1 < len(argv):
+                    os.environ["TRAIN_PROFILE"] = argv[i + 1]
+                    i += 2
+                    continue
+                else:
+                    i += 1
+                    continue
+            elif tok.startswith("--train-profile="):
+                os.environ["TRAIN_PROFILE"] = tok.split("=", 1)[1]
+                i += 1
+                continue
             else:
                 new_argv.append(tok)
                 i += 1
@@ -150,6 +321,58 @@ def _preparse_custom_argv():
         pass
 
 _preparse_custom_argv()
+
+# ---- TRAIN_PROFILE presets -------------------------------------------------
+def _setenv_if_unset(k: str, v: str):
+    if os.getenv(k) is None or os.getenv(k) == "":
+        os.environ[k] = v
+
+def _apply_train_profile():
+    profile = os.getenv("TRAIN_PROFILE", "").strip().lower()
+    if not profile:
+        return
+    if profile in ("smoke", "quick"):
+        _setenv_if_unset("USE_MINI_TRAIN", "1")
+        _setenv_if_unset("PHASE_MAX_EPOCHS", "2")
+        _setenv_if_unset("PHASE_MAX_BATCHES", "10")
+        _setenv_if_unset("EARLY_STOP_METRIC", "val_loss")
+        _setenv_if_unset("EARLY_STOP_PATIENCE", "2")
+        _setenv_if_unset("SCHEDULER", "warmup_cosine")
+        _setenv_if_unset("PHASE_WARMUP_EPOCHS", "1")
+        _setenv_if_unset("OUTPUT_NOISE_STD", "0.01")
+        _setenv_if_unset("NOISE_WARMUP_EPOCHS", "1")
+        _setenv_if_unset("LABEL_CLIP_BPS_MAP", "1:2000")
+        _setenv_if_unset("SMOKE_DATA_MAX_FILES", "2")
+    elif profile in ("exp", "experiment"):
+        _setenv_if_unset("EARLY_STOP_METRIC", "val_sharpe")
+        _setenv_if_unset("EARLY_STOP_MAXIMIZE", "1")
+        _setenv_if_unset("SCHEDULER", "warmup_cosine")
+        _setenv_if_unset("PHASE_WARMUP_EPOCHS", "2")
+        _setenv_if_unset("LABEL_CLIP_BPS_MAP", "1:2000,5:3000,10:5000")
+        _setenv_if_unset("FUSE_FORCE_MODE", "tft_only")
+        _setenv_if_unset("FUSE_START_PHASE", "2")
+        _setenv_if_unset("GAT_ALPHA_WARMUP_MIN", "0.30")
+        _setenv_if_unset("GAT_ALPHA_WARMUP_EPOCHS", "2")
+        _setenv_if_unset("PHASE_LOSS_WEIGHTS", "0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.1;2:quantile=1.0,sharpe=0.15,rankic=0.05,t_nll=0.7")
+        _setenv_if_unset("EARLY_STOP_PATIENCE", "9")
+        _setenv_if_unset("USE_AMP", "1")
+        _setenv_if_unset("AMP_DTYPE", "bf16")
+    elif profile in ("prod", "production"):
+        _setenv_if_unset("EARLY_STOP_METRIC", "val_sharpe")
+        _setenv_if_unset("EARLY_STOP_MAXIMIZE", "1")
+        _setenv_if_unset("SCHEDULER", "warmup_cosine")
+        _setenv_if_unset("PHASE_WARMUP_EPOCHS", "2")
+        _setenv_if_unset("LABEL_CLIP_BPS_MAP", "1:2000,5:3000,10:5000")
+        _setenv_if_unset("FUSE_FORCE_MODE", "auto")
+        _setenv_if_unset("FUSE_START_PHASE", "2")
+        _setenv_if_unset("GAT_ALPHA_WARMUP_MIN", "0.30")
+        _setenv_if_unset("GAT_ALPHA_WARMUP_EPOCHS", "2")
+        _setenv_if_unset("PHASE_LOSS_WEIGHTS", "0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.1;2:quantile=1.0,sharpe=0.15,rankic=0.05,t_nll=0.7")
+        _setenv_if_unset("EARLY_STOP_PATIENCE", "12")
+        _setenv_if_unset("USE_AMP", "1")
+        _setenv_if_unset("AMP_DTYPE", "bf16")
+
+_apply_train_profile()
 
 # Import unified metrics utilities
 try:
@@ -199,10 +422,15 @@ if use_optimized:
 
         print(f"Optimized loader not available ({e}), using standard")
 else:
-    from src.data.loaders.production_loader_v2 import (  # noqa: E402
-        ProductionDataModuleV2,
-        ProductionDatasetV2,
-    )
+    try:
+        from src.data.loaders.production_loader_v2 import (  # noqa: E402
+            ProductionDataModuleV2,
+            ProductionDatasetV2,
+        )
+    except Exception as e:
+        ProductionDataModuleV2 = None  # type: ignore
+        ProductionDatasetV2 = None  # type: ignore
+        print(f"Standard loader not available ({e}); will use smoke fallback if enabled")
 from src.data.samplers.day_batch_sampler import DayBatchSampler  # noqa: E402
 # DayBatchSamplerFixed is not needed, using DayBatchSampler instead
 DayBatchSamplerFixed = DayBatchSampler  # Alias for compatibility
@@ -223,6 +451,51 @@ from src.utils.config_validator import ConfigValidator  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Fallback minimal DataModule for smoke profile (when ProductionDataModuleV2 is missing)
+if ProductionDataModuleV2 is None:  # type: ignore
+    try:
+        class _SmokeDataset(torch.utils.data.Dataset):
+            def __init__(self, n_samples: int = 512, seq_len: int = 20, n_features: int = 8):
+                self.n = n_samples
+                self.T = seq_len
+                self.F = n_features
+                w = torch.randn(n_features)
+                self.w = w
+
+            def __len__(self):
+                return self.n
+
+            def __getitem__(self, idx):
+                x = torch.randn(self.T, self.F)
+                y = (x[-1] @ self.w) / (self.F ** 0.5)
+                sample = {
+                    "features": x,
+                    "targets": {
+                        "horizon_1": y.unsqueeze(0),
+                    },
+                }
+                return sample
+
+        class ProductionDataModuleV2:  # type: ignore
+            def __init__(self, cfg, batch_size: int = 64, num_workers: int = 0):
+                self.bs = int(batch_size)
+                self.nw = int(num_workers)
+                self.seq_len = int(getattr(getattr(cfg.data.time_series, "sequence_length", 20), "__int__", lambda: 20)())
+
+            def setup(self, stage: str | None = None):
+                self.train_ds = _SmokeDataset(512, self.seq_len)
+                self.val_ds = _SmokeDataset(256, self.seq_len)
+
+            def train_dataloader(self):
+                return torch.utils.data.DataLoader(self.train_ds, batch_size=self.bs, shuffle=True, num_workers=self.nw)
+
+            def val_dataloader(self):
+                return torch.utils.data.DataLoader(self.val_ds, batch_size=self.bs, shuffle=False, num_workers=self.nw)
+
+        print("[SmokeFallback] Using internal smoke DataModule (random data)")
+    except Exception as _e_fb:
+        logger.warning(f"Smoke fallback unavailable: {_e_fb}")
 
 # Attach file logger for live tailing (logs/ml_training.log)
 try:
@@ -2186,6 +2459,23 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         lr=phases[0]["lr"],
         weight_decay=config.train.optimizer.weight_decay
     )
+    # Fusion control + alpha warmup settings
+    fuse_mode = os.getenv("FUSE_FORCE_MODE", "auto").lower()  # auto|tft_only
+    fuse_start_phase = int(os.getenv("FUSE_START_PHASE", "2"))
+    # Base alpha_min from config or model attribute
+    try:
+        base_alpha_min = float(getattr(getattr(config.model, "gat"), "alpha_min"))
+    except Exception:
+        base_alpha_min = float(getattr(model, "alpha_graph_min", 0.1))
+    alpha_warm_min = float(os.getenv("GAT_ALPHA_WARMUP_MIN", "0.30"))
+    alpha_warm_epochs = int(os.getenv("GAT_ALPHA_WARMUP_EPOCHS", "2"))
+    # Scheduler selection (default warmup+cosine per phase)
+    sched_choice = os.getenv("SCHEDULER", "warmup_cosine").lower()
+    warmup_epochs_phase = int(os.getenv("PHASE_WARMUP_EPOCHS", "2"))
+    if sched_choice == "plateau":
+        logger.info("[Scheduler] Using ReduceLROnPlateau (phase-scoped)")
+    else:
+        logger.info(f"[Scheduler] Using Warmup+Cosine (warmup_epochs={warmup_epochs_phase})")
     
     # Loss初期化 - Fixed to use correct constructor
     criterion = MultiHorizonLoss(
@@ -2198,6 +2488,18 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     best_val_loss = float('inf')
     checkpoint_path = Path("output/checkpoints")
     checkpoint_path.mkdir(parents=True, exist_ok=True)
+    # Early stopping metric selection (ENV-controlled)
+    # Options: val_loss (min), val_sharpe (max), val_rankic (max), val_hit_rate (max)
+    early_stop_metric = os.getenv("EARLY_STOP_METRIC", "val_loss").lower()
+    early_stop_maximize = os.getenv("EARLY_STOP_MAXIMIZE", "0").lower() in ("1", "true", "yes")
+    if early_stop_metric in ("val_sharpe", "val_rankic", "val_hit_rate") and os.getenv("EARLY_STOP_MAXIMIZE", "") == "":
+        early_stop_maximize = True
+
+    def _is_better(curr: float, best: float, maximize: bool, delta: float) -> bool:
+        try:
+            return (curr > best + delta) if maximize else (curr < best - delta)
+        except Exception:
+            return False
     
     for phase_idx, phase in enumerate(phases):
         logger.info(f"\n{'='*60}")
@@ -2211,13 +2513,36 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             if not phase["toggles"]["use_san"]:
                 model.san = nn.Identity()
         
-        # GAT有効/無効化
+        # GAT有効/無効化（FUSE_FORCE_MODE反映）
         if hasattr(model, 'use_gat'):
-            model.use_gat = phase["toggles"]["use_gat"]
+            use_gat_flag = phase["toggles"]["use_gat"]
+            if fuse_mode == "tft_only" and phase_idx < fuse_start_phase:
+                use_gat_flag = False
+            model.use_gat = use_gat_flag
         
         # 学習率調整
         for g in optimizer.param_groups:
             g["lr"] = phase["lr"]
+        # Build phase scheduler if Warmup+Cosine is selected
+        if sched_choice != "plateau":
+            total_e = int(phase["epochs"]) if int(phase["epochs"]) > 0 else 1
+            warm_e = min(warmup_epochs_phase, max(1, total_e // 3))
+            def _lr_lambda(e_idx: int):
+                if e_idx < warm_e:
+                    return float(e_idx + 1) / max(1, warm_e)
+                prog = (e_idx - warm_e) / max(1, total_e - warm_e)
+                return 0.5 * (1.0 + np.cos(np.pi * prog))
+            phase_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
+        # Build phase scheduler if Warmup+Cosine is selected
+        if sched_choice != "plateau":
+            total_e = int(phase["epochs"]) if int(phase["epochs"]) > 0 else 1
+            warm_e = min(warmup_epochs_phase, max(1, total_e // 3))
+            def _lr_lambda(e_idx: int):
+                if e_idx < warm_e:
+                    return float(e_idx + 1) / max(1, warm_e)
+                prog = (e_idx - warm_e) / max(1, total_e - warm_e)
+                return 0.5 * (1.0 + np.cos(np.pi * prog))
+            phase_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
         
         # 損失重み更新（実装に応じて安全に適用）
         try:
@@ -2236,6 +2561,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             elif hasattr(criterion, "horizon_weights"):
                 # 最後の手段として後方互換（将来的に削除予定）
                 criterion.horizon_weights = w
+            # Phase-aware loss schedule (env: PHASE_LOSS_WEIGHTS)
+            _phase_loss_sched = _parse_phase_loss_schedule(os.getenv("PHASE_LOSS_WEIGHTS", ""))
+            _apply_phase_loss_weights(criterion, phase_idx, _phase_loss_sched)
         except Exception:
             pass
         
@@ -2247,16 +2575,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         
         # Early stopping with min_delta
         early_stop_min_delta = float(os.getenv("EARLY_STOP_MIN_DELTA", "1e-4"))
-        _phase_best = float("inf")
+        _phase_best = -float("inf") if early_stop_maximize else float("inf")
         _no_improve = 0
         
-        # ReduceLROnPlateau scheduler for this phase
-        phase_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, 
-            mode='min',
-            factor=0.5,
-            patience=5,
-            min_lr=1e-5,
+        # ReduceLROnPlateau scheduler for this phase (if selected)
+        if sched_choice == "plateau":
+            phase_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-5
             )
 
         # エポック実行
@@ -2312,6 +2637,33 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         for tk, tv in targets_dict.items()
                     }
                     targets_dict = _reshape_to_batch_only(targets_dict)
+                except Exception:
+                    pass
+                # Optional: label clipping by horizon (bps) for stability
+                try:
+                    clip_map = _parse_label_clip_map(os.getenv("LABEL_CLIP_BPS_MAP", ""))
+                    if clip_map:
+                        targets_dict = _clip_targets_by_horizon(targets_dict, clip_map)
+                except Exception:
+                    pass
+                # Optional: add small Gaussian noise to outputs for warmup epochs
+                try:
+                    output_noise_std = float(os.getenv("OUTPUT_NOISE_STD", "0.0"))
+                    noise_warmup_epochs = int(os.getenv("NOISE_WARMUP_EPOCHS", "2"))
+                    if output_noise_std > 0.0 and (epoch < noise_warmup_epochs) and isinstance(predictions, dict):
+                        for k in list(predictions.keys()):
+                            if isinstance(predictions[k], torch.Tensor) and (k.startswith("point_horizon_") or k.startswith("horizon_")):
+                                predictions[k] = predictions[k] + torch.randn_like(predictions[k]) * output_noise_std
+                except Exception:
+                    pass
+
+                # Alpha warmup within GAT-enabled phases (epoch-scoped)
+                try:
+                    if getattr(model, "use_gat", False) and hasattr(model, "alpha_graph_min"):
+                        if epoch < alpha_warm_epochs:
+                            model.alpha_graph_min = max(base_alpha_min, alpha_warm_min)
+                        else:
+                            model.alpha_graph_min = base_alpha_min
                 except Exception:
                     pass
 
@@ -2372,6 +2724,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             val_loss = 0.0
             val_batches = 0
             val_metrics = {'sharpe': [], 'ic': [], 'rank_ic': []}
+            # For Hit Rate accumulation on horizon=1
+            _val_preds_h1_all = []
+            _val_targs_h1_all = []
             # Accumulate predictions/targets for Sharpe
             _val_preds: dict[int, list] = {h: [] for h in criterion.horizons}
             _val_targs: dict[int, list] = {h: [] for h in criterion.horizons}
@@ -2413,6 +2768,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         tdict = _reshape_to_batch_only(tdict)
                     except Exception:
                         pass
+                    # Optional: label clipping in validation
+                    try:
+                        clip_map = _parse_label_clip_map(os.getenv("LABEL_CLIP_BPS_MAP", ""))
+                        if clip_map:
+                            tdict = _clip_targets_by_horizon(tdict, clip_map)
+                    except Exception:
+                        pass
 
                     loss_result = criterion(predictions, tdict)
 
@@ -2452,6 +2814,12 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         val_metrics['sharpe'].append(sharpe)
                         val_metrics['ic'].append(ic)
                         val_metrics['rank_ic'].append(rank_ic)
+                        # Accumulate for hit rate across validation
+                        try:
+                            _val_preds_h1_all.append(pred_1d.view(-1).detach().float().cpu())
+                            _val_targs_h1_all.append(targ_1d.view(-1).detach().float().cpu())
+                        except Exception:
+                            pass
                     else:
                         # Debug: Log available keys
                         logger.debug(f"[DEBUG] Val Prediction keys: {list(predictions.keys())}")
@@ -2481,7 +2849,18 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             
             avg_train_loss = train_loss / max(1, train_batches)
             avg_val_loss = val_loss / max(1, val_batches)
-            
+            # Compute Hit Rate on horizon=1 if available
+            val_hit_rate = 0.0
+            try:
+                if _val_preds_h1_all and _val_targs_h1_all:
+                    pv = torch.cat(_val_preds_h1_all, dim=0)
+                    tv = torch.cat(_val_targs_h1_all, dim=0)
+                    mask = (pv != 0) & (tv != 0)
+                    if mask.any():
+                        val_hit_rate = float(((pv[mask] * tv[mask]) > 0).float().mean().item())
+            except Exception:
+                val_hit_rate = 0.0
+
             # Compute average metrics
             avg_train_sharpe = np.mean(train_metrics['sharpe']) if train_metrics['sharpe'] else 0.0
             avg_train_ic = np.mean(train_metrics['ic']) if train_metrics['ic'] else 0.0
@@ -2500,8 +2879,37 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 f"  Train Metrics - Sharpe: {avg_train_sharpe:.4f}, IC: {avg_train_ic:.4f}, RankIC: {avg_train_rank_ic:.4f}"
             )
             logger.info(
-                f"  Val Metrics   - Sharpe: {avg_val_sharpe:.4f}, IC: {avg_val_ic:.4f}, RankIC: {avg_val_rank_ic:.4f}"
+                f"  Val Metrics   - Sharpe: {avg_val_sharpe:.4f}, IC: {avg_val_ic:.4f}, RankIC: {avg_val_rank_ic:.4f}, HitRate(h1): {val_hit_rate:.4f}"
             )
+            # Log fusion alpha if available
+            try:
+                if hasattr(model, "alpha_logit"):
+                    alpha_min_now = float(getattr(model, "alpha_graph_min", base_alpha_min))
+                    alpha_val = alpha_min_now + (1 - alpha_min_now) * torch.sigmoid(getattr(model, "alpha_logit")).mean().item()
+                    logger.info(f"  Fusion alpha (mean): {alpha_val:.4f} (alpha_min={alpha_min_now:.2f})")
+            except Exception:
+                pass
+            # Persist epoch metrics to JSONL (per phase)
+            try:
+                out_dir = Path("output/results")
+                out_dir.mkdir(parents=True, exist_ok=True)
+                jsonl = out_dir / f"phase_{phase_idx}_metrics.jsonl"
+                rec = {
+                    "phase": int(phase_idx),
+                    "epoch": int(epoch + 1),
+                    "train_loss": float(avg_train_loss),
+                    "val_loss": float(avg_val_loss),
+                    "val_sharpe": float(avg_val_sharpe),
+                    "val_ic": float(avg_val_ic),
+                    "val_rank_ic": float(avg_val_rank_ic),
+                    "val_hit_rate": float(val_hit_rate),
+                    "lr": float(optimizer.param_groups[0]['lr']),
+                    "timestamp": now_jst_iso(),
+                }
+                with open(jsonl, "a", encoding="utf-8") as jf:
+                    jf.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            except Exception as _pe:
+                logger.debug(f"metrics JSONL append skipped: {_pe}")
             # Compute and print parser-friendly Sharpe line (portfolio returns)
             try:
                 import numpy as _np
@@ -2574,40 +2982,59 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             except Exception as _swe2:
                 logger.debug(f"metrics_summary.json fallback write skipped: {_swe2}")
             
-            # Best model保存
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
+            # Best model保存（選択メトリクスで評価、保存メタに値を記録）
+            chosen_curr = avg_val_loss
+            try:
+                if early_stop_metric == "val_sharpe":
+                    chosen_curr = float(avg_val_sharpe)
+                elif early_stop_metric == "val_rankic":
+                    chosen_curr = float(avg_val_rank_ic)
+                elif early_stop_metric == "val_hit_rate":
+                    chosen_curr = float(val_hit_rate)
+            except Exception:
+                chosen_curr = avg_val_loss
+
+            if _is_better(chosen_curr, (-float('inf') if early_stop_maximize else float('inf')) if 'best_metric_val' not in locals() else best_metric_val, early_stop_maximize, 0.0):
+                best_metric_val = chosen_curr
                 checkpoint = {
                     'phase': phase_idx,
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'val_loss': avg_val_loss,
+                    'early_stop_metric': early_stop_metric,
+                    'early_stop_value': chosen_curr,
                     'config': phase
                 }
                 torch.save(
                     checkpoint,
                     checkpoint_path / f"best_model_phase{phase_idx}.pth"
                 )
-                logger.info(f"✅ Saved best model (val_loss={avg_val_loss:.4f})")
+                logger.info(f"✅ Saved best model ({early_stop_metric}={chosen_curr:.4f}, val_loss={avg_val_loss:.4f})")
 
             # Update learning rate scheduler
-            phase_scheduler.step(avg_val_loss)
+            # Update scheduler
+            try:
+                if sched_choice == "plateau" and phase_scheduler is not None:
+                    phase_scheduler.step(avg_val_loss)
+                elif sched_choice != "plateau" and phase_scheduler is not None:
+                    phase_scheduler.step()
+            except Exception:
+                pass
             
             # Early stopping (phase scoped)
-            if avg_val_loss < _phase_best - early_stop_min_delta:
-                _phase_best = avg_val_loss
+            curr_for_es = chosen_curr
+            if _is_better(curr_for_es, _phase_best, early_stop_maximize, early_stop_min_delta):
+                _phase_best = curr_for_es
                 _no_improve = 0
             else:
                 _no_improve += 1
                 if _no_improve >= early_stop_patience:
-                    logger.info(
-                        f"⏹ Early stopping phase {phase_idx} after {epoch+1} epochs (best={_phase_best:.4f})"
-                    )
+                    logger.info(f"⏹ Early stopping phase {phase_idx} after {epoch+1} epochs (best_{early_stop_metric}={_phase_best:.4f})")
                     break
     
     logger.info("=" * 80)
-    logger.info(f"Phase Training Complete. Best Val Loss: {best_val_loss:.4f}")
+    logger.info(f"Phase Training Complete. Best Val Loss: {best_val_loss:.4f}; EarlyStop Metric: {early_stop_metric}")
     logger.info("=" * 80)
     
     return model
@@ -2660,6 +3087,22 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
         direction_aux_weight=dir_aux_weight,
     )
 
+    # Early-stop metric setup (same options as phase training)
+    es_metric = os.getenv("EARLY_STOP_METRIC", "val_loss").lower()
+    es_max = os.getenv("EARLY_STOP_MAXIMIZE", "0").lower() in ("1", "true", "yes")
+    if es_metric in ("val_sharpe", "val_rankic", "val_hit_rate") and os.getenv("EARLY_STOP_MAXIMIZE", "") == "":
+        es_max = True
+    es_patience = int(os.getenv("EARLY_STOP_PATIENCE", "9"))
+    es_delta = float(os.getenv("EARLY_STOP_MIN_DELTA", "1e-4"))
+    best_metric = -float("inf") if es_max else float("inf")
+    no_improve = 0
+
+    def _is_better_m(curr: float, best: float) -> bool:
+        try:
+            return (curr > best + es_delta) if es_max else (curr < best - es_delta)
+        except Exception:
+            return False
+
     for epoch in range(1, int(max_epochs) + 1):
         avg_train_loss, _ = train_epoch(
             model,
@@ -2674,7 +3117,85 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
         logger.info(f"[mini] Train loss @epoch{epoch}: {avg_train_loss:.4f}")
 
         val_loss, _, _ = validate(model, val_loader, criterion, device)
-        logger.info(f"[mini] Val loss @epoch{epoch}: {val_loss:.4f}")
+        # Compute simple Hit Rate(h1) over a few batches (up to 50) for mini path
+        def _mini_val_hit_rate(_model, _loader, _device, max_batches: int = 50) -> float:
+            _model.eval()
+            preds_all, targs_all = [], []
+            with torch.no_grad():
+                for bi, b in enumerate(_loader):
+                    if bi >= max_batches:
+                        break
+                    feats = b.get("features")
+                    if feats is None:
+                        continue
+                    feats = feats.to(_device)
+                    out = _model(feats)
+                    if not isinstance(out, dict):
+                        continue
+                    # normalize and take horizon_1
+                    pk = "point_horizon_1" if "point_horizon_1" in out else ("horizon_1" if "horizon_1" in out else None)
+                    tk = None
+                    for k in b.get("targets", {}).keys():
+                        nk = _canonicalize_target_key(k)
+                        if nk == "horizon_1":
+                            tk = k
+                            break
+                    if pk is None or tk is None:
+                        continue
+                    p = out[pk]
+                    t = b["targets"][tk]
+                    try:
+                        p = p.detach().float().view(-1).cpu()
+                        t = t.detach().float().view(-1).cpu()
+                        preds_all.append(p)
+                        targs_all.append(t)
+                    except Exception:
+                        continue
+            try:
+                if preds_all and targs_all:
+                    pv = torch.cat(preds_all)
+                    tv = torch.cat(targs_all)
+                    mask = (pv != 0) & (tv != 0)
+                    if mask.any():
+                        return float(((pv[mask] * tv[mask]) > 0).float().mean().item())
+            except Exception:
+                pass
+            return 0.0
+
+        val_hit_rate = _mini_val_hit_rate(model, val_loader, device)
+        logger.info(f"[mini] Val loss @epoch{epoch}: {val_loss:.4f}, HitRate(h1)={val_hit_rate:.4f}")
+
+        # Choose metric for early stopping
+        chosen = val_loss
+        if es_metric == "val_hit_rate":
+            chosen = val_hit_rate
+        # (Optional) could extend to Sharpe/RankIC here if needed
+
+        # Persist epoch metrics
+        try:
+            out_dir = Path("output/results")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "mode": "mini",
+                "epoch": int(epoch),
+                "val_loss": float(val_loss),
+                "val_hit_rate": float(val_hit_rate),
+                "timestamp": now_jst_iso(),
+            }
+            with open(out_dir / "mini_metrics.jsonl", "a", encoding="utf-8") as jf:
+                jf.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+        # Early stopping
+        if _is_better_m(chosen, best_metric):
+            best_metric = chosen
+            no_improve = 0
+        else:
+            no_improve += 1
+            if no_improve >= es_patience:
+                logger.info(f"[mini] Early stopping at epoch {epoch} (best {es_metric}={best_metric:.4f})")
+                break
 
     save_path = Path("models/checkpoints/atft_gat_fan_best_mini.pt")
     save_path.parent.mkdir(parents=True, exist_ok=True)

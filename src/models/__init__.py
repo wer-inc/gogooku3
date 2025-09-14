@@ -5,7 +5,7 @@ from .tft_components import TemporalFusionTransformer, VariableSelectionNetwork
 
 __all__ = [
     "FrequencyAdaptiveNorm",
-    "SliceAdaptiveNorm", 
+    "SliceAdaptiveNorm",
     "TemporalFusionTransformer",
     "VariableSelectionNetwork"
 ]

@@ -7,8 +7,8 @@ This is a minimal placeholder to satisfy imports; the modern pipeline reads
 parquet directly via Polars and does not rely on this class.
 """
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import polars as pl
 

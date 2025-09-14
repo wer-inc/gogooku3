@@ -256,7 +256,7 @@ class RealHyperparameterTuner:
 
     def parse_training_output(self, stdout: str, stderr: str) -> Dict[str, float]:
         """トレーニング出力からメトリクスを抽出"""
-        metrics = {'sharpe': -1.0, 'ic': 0.0, 'rankic': 0.0, 'loss': 999.0}
+        metrics = {'sharpe': -1.0, 'ic': 0.0, 'rankic': 0.0, 'loss': 999.0, 'hit_rate': 0.0}
         
         try:
             # 最後のエポックのメトリクスを抽出
@@ -287,6 +287,16 @@ class RealHyperparameterTuner:
                         if 'RankIC:' in line:
                             rankic_part = line.split('RankIC:')[1].strip()
                             metrics['rankic'] = float(rankic_part)
+                        if 'HitRate' in line:
+                            # HitRate(h1): 0.6123
+                            try:
+                                hr = line.split('HitRate')[1]
+                                hr = hr.split(':')[1].strip()
+                                # Remove trailing commas if any
+                                hr = hr.split(',')[0].strip()
+                                metrics['hit_rate'] = float(hr)
+                            except Exception:
+                                pass
                         break
                     except (ValueError, IndexError):
                         continue
@@ -303,6 +313,7 @@ class RealHyperparameterTuner:
         sharpe = metrics.get('sharpe', -1.0)
         ic = metrics.get('ic', 0.0)
         rankic = metrics.get('rankic', 0.0)
+        hit_rate = metrics.get('hit_rate', 0.0)
         
         # 基本: Sharpe Ratio重視
         score = sharpe
@@ -312,7 +323,9 @@ class RealHyperparameterTuner:
         rankic_bonus = abs(rankic) * 0.1  # RankICの絶対値を小さく加点
         
         # 複合スコア
-        total_score = score + ic_bonus + rankic_bonus
+        # Hit Rate as a small stabilizer (directional consistency)
+        hr_bonus = max(0.0, hit_rate - 0.5) * 0.2  # above-random portion scaled
+        total_score = score + ic_bonus + rankic_bonus + hr_bonus
         
         # 異常値チェック
         if sharpe < -0.5 or sharpe > 2.0:  # 異常なSharpe値

@@ -2,12 +2,12 @@
 ATFT-GAT-FAN アーキテクチャ実装
 Adaptive Temporal Fusion Transformer with Graph Attention and Frequency Adaptive Normalization
 """
+import logging
+
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import pytorch_lightning as pl
 from omegaconf import DictConfig
-from typing import Dict, List, Optional, Tuple, Any
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -189,11 +189,21 @@ class ATFT_GAT_FAN(pl.LightningModule):
         )
 
     def _build_prediction_head(self):
-        """予測ヘッドの構築"""
-        return PredictionHead(
-            hidden_size=self.config.model.hidden_size,
-            config=self.config.model.prediction_head
-        )
+        """予測ヘッドの構築（Multi-horizon対応）"""
+        # Multi-horizon prediction headを使用
+        use_multi_horizon = getattr(self.config.training, 'use_multi_horizon_heads', True)
+
+        if use_multi_horizon:
+            return MultiHorizonPredictionHeads(
+                hidden_size=self.config.model.hidden_size,
+                config=self.config.model.prediction_head
+            )
+        else:
+            # Backward compatibility: single horizon head
+            return PredictionHead(
+                hidden_size=self.config.model.hidden_size,
+                config=self.config.model.prediction_head
+            )
 
     def _setup_loss_functions(self):
         """損失関数の設定"""
@@ -208,7 +218,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 min_periods=self.config.train.loss.auxiliary.sharpe_loss.min_periods
             )
 
-    def forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         フォワードパス
         """
@@ -238,52 +248,125 @@ class ATFT_GAT_FAN(pl.LightningModule):
         # 適応正規化
         normalized_features = self.adaptive_norm(combined_features)
 
-        # 予測
+        # 予測（Multi-horizon対応）
         predictions = self.prediction_head(normalized_features)
+
+        # Multi-horizon vs single-horizon の結果統一
+        if isinstance(predictions, dict):
+            # Multi-horizon: {horizon_1d: tensor, horizon_5d: tensor, ...}
+            output_type = 'multi_horizon'
+        else:
+            # Single-horizon (backward compatibility)
+            output_type = 'single_horizon'
+            predictions = {'single': predictions}
 
         return {
             'predictions': predictions,
-            'features': normalized_features
+            'features': normalized_features,
+            'output_type': output_type
         }
 
-    def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int):
-        """学習ステップ"""
+    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int):
+        """学習ステップ（Multi-horizon対応）"""
         outputs = self.forward(batch)
-        targets = batch['targets']
+        predictions = outputs['predictions']
+        output_type = outputs['output_type']
 
-        # メイン損失（Quantile Loss）
-        main_loss = self.quantile_loss(outputs['predictions'], targets)
+        total_loss = 0.0
+        horizon_losses = {}
 
-        # 補助損失
-        total_loss = main_loss
+        if output_type == 'multi_horizon':
+            # Multi-horizon training: 各horizonでの損失計算
+            # 新しいconfig構造から重みを取得
+            if (hasattr(self.config.training, 'prediction') and
+                hasattr(self.config.training.prediction, 'horizon_weights')):
+                horizon_weight_list = self.config.training.prediction.horizon_weights
+                horizon_weights = {
+                    f'horizon_{h}d': w for h, w in zip(self.prediction_horizons, horizon_weight_list)
+                }
+            else:
+                # フォールバック: 従来の設定またはデフォルト
+                horizon_weights = getattr(self.config.training, 'horizon_weights', {
+                    'horizon_1d': 1.0, 'horizon_5d': 0.8, 'horizon_10d': 0.6, 'horizon_20d': 0.4
+                })
 
-        if hasattr(self, 'sharpe_loss'):
-            sharpe_loss = self.sharpe_loss(outputs['predictions'], targets)
-            total_loss = total_loss + sharpe_loss
+            for horizon_key, pred in predictions.items():
+                # Extract corresponding target for this horizon
+                if horizon_key in batch:
+                    target = batch[horizon_key]
+                elif 'targets' in batch:
+                    # Fallback to single target (assume it matches the prediction format)
+                    target = batch['targets']
+                else:
+                    # Skip if no matching target
+                    continue
+
+                # Horizon-specific loss
+                horizon_loss = self.quantile_loss(pred, target)
+
+                # Apply horizon weighting (emphasize short-term)
+                weight = horizon_weights.get(horizon_key, 0.5)
+                weighted_loss = horizon_loss * weight
+
+                total_loss += weighted_loss
+                horizon_losses[f'train_loss_{horizon_key}'] = horizon_loss
+
+                # Log individual horizon losses
+                self.log(f'train_loss_{horizon_key}', horizon_loss, prog_bar=False)
+
+        else:
+            # Single-horizon training (backward compatibility)
+            targets = batch['targets']
+            main_loss = self.quantile_loss(predictions['single'], targets)
+            total_loss = main_loss
+            self.log('train_main_loss', main_loss, prog_bar=True)
+
+        # Auxiliary losses (applied to all horizons)
+        if hasattr(self, 'sharpe_loss') and output_type == 'multi_horizon':
+            # Apply Sharpe loss to primary horizon (usually 1d or 5d)
+            primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
+            if primary_horizon in predictions and primary_horizon in batch:
+                sharpe_loss = self.sharpe_loss(predictions[primary_horizon], batch[primary_horizon])
+                total_loss += sharpe_loss
+                self.log('train_sharpe_loss', sharpe_loss, prog_bar=False)
 
         # ログ記録
         self.log('train_loss', total_loss, prog_bar=True)
-        self.log('train_main_loss', main_loss, prog_bar=True)
 
         return total_loss
 
-    def validation_step(self, batch: Dict[str, torch.Tensor], batch_idx: int):
-        """検証ステップ"""
+    def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int):
+        """検証ステップ（Multi-horizon対応）"""
         outputs = self.forward(batch)
-        targets = batch['targets']
+        predictions = outputs['predictions']
+        output_type = outputs['output_type']
 
-        # 損失計算
-        loss = self.quantile_loss(outputs['predictions'], targets)
+        total_loss = 0.0
 
-        # 金融指標計算
-        metrics = self._calculate_financial_metrics(outputs['predictions'], targets)
+        if output_type == 'multi_horizon':
+            # Multi-horizon validation
+            for horizon_key, pred in predictions.items():
+                if horizon_key in batch:
+                    target = batch[horizon_key]
+                elif 'targets' in batch:
+                    target = batch['targets']
+                else:
+                    continue
 
-        # ログ記録
-        self.log('val_loss', loss, prog_bar=True)
-        for metric_name, metric_value in metrics.items():
-            self.log(f'val_{metric_name}', metric_value, prog_bar=True)
+                val_loss = self.quantile_loss(pred, target)
+                total_loss += val_loss
 
-        return loss
+                # Log individual horizon validation losses
+                self.log(f'val_loss_{horizon_key}', val_loss, prog_bar=False, sync_dist=True)
+
+        else:
+            # Single-horizon validation
+            targets = batch['targets']
+            val_loss = self.quantile_loss(predictions['single'], targets)
+            total_loss = val_loss
+
+        self.log('val_loss', total_loss, prog_bar=True, sync_dist=True)
+        return total_loss
 
     def _calculate_financial_metrics(self, predictions: torch.Tensor, targets: torch.Tensor):
         """金融指標の計算"""
@@ -374,7 +457,7 @@ class TemporalFusionTransformer(nn.Module):
         else:
             self.static_encoder = None
 
-    def forward(self, x: torch.Tensor, static_features: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, static_features: torch.Tensor | None = None):
         # LSTM処理
         lstm_out, _ = self.lstm(x)
 
@@ -403,7 +486,7 @@ class GraphAttentionNetwork(nn.Module):
             batch_first=True
         )
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None):
         # 簡易的なグラフ注意処理
         attn_output, _ = self.attention(x, x, x)
         return attn_output
@@ -430,24 +513,25 @@ class AdaptiveNormalization(nn.Module):
 
 
 class PredictionHead(nn.Module):
-    """改善版予測ヘッド（small-init + LayerScale）"""
+    """改善版予測ヘッド（single-horizon用、backward compatibility）"""
     def __init__(self, hidden_size: int, config: DictConfig, output_std: float = 0.01, layer_scale_gamma: float = 0.1):
         super().__init__()
         self.config = config
 
         # 隠れ層
         layers = []
+        current_size = hidden_size
         for hidden_dim in config.architecture.hidden_layers:
             layers.extend([
-                nn.Linear(hidden_size, hidden_dim),
+                nn.Linear(current_size, hidden_dim),
                 nn.ReLU(),
                 nn.Dropout(config.architecture.dropout)
             ])
-            hidden_size = hidden_dim
+            current_size = hidden_dim
 
         # 出力層（改善版初期化）
         quantiles = config.output.quantile_prediction.quantiles
-        self.output_layer = nn.Linear(hidden_size, len(quantiles))
+        self.output_layer = nn.Linear(current_size, len(quantiles))
 
         # small-init + zero bias
         nn.init.trunc_normal_(self.output_layer.weight, std=output_std)
@@ -470,9 +554,135 @@ class PredictionHead(nn.Module):
         return output * self.layer_scale
 
 
+class MultiHorizonPredictionHeads(nn.Module):
+    """Multi-horizon prediction heads - 各予測期間専用の出力層"""
+    def __init__(self, hidden_size: int, config: DictConfig, output_std: float = 0.01, layer_scale_gamma: float = 0.1):
+        super().__init__()
+        self.config = config
+
+        # 予測対象期間の設定 (新しいconfig構造をサポート)
+        if hasattr(config.training, 'prediction') and hasattr(config.training.prediction, 'horizons'):
+            self.prediction_horizons = config.training.prediction.horizons
+        else:
+            # フォールバック: 従来の設定を試す
+            self.prediction_horizons = getattr(config.training, 'prediction_horizons', [1, 5, 10, 20])
+
+        # 共有特徴抽出層（各horizonで共有される中間表現）
+        self.shared_encoder = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.ReLU(),
+            nn.Dropout(config.architecture.dropout),
+            nn.LayerNorm(hidden_size // 2)
+        )
+
+        # 各horizon専用の出力ヘッド
+        self.horizon_heads = nn.ModuleDict()
+        quantiles = config.output.quantile_prediction.quantiles
+
+        for horizon in self.prediction_horizons:
+            # Horizon-specific architecture
+            horizon_layers = []
+            current_size = hidden_size // 2
+
+            # Horizon専用の隠れ層（短期と長期で異なるarchitecture）
+            if horizon <= 5:  # Short-term horizons (1d, 5d)
+                # より細かい特徴抽出 - ノイズが重要
+                horizon_layers.extend([
+                    nn.Linear(current_size, current_size),
+                    nn.ReLU(),
+                    nn.Dropout(config.architecture.dropout * 0.5),  # Lower dropout for short-term
+                ])
+            else:  # Long-term horizons (10d, 20d)
+                # よりスムーズな特徴抽出 - トレンドが重要
+                horizon_layers.extend([
+                    nn.Linear(current_size, current_size // 2),
+                    nn.ReLU(),
+                    nn.Dropout(config.architecture.dropout * 1.5),  # Higher dropout for long-term
+                    nn.Linear(current_size // 2, current_size),
+                    nn.ReLU(),
+                ])
+
+            # 最終出力層
+            horizon_layers.append(nn.Linear(current_size, len(quantiles)))
+
+            # Initialize head
+            head = nn.Sequential(*horizon_layers)
+
+            # Horizon-specific initialization
+            for layer in head:
+                if isinstance(layer, nn.Linear):
+                    # Short-term: smaller init (less certainty)
+                    # Long-term: larger init (more trend confidence)
+                    std = output_std * (0.5 if horizon <= 5 else 1.0)
+                    nn.init.trunc_normal_(layer.weight, std=std)
+                    nn.init.zeros_(layer.bias)
+
+            self.horizon_heads[f'horizon_{horizon}d'] = head
+
+        # Horizon-specific LayerScale parameters
+        self.layer_scales = nn.ParameterDict()
+        for horizon in self.prediction_horizons:
+            # Short-term: smaller scale (less confident)
+            # Long-term: larger scale (more trend confident)
+            scale = layer_scale_gamma * (0.8 if horizon <= 5 else 1.2)
+            self.layer_scales[f'horizon_{horizon}d'] = nn.Parameter(torch.ones(len(quantiles)) * scale)
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Args:
+            x: [batch_size, sequence_length, hidden_size]
+
+        Returns:
+            Dictionary mapping horizon names to predictions
+            {
+                'horizon_1d': [batch_size, n_quantiles],
+                'horizon_5d': [batch_size, n_quantiles],
+                'horizon_10d': [batch_size, n_quantiles],
+                'horizon_20d': [batch_size, n_quantiles],
+            }
+        """
+        # 最後のタイムステップを使用 (3D input) or そのまま使用 (2D input)
+        if x.dim() == 3:
+            x = x[:, -1, :]  # [batch_size, hidden_size]
+        elif x.dim() == 2:
+            pass  # Already [batch_size, hidden_size]
+        else:
+            raise ValueError(f"Expected 2D or 3D input, got {x.dim()}D")
+
+        # 共有エンコーダで中間表現を獲得
+        shared_features = self.shared_encoder(x)  # [batch_size, hidden_size//2]
+
+        # 各horizon専用ヘッドで予測
+        predictions = {}
+        for horizon in self.prediction_horizons:
+            horizon_key = f'horizon_{horizon}d'
+
+            # Horizon専用の処理
+            horizon_output = self.horizon_heads[horizon_key](shared_features)
+
+            # LayerScale適用
+            scaled_output = horizon_output * self.layer_scales[horizon_key]
+
+            predictions[horizon_key] = scaled_output
+
+        return predictions
+
+    def get_single_horizon_prediction(self, x: torch.Tensor, horizon: int) -> torch.Tensor:
+        """特定のhorizonの予測のみを取得（効率的）"""
+        x = x[:, -1, :]
+        shared_features = self.shared_encoder(x)
+
+        horizon_key = f'horizon_{horizon}d'
+        if horizon_key not in self.horizon_heads:
+            raise ValueError(f"Horizon {horizon}d not supported. Available: {list(self.horizon_heads.keys())}")
+
+        horizon_output = self.horizon_heads[horizon_key](shared_features)
+        return horizon_output * self.layer_scales[horizon_key]
+
+
 class QuantileLoss(nn.Module):
     """Quantile Loss"""
-    def __init__(self, quantiles: List[float]):
+    def __init__(self, quantiles: list[float]):
         super().__init__()
         self.quantiles = torch.tensor(quantiles)
 

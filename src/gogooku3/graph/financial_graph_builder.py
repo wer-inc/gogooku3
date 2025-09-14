@@ -6,7 +6,7 @@ Minimal financial graph builder for pipeline compatibility.
 Builds a simple correlation-based graph and returns summary stats.
 """
 
-from typing import Dict, Iterable, Optional
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -26,7 +26,7 @@ class FinancialGraphBuilder:
         self.max_edges_per_node = max_edges_per_node
         self.correlation_method = correlation_method
 
-    def build_graph(self, df: pd.DataFrame, codes: Iterable[str], date_end: Optional[str] = None) -> Dict:
+    def build_graph(self, df: pd.DataFrame, codes: Iterable[str], date_end: str | None = None) -> dict:
         # Simple implementation: compute correlations between returns columns per code
         try:
             sub = df[df["code"].isin(list(codes))]

@@ -14,7 +14,9 @@ Usage:
   python scripts/pipelines/run_full_dataset.py --jquants \
     --start-date 2020-09-03 --end-date 2025-09-03 \
     [--topix-parquet output/topix_history_YYYYMMDD_YYYYMMDD.parquet] \
-    [--statements-parquet output/event_raw_statements_YYYYMMDD_YYYYMMDD.parquet]
+    [--statements-parquet output/event_raw_statements_YYYYMMDD_YYYYMMDD.parquet] \
+    [--enable-sector-short-selling] \
+    [--sector-short-selling-parquet output/sector_short_selling_YYYYMMDD_YYYYMMDD.parquet]
 
 If dates are omitted, it defaults to last ~5 years.
 Requires .env with JQUANTS_AUTH_EMAIL, JQUANTS_AUTH_PASSWORD.
@@ -112,6 +114,88 @@ def _parse_args() -> argparse.Namespace:
         default=20,
         help="ADV window (days) for scaling margin stocks (default=20)",
     )
+    parser.add_argument(
+        "--daily-margin-parquet",
+        type=Path,
+        default=None,
+        help="Path to daily_margin_interest parquet (Code/Date/PublishedDate + credit data)",
+    )
+    parser.add_argument(
+        "--enable-daily-margin",
+        action="store_true",
+        help="Enable daily margin interest features (default: off)",
+    )
+    # Futures options
+    parser.add_argument(
+        "--futures-parquet",
+        type=Path,
+        default=None,
+        help="Optional derivatives/futures daily parquet for enrichment",
+    )
+    parser.add_argument(
+        "--futures-categories",
+        type=str,
+        default="TOPIXF,NK225F,JN400F,REITF",
+        help="Comma-separated futures categories to include",
+    )
+    parser.add_argument(
+        "--disable-futures",
+        action="store_true",
+        help="Disable futures features (default: enabled)",
+    )
+    parser.add_argument(
+        "--futures-continuous",
+        action="store_true",
+        help="Enable continuous futures series (fut_whole_ret_cont_*) (default: off)",
+    )
+    # Advanced volatility
+    parser.add_argument(
+        "--enable-advanced-vol",
+        action="store_true",
+        help="Enable Yang–Zhang volatility and VoV features",
+    )
+    parser.add_argument(
+        "--adv-vol-windows",
+        type=str,
+        default="20,60",
+        help="Comma-separated windows for advanced volatility (e.g., 20,60)",
+    )
+    # Optional spot index parquets for basis mapping
+    parser.add_argument(
+        "--nk225-parquet",
+        type=Path,
+        default=None,
+        help="Optional Nikkei225 spot parquet for basis mapping (Date, Close)",
+    )
+    parser.add_argument(
+        "--reit-parquet",
+        type=Path,
+        default=None,
+        help="Optional REIT index spot parquet for basis mapping (Date, Close)",
+    )
+    parser.add_argument(
+        "--jpx400-parquet",
+        type=Path,
+        default=None,
+        help="Optional JPX400 spot parquet for basis mapping (Date, Close)",
+    )
+    # Nikkei225 index option features (optional)
+    parser.add_argument(
+        "--enable-nk225-option-features",
+        action="store_true",
+        help="Enable Nikkei225 index option features build and save (default: off)",
+    )
+    parser.add_argument(
+        "--index-option-parquet",
+        type=Path,
+        default=None,
+        help="Path to pre-saved /option/index_option raw parquet (optional)",
+    )
+    parser.add_argument(
+        "--attach-nk225-option-market",
+        action="store_true",
+        help="Attach Nikkei225 option market aggregates (CMAT IV, term slope, flows) to equity panel (default: off)",
+    )
     # Sector feature toggles
     parser.add_argument(
         "--sector-onehot33",
@@ -143,6 +227,60 @@ def _parse_args() -> argparse.Namespace:
         default="33",
         help="Comma-separated sector levels for TE (choices: 33,17)",
     )
+    # Futures integration arguments (already defined above)
+    # Short selling integration arguments
+    parser.add_argument(
+        "--enable-short-selling",
+        action="store_true",
+        help="Enable short selling data integration (default: off)",
+    )
+    parser.add_argument(
+        "--short-selling-parquet",
+        type=Path,
+        default=None,
+        help="Path to pre-saved short selling parquet file",
+    )
+    parser.add_argument(
+        "--short-positions-parquet",
+        type=Path,
+        default=None,
+        help="Path to pre-saved short selling positions parquet file",
+    )
+    # Earnings events integration arguments
+    parser.add_argument(
+        "--enable-earnings-events",
+        action="store_true",
+        help="Enable earnings announcement events data integration (default: off)",
+    )
+    parser.add_argument(
+        "--earnings-announcements-parquet",
+        type=Path,
+        default=None,
+        help="Path to pre-saved earnings announcements parquet file",
+    )
+    parser.add_argument(
+        "--enable-pead-features",
+        action="store_true",
+        default=True,
+        help="Enable Post-Earnings Announcement Drift (PEAD) features (default: on)",
+    )
+    # Sector-wise short selling integration arguments
+    parser.add_argument(
+        "--enable-sector-short-selling",
+        action="store_true",
+        help="Enable sector-wise short selling features (default: off)",
+    )
+    parser.add_argument(
+        "--sector-short-selling-parquet",
+        type=Path,
+        default=None,
+        help="Path to pre-saved sector short selling parquet file",
+    )
+    parser.add_argument(
+        "--disable-sector-short-z-scores",
+        action="store_true",
+        help="Disable Z-score features for sector short selling (default: enabled)",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -167,8 +305,13 @@ async def main() -> int:
         print("[DRY-RUN] Build fully enriched 5y dataset")
         print("Steps:")
         print(" 0) Prepare trade-spec (JQuants optional or local fallback)")
+        print(" 0.5) Fetch futures data (if --enable-futures)")
+        print(" 0.6) Fetch short selling data (if --enable-short-selling)")
+        print(" 0.7) Fetch sector short selling data (if --enable-sector-short-selling)")
+        print(" 0.8) Fetch Nikkei225 index options (if --enable-nk225-option-features)")
         print(" 1) Run base optimized pipeline (prices + TA + statements)")
-        print(" 2) Enrich with TOPIX, flow, and sector features")
+        print(" 2) Enrich with TOPIX, flow, sector, futures, short selling, sector short selling")
+        print(" 2.5) Build and save Nikkei225 option features (separate parquet)")
         print(" 3) Save ml_dataset_latest_full.parquet (+ metadata)")
         print("=" * 60)
         return 0
@@ -190,6 +333,9 @@ async def main() -> int:
     logger.info("=== STEP 0: Prepare trade-spec for flow features ===")
     trades_spec_path: Path | None = None
     listed_info_path: Path | None = args.listed_info_parquet
+    futures_path: Path | None = None
+    short_selling_path: Path | None = None
+    short_positions_path: Path | None = None
     if args.jquants:
         # Fetch trade-spec and save to Parquet
         email = os.getenv("JQUANTS_AUTH_EMAIL", "")
@@ -210,6 +356,13 @@ async def main() -> int:
             except Exception as e:
                 logger.warning(f"Failed to fetch weekly margin interest: {e}")
                 wmi_df = pl.DataFrame()
+            # Fetch daily margin interest for high-frequency credit data (optional)
+            try:
+                logger.info("Fetching daily margin interest for daily credit features")
+                dmi_df = await fetcher.get_daily_margin_interest(session, start_date, end_date)
+            except Exception as e:
+                logger.warning(f"Failed to fetch daily margin interest: {e}")
+                dmi_df = pl.DataFrame()
             # Also fetch listed_info for sector/market enrichment
             try:
                 logger.info("Fetching listed_info for sector/market enrichment")
@@ -246,6 +399,76 @@ async def main() -> int:
                 logger.info(f"Saved weekly margin interest: {wmi_path}")
             except Exception as e:
                 logger.warning(f"Failed to save weekly margin parquet: {e}")
+        # Save daily margin interest if fetched
+        dmi_path: Path | None = None
+        if 'dmi_df' in locals() and dmi_df is not None and not dmi_df.is_empty():
+            try:
+                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                dmi_path = outdir / f"daily_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                dmi_df.write_parquet(dmi_path)
+                logger.info(f"Saved daily margin interest: {dmi_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save daily margin parquet: {e}")
+
+        # Fetch futures data for derivatives features (optional)
+        if args.enable_futures or (args.futures_parquet is not None):
+            try:
+                logger.info("Fetching futures data for derivatives features")
+                futures_df = await fetcher.get_futures_daily(session, start_date, end_date)
+                if futures_df is not None and not futures_df.is_empty():
+                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                    futures_path = outdir / f"futures_daily_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                    futures_df.write_parquet(futures_path)
+                    logger.info(f"Saved futures data: {futures_path}")
+                else:
+                    logger.warning("No futures data retrieved from API")
+            except Exception as e:
+                logger.warning(f"Failed to fetch futures data: {e}")
+
+        # Fetch short selling data for short selling features (optional)
+        if args.enable_short_selling:
+            # Fetch short selling ratio data
+            try:
+                logger.info("Fetching short selling ratio data")
+                short_df = await fetcher.get_short_selling(session, start_date, end_date)
+                if short_df is not None and not short_df.is_empty():
+                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                    short_selling_path = outdir / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                    short_df.write_parquet(short_selling_path)
+                    logger.info(f"Saved short selling data: {short_selling_path}")
+                else:
+                    logger.warning("No short selling data retrieved from API")
+            except Exception as e:
+                logger.warning(f"Failed to fetch short selling data: {e}")
+
+            # Fetch short selling positions data
+            try:
+                logger.info("Fetching short selling positions data")
+                positions_df = await fetcher.get_short_selling_positions(session, start_date, end_date)
+                if positions_df is not None and not positions_df.is_empty():
+                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                    short_positions_path = outdir / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                    positions_df.write_parquet(short_positions_path)
+                    logger.info(f"Saved short selling positions data: {short_positions_path}")
+                else:
+                    logger.warning("No short selling positions data retrieved from API")
+            except Exception as e:
+                logger.warning(f"Failed to fetch short selling positions data: {e}")
+
+        # Fetch sector-wise short selling data (optional)
+        if args.enable_sector_short_selling:
+            try:
+                logger.info("Fetching sector-wise short selling data")
+                sector_short_df = await fetcher.get_sector_short_selling(session, start_date, end_date)
+                if sector_short_df is not None and not sector_short_df.is_empty():
+                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                    sector_short_path = outdir / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                    sector_short_df.write_parquet(sector_short_path)
+                    logger.info(f"Saved sector short selling data: {sector_short_path}")
+                else:
+                    logger.warning("No sector short selling data retrieved from API")
+            except Exception as e:
+                logger.warning(f"Failed to fetch sector short selling data: {e}")
     else:
         # Offline fallback: look for a local trades_spec parquet
         trades_spec_path = _find_latest("trades_spec_history_*.parquet")
@@ -260,6 +483,42 @@ async def main() -> int:
             logger.info(f"Using listed_info parquet: {listed_info_path}")
         else:
             logger.warning("No listed_info parquet provided/found; sector enrichment will be skipped")
+
+        # Offline futures fallback
+        if args.enable_futures or args.futures_parquet is not None:
+            if args.futures_parquet is not None and args.futures_parquet.exists():
+                futures_path = args.futures_parquet
+                logger.info(f"Using provided futures parquet: {futures_path}")
+            else:
+                futures_path = _find_latest("futures_daily_*.parquet")
+                if futures_path:
+                    logger.info(f"Using local futures parquet: {futures_path}")
+                else:
+                    logger.warning("No futures parquet found; futures features will be skipped")
+
+        # Offline short selling fallback
+        if args.enable_short_selling:
+            # Short selling ratio data
+            if args.short_selling_parquet is not None and args.short_selling_parquet.exists():
+                short_selling_path = args.short_selling_parquet
+                logger.info(f"Using provided short selling parquet: {short_selling_path}")
+            else:
+                short_selling_path = _find_latest("short_selling_*.parquet")
+                if short_selling_path:
+                    logger.info(f"Using local short selling parquet: {short_selling_path}")
+                else:
+                    logger.warning("No short selling parquet found; short selling features will be skipped")
+
+            # Short selling positions data
+            if args.short_positions_parquet is not None and args.short_positions_parquet.exists():
+                short_positions_path = args.short_positions_parquet
+                logger.info(f"Using provided short positions parquet: {short_positions_path}")
+            else:
+                short_positions_path = _find_latest("short_positions_*.parquet")
+                if short_positions_path:
+                    logger.info(f"Using local short positions parquet: {short_positions_path}")
+                else:
+                    logger.warning("No short positions parquet found; positions features will be skipped")
 
     logger.info("=== STEP 1: Run base optimized pipeline (prices + TA + statements) ===")
     pipeline = JQuantsPipelineV4Optimized()
@@ -283,6 +542,28 @@ async def main() -> int:
         else:
             margin_weekly_parquet = _find_latest("weekly_margin_interest_*.parquet")
 
+    # Resolve daily margin parquet (similar to weekly margin handling)
+    daily_margin_parquet: Path | None = None
+    if args.daily_margin_parquet is not None and args.daily_margin_parquet.exists():
+        daily_margin_parquet = args.daily_margin_parquet
+    else:
+        # prefer the one we just saved (if any)
+        if 'dmi_path' in locals() and dmi_path and dmi_path.exists():
+            daily_margin_parquet = dmi_path
+        else:
+            daily_margin_parquet = _find_latest("daily_margin_interest_*.parquet")
+
+    # Resolve sector short selling parquet (similar to other data sources)
+    sector_short_selling_parquet: Path | None = None
+    if args.sector_short_selling_parquet is not None and args.sector_short_selling_parquet.exists():
+        sector_short_selling_parquet = args.sector_short_selling_parquet
+    else:
+        # prefer the one we just saved (if any)
+        if 'sector_short_path' in locals() and sector_short_path and sector_short_path.exists():
+            sector_short_selling_parquet = sector_short_path
+        else:
+            sector_short_selling_parquet = _find_latest("sector_short_selling_*.parquet")
+
     te_targets = [s.strip() for s in (args.sector_te_targets or "").split(",") if s.strip()]
     series_levels = [s.strip() for s in (getattr(args, 'sector_series_levels', '33') or "").split(",") if s.strip()]
     te_levels = [s.strip() for s in (getattr(args, 'sector_te_levels', '33') or "").split(",") if s.strip()]
@@ -296,20 +577,90 @@ async def main() -> int:
         topix_parquet=args.topix_parquet,
         statements_parquet=args.statements_parquet,
         listed_info_parquet=listed_info_path,
+        enable_futures=not getattr(args, "disable_futures", False),
+        futures_parquet=futures_path,
+        futures_categories=[s.strip() for s in (getattr(args, "futures_categories", "") or "").split(",") if s.strip()],
+        futures_continuous=args.futures_continuous,
+        nk225_parquet=getattr(args, "nk225_parquet", None),
+        reit_parquet=getattr(args, "reit_parquet", None),
+        jpx400_parquet=getattr(args, "jpx400_parquet", None),
+        enable_advanced_vol=args.enable_advanced_vol,
+        adv_vol_windows=[int(s.strip()) for s in (args.adv_vol_windows or '').split(',') if s.strip()],
         enable_margin_weekly=bool(margin_weekly_parquet is not None and margin_weekly_parquet.exists()),
         margin_weekly_parquet=margin_weekly_parquet,
         margin_weekly_lag=getattr(args, "margin_weekly_lag", 3),
         adv_window_days=getattr(args, "adv_window_days", 20),
+        enable_daily_margin=args.enable_daily_margin or bool(daily_margin_parquet is not None and daily_margin_parquet.exists()),
+        daily_margin_parquet=daily_margin_parquet,
+        # Short selling parameters
+        enable_short_selling=args.enable_short_selling,
+        short_selling_parquet=short_selling_path,
+        short_positions_parquet=short_positions_path,
+        # Earnings events parameters
+        enable_earnings_events=args.enable_earnings_events,
+        earnings_announcements_parquet=args.earnings_announcements_parquet,
+        enable_pead_features=args.enable_pead_features,
+        # Sector short selling parameters
+        enable_sector_short_selling=args.enable_sector_short_selling,
+        sector_short_selling_parquet=sector_short_selling_parquet,
+        enable_sector_short_z_scores=not args.disable_sector_short_z_scores,
         sector_onehot33=args.sector_onehot33,
         sector_series_mcap=args.sector_series_mcap,
         sector_te_targets=te_targets,
         sector_series_levels=series_levels,
         sector_te_levels=te_levels,
+        # Option market aggregates
+        enable_option_market_features=args.attach_nk225_option_market,
+        index_option_features_parquet=None,
+        index_option_raw_parquet=args.index_option_parquet,
     )
     logger.info("Full enriched dataset saved")
     logger.info(f"  Dataset : {pq_path}")
     logger.info(f"  Metadata: {meta_path}")
     logger.info(f"  Symlink : {output_dir / 'ml_dataset_latest_full.parquet'}")
+
+    # Optionally build Nikkei225 index option features and save as a separate artifact
+    try:
+        if args.enable_nk225_option_features:
+            opt_raw: pl.DataFrame | None = None
+            # Prefer provided parquet
+            if args.index_option_parquet and args.index_option_parquet.exists():
+                try:
+                    opt_raw = pl.read_parquet(args.index_option_parquet)
+                    logger.info(f"Loaded index_option parquet: {args.index_option_parquet}")
+                except Exception as e:
+                    logger.warning(f"Failed to load index_option parquet: {e}")
+
+            # If not provided, and JQuants is enabled, fetch from API per date range
+            if (opt_raw is None or opt_raw.is_empty()) and args.jquants:
+                try:
+                    email = os.getenv("JQUANTS_AUTH_EMAIL", "")
+                    password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
+                    if email and password:
+                        fetcher = JQuantsAsyncFetcher(email, password)
+                        async with aiohttp.ClientSession() as session:
+                            await fetcher.authenticate(session)
+                            start_date = start_dt.strftime("%Y-%m-%d")
+                            end_date = end_dt.strftime("%Y-%m-%d")
+                            logger.info(f"Fetching index options {start_date} → {end_date}")
+                            opt_raw = await fetcher.get_index_option(session, start_date, end_date)
+                except Exception as e:
+                    logger.warning(f"Index option fetch failed: {e}")
+
+            if opt_raw is not None and not opt_raw.is_empty():
+                try:
+                    from src.gogooku3.features.index_option import build_index_option_features
+
+                    opt_feats = build_index_option_features(opt_raw)
+                    out = output_dir / f"nk225_index_option_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                    opt_feats.write_parquet(out)
+                    logger.info(f"Saved Nikkei225 option features: {out}")
+                except Exception as e:
+                    logger.warning(f"Failed to build/save option features: {e}")
+            else:
+                logger.info("No index_option data available; skipping option features build")
+    except Exception as e:
+        logger.warning(f"Index option features step skipped: {e}")
     return 0
 
 

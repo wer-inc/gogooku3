@@ -82,6 +82,23 @@
   - Timing/Validity: margin_impulse (effective_start day flag), margin_days_since, is_margin_valid, margin_issue_type, is_borrowable
 - Availability: Attached when `--weekly-margin-parquet` option is used or weekly_margin_interest_*.parquet files are discovered in output/.
 
+**Margin (Daily Credit Balance)**
+
+- Description: Daily margin interest series (credit balances and regulatory flags) integrated via leak-safe as-of backward join to the daily panel. Column prefix is `dmi_` to distinguish from weekly (`margin_`).
+- Effective Start: `effective_start = next_business_day(PublishedDate)` (T+1 rule). Values become valid starting on `effective_start` only (no same‑day lookahead).
+- Join Strategy: `(Code, Date)` daily grid joined as‑of backward on `effective_start` per stock; latest correction per `(Code, ApplicationDate)` kept in the fetcher.
+- Scale Normalization: Liquidity‑scaled features computed when `ADV20_shares` is available from quotes (20‑day rolling mean of adjusted volume).
+- Core Features:
+  - Stocks/ratios: `dmi_long`, `dmi_short`, `dmi_net`, `dmi_total`, `dmi_credit_ratio`, `dmi_imbalance`, `dmi_short_long_ratio`
+  - Daily diffs/Z: `dmi_d_long_1d`, `dmi_d_short_1d`, `dmi_d_net_1d`, `dmi_d_ratio_1d`, `dmi_z26_long/short/total/d_short_1d`
+  - ADV‑scaled: `dmi_long_to_adv20`, `dmi_short_to_adv20`, `dmi_total_to_adv20`, `dmi_d_long_to_adv1d`, `dmi_d_short_to_adv1d`, `dmi_d_net_to_adv1d`
+  - Regulatory flags/count: `dmi_reason_restricted`, `dmi_reason_dailypublication`, `dmi_reason_monitoring`, `dmi_reason_restrictedbyjsf`, `dmi_reason_precautionbyjsf`, `dmi_reason_unclearorseconalert`, `dmi_reason_count`, `dmi_tse_reg_level`
+  - Timing/Validity: `dmi_impulse` (1 on `effective_start`), `dmi_days_since_pub`, `dmi_days_since_app`, `is_dmi_valid`
+- Enabling (pipeline): `scripts/pipelines/run_full_dataset.py`
+  - Flags: `--enable-daily-margin`, `--daily-margin-parquet <path>`
+  - Auto‑discover: `output/daily_margin_interest_*.parquet` when not specified.
+- Leakage Prevention: T+1 effective start; as‑of backward join; latest correction kept per `(Code, ApplicationDate)`.
+
 **Time Alignment & Leakage Prevention**
 - Calendar: JP business days; all joins align on `Date`.
 - Statements: DisclosedTime < 15:00 → same day, ≥ 15:00 → next business day (as‑of join).
@@ -102,4 +119,3 @@
 - 2025‑09: Margin (weekly credit balance) block fully implemented with leak-safe as-of join, effective_start calculation, and ADV20 scaling.
 - JQuantsAsyncFetcher moved from scripts/_archive/ to src/gogooku3/components/ for better organization.
 - TOPIX/Flow/Statements remain auto‑integrated; missing inputs are skipped per current behavior.
-

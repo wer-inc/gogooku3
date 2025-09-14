@@ -11,11 +11,13 @@ Trade-Spec Flow Joiner
 - リーク検査: 負のdays_since_flowが0件、(Code,Date)一意などを自動テスト
 """
 
-import polars as pl
-from typing import Iterable, Optional, Callable
 import logging
-from datetime import datetime, timedelta
-from src.utils.dtypes import ensure_date, ensure_code
+from collections.abc import Callable, Iterable
+from datetime import datetime
+
+import polars as pl
+
+from src.utils.dtypes import ensure_code, ensure_date
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,7 @@ def normalize_section_name(name: str) -> str:
         "JASDAQ Growth": "JASDAQGrowth",
         "JASDAQGrowth": "JASDAQGrowth",
         "JASDAQグロース": "JASDAQGrowth",
-        
+
         # 新市場名（2022年4月4日以降）
         "Prime": "TSEPrime",
         "Prime Market": "TSEPrime",
@@ -72,12 +74,12 @@ def normalize_section_name(name: str) -> str:
         "TSEGrowth": "TSEGrowth",
         "東証グロース": "TSEGrowth",
         "グロース": "TSEGrowth",
-        
+
         # 特殊カテゴリ
         # 東証および名証は AllMarket に寄せて結合脱落を回避
         "TokyoNagoya": "AllMarket",
         "東証および名証": "AllMarket",
-        
+
         # 全市場・その他
         "All": "AllMarket",
         "ALL": "AllMarket",
@@ -89,7 +91,7 @@ def normalize_section_name(name: str) -> str:
 
 
 def build_flow_intervals(
-    trades_spec: pl.DataFrame, 
+    trades_spec: pl.DataFrame,
     next_bd: Callable[[datetime], datetime]
 ) -> pl.DataFrame:
     """
@@ -103,34 +105,34 @@ def build_flow_intervals(
         section, effective_start, effective_end を含むDataFrame
     """
     logger.info(f"Building flow intervals from {len(trades_spec)} trade-spec records")
-    
+
     # PublishedDateとSectionを整形
     df = trades_spec.with_columns([
         pl.col("PublishedDate").cast(pl.Date),
         pl.col("Section").map_elements(normalize_section_name, return_dtype=pl.Utf8).alias("section"),
     ])
-    
+
     # PublishedDateの翌営業日をeffective_startとする（T+1ルール）
     df = df.with_columns([
         pl.col("PublishedDate").map_elements(
-            lambda d: next_bd(d.to_pydatetime() if hasattr(d, 'to_pydatetime') else d) if d else None, 
+            lambda d: next_bd(d.to_pydatetime() if hasattr(d, 'to_pydatetime') else d) if d else None,
             return_dtype=pl.Date
         ).alias("effective_start")
     ])
-    
+
     # Section×PublishedDateでソート
     df = df.sort(["section", "PublishedDate"])
-    
+
     # 同section・同PublishedDateに複数があれば最後（遅い方）を採用
     df = df.group_by(["section", "PublishedDate"]).tail(1)
-    
+
     # 次回startの前日をendに設定
     df = df.with_columns([
         pl.col("effective_start").shift(-1).over("section").alias("next_start")
     ]).with_columns([
         (pl.col("next_start").fill_null(pl.date(2999, 12, 31)) - pl.duration(days=1)).alias("effective_end")
     ]).drop("next_start")
-    
+
     logger.info(f"Created {len(df)} flow intervals")
     return df
 
@@ -146,22 +148,22 @@ def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
         フロー特徴量を追加したDataFrame
     """
     df = flow_intervals
-    
+
     def net_ratio(prefix: str) -> pl.Expr:
         """Net/Total比率を計算"""
         return (
             pl.col(f"{prefix}Balance") / (pl.col(f"{prefix}Total") + 1e-12)
         ).alias(f"{prefix.lower()}_net_ratio")
-    
+
     # 基本的なフロー特徴量
     df = df.with_columns([
         # 外国人・個人のネット比率
         net_ratio("Foreigners"),
         net_ratio("Individuals"),
-        
+
         # 外国人の活動シェア
         (pl.col("ForeignersTotal") / (pl.col("TotalTotal") + 1e-12)).alias("foreign_share_activity"),
-        
+
         # ブレッドス（買い越し部門の割合）
         (
             pl.concat_list([
@@ -178,17 +180,17 @@ def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
             ]).list.eval(pl.element().cast(pl.Int8)).list.sum() / 6.0
         ).alias("breadth_pos"),
     ])
-    
+
     # 52週ローリングZ-score（Section内）
     by = ["section"]
-    
+
     def roll_z(col: str, out: str) -> pl.Expr:
         """52週ローリングZ-scoreを計算"""
         return (
             (pl.col(col) - pl.col(col).rolling_mean(52).over(by)) /
             (pl.col(col).rolling_std(52).over(by) + 1e-12)
         ).alias(out)
-    
+
     # Z-score特徴量の追加 + 活況度比率
     df = df.sort(["section", "effective_start"]).with_columns([
         roll_z("ForeignersBalance", "foreign_net_z"),
@@ -196,7 +198,7 @@ def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
         roll_z("TotalTotal", "activity_z"),
         (pl.col("TotalTotal") / (pl.col("TotalTotal").rolling_mean(52).over(by) + 1e-12)).alias("activity_ratio"),
     ])
-    
+
     # スマートマネー指標
     df = df.with_columns([
         # スマートマネーインデックス（外国人 - 個人）
@@ -204,14 +206,14 @@ def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
     ]).with_columns([
         # 4週モメンタム
         (
-            pl.col("smart_money_idx") - 
+            pl.col("smart_money_idx") -
             pl.col("smart_money_idx").rolling_mean(4).over(by)
         ).alias("smart_money_mom4"),
-        
+
         # フローショックフラグ
         (pl.col("smart_money_idx").abs() >= 2.0).cast(pl.Int8).alias("flow_shock_flag"),
     ])
-    
+
     # 仕様準拠のflow_* エイリアスを追加（元列は保持）
     df = df.with_columns([
         pl.col("foreigners_net_ratio").alias("flow_foreign_net_ratio"),
@@ -243,15 +245,15 @@ def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
         "flow_smart_idx", "flow_smart_mom4", "flow_breadth_pos", "flow_foreign_share",
         "flow_foreign_net_pos", "flow_activity_high", "flow_activity_low", "flow_smart_pos",
     ]
-    
+
     available_cols = [c for c in keep_cols if c in df.columns]
     logger.info(f"Generated {len(available_cols) - 3} flow features")
-    
+
     return df.select(available_cols)
 
 
 def expand_flow_daily(
-    flow_feat: pl.DataFrame, 
+    flow_feat: pl.DataFrame,
     business_days: Iterable
 ) -> pl.DataFrame:
     """
@@ -269,18 +271,18 @@ def expand_flow_daily(
     cal = pl.DataFrame({"Date": list(business_days)}).with_columns(
         pl.col("Date").cast(pl.Date)
     )
-    
+
     logger.info(f"P0-2: Expanding flow features to {len(cal)} business days using optimized as-of join")
-    
+
     # P0-2: As-of結合による最適化実装
     sections = flow_feat["section"].unique().to_list()
     daily_parts = []
-    
+
     for section in sections:
         # Section別にas-of結合
         sec_cal = cal.with_columns(pl.lit(section).alias("section"))
         sec_flow = flow_feat.filter(pl.col("section") == section).sort("effective_start")
-        
+
         # As-of結合（backward）でeffective_startを取得
         joined = sec_cal.join_asof(
             sec_flow,
@@ -289,24 +291,24 @@ def expand_flow_daily(
             by="section",
             strategy="backward"
         )
-        
+
         # 有効期間内のみ保持
         if "effective_end" in joined.columns:
             joined = joined.filter(
                 (pl.col("Date") >= pl.col("effective_start")) &
                 (pl.col("Date") <= pl.col("effective_end"))
             )
-        
+
         daily_parts.append(joined)
-    
+
     # 全Sectionを結合
     daily = pl.concat(daily_parts, how="vertical") if daily_parts else pl.DataFrame()
-    
+
     if not daily.is_empty():
         daily = daily.with_columns([
             # フローインパルス（公表初日フラグ）
             (pl.col("Date") == pl.col("effective_start")).cast(pl.Int8).alias("flow_impulse"),
-            
+
             # フロー公表からの経過日数
             (pl.col("Date") - pl.col("effective_start")).dt.days().alias("days_since_flow")
         ]).with_columns([
@@ -315,13 +317,13 @@ def expand_flow_daily(
         ]).drop(["effective_start", "effective_end"])
     # Normalize Date dtype
     daily = ensure_date(daily, "Date")
-    
+
     logger.info(f"P0-2 ✅: Created {len(daily)} daily flow records (optimized)")
     return daily
 
 
 def attach_flow_to_quotes(
-    quotes_sec: pl.DataFrame, 
+    quotes_sec: pl.DataFrame,
     flow_daily: pl.DataFrame,
     section_col: str = "Section"
 ) -> pl.DataFrame:
@@ -337,13 +339,13 @@ def attach_flow_to_quotes(
         フロー特徴量を結合した価格データ
     """
     logger.info(f"Attaching flow features to {len(quotes_sec)} quote records")
-    
+
     # Normalize dtypes (Date/Code)
     quotes_sec = ensure_date(quotes_sec, "Date")
     flow_daily = ensure_date(flow_daily, "Date")
     if "Code" in quotes_sec.columns:
         quotes_sec = ensure_code(quotes_sec, "Code")
-    
+
     # Section正規化
     quotes_sec = quotes_sec.with_columns([
         pl.col(section_col).map_elements(normalize_section_name, return_dtype=pl.Utf8).alias(section_col)
@@ -356,17 +358,17 @@ def attach_flow_to_quotes(
         right_on=["section", "Date"],
         how="left"
     )
-    
+
     # section列が重複している場合は削除
     if "section" in out.columns and section_col in out.columns:
         out = out.drop("section")
-    
+
     # フロー関連列の特定
     flow_cols = [c for c in out.columns if c.startswith((
         "foreigners_", "individuals_", "smart_money", "activity_z",
         "foreign_share_activity", "breadth_pos", "flow_shock_flag"
     ))]
-    
+
     # 欠損値の処理とバリデーション列の追加（NULLは保持、学習側で制御）
     out = out.with_columns([
         # インパルス・経過日数は明示的に保持しつつ、欠損は符号付きに
@@ -374,11 +376,11 @@ def attach_flow_to_quotes(
         pl.col("days_since_flow").fill_null(-1).alias("days_since_flow"),  # -1: 未経験
         (pl.col("activity_z").is_not_null()).cast(pl.Int8).alias("is_flow_valid")
     ])
-    
+
     # カバレッジ統計のログ出力
     coverage = (out["is_flow_valid"] == 1).sum() / len(out) if len(out) > 0 else 0
     logger.info(f"Flow feature coverage: {coverage:.1%}")
-    
+
     return out
 
 
@@ -405,13 +407,13 @@ def attach_flow_with_fallback(
         pl.col("Section").fill_null(fallback_section).alias("Section"),
         pl.col("Section").is_null().cast(pl.Int8).alias("is_section_fallback")
     ])
-    
+
     # フロー結合
     result = attach_flow_to_quotes(quotes_sec, flow_daily, "Section")
-    
+
     # フォールバック統計のログ
     if "is_section_fallback" in result.columns:
         fallback_pct = result["is_section_fallback"].sum() / len(result) if len(result) > 0 else 0
         logger.info(f"Section fallback rate: {fallback_pct:.1%}")
-    
+
     return result

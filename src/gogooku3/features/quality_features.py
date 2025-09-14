@@ -13,7 +13,7 @@ API compatible subset used by SafeTrainingPipeline:
 
 import importlib.util
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 class QualityFinancialFeaturesGenerator:
@@ -42,7 +42,7 @@ class QualityFinancialFeaturesGenerator:
             # On any failure, return original df to keep pipeline robust
             return df
 
-    def validate_features(self, df) -> Dict[str, Any]:
+    def validate_features(self, df) -> dict[str, Any]:
         # Minimal validation stub; pipeline expects keys below
         zero_var = []
         high_missing = []

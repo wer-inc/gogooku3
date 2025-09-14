@@ -1,10 +1,11 @@
 """Command-line interface for gogooku3."""
 
-import sys
 import argparse
+import sys
 from pathlib import Path
 
 from gogooku3.utils.settings import settings
+
 
 def cmd_data(args: argparse.Namespace) -> int:
     """Data validation and preparation commands."""
@@ -42,7 +43,7 @@ def cmd_train(args: argparse.Namespace) -> int:
         print("   - Fit normalizer on train fold only")
         print("   - Transform train/test with same statistics")
         return 0
-    
+
     print("⚠️ Full training pipeline not yet wired to CLI.")
     print("💡 Use --dry-run to see pipeline steps.")
     print("💡 For now, use: python scripts/run_safe_training.py")
@@ -50,7 +51,7 @@ def cmd_train(args: argparse.Namespace) -> int:
 
 def cmd_infer(args: argparse.Namespace) -> int:
     """Inference command."""
-    print(f"🔮 Inference configuration:")
+    print("🔮 Inference configuration:")
     print(f"  Model: {args.model_path}")
     print(f"  Input: {args.input_path}")
     print(f"  Output: {args.output_path}")
@@ -63,26 +64,26 @@ def main() -> None:
         prog="gogooku3",
         description="Gogooku3 – 金融MLシステム（最小CLI）"
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", required=True)
-    
+
     # Data command
     p_data = subparsers.add_parser("data", help="データ検証/準備")
     p_data.set_defaults(func=cmd_data)
-    
+
     # Training command
     p_train = subparsers.add_parser("train", help="学習の実行/ドライラン")
     p_train.add_argument("--dry-run", action="store_true", help="配線確認のみ")
     p_train.add_argument("--config", type=Path, help="設定ファイルパス")
     p_train.set_defaults(func=cmd_train)
-    
+
     # Inference command
     p_infer = subparsers.add_parser("infer", help="推論")
     p_infer.add_argument("--model-path", required=True, help="モデルファイルパス")
     p_infer.add_argument("--input-path", required=True, help="入力データパス")
     p_infer.add_argument("--output-path", required=True, help="出力パス")
     p_infer.set_defaults(func=cmd_infer)
-    
+
     args = parser.parse_args()
     rc = args.func(args)
     sys.exit(rc)

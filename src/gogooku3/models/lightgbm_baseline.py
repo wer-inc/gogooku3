@@ -10,7 +10,6 @@ Provides a minimal interface used by SafeTrainingPipeline:
 - get_results_summary() -> dict
 """
 
-from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -19,7 +18,7 @@ import pandas as pd
 class LightGBMFinancialBaseline:
     def __init__(
         self,
-        prediction_horizons: Optional[List[int]] = None,
+        prediction_horizons: list[int] | None = None,
         embargo_days: int = 20,
         normalize_features: bool = True,
         verbose: bool = True,
@@ -35,9 +34,9 @@ class LightGBMFinancialBaseline:
         # Minimal placeholder: mark as trained. Real training can be added later.
         self._trained = True
 
-    def evaluate_performance(self) -> Dict[str, Dict[str, float]]:
+    def evaluate_performance(self) -> dict[str, dict[str, float]]:
         # Compute naive baseline metrics: correlation between simple target and its shifted version
-        perf: Dict[str, Dict[str, float]] = {}
+        perf: dict[str, dict[str, float]] = {}
         for h in self.prediction_horizons:
             # Pick target column by common aliases
             target = None
@@ -60,7 +59,7 @@ class LightGBMFinancialBaseline:
             perf[f"{h}d"] = {"mean_ic": ic, "std_ic": 0.0, "mean_rank_ic": rank_ic, "std_rank_ic": 0.0}
         return perf
 
-    def get_results_summary(self) -> Dict[str, float]:
+    def get_results_summary(self) -> dict[str, float]:
         return {"trained": float(self._trained)}
 
     # Store last df for evaluation

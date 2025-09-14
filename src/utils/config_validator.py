@@ -3,9 +3,9 @@ Hydra configuration validator with strict checks
 """
 
 import logging
-from typing import List
-from omegaconf import DictConfig, OmegaConf
+
 import yaml
+from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +14,8 @@ class ConfigValidator:
     """Hydra設定の厳格な検証"""
 
     def __init__(self):
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
 
     def validate(self, config: DictConfig) -> bool:
         """
@@ -277,7 +277,7 @@ def validate_config_file(config_path: str) -> bool:
     """
     try:
         # YAMLファイルを読み込み
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config_dict = yaml.safe_load(f)
 
         # DictConfigに変換
