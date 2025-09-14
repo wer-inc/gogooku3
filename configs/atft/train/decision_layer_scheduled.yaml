@@ -1,0 +1,140 @@
+# @package train
+# Decision Layer with Dynamic Parameter Scheduling
+
+loss:
+  auxiliary:
+    # Base Decision Layer configuration
+    decision_layer:
+      enabled: true
+      alpha: 2.0          # Will be overridden by scheduler
+      method: tanh        # Position mapping method
+      sharpe_weight: 0.1  # Will be overridden by scheduler
+      pos_l2: 1.0e-3      # Will be overridden by scheduler
+      fee_abs: 0.0        # Simple fee proportional to |pos|
+      detach_signal: true # Will be overridden by scheduler
+
+    # Dynamic scheduling configuration
+    decision_layer_schedule:
+      enabled: true
+
+      # Phase boundaries
+      warmup_epochs: 10       # Conservative parameters for stability
+      intermediate_epochs: 30 # Transition to full learning
+
+      # Warmup phase (Epochs 0-10): Focus on stability
+      warmup_detach_signal: true   # Detach signal for stability
+      warmup_sharpe_weight: 0.05   # Low portfolio emphasis
+      warmup_pos_l2: 1.0e-3       # Standard position regularization
+      warmup_alpha: 1.5           # Conservative position sensitivity
+
+      # Intermediate phase (Epochs 11-30): Balanced learning
+      intermediate_detach_signal: false  # Enable end-to-end learning
+      intermediate_sharpe_weight: 0.1    # Moderate portfolio emphasis
+      intermediate_pos_l2: 8.0e-4       # Slightly reduced regularization
+      intermediate_alpha: 2.0           # Standard position sensitivity
+
+      # Final phase (Epochs 31+): Optimize performance
+      final_detach_signal: false  # Full end-to-end optimization
+      final_sharpe_weight: 0.15   # High portfolio emphasis
+      final_pos_l2: 5.0e-4       # Reduced regularization for flexibility
+      final_alpha: 2.5           # High position sensitivity
+
+      # Transition settings
+      use_smooth_transitions: true  # Smooth parameter interpolation
+      transition_window: 3         # Epochs for smooth transition
+
+      # Logging
+      log_parameter_changes: true  # Log when parameters change
+
+# Training configuration optimized for Decision Layer scheduling
+trainer:
+  max_epochs: 50
+  min_epochs: 35  # Ensure we reach final phase
+
+  # Validation and checkpointing
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+
+  # Gradient settings
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 1
+
+  # Precision
+  precision: 16-mixed
+
+  # Display
+  enable_progress_bar: true
+
+# Optimizer configuration for scheduled training
+optimizer:
+  type: AdamW
+  lr: 3e-4  # Conservative learning rate for scheduled training
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+  # Learning rate warmup (coordinate with Decision Layer schedule)
+  warmup:
+    enabled: true
+    steps: 1000  # Warm up during decision layer warmup phase
+
+# Scheduler
+scheduler:
+  type: CosineAnnealingWarmRestarts
+  T_0: 15   # Restart every 15 epochs (coordinate with decision phases)
+  T_mult: 1 # Keep constant restart period
+  eta_min: 1e-6
+
+# Early stopping (allow full schedule to complete)
+early_stopping:
+  monitor: val/sharpe_ratio
+  mode: max
+  patience: 15  # Longer patience to allow schedule to complete
+  min_delta: 0.001
+
+# Checkpoint configuration
+checkpoint:
+  monitor: val/sharpe_ratio
+  mode: max
+  save_top_k: 5
+  save_last: true
+  filename: "decision-{epoch:03d}-{val_sharpe_ratio:.4f}"
+
+# Enhanced logging for scheduled training
+logging:
+  log_every_n_steps: 10
+  log_grad_norm: true
+  log_learning_rate: true
+
+  # Additional metrics for Decision Layer analysis
+  metrics:
+    - sharpe_ratio
+    - information_ratio
+    - max_drawdown
+    - hit_rate
+    - decision_sharpe      # From Decision Layer
+    - decision_pos_l2      # Position regularization
+    - decision_fee         # Trading costs
+    - decision_pos_mean    # Average position
+    - decision_pos_abs_mean # Average absolute position
+
+  # Visualization settings
+  visualize:
+    attention_weights: true
+    feature_importance: true
+    prediction_distribution: true
+    portfolio_weights: true
+    decision_schedule: true  # NEW: Decision Layer parameter evolution
+
+# Batch configuration
+batch:
+  train_batch_size: 64
+  val_batch_size: 128
+  test_batch_size: 128
+
+  # DataLoader settings
+  num_workers: 4
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 2

@@ -50,13 +50,55 @@ def cmd_train(args: argparse.Namespace) -> int:
     return 2
 
 def cmd_infer(args: argparse.Namespace) -> int:
-    """Inference command."""
+    """Inference command with TENT support."""
     print("🔮 Inference configuration:")
     print(f"  Model: {args.model_path}")
     print(f"  Input: {args.input_path}")
     print(f"  Output: {args.output_path}")
-    print("⚠️ Inference pipeline not yet wired to CLI.")
-    return 2
+
+    if args.tta == "tent":
+        print(f"  🧠 TENT adaptation enabled:")
+        print(f"    Steps per batch: {args.tta_steps}")
+        print(f"    Learning rate: {args.tta_lr}")
+        print("    Target: BatchNorm parameters only")
+        print("    Method: Entropy minimization")
+
+        # Run TENT inference
+        try:
+            from ..inference.tent_inference_runner import run_tent_inference
+            result = run_tent_inference(
+                model_path=args.model_path,
+                input_path=args.input_path,
+                output_path=args.output_path,
+                tent_steps=args.tta_steps,
+                tent_lr=args.tta_lr
+            )
+            if result["success"]:
+                print("✅ TENT inference completed successfully")
+                print(f"   Processed: {result.get('batches_processed', 0)} batches")
+                print(f"   Avg entropy improvement: {result.get('avg_entropy_improvement', 0):.4f}")
+                print(f"   Final confidence: {result.get('avg_confidence', 0):.3f}")
+                return 0
+            else:
+                print(f"❌ TENT inference failed: {result.get('error', 'Unknown error')}")
+                return 1
+
+        except ImportError:
+            print("⚠️ TENT inference runner not available.")
+            print("💡 Run: python -m src.inference.tent_inference_runner --help")
+            return 2
+        except Exception as e:
+            print(f"❌ TENT inference error: {e}")
+            return 1
+
+    elif args.tta == "off":
+        print("  Standard inference (no adaptation)")
+        print("⚠️ Standard inference pipeline not yet wired to CLI.")
+        return 2
+
+    else:
+        print(f"❌ Unknown TTA method: {args.tta}")
+        return 1
 
 def main() -> None:
     """Main CLI entry point for gogooku3."""
@@ -82,6 +124,9 @@ def main() -> None:
     p_infer.add_argument("--model-path", required=True, help="モデルファイルパス")
     p_infer.add_argument("--input-path", required=True, help="入力データパス")
     p_infer.add_argument("--output-path", required=True, help="出力パス")
+    p_infer.add_argument("--tta", choices=["off", "tent"], default="off", help="推論時適応(TTA)方式")
+    p_infer.add_argument("--tta-steps", type=int, default=2, help="TTAステップ数（各バッチ）")
+    p_infer.add_argument("--tta-lr", type=float, default=1e-4, help="TTA学習率")
     p_infer.set_defaults(func=cmd_infer)
 
     args = parser.parse_args()

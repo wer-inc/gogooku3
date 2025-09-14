@@ -1,0 +1,13 @@
+# @package train
+
+loss:
+  auxiliary:
+    decision_layer:
+      enabled: true
+      alpha: 2.0          # Position sensitivity
+      method: tanh        # Position mapping
+      sharpe_weight: 0.1  # Weight for SoftSharpe term
+      pos_l2: 1.0e-3      # Position magnitude regularizer
+      fee_abs: 0.0        # Simple fee proportional to |pos|
+      detach_signal: true # Start stable; set false after warmup if desired
+
