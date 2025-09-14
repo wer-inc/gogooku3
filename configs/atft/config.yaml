@@ -58,10 +58,9 @@ improvements:
   memory_map: false
   multi_horizon_weights:
   - 1.0
-  - 0.8
-  - 0.7
-  - 0.5
-  - 0.3
+  - 1.0
+  - 1.0
+  - 1.0
   online_normalization: true
   output_head_small_init: true
   use_ema: true

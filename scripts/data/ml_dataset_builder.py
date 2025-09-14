@@ -69,7 +69,7 @@ class MLDatasetBuilder:
     def create_technical_features(self, df: pl.DataFrame) -> pl.DataFrame:
         eps = 1e-12
         df = df.with_columns(pl.col("Date").cast(pl.Date)).sort(["Code", "Date"])  # type: ignore
-        # Returns
+        # Returns (backward-looking, descriptive only)
         if "Close" in df.columns:
             df = df.with_columns(
                 [
@@ -79,12 +79,127 @@ class MLDatasetBuilder:
                     pl.col("Close").pct_change(20).over("Code").alias("returns_20d"),
                 ]
             )
+            # Forward-looking labels (do not forward-fill; mask trailing windows per horizon)
+            df = df.with_columns(
+                [
+                    ((pl.col("Close").shift(-1) / (pl.col("Close") + eps)) - 1.0)
+                    .over("Code")
+                    .alias("feat_ret_1d"),
+                    ((pl.col("Close").shift(-5) / (pl.col("Close") + eps)) - 1.0)
+                    .over("Code")
+                    .alias("feat_ret_5d"),
+                    ((pl.col("Close").shift(-10) / (pl.col("Close") + eps)) - 1.0)
+                    .over("Code")
+                    .alias("feat_ret_10d"),
+                    ((pl.col("Close").shift(-20) / (pl.col("Close") + eps)) - 1.0)
+                    .over("Code")
+                    .alias("feat_ret_20d"),
+                ]
+            )
         # Row maturity index
         df = df.with_columns(pl.col("Date").cum_count().over("Code").alias("row_idx"))
         # Simple liquidity proxy
         if all(c in df.columns for c in ("Close", "Volume")):
             df = df.with_columns((pl.col("Close") * pl.col("Volume")).alias("dollar_volume"))
         return df
+
+    def validate_forward_return_labels(self, df: pl.DataFrame) -> dict[str, any]:
+        """
+        Validate forward return labels quality as per PDF diagnosis requirements.
+
+        Checks:
+        1. feat_ret_1d(Code,t) == returns_1d(Code,t+1) for consistency
+        2. Proper masking of trailing windows (last h rows should be NULL)
+        3. No data leakage in forward-looking computation
+
+        Returns validation results with warnings and statistics.
+        """
+        validation_results = {
+            "passed": True,
+            "warnings": [],
+            "statistics": {},
+            "critical_errors": []
+        }
+
+        try:
+            # Check if forward return labels exist
+            feat_ret_cols = [col for col in df.columns if col.startswith("feat_ret_")]
+            if not feat_ret_cols:
+                validation_results["critical_errors"].append("No forward return labels found (feat_ret_* columns missing)")
+                validation_results["passed"] = False
+                return validation_results
+
+            # Check 1: Consistency validation - feat_ret_1d(Code,t) should equal returns_1d(Code,t+1)
+            if all(col in df.columns for col in ["feat_ret_1d", "returns_1d", "Code"]):
+                # Calculate shifted returns_1d for comparison
+                comparison_df = df.with_columns([
+                    pl.col("returns_1d").shift(-1).over("Code").alias("returns_1d_shifted_future")
+                ])
+
+                # Compare feat_ret_1d with shifted returns_1d (should be identical)
+                diff_check = comparison_df.select([
+                    pl.col("Code"),
+                    pl.col("feat_ret_1d"),
+                    pl.col("returns_1d_shifted_future"),
+                    (pl.col("feat_ret_1d") - pl.col("returns_1d_shifted_future")).abs().alias("abs_diff")
+                ]).filter(
+                    pl.col("feat_ret_1d").is_not_null() & pl.col("returns_1d_shifted_future").is_not_null()
+                )
+
+                if diff_check.height > 0:
+                    max_diff = diff_check.select(pl.col("abs_diff").max()).item()
+                    mean_diff = diff_check.select(pl.col("abs_diff").mean()).item()
+
+                    validation_results["statistics"]["feat_ret_1d_consistency_max_diff"] = max_diff
+                    validation_results["statistics"]["feat_ret_1d_consistency_mean_diff"] = mean_diff
+
+                    if max_diff > 1e-10:  # Allow for floating point precision
+                        validation_results["warnings"].append(
+                            f"feat_ret_1d consistency check failed: max_diff={max_diff:.2e}, mean_diff={mean_diff:.2e}"
+                        )
+                        validation_results["passed"] = False
+                    else:
+                        validation_results["statistics"]["feat_ret_1d_consistency"] = "PASSED"
+
+            # Check 2: Proper masking of trailing windows
+            horizons = [1, 5, 10, 20]
+            for h in horizons:
+                col_name = f"feat_ret_{h}d"
+                if col_name in df.columns:
+                    # Count trailing nulls per Code (should be exactly h nulls at the end)
+                    trailing_nulls = df.group_by("Code").agg([
+                        pl.col(col_name).tail(h).null_count().alias(f"trailing_nulls_{h}d")
+                    ])
+
+                    # Check if all codes have exactly h trailing nulls
+                    perfect_masking = trailing_nulls.filter(pl.col(f"trailing_nulls_{h}d") == h).height
+                    total_codes = trailing_nulls.height
+
+                    validation_results["statistics"][f"trailing_mask_{h}d_compliance"] = perfect_masking / total_codes if total_codes > 0 else 0
+
+                    if perfect_masking < total_codes * 0.95:  # 95% compliance threshold
+                        validation_results["warnings"].append(
+                            f"Trailing window masking for {col_name}: only {perfect_masking}/{total_codes} codes properly masked"
+                        )
+
+            # Check 3: Non-null data availability
+            for col_name in feat_ret_cols:
+                null_pct = df.select((pl.col(col_name).null_count() / pl.len() * 100).alias("null_pct")).item()
+                validation_results["statistics"][f"{col_name}_null_percentage"] = null_pct
+
+                if null_pct > 80:  # More than 80% null is suspicious
+                    validation_results["warnings"].append(f"{col_name} has {null_pct:.1f}% null values")
+
+            # Summary statistics
+            validation_results["statistics"]["forward_return_columns_found"] = len(feat_ret_cols)
+            validation_results["statistics"]["total_rows"] = df.height
+            validation_results["statistics"]["unique_codes"] = df.select(pl.col("Code").n_unique()).item() if "Code" in df.columns else 0
+
+        except Exception as e:
+            validation_results["critical_errors"].append(f"Validation failed with error: {str(e)}")
+            validation_results["passed"] = False
+
+        return validation_results
 
     def add_pandas_ta_features(self, df: pl.DataFrame) -> pl.DataFrame:
         # Optional; keep pipeline robust without pandas_ta

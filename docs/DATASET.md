@@ -2,7 +2,7 @@
 
 - **Scope:** ML dataset used by Gogooku3 training/inference (daily panel, JP market).
 - **Grain:** `Code` × `Date` (JP business days).
-- **Blocks:** Identifiers, Price/OHLCV, Returns, Volatility, MA/Position, Technical, Market (TOPIX), Cross, Flow, Statements, Flags, Targets, Optional: Margin (weekly credit balance).
+- **Blocks:** Identifiers, Price/OHLCV, Returns, Volatility, MA/Position, Technical, Market (TOPIX), Cross, Flow, Statements, Flags, Targets; Optional: Margin (weekly/daily credit), Sector Short Selling (sector‑level), Sector Cross‑Sectional (relative), Graph (correlation network), Option Market Aggregates (NK225 options).
 
 **Identifiers**
 - Code: 5‑digit LocalCode string (primary key with `Date`).
@@ -99,11 +99,55 @@
   - Auto‑discover: `output/daily_margin_interest_*.parquet` when not specified.
 - Leakage Prevention: T+1 effective start; as‑of backward join; latest correction kept per `(Code, ApplicationDate)`.
 
+**Sector Short Selling (業種別空売り)**
+
+- Description: Sector‑level short selling ratios and restriction ratios aggregated per 33‑sector, attached to stocks via leak‑safe as‑of join.
+- Effective Start: `effective_date = next_business_day(Date)` (T+1 rule). Values become valid starting on `effective_date`.
+- Sector Features (examples):
+  - Sector: `ss_sec33_short_share`, `ss_sec33_restrict_share`, `ss_sec33_short_turnover`, daily diffs (`*_d1`), momentum/accel (`ss_sec33_short_mom5`, `ss_sec33_short_accel`), z‑scores (`ss_sec33_short_share_z60`, `ss_sec33_short_turnover_z252`).
+  - Market aggregates: `ss_mkt_short_share`, `ss_mkt_restrict_share`, `ss_mkt_short_breadth_q80`.
+  - Relative: `ss_rel_short_share`, `ss_rel_restrict_share`; conditional signals `ss_cond_pressure`, `ss_squeeze_setup`.
+  - Validity: `is_ss_valid`.
+- Enabling: `--enable-sector-short-selling` (pipeline); module `src/gogooku3/features/short_selling_sector.py`.
+
+**Sector Cross‑Sectional (Sector‑Relative) Features**
+
+- Description: Same‑day cross‑sectional statistics computed within sectors (e.g., 33‑sector) and joined T+0 (no lookahead).
+- Core Features: deviations vs sector mean and z‑scores within sector.
+  - Returns: `ret_1d_vs_sec`, `ret_1d_in_sec_z`, `ret_1d_rank_in_sec`; also `ret_5d_*`, `ret_10d_*` when present.
+  - Volume/vol: `volume_in_sec_z`, `volume_rank_in_sec`, `rv20_in_sec_z`.
+  - Technical interactions: `rsi14_in_sec_z`, `macd_slope_in_sec_z`, `vcm_in_sec_z`, `rsi_vol_in_sec_z`.
+- Custom Include Cols: additional numeric columns can be specified to auto‑generate `<col>_vs_sec` and `<col>_in_sec_z`.
+  - CLI: `--enable-sector-cs --sector-cs-cols "rsi_14,returns_10d"`
+  - YAML: via `--config` (`sector_cs.include_cols`).
+- Module: `src/gogooku3/features/sector_cross_sectional.py`.
+
+**Graph (Correlation Network) Features**
+
+- Description: For each Date, builds a correlation graph over past returns and attaches node‑level features. T+0 only uses past window.
+- Core Features:
+  - Topology/centrality: `graph_degree`, `graph_degree_z`, `graph_degree_z_in_comp`, `graph_clustering`, `graph_avg_neigh_deg`, `graph_core`, `graph_degree_centrality`, `graph_closeness`, `graph_pagerank`, `graph_pagerank_z_in_comp`.
+  - Components/density: `graph_comp_size`, `graph_degree_in_comp`, `graph_local_density`, `graph_isolated`, `graph_pagerank_share_comp`.
+  - Peer stats: `peer_corr_mean`, `peer_count`.
+- Parameters (CLI): `--enable-graph-features --graph-window 60 --graph-threshold 0.3 --graph-max-k 10 --graph-cache-dir output/graph_cache`.
+- YAML: via `--config` (`graph.window/threshold/max_k/cache_dir`).
+- Module: `src/gogooku3/features/graph_features.py`.
+
+**Option Market Aggregates (Nikkei225 Options)**
+
+- Description: Builds daily market‑level aggregates from NK225 option contracts (per‑contract features built separately). Aggregates attached T+1 to equity panel.
+- Aggregates: `opt_iv_cmat_30d`, `opt_iv_cmat_60d`, `opt_term_slope_30_60`, `opt_iv_atm_median`, `opt_oi_sum`, `opt_vol_sum`, `opt_dollar_vol_sum`.
+- Effective Start: via `effective_date = next_business_day(Date)` when attaching; leak‑safe.
+- Enabling attach: `--attach-nk225-option-market` (requires features/raw or API fetch).
+- Modules: `src/gogooku3/features/index_option.py`, fetcher `get_index_option` in `src/gogooku3/components/jquants_async_fetcher.py`.
+
 **Time Alignment & Leakage Prevention**
 - Calendar: JP business days; all joins align on `Date`.
 - Statements: DisclosedTime < 15:00 → same day, ≥ 15:00 → next business day (as‑of join).
 - Flow: Weekly published intervals expanded via as‑of join; `flow_impulse/flow_days_since` annotate freshness.
 - Margin: Weekly series with effective_start = PublishedDate + 1 business day (or Date + lag_bdays_weekly if PublishedDate missing). Features computed weekly, then as-of backward join to daily grid. ADV20_shares calculated from adjusted volume with no same-day lookahead.
+- Sector Short Selling: Sector metrics have `effective_date = next_bday(Date)`, then as‑of backward join by sector; individual stocks receive sector values only on or after `effective_date`.
+- Option Market Aggregates: Market aggregates are shifted to `effective_date = next_bday(Date)` and joined on Date (T+1) to avoid lookahead.
 - Normalization: Cross‑sectional Z/sector‑in‑Z are fit on train windows only.
 
 **Null Semantics**

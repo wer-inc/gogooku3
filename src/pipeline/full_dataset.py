@@ -150,6 +150,17 @@ async def enrich_and_save(
     enable_option_market_features: bool = False,
     index_option_features_parquet: Path | None = None,
     index_option_raw_parquet: Path | None = None,
+    # Advanced features (Phase 1)
+    enable_advanced_features: bool = False,
+    # Sector cross-sectional features (Phase 2)
+    enable_sector_cs: bool = False,
+    sector_cs_cols: list[str] | None = None,
+    # Graph features (Phase 3)
+    enable_graph_features: bool = False,
+    graph_window: int = 60,
+    graph_threshold: float = 0.3,
+    graph_max_k: int = 10,
+    graph_cache_dir: str | None = None,
 ) -> tuple[Path, Path]:
     """Attach TOPIX + statements + flow then save with symlinks.
 
@@ -216,6 +227,43 @@ async def enrich_and_save(
             logger.warning(f"TOPIX local selection failed: {e}")
 
     df = builder.add_topix_features(df_base, topix_df=topix_df)
+
+    # CRITICAL FIX: Add forward return labels (feat_ret_1d, feat_ret_5d, feat_ret_10d, feat_ret_20d)
+    # This fixes the missing supervised learning targets identified in the PDF diagnosis
+    try:
+        df = builder.create_technical_features(df)
+        logger.info("Forward return labels (feat_ret_1d, feat_ret_5d, feat_ret_10d, feat_ret_20d) added successfully")
+
+        # QUALITY CHECK: Validate forward return labels per PDF requirements
+        validation_results = builder.validate_forward_return_labels(df)
+        if validation_results["passed"]:
+            logger.info("✅ Forward return labels validation PASSED")
+            if validation_results["statistics"]:
+                logger.info(f"📊 Validation stats: {validation_results['statistics']}")
+        else:
+            logger.warning("⚠️  Forward return labels validation FAILED")
+            for warning in validation_results["warnings"]:
+                logger.warning(f"   - {warning}")
+            for error in validation_results["critical_errors"]:
+                logger.error(f"   - CRITICAL: {error}")
+            # Don't fail the pipeline on validation warnings, but log them prominently
+
+    except Exception as e:
+        logger.error(f"CRITICAL: Failed to add forward return labels: {e}")
+        # This is a critical failure - forward returns are required for supervised learning
+        raise
+
+    # Advanced equity features (optional, Phase 1)
+    try:
+        if enable_advanced_features:
+            from src.gogooku3.features.advanced_features import add_advanced_features
+            df = add_advanced_features(df)
+            logger.info("Advanced features attached (interactions, CS ranks, calendar)")
+        else:
+            logger.info("Advanced features disabled; skipping")
+    except Exception as e:
+        logger.warning(f"Advanced features attach skipped: {e}")
+
     # Finalize to match DATASET.md
     try:
         df = builder.finalize_for_spec(df)
@@ -283,6 +331,37 @@ async def enrich_and_save(
             logger.info("Sector enrichment completed (sector33/MarketCode/CompanyName)")
         except Exception as e:
             logger.warning(f"Failed sector enrichment: {e}")
+
+    # Sector cross-sectional features (Phase 2): relies on sector column if present
+    try:
+        if enable_sector_cs:
+            from src.gogooku3.features.sector_cross_sectional import add_sector_cross_sectional_features
+            df = add_sector_cross_sectional_features(df, include_cols=sector_cs_cols)
+            logger.info("Sector cross-sectional features attached (ret_vs_sec, rank_in_sec, volume/rv20 z in sector)")
+        else:
+            logger.info("Sector cross-sectional features disabled; skipping")
+    except Exception as e:
+        logger.warning(f"Sector cross-sectional features attach skipped: {e}")
+
+    # Graph-structured features (Phase 3): degree, peer corr mean, peer count
+    try:
+        if enable_graph_features:
+            from src.gogooku3.features.graph_features import add_graph_features
+            df = add_graph_features(
+                df,
+                return_col="returns_1d" if "returns_1d" in df.columns else "feat_ret_1d",
+                window=graph_window,
+                min_obs=max(20, min(graph_window // 2, graph_window - 5)),
+                threshold=graph_threshold,
+                max_k=graph_max_k,
+                method="pearson",
+                cache_dir=graph_cache_dir,
+            )
+            logger.info("Graph features attached (graph_degree, peer_corr_mean, peer_count)")
+        else:
+            logger.info("Graph features disabled; skipping")
+    except Exception as e:
+        logger.warning(f"Graph features attach skipped: {e}")
 
     # Futures features (ON/EOD, T+0/T+1 leak-safe)
     futures_df = None
@@ -957,6 +1036,8 @@ async def enrich_and_save(
             "margin_impulse","margin_days_since","is_margin_valid","margin_issue_type","is_borrowable",
             # 7) Targets (7)
             "target_1d","target_5d","target_10d","target_20d","target_1d_binary","target_5d_binary","target_10d_binary",
+            # 8) Forward Return Labels (4) - CRITICAL for supervised learning
+            "feat_ret_1d","feat_ret_5d","feat_ret_10d","feat_ret_20d",
         ]
 
         # Rename any alternate technical names to docs naming
@@ -1180,6 +1261,16 @@ async def enrich_and_save(
     try:
         df = df.unique(subset=["Code", "Date"], keep="last")
         logger.info("De-duplicated (Code, Date) pairs with keep=last")
+    except Exception:
+        pass
+
+    # Stable ordering: sort by (Code, Date) before saving so downstream
+    # tools that rely on windowed operations (e.g., shift over Code) are
+    # evaluated against a canonical ordering.
+    try:
+        if {"Code", "Date"}.issubset(df.columns):
+            df = df.sort(["Code", "Date"])  # type: ignore[arg-type]
+            logger.info("Sorted dataset by (Code, Date) prior to save")
     except Exception:
         pass
 
