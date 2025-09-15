@@ -482,6 +482,9 @@ async def main() -> int:
             try:
                 logger.info("Fetching weekly margin interest for margin features")
                 wmi_df = await fetcher.get_weekly_margin_interest(session, start_date, end_date)
+                if wmi_df is not None and not wmi_df.is_empty() and "Code" in wmi_df.columns:
+                    wmi_df = wmi_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+                    logger.info("Weekly margin: unified Code dtype to Utf8")
             except Exception as e:
                 logger.warning(f"Failed to fetch weekly margin interest: {e}")
                 wmi_df = pl.DataFrame()
@@ -489,6 +492,9 @@ async def main() -> int:
             try:
                 logger.info("Fetching daily margin interest for daily credit features")
                 dmi_df = await fetcher.get_daily_margin_interest(session, start_date, end_date)
+                if dmi_df is not None and not dmi_df.is_empty() and "Code" in dmi_df.columns:
+                    dmi_df = dmi_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+                    logger.info("Daily margin: unified Code dtype to Utf8")
             except Exception as e:
                 logger.warning(f"Failed to fetch daily margin interest: {e}")
                 dmi_df = pl.DataFrame()
@@ -655,6 +661,13 @@ async def main() -> int:
     if df_base is None or metadata is None:
         logger.error("Base pipeline failed")
         return 1
+    # Unify Code dtype to Utf8 early to avoid join type mismatches downstream
+    try:
+        if "Code" in df_base.columns:
+            df_base = df_base.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+            logger.info("Normalized base frame Code dtype to Utf8")
+    except Exception as e:
+        logger.warning(f"Failed to normalize Code dtype in base frame: {e}")
 
     # Use freshly built base frame; avoid overriding with older ml_dataset_latest.parquet
     output_dir = pipeline.output_dir if hasattr(pipeline, "output_dir") else Path("output")

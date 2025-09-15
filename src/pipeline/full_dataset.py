@@ -17,6 +17,29 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
+def _ensure_code_utf8(df: pl.DataFrame | None, source: str = "") -> pl.DataFrame | None:
+    """Cast Code column to Utf8 if present; log where applied."""
+    try:
+        if df is not None and not df.is_empty() and "Code" in df.columns and df["Code"].dtype != pl.Utf8:
+            df = df.with_columns(pl.col("Code").cast(pl.Utf8).alias("Code"))
+            if source:
+                logger.info(f"Normalized Code dtype to Utf8: {source}")
+    except Exception as e:
+        logger.warning(f"Failed to normalize Code dtype for {source or 'frame'}: {e}")
+    return df
+
+def _validate_code_type_consistency(df: pl.DataFrame, data_source: str) -> bool:
+    """Validate Code dtype is Utf8; warn if not."""
+    try:
+        if "Code" in df.columns:
+            code_type = df["Code"].dtype
+            if code_type != pl.Utf8:
+                logger.warning(f"{data_source}: Code dtype is {code_type}, expected Utf8")
+                return False
+    except Exception:
+        pass
+    return True
+
 
 def save_with_symlinks(
     df: pl.DataFrame,
@@ -177,6 +200,10 @@ async def enrich_and_save(
     from src.gogooku3.pipeline.builder import MLDatasetBuilder
 
     builder = MLDatasetBuilder(output_dir=output_dir)
+
+    # Ensure base quotes have Code as Utf8 before any joins
+    result = _ensure_code_utf8(df_base, source="base_quotes")
+    df_base = result if result is not None and not result.is_empty() else df_base
 
     # TOPIX: prefer provided parquet, else API, else local, else fallback in builder
     topix_df = None
@@ -591,6 +618,11 @@ async def enrich_and_save(
         if enable_margin_weekly or (w_path and w_path.exists()):
             if w_path and w_path.exists():
                 wdf = pl.read_parquet(w_path)
+                wdf = _ensure_code_utf8(wdf, source="weekly_margin") or wdf
+                df = _ensure_code_utf8(df, source="quotes_for_weekly_margin") or df
+                # Validate and attach
+                _validate_code_type_consistency(df, "quotes (weekly margin)")
+                _validate_code_type_consistency(wdf, "weekly_margin")
                 df = builder.add_margin_weekly_block(
                     df,
                     wdf,
@@ -618,6 +650,11 @@ async def enrich_and_save(
         if enable_daily_margin or (d_path and d_path.exists()):
             if d_path and d_path.exists():
                 ddf = pl.read_parquet(d_path)
+                ddf = _ensure_code_utf8(ddf, source="daily_margin") or ddf
+                df = _ensure_code_utf8(df, source="quotes_for_daily_margin") or df
+                # Validate and attach
+                _validate_code_type_consistency(df, "quotes (daily margin)")
+                _validate_code_type_consistency(ddf, "daily_margin")
                 df = builder.add_daily_margin_block(
                     df,
                     ddf,
@@ -661,6 +698,7 @@ async def enrich_and_save(
             if ss_path and ss_path.exists():
                 try:
                     short_df = pl.read_parquet(ss_path)
+                    short_df = _ensure_code_utf8(short_df, source="short_selling") or short_df
                     logger.info(f"Loaded short selling data from: {ss_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load short selling data: {e}")
@@ -668,6 +706,7 @@ async def enrich_and_save(
             if pos_path and pos_path.exists():
                 try:
                     positions_df = pl.read_parquet(pos_path)
+                    positions_df = _ensure_code_utf8(positions_df, source="short_positions") or positions_df
                     logger.info(f"Loaded short positions data from: {pos_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load short positions data: {e}")
@@ -736,6 +775,7 @@ async def enrich_and_save(
                 # Import and apply short selling features
                 from src.gogooku3.features.short_selling import add_short_selling_block
 
+                df = _ensure_code_utf8(df, source="quotes_for_short_selling") or df
                 df = add_short_selling_block(
                     quotes=df,
                     short_df=short_df,

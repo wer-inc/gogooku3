@@ -1,0 +1,82 @@
+2025-09-15 18:06:33,980 - run_full_dataset - INFO - === STEP 0: Prepare trade-spec for flow features ===
+2025-09-15 18:06:35,101 - run_full_dataset - INFO - Fetching trade-spec from 2023-01-01 to 2025-01-01
+2025-09-15 18:06:36,544 - run_full_dataset - INFO - Fetching weekly margin interest for margin features
+2025-09-15 18:08:28,319 - run_full_dataset - INFO - Weekly margin: unified Code dtype to Utf8
+2025-09-15 18:08:28,320 - run_full_dataset - INFO - Fetching daily margin interest for daily credit features
+2025-09-15 18:14:16,482 - run_full_dataset - WARNING - Failed to fetch daily margin interest: could not append value: "-" of type: str to the builder; make sure that all rows have the same schema or consider increasing `infer_schema_length`
+
+it might also be that a value overflows the data-type's capacity
+2025-09-15 18:14:16,537 - run_full_dataset - INFO - Fetching listed_info for sector/market enrichment
+2025-09-15 18:14:17,811 - scripts.components.market_code_filter - INFO - Market Codeフィルタリング: 4411 → 3800 銘柄
+2025-09-15 18:14:17,814 - scripts.components.market_code_filter - INFO - 市場別銘柄数:
+2025-09-15 18:14:17,814 - scripts.components.market_code_filter - INFO -   0111: プライム - 1620銘柄
+2025-09-15 18:14:17,814 - scripts.components.market_code_filter - INFO -   0112: スタンダード - 1573銘柄
+2025-09-15 18:14:17,814 - scripts.components.market_code_filter - INFO -   0113: グロース - 607銘柄
+2025-09-15 18:14:17,833 - run_full_dataset - INFO - Saved trade-spec: output/trades_spec_history_20230101_20250101.parquet
+2025-09-15 18:14:17,840 - run_full_dataset - INFO - Saved listed_info: output/listed_info_history_20250101.parquet
+2025-09-15 18:14:17,957 - run_full_dataset - INFO - Saved weekly margin interest: output/weekly_margin_interest_20230101_20250101.parquet
+2025-09-15 18:14:17,957 - run_full_dataset - INFO - Fetching futures data for derivatives features
+2025-09-15 18:14:17,957 - run_full_dataset - WARNING - No futures data retrieved from API
+2025-09-15 18:14:17,957 - run_full_dataset - INFO - === STEP 1: Run base optimized pipeline (prices + TA + statements) ===
+2025-09-15 18:14:17,957 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-15 18:14:17,957 - scripts.pipelines.run_pipeline_v4_optimized - INFO - OPTIMIZED ML DATASET PIPELINE V4
+2025-09-15 18:14:17,957 - scripts.pipelines.run_pipeline_v4_optimized - INFO - With axis selection, diff detection, and event tracking
+2025-09-15 18:14:17,957 - scripts.pipelines.run_pipeline_v4_optimized - INFO - (Note) For full enriched dataset builds, prefer run_full_dataset.py
+2025-09-15 18:14:17,958 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ============================================================
+2025-09-15 18:14:17,958 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Fetching data from JQuants API (optimized)...
+2025-09-15 18:14:19,049 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ JQuants authentication successful
+2025-09-15 18:14:19,057 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 1: Fetching trading calendar (2023-01-01 - 2025-01-01)...
+2025-09-15 18:14:19,057 - components.trading_calendar_fetcher - INFO - 営業日カレンダーを取得中: 2023-01-01 - 2025-01-01
+2025-09-15 18:14:19,361 - components.trading_calendar_fetcher - INFO - 営業日: 512日, 休日: 220日, 半休日: 0日
+2025-09-15 18:14:19,361 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Business days: 512
+2025-09-15 18:14:19,362 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 2: Fetching listed info (monthly + diff)...
+2025-09-15 18:14:19,362 - components.listed_info_manager - INFO - Fetching 24 monthly snapshots...
+2025-09-15 18:14:19,721 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Listed info: 24 snapshots, 0 events detected
+2025-09-15 18:14:19,740 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Target stocks: 3990 (filtered by market)
+2025-09-15 18:14:19,740 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 3: Fetching daily quotes (optimized axis)...
+2025-09-15 18:14:19,740 - components.axis_decider - INFO - Using cached axis decision: by_date
+2025-09-15 18:14:19,740 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Selected axis: by_date (reason: Date axis is more efficient (1 <= 0.9 * 1800))
+2025-09-15 18:14:19,740 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Fetching by date axis for 512 days...
+2025-09-15 18:15:53,081 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Filtered: 2123276 → 1880934 records
+2025-09-15 18:15:53,103 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Price data: 1880934 records, 3990 stocks
+2025-09-15 18:15:53,103 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 4: Fetching statements (date axis)...
+2025-09-15 18:19:10,857 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ Statements: 38172 records
+2025-09-15 18:19:10,857 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 5: Fetching TOPIX index data...
+2025-09-15 18:19:11,138 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ TOPIX: 491 records from 2023-01-01 to 2025-01-01
+2025-09-15 18:19:11,138 - scripts.pipelines.run_pipeline_v4_optimized - INFO - Step 6: Fetching trades_spec (flow data)...
+2025-09-15 18:19:12,306 - scripts.pipelines.run_pipeline_v4_optimized - INFO - ✅ trades_spec: 420 records
+Fetching futures data for category: TOPIXF
+Error fetching futures category TOPIXF: Session is closed
+Fetching futures data for category: TOPIXMF
+Error fetching futures category TOPIXMF: Session is closed
+Fetching futures data for category: NK225F
+Error fetching futures category NK225F: Session is closed
+Fetching futures data for category: NK225MF
+Error fetching futures category NK225MF: Session is closed
+Fetching futures data for category: NK225MCF
+Error fetching futures category NK225MCF: Session is closed
+Fetching futures data for category: JN400F
+Error fetching futures category JN400F: Session is closed
+Fetching futures data for category: REITF
+Error fetching futures category REITF: Session is closed
+Fetching futures data for category: MOTF
+Error fetching futures category MOTF: Session is closed
+No futures data retrieved
+Traceback (most recent call last):
+  File "/home/ubuntu/gogooku3-standalone/scripts/pipelines/run_full_dataset.py", line 825, in <module>
+    raise SystemExit(asyncio.run(main()))
+  File "/usr/lib/python3.10/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 649, in run_until_complete
+    return future.result()
+  File "/home/ubuntu/gogooku3-standalone/scripts/pipelines/run_full_dataset.py", line 660, in main
+    df_base, metadata = await pipeline.run(use_jquants=args.jquants, start_date=start_date, end_date=end_date)
+  File "/home/ubuntu/gogooku3-standalone/scripts/pipelines/run_pipeline_v4_optimized.py", line 891, in run
+    price_df, statements_df, events, snapshots, topix_df, trades_spec_df = await self.fetch_jquants_data_optimized(
+  File "/home/ubuntu/gogooku3-standalone/scripts/pipelines/run_pipeline_v4_optimized.py", line 685, in fetch_jquants_data_optimized
+    price_df = self._ensure_code_utf8(price_df) or pl.DataFrame()
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/polars/dataframe/frame.py", line 991, in __bool__
+    raise TypeError(msg)
+TypeError: the truth value of a DataFrame is ambiguous
+
+Hint: to check if a DataFrame contains any values, use `is_empty()`.

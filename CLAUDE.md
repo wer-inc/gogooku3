@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-Advanced financial ML system for Japanese stock market prediction using ATFT-GAT-FAN architecture. Modern Python package (v2.0.0) with focus on safety (壊れず), strength (強く), and speed (速く).
+ATFT-GAT-FAN: Advanced financial ML system for Japanese stock market prediction with Graph Attention Networks and multi-horizon forecasting. Modern Python package (v2.0.0) implementing production-grade time-series ML with strict data safety protocols.
 
 ## Essential Commands
 
@@ -24,17 +24,23 @@ python -c "import gogooku3; print(f'✅ Gogooku3 v{gogooku3.__version__}')"
 
 ### Testing & Validation
 ```bash
-# Full test suite
+# Single test execution
+pytest tests/unit/test_specific.py::test_function_name -v
+
+# Test suite by category
 pytest tests/ -v                # All tests
-pytest tests/unit/ -v           # Unit tests only  
+pytest tests/unit/ -v           # Unit tests only
 pytest tests/integration/ -v    # Integration tests only
 pytest tests/ -k "smoke" -v     # Smoke tests only
+pytest -m "not slow"            # Skip slow tests
 
-# Quick smoke test (basic functionality)
-python scripts/smoke_test.py
+# Quick validation
+python scripts/smoke_test.py    # 1-epoch basic functionality test
+python scripts/validate_improvements.py --detailed  # Performance validation
 
-# Migration compatibility tests
-pytest tests/integration/test_migration_smoke.py -v
+# Feature testing
+python scripts/test_phase1_features.py  # J-Quants Phase 1 features
+python scripts/test_phase2_features.py  # J-Quants Phase 2 features
 ```
 
 ### Data Pipeline
@@ -79,17 +85,20 @@ gogooku3 infer --model-path models/best_model.pth
 python -m gogooku3.compat.script_wrappers train_atft
 ```
 
-### Code Quality & Development
+### Code Quality & Linting
 ```bash
-# Automated code quality (pre-commit hooks configured)
-pre-commit run --all-files
-ruff check src/ --fix           # Linting and auto-fixes
-ruff format src/                # Code formatting
+# Quick quality check
+ruff check src/ --fix           # Auto-fix linting issues
+ruff format src/                # Format code
 mypy src/gogooku3              # Type checking
+
+# Full quality gate
+pre-commit run --all-files      # Run all hooks
 bandit -r src/                 # Security scanning
 
-# Manual install of pre-commit hooks
-pre-commit install
+# Pre-commit setup
+pre-commit install              # Install git hooks
+pre-commit autoupdate          # Update hook versions
 ```
 
 ### Docker Services
@@ -163,11 +172,13 @@ The system implements strict temporal validation to prevent data leakage in fina
 - **WalkForwardSplitterV2**: Time-series validation with 20-day embargo periods
 - **JQuants Integration**: Real-time Japanese stock data with rate limiting
 
-**Feature Engineering** (`features/`)  
+**Feature Engineering** (`features/`)
 - **Technical Indicators**: 50+ indicators via pandas-ta (RSI, MACD, Bollinger Bands, ATR)
 - **Market Features**: TOPIX correlation (26 mkt_* features)
-- **Investment Flows**: Institutional flow analysis (17 flow_* features)  
+- **Investment Flows**: Institutional flow analysis (17 flow_* features)
 - **Financial Statements**: T+1 as-of joins with 15:00 cutoff safety (17 stmt_* features)
+- **J-Quants Phase 1**: Earnings events (5), short positions (6), listed info (5)
+- **J-Quants Phase 2**: Margin trading (9), option sentiment (10), enhanced flows (9)
 
 **Model Architecture** (`models/`)
 - **ATFT-GAT-FAN**: Multi-horizon prediction (1d, 5d, 10d, 20d horizons)
@@ -179,23 +190,26 @@ The system implements strict temporal validation to prevent data leakage in fina
 - **Walk-Forward Validation**: Strict temporal splitting with embargo enforcement
 - **Cross-Sectional Normalization**: Daily standardization to prevent lookahead bias
 
-### Critical Design Patterns
+### Critical Implementation Patterns
 
-**Data Safety (壊れず)**
-- No BatchNorm in time-series models (prevents leakage)
-- Fit normalizers on training data only
-- T+1 as-of joins for statements (15:00 cutoff)
-- Temporal overlap validation between train/test splits
+**Data Safety Architecture**
+- Walk-Forward validation with 20-day embargo between train/test
+- Cross-sectional normalization (daily Z-score) with fit-transform separation
+- No BatchNorm in time-series models (prevents cross-sample leakage)
+- T+1 as-of joins for financial statements (15:00 JST cutoff)
+- Temporal overlap detection and validation
 
-**Configuration Management**
-- Hydra framework for hierarchical configs
-- Main configs in `configs/atft/`
-- Environment-specific settings via `.env`
+**J-Quants API Integration**
+- Async fetcher with rate limiting (75 concurrent requests max)
+- Batch API calls by date range (not per stock)
+- Forward-fill weekly data to daily frequency
+- Graceful fallback to null features when data unavailable
 
-**Performance Optimization**
-- Polars for 3-5x faster data processing
-- GPU memory management with expandable segments
-- Batch size auto-adjustment for OOM prevention
+**Performance Patterns**
+- Polars lazy evaluation with columnar projection
+- GPU expandable segments: `export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+- Mixed precision training (bf16) for memory efficiency
+- Batch size auto-adjustment on OOM
 
 ## Key Configuration Files
 
@@ -224,6 +238,24 @@ The system implements strict temporal validation to prevent data leakage in fina
 2. **Safe Pipeline**: `python scripts/run_safe_training.py` (7-step validation)
 3. **Full Training**: `python scripts/integrated_ml_training_pipeline.py`
 4. **Monitor**: Check logs in `logs/` directory and TensorBoard/W&B dashboards
+
+## J-Quants Feature Pipeline
+
+### Feature Addition Order (Recommended)
+```python
+# Optimal order for feature dependencies
+df = builder.add_enhanced_listed_features(df, fetcher)  # Provides market_cap
+df = builder.add_earnings_features(df, fetcher)         # Phase 1
+df = builder.add_short_position_features(df, fetcher)   # Phase 1
+df = builder.add_enhanced_margin_features(df, fetcher)  # Phase 2 (uses market_cap)
+df = builder.add_option_sentiment_features(df, fetcher) # Phase 2
+df = builder.add_enhanced_flow_features(df, fetcher)    # Phase 2
+```
+
+### Feature Categories Summary
+- **Phase 1 (16 features)**: Basic events and positions
+- **Phase 2 (28 features)**: Advanced market microstructure
+- **Total**: 44 new J-Quants derived features
 
 ## Common Issues & Solutions
 
@@ -373,22 +405,31 @@ from scripts.run_safe_training import SafeTrainingPipeline  # Still works
 3. **Testing**: Use `pytest tests/integration/test_migration_smoke.py` to validate compatibility
 4. **Configuration**: Prefer environment variables and `settings` over hardcoded paths
 
-### Key Architectural Insights
+### ATFT-GAT-FAN Model Architecture
 
-**Financial ML Safety Design**
-- **No BatchNorm**: Prevents cross-sample information leakage in time series
-- **Walk-Forward Validation**: Temporal splitting with 20-day embargo periods
-- **Fit-Transform Separation**: Normalizers trained only on historical data
-- **T+1 As-Of Joins**: Financial statements use 15:00 cutoff for realistic availability
+**Core Components**
+- **ATFT**: Adaptive Temporal Fusion Transformer for multi-horizon prediction
+- **GAT**: Graph Attention Networks for stock correlation modeling
+- **FAN**: Frequency Adaptive Normalization for time-series stability
+- **Model Scale**: ~5.6M parameters, optimized for Sharpe ratio
+- **Horizons**: [1d, 5d, 10d, 20d] simultaneous prediction
 
-**Performance Optimization Stack**
-- **Polars Engine**: 3-5x faster data processing vs pandas
-- **Lazy Loading**: Memory-mapped files with columnar projection
-- **GPU Memory Management**: Expandable segments for CUDA OOM prevention
-- **Mixed Precision**: bf16 training for memory efficiency
+**Training Optimizations**
+- **Small-init + LayerScale**: Output head stability
+- **FreqDropout**: Frequency domain regularization
+- **EMA Teacher**: Exponential moving average for stability
+- **Huber Loss**: Outlier robustness
+- **ParamGroup**: Layer-specific learning rates
 
-**Production Safety Features**  
-- **Data Quality Gates**: Great Expectations integration
-- **Automated Testing**: Unit, integration, E2E, and smoke tests
-- **Security Scanning**: Bandit, pre-commit hooks, dependency audits
-- **Monitoring**: Prometheus metrics, health checks, log rotation
+### Data Pipeline Architecture
+
+**Three-Stage Processing**
+1. **Raw Data Fetching**: J-Quants API → parquet files
+2. **Feature Engineering**: Technical + fundamental + J-Quants features
+3. **ML Dataset Build**: Cross-sectional normalization + safety validation
+
+**Key Components**
+- `JQuantsAsyncFetcher`: Rate-limited async API client
+- `MLDatasetBuilder`: Feature orchestration and integration
+- `ProductionDatasetV3`: Polars-based lazy loading
+- `SafeTrainingPipeline`: 7-step validation pipeline

@@ -7,6 +7,8 @@
 [![CUDA](https://img.shields.io/badge/CUDA-12.6+-green.svg)](https://developer.nvidia.com/cuda-toolkit)
 [![License](https://img.shields.io/badge/License-Private-black.svg)]()
 
+> Contributors: See the Repository Guidelines in [AGENTS.md](AGENTS.md). Enable hooks with `pre-commit install` and `pre-commit install -t commit-msg`.
+
 ## 🎯 概要
 
 ATFT-GAT-FANは、最新の深層学習技術を活用した高性能金融時系列予測システムです。**ATFT-GAT-FAN**アーキテクチャにより、従来比**+20%**の予測精度向上を実現しています。

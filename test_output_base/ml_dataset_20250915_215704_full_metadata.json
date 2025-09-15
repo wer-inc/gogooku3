@@ -1,0 +1,13 @@
+{
+  "rows": 7685,
+  "cols": 85,
+  "stocks": 3843,
+  "date_range": {
+    "start": "2024-09-02",
+    "end": "2024-09-03"
+  },
+  "features": {
+    "count": 81
+  },
+  "fixes_applied": []
+}

@@ -644,10 +644,12 @@ class JQuantsAsyncFetcher:
         def _float_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Float64).alias(name)
+            # First ensure all values are strings for safe comparison, then handle conversion
+            col_as_str = pl.col(name).cast(pl.Utf8)
             return (
-                pl.when((pl.col(name) == "-") | (pl.col(name) == "*") | (pl.col(name) == "") | (pl.col(name).is_null()))
+                pl.when((col_as_str == "-") | (col_as_str == "*") | (col_as_str == "") | (col_as_str.is_null()) | (col_as_str == "null"))
                 .then(None)
-                .otherwise(pl.col(name).cast(pl.Float64, strict=False))
+                .otherwise(col_as_str.cast(pl.Float64, strict=False))
                 .alias(name)
             )
 

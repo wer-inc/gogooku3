@@ -1,0 +1,15 @@
+{
+  "total_duration_seconds": 0.6099684238433838,
+  "total_api_calls": 0,
+  "total_records": 21500,
+  "components": [
+    {
+      "component": "process_pipeline",
+      "duration_seconds": 0.38655638694763184,
+      "api_calls": 0,
+      "records_processed": 21500,
+      "memory_usage_mb": 297.43359375
+    }
+  ],
+  "average_memory_mb": 297.43359375
+}

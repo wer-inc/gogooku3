@@ -99,7 +99,7 @@ class TestDailyMarginPipelineIntegration:
         rows = []
         for pub_date in pub_dates:
             # Application date is typically same day or T-1
-            app_date = pub_date - timedelta(days=np.random.choice([0, 1]))
+            app_date = pub_date - timedelta(days=int(np.random.choice([0, 1])))
 
             for code in codes:
                 if np.random.random() < 0.7:  # 70% chance of data per code/date
