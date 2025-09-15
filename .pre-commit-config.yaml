@@ -48,6 +48,14 @@ repos:
         args: ["-c", ".bandit"]
         additional_dependencies: ["bandit[toml]"]
 
+  # Enforce Conventional Commits via gitlint on commit messages
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+        stages: [commit-msg]
+        args: ["--config", ".gitlint"]
+
   # Custom hooks for Gogooku3
   - repo: local
     hooks:

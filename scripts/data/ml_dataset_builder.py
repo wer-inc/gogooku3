@@ -414,6 +414,328 @@ class MLDatasetBuilder:
             logger.warning(f"[builder] flow integration failed: {e}")
             return df
 
+    def add_earnings_features(
+        self,
+        df: pl.DataFrame,
+        fetcher=None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        lookback_days: int = 90,
+        lookahead_days: int = 90
+    ) -> pl.DataFrame:
+        """Add earnings event features from J-Quants API.
+
+        Args:
+            df: Base dataset with [code, date] columns
+            fetcher: JQuantsAsyncFetcher instance
+            start_date: Start date for earnings data (defaults to min date in df)
+            end_date: End date for earnings data (defaults to max date in df)
+            lookback_days: Days to look back for past earnings
+            lookahead_days: Days to look ahead for future earnings
+
+        Returns:
+            DataFrame with earnings features added
+        """
+        if fetcher is None:
+            logger.info("[builder] Earnings features skipped (no fetcher provided)")
+            return df
+
+        try:
+            from src.gogooku3.features.earnings_features import add_earnings_features as _add_earnings
+
+            # Use df date range if not provided
+            if start_date is None:
+                start_date = str(df['Date'].min())
+            if end_date is None:
+                end_date = str(df['Date'].max())
+
+            # Rename columns for compatibility
+            df_renamed = df.rename({'Date': 'date', 'Code': 'code'})
+
+            # Add features
+            df_with_earnings = _add_earnings(
+                df_renamed,
+                fetcher,
+                start_date,
+                end_date,
+                lookback_days,
+                lookahead_days
+            )
+
+            # Rename back
+            df_with_earnings = df_with_earnings.rename({'date': 'Date', 'code': 'Code'})
+
+            logger.info("[builder] Added earnings features: days_to_earnings, days_since_earnings, is_earnings_week, etc.")
+            return df_with_earnings
+
+        except Exception as e:
+            logger.warning(f"[builder] Earnings features failed: {e}")
+            return df
+
+    def add_short_position_features(
+        self,
+        df: pl.DataFrame,
+        fetcher=None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        ma_windows: list[int] = [5, 20]
+    ) -> pl.DataFrame:
+        """Add short position features from J-Quants API.
+
+        Args:
+            df: Base dataset with [code, date, volume] columns
+            fetcher: JQuantsAsyncFetcher instance
+            start_date: Start date for short data
+            end_date: End date for short data
+            ma_windows: Moving average windows for trends
+
+        Returns:
+            DataFrame with short position features added
+        """
+        if fetcher is None:
+            logger.info("[builder] Short position features skipped (no fetcher provided)")
+            return df
+
+        try:
+            from src.gogooku3.features.short_features import add_short_position_features as _add_shorts
+
+            # Use df date range if not provided
+            if start_date is None:
+                start_date = str(df['Date'].min())
+            if end_date is None:
+                end_date = str(df['Date'].max())
+
+            # Rename columns for compatibility
+            df_renamed = df.rename({'Date': 'date', 'Code': 'code', 'Volume': 'volume'})
+
+            # Add features
+            df_with_shorts = _add_shorts(
+                df_renamed,
+                fetcher,
+                start_date,
+                end_date,
+                ma_windows
+            )
+
+            # Rename back
+            rename_dict = {'date': 'Date', 'code': 'Code', 'volume': 'Volume'}
+            for col in df_with_shorts.columns:
+                if col in rename_dict:
+                    df_with_shorts = df_with_shorts.rename({col: rename_dict[col]})
+
+            logger.info("[builder] Added short position features: short_ratio, days_to_cover, short_squeeze_risk, etc.")
+            return df_with_shorts
+
+        except Exception as e:
+            logger.warning(f"[builder] Short position features failed: {e}")
+            return df
+
+    def add_enhanced_listed_features(
+        self,
+        df: pl.DataFrame,
+        fetcher=None,
+        df_prices: Optional[pl.DataFrame] = None
+    ) -> pl.DataFrame:
+        """Add enhanced listed info features from J-Quants API.
+
+        Args:
+            df: Base dataset with [code, date] columns
+            fetcher: JQuantsAsyncFetcher instance
+            df_prices: Price data for momentum calculations (optional)
+
+        Returns:
+            DataFrame with enhanced listed info features added
+        """
+        if fetcher is None:
+            logger.info("[builder] Enhanced listed features skipped (no fetcher provided)")
+            return df
+
+        try:
+            from src.gogooku3.features.listed_features import add_listed_info_features as _add_listed
+
+            # Rename columns for compatibility
+            df_renamed = df.rename({'Date': 'date', 'Code': 'code'})
+
+            # Prepare price data if available
+            if df_prices is not None:
+                df_prices = df_prices.rename({'Date': 'date', 'Code': 'code', 'Close': 'close'})
+
+            # Add features
+            df_with_listed = _add_listed(
+                df_renamed,
+                fetcher,
+                df_prices
+            )
+
+            # Rename back
+            df_with_listed = df_with_listed.rename({'date': 'Date', 'code': 'Code'})
+
+            logger.info("[builder] Added enhanced listed features: market_cap_log, liquidity_score, sector_momentum, etc.")
+            return df_with_listed
+
+        except Exception as e:
+            logger.warning(f"[builder] Enhanced listed features failed: {e}")
+            return df
+
+    def add_enhanced_margin_features(
+        self,
+        df: pl.DataFrame,
+        fetcher=None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        use_weekly: bool = True
+    ) -> pl.DataFrame:
+        """Add enhanced margin trading features from J-Quants API.
+
+        Args:
+            df: Base dataset with [code, date] columns
+            fetcher: JQuantsAsyncFetcher instance
+            start_date: Start date for margin data
+            end_date: End date for margin data
+            use_weekly: Whether to include weekly margin data
+
+        Returns:
+            DataFrame with enhanced margin features added
+        """
+        if fetcher is None:
+            logger.info("[builder] Enhanced margin features skipped (no fetcher provided)")
+            return df
+
+        try:
+            from src.gogooku3.features.margin_trading_features import add_enhanced_margin_features as _add_margin
+
+            # Use df date range if not provided
+            if start_date is None:
+                start_date = str(df['Date'].min())
+            if end_date is None:
+                end_date = str(df['Date'].max())
+
+            # Rename columns for compatibility
+            df_renamed = df.rename({'Date': 'date', 'Code': 'code'})
+
+            # Add features
+            df_with_margin = _add_margin(
+                df_renamed,
+                fetcher,
+                start_date,
+                end_date,
+                use_weekly
+            )
+
+            # Rename back
+            df_with_margin = df_with_margin.rename({'date': 'Date', 'code': 'Code'})
+
+            logger.info("[builder] Added enhanced margin features: margin_balance_ratio, margin_velocity, margin_stress_indicator, etc.")
+            return df_with_margin
+
+        except Exception as e:
+            logger.warning(f"[builder] Enhanced margin features failed: {e}")
+            return df
+
+    def add_option_sentiment_features(
+        self,
+        df: pl.DataFrame,
+        fetcher=None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> pl.DataFrame:
+        """Add option sentiment features from J-Quants index options.
+
+        Args:
+            df: Base dataset with [date] columns
+            fetcher: JQuantsAsyncFetcher instance
+            start_date: Start date for option data
+            end_date: End date for option data
+
+        Returns:
+            DataFrame with option sentiment features added
+        """
+        if fetcher is None:
+            logger.info("[builder] Option sentiment features skipped (no fetcher provided)")
+            return df
+
+        try:
+            from src.gogooku3.features.option_sentiment_features import add_option_sentiment_features as _add_options
+
+            # Use df date range if not provided
+            if start_date is None:
+                start_date = str(df['Date'].min())
+            if end_date is None:
+                end_date = str(df['Date'].max())
+
+            # Rename columns for compatibility
+            df_renamed = df.rename({'Date': 'date', 'Code': 'code'})
+
+            # Add features
+            df_with_options = _add_options(
+                df_renamed,
+                fetcher,
+                start_date,
+                end_date
+            )
+
+            # Rename back
+            df_with_options = df_with_options.rename({'date': 'Date', 'code': 'Code'})
+
+            logger.info("[builder] Added option sentiment features: put_call_ratio, iv_skew, smart_money_indicator, etc.")
+            return df_with_options
+
+        except Exception as e:
+            logger.warning(f"[builder] Option sentiment features failed: {e}")
+            return df
+
+    def add_enhanced_flow_features(
+        self,
+        df: pl.DataFrame,
+        fetcher=None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> pl.DataFrame:
+        """Add enhanced flow analysis features from J-Quants trades_spec.
+
+        Args:
+            df: Base dataset with [code, date] columns
+            fetcher: JQuantsAsyncFetcher instance
+            start_date: Start date for flow data
+            end_date: End date for flow data
+
+        Returns:
+            DataFrame with enhanced flow features added
+        """
+        if fetcher is None:
+            logger.info("[builder] Enhanced flow features skipped (no fetcher provided)")
+            return df
+
+        try:
+            from src.gogooku3.features.enhanced_flow_features import add_enhanced_flow_features as _add_flow
+
+            # Use df date range if not provided
+            if start_date is None:
+                start_date = str(df['Date'].min())
+            if end_date is None:
+                end_date = str(df['Date'].max())
+
+            # Rename columns for compatibility
+            df_renamed = df.rename({'Date': 'date', 'Code': 'code'})
+
+            # Add features
+            df_with_flow = _add_flow(
+                df_renamed,
+                fetcher,
+                start_date,
+                end_date
+            )
+
+            # Rename back
+            df_with_flow = df_with_flow.rename({'date': 'Date', 'code': 'Code'})
+
+            logger.info("[builder] Added enhanced flow features: institutional_accumulation, foreign_sentiment, smart_flow_indicator, etc.")
+            return df_with_flow
+
+        except Exception as e:
+            logger.warning(f"[builder] Enhanced flow features failed: {e}")
+            return df
+
     def add_futures_block(
         self,
         df: pl.DataFrame,

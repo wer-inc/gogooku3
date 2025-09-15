@@ -1,43 +1,41 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Code: `src/gogooku3/` — CLI, utils, data, features, models, graph, training, compat.
-- Pipelines: `scripts/` (e.g., `run_safe_training.py`, `train_atft.py`, `pipelines/`).
-- Configs: `configs/` — model/data/training/hardware YAMLs.
-- Tests: `tests/` with fixtures in `tests/fixtures/`.
-- Runtime: `data/`, `output/`, `cache/`, `_logs/` (do not commit `_logs/`).
-- Orchestration: `dagster_repo/`, `docker-compose*.yml`.
+- Code: `src/gogooku3/` (CLI, utils, features, models, training, graph, compat)
+- Pipelines: `scripts/` (e.g., `run_safe_training.py`, `train_atft.py`, `pipelines/`)
+- Configs: `configs/` (model/data/training/hardware YAMLs)
+- Tests: `tests/` with fixtures in `tests/fixtures/`
+- Runtime: `data/`, `output/`, `cache/`, `_logs/` (do not commit `_logs/`)
+- Ops: `dagster_repo/`, `docker-compose*.yml`
 
 ## Build, Test, and Development Commands
-- Setup: `pip install -e ".[dev]"` or `make setup` — install dev deps in editable mode.
-- Train (CLI): `gogooku3 train --config configs/atft/train/production.yaml` — run main training.
-- Safe training: `python scripts/run_safe_training.py --n-splits 2 --memory-limit 6` — CV-safe pipeline.
-- Fast tests: `pytest -m "not slow"` — run unit/integration tests excluding slow.
-- Coverage: `pytest --cov=src/gogooku3 --cov-report=term-missing` — show missing lines.
-- Quality: `pre-commit run --all-files`; `ruff check src/ --fix`; `black .`; `mypy src/gogooku3`; `bandit -r src/` — hooks, lint/format, type, security.
+- Setup: `pip install -e ".[dev]"` or `make setup` (editable install + dev deps)
+- Train: `gogooku3 train --config configs/atft/train/production.yaml`
+- Safe CV: `python scripts/run_safe_training.py --n-splits 2 --memory-limit 6`
+- Tests (fast): `pytest -m "not slow"`
+- Coverage: `pytest --cov=src/gogooku3 --cov-report=term-missing`
+- Quality: `pre-commit run --all-files && ruff check src/ --fix && black . && mypy src/gogooku3 && bandit -r src/`
 
 ## Coding Style & Naming Conventions
-- Python 3.10+, 4-space indents; Black (88), isort (`profile=black`), Ruff.
-- Type hints required; `mypy` is strict on `src/gogooku3/`.
-- Names: modules `snake_case.py`; classes `CamelCase`; functions/vars `snake_case`.
+- Python 3.10+, 4 spaces; Black (88), isort (`profile=black`), Ruff
+- Type hints required; `mypy` is strict on `src/gogooku3/`
+- Names: modules `snake_case.py`; classes `CamelCase`; funcs/vars `snake_case`
 
 ## Testing Guidelines
-- Framework: `pytest`; markers: `unit`, `integration`, `slow`, `smoke`.
-- Location: tests under `tests/`; fixtures in `tests/fixtures/`.
-- Naming: `test_<module>.py::TestClass::test_case`.
-- Deterministic; no network in unit tests; gate external calls with `requires_api`.
-- Before PR: run coverage and all quality checks above.
+- Framework: `pytest`; markers: `unit`, `integration`, `slow`, `smoke`, `requires_api`
+- Location: keep tests in `tests/`; fixtures in `tests/fixtures/`
+- Naming: `tests/test_<module>.py::TestClass::test_case`
+- Deterministic: no network in unit tests; gate external calls with `@pytest.mark.requires_api`
 
 ## Commit & Pull Request Guidelines
-- Commits: Conventional Commits (e.g., `feat(training): add EMA teacher`).
-- PRs: explain what/why; link issues (`Closes #123`); call out config/docs changes; attach key metrics/plots; ensure CI is green.
+- Commits: Conventional Commits (e.g., `feat(training): add EMA teacher`)
+- PRs: explain what/why, link issues (`Closes #123`), call out config/docs changes, include key metrics/plots, ensure CI green
 
-## Security & Configuration Tips (Optional)
-- Secrets via env vars: `JQUANTS_AUTH_EMAIL`, `JQUANTS_AUTH_PASSWORD`, `WANDB_API_KEY` (never commit `.env`).
-- Respect safety: walk-forward with 20-day embargo; fit normalization on train only.
-- Logs in `_logs/`, caches in `cache/`, artifacts in `output/`.
+## Security & Configuration Tips
+- Secrets via env: `JQUANTS_AUTH_EMAIL`, `JQUANTS_AUTH_PASSWORD`, `WANDB_API_KEY` (never commit `.env`)
+- Data safety: use walk-forward CV with 20‑day embargo; fit normalization on train only
+- Artifacts: logs in `_logs/`, caches in `cache/`, outputs in `output/`
 
-## Architecture Overview (Optional)
-- Core: ATFT-GAT-FAN multi-horizon forecasting.
-- Training: 7-step `SafeTrainingPipeline` with strict leakage prevention.
-
+## Architecture Overview
+- Core: ATFT‑GAT‑FAN multi‑horizon forecasting
+- Pipeline: 7‑step SafeTrainingPipeline with strict leakage prevention

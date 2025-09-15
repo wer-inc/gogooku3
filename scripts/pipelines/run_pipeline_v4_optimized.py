@@ -532,6 +532,17 @@ class JQuantsPipelineV4Optimized:
         self.builder = MLDatasetBuilder(output_dir=self.output_dir)
         self.event_detector = EventDetector()
 
+    def _ensure_code_utf8(self, df: pl.DataFrame | None) -> pl.DataFrame | None:
+        """Ensure Code column dtype is Utf8 for safe joins.
+        Returns the same df if None or empty.
+        """
+        try:
+            if df is not None and not df.is_empty() and "Code" in df.columns:
+                return df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+        except Exception:
+            pass
+        return df
+
     async def fetch_jquants_data_optimized(
         self, start_date: str = None, end_date: str = None
     ) -> tuple:
@@ -670,6 +681,21 @@ class JQuantsPipelineV4Optimized:
                 # ソート
                 price_df = price_df.sort(["Code", "Date"])
             
+            # Unify Code dtype to Utf8 for all core frames used in joins
+            if not price_df.is_empty():
+                result = self._ensure_code_utf8(price_df)
+                price_df = result if result is not None and not result.is_empty() else price_df
+            else:
+                price_df = pl.DataFrame()
+
+            if not statements_df.is_empty():
+                result = self._ensure_code_utf8(statements_df)
+                statements_df = result if result is not None and not result.is_empty() else statements_df
+
+            if not trades_spec_df.is_empty():
+                result = self._ensure_code_utf8(trades_spec_df)
+                trades_spec_df = result if result is not None and not result.is_empty() else trades_spec_df
+
             self.tracker.end_component(metric, records=len(price_df))
             
             return price_df, statements_df, events, snapshots, topix_df, trades_spec_df

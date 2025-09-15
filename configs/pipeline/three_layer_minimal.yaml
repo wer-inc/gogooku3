@@ -1,0 +1,15 @@
+pipeline:
+  forecast:
+    horizons: [1, 5, 10, 20, 30]
+    context: 256
+    quantiles: [0.1, 0.5, 0.9]
+  detect:
+    residual_window: 63
+    changepoint_window: 20
+    sr_avg_window: 5
+    threshold_percentile: 0.95
+    min_range_len: 2
+  index:
+    name: ESVI_JP
+    horizon: 30
+

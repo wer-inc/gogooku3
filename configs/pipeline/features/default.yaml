@@ -1,0 +1,23 @@
+features:
+  # KAMA parameters
+  kama_window: 10
+  kama_fast: 2
+  kama_slow: 30
+  # Optionally define multiple KAMA configs (overrides single if non-empty)
+  # kama_set: [[10, 2, 30], [20, 2, 30]]
+  # VIDYA parameter
+  vidya_window: 14
+  # Optionally define multiple VIDYA windows (overrides single if non-empty)
+  # vidya_windows: [10, 20]
+  # Fractional differencing
+  fd_d: 0.4
+  fd_window: 100
+  # Rolling quantiles
+  rq_window: 63
+  # Alternatively define multiple windows
+  # rq_windows: [20, 63, 126]
+  rq_quantiles: [0.1, 0.5, 0.9]
+  # Cross-sectional features to compute per date
+  cs_features: ["y", "roll_std_20", "roll_std_63"]
+  # Rolling std windows
+  roll_std_windows: [20, 63]

@@ -1,0 +1,4 @@
+- pipeline.start_date=2025-09-01
+- pipeline.end_date=2025-09-07
+- pipeline.output_dir=/home/ubuntu/gogooku3-standalone/benchmark_output/memory_benchmark
+- pipeline.jquants=false

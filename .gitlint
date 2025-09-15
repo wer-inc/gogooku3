@@ -1,0 +1,12 @@
+[general]
+ignore=body-is-missing,body-max-line-length
+
+# Extend subject length slightly for Conventional Commit scopes
+[title-max-length]
+max-length=100
+
+# Require Conventional Commit style summary
+[title-match-regex]
+regex=^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([A-Za-z0-9_.-]+\))?!?:\s.+
+ignore=merge,release
+
