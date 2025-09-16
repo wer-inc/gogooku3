@@ -4,19 +4,19 @@ Complete ATFT-GAT-FAN Training Pipeline for gogooku3
 ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する統合学習パイプライン
 """
 
-import os
-import sys
 import asyncio
-import logging
 import json
+import logging
+import os
+import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+
+import numpy as np
 import polars as pl
 import torch
-import numpy as np
-import subprocess
 
 # パスを追加（repo root と src を import path へ）
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,13 +38,20 @@ logger = logging.getLogger(__name__)
 class CompleteATFTTrainingPipeline:
     """ATFT-GAT-FANの成果を完全に再現する統合学習パイプライン"""
 
-    def __init__(self, data_path: Optional[str] = None, sample_size: Optional[int] = None):
+    def __init__(self, data_path: str | None = None, sample_size: int | None = None,
+                 run_safe_pipeline: bool = False, extra_overrides: list[str] | None = None):
         self.output_dir = Path("output")
         self.logs_dir = Path("logs")
         self.logs_dir.mkdir(exist_ok=True)
         self.data_path = Path(data_path) if data_path else None
         # 小規模実行用のサンプリング行数（概算）
-        self.sample_size: Optional[int] = int(sample_size) if sample_size else None
+        self.sample_size: int | None = int(sample_size) if sample_size else None
+        # オプション: SafeTrainingPipeline を事前に実行
+        self.run_safe_pipeline: bool = bool(run_safe_pipeline)
+        # 追加のHydraオーバーライド（train_atft.pyへ引き渡し）
+        self.extra_overrides: list[str] = list(extra_overrides or [])
+        # 直近に使用したMLデータセットのパス（検証やSafePipeline実行に利用）
+        self._last_ml_dataset_path: Path | None = None
 
         # ATFT-GAT-FANの成果設定
         self.atft_settings = {
@@ -77,7 +84,7 @@ class CompleteATFTTrainingPipeline:
             "AMP_DTYPE": "bf16",
         }
 
-    async def run_complete_training_pipeline(self) -> Tuple[bool, Dict]:
+    async def run_complete_training_pipeline(self) -> tuple[bool, dict]:
         """ATFT-GAT-FANの成果を完全に再現する統合学習パイプラインを実行"""
         start_time = time.time()
 
@@ -96,6 +103,18 @@ class CompleteATFTTrainingPipeline:
             success, data_info = await self._load_and_validate_ml_dataset()
             if not success:
                 return False, {"error": "ML dataset loading failed", "stage": "load"}
+
+            # 3. 特徴量変換（ML → ATFT形式）
+            # 2.5. （任意）SafeTrainingPipelineの実行（リーク防止チェックと基準性能の確認）
+            try:
+                if self.run_safe_pipeline:
+                    ds_path = data_info.get("path") or self._last_ml_dataset_path
+                    if ds_path and Path(ds_path).exists():
+                        await self._run_safe_training_pipeline(Path(ds_path))
+                    else:
+                        logger.warning("Safe pipeline requested, but dataset path is unavailable. Skipping.")
+            except Exception as _e:
+                logger.warning(f"SafeTrainingPipeline step skipped: {_e}")
 
             # 3. 特徴量変換（ML → ATFT形式）
             success, conversion_info = await self._convert_ml_to_atft_format(
@@ -210,7 +229,7 @@ class CompleteATFTTrainingPipeline:
             logger.error(f"❌ Environment setup failed: {e}")
             return False
 
-    async def _load_and_validate_ml_dataset(self) -> Tuple[bool, Dict]:
+    async def _load_and_validate_ml_dataset(self) -> tuple[bool, dict]:
         """MLデータセットの読み込みと検証（ATFT-GAT-FAN対応）"""
         try:
             logger.info("📊 Loading and validating ML dataset...")
@@ -218,15 +237,15 @@ class CompleteATFTTrainingPipeline:
             # MLデータセットの読み込み（実際のデータを使用）
             # 優先順位: コマンドライン引数 > output/ml_dataset_*.parquet > data/processed/ml_dataset_latest.parquet > data/ml_dataset.parquet
             ml_dataset_paths = []
-            
+
             # コマンドライン引数が指定されていれば最優先
             if self.data_path and self.data_path.exists():
                 ml_dataset_paths.append(self.data_path)
-            
+
             # output内の最新のデータセットを探す
             output_datasets = sorted(Path("output").glob("ml_dataset_*.parquet"), reverse=True)
             ml_dataset_paths.extend(output_datasets[:3])  # 最新3つまで
-            
+
             # デフォルトパス
             ml_dataset_paths.extend([
                 Path("output/ml_dataset_production.parquet"),
@@ -247,6 +266,7 @@ class CompleteATFTTrainingPipeline:
             else:
                 logger.info(f"📂 Loading ML dataset from: {ml_dataset_path}")
                 df = pl.read_parquet(ml_dataset_path)
+                self._last_ml_dataset_path = ml_dataset_path
 
             # 迅速検証モード: --sample-size が指定された場合は変換前にデータを縮小
             if self.sample_size is not None and self.sample_size > 0:
@@ -263,7 +283,7 @@ class CompleteATFTTrainingPipeline:
                     codes = gb.select(["Code", "n"]).to_dict(as_series=False)
                     sel_codes = []
                     cum = 0
-                    for code, n in zip(codes["Code"], codes["n"]):
+                    for code, n in zip(codes["Code"], codes["n"], strict=False):
                         if cum >= self.sample_size:
                             break
                         sel_codes.append(code)
@@ -295,7 +315,7 @@ class CompleteATFTTrainingPipeline:
                     error_details.append(f"Not enough features: {validation_result['total_columns']} < 50")
                 if validation_result['total_rows'] == 0:
                     error_details.append("Dataset is empty")
-                
+
                 error_msg = "; ".join(error_details) if error_details else "Unknown validation error"
                 logger.error(f"Dataset validation failed: {error_msg}")
                 logger.info(f"Dataset info - Rows: {validation_result['total_rows']}, Cols: {validation_result['total_columns']}")
@@ -307,6 +327,7 @@ class CompleteATFTTrainingPipeline:
                 "shape": df.shape,
                 "columns": df.columns,
                 "validation": validation_result,
+                "path": self._last_ml_dataset_path,
             }
 
             logger.info(f"✅ ML dataset loaded: {df.shape}")
@@ -316,11 +337,40 @@ class CompleteATFTTrainingPipeline:
             logger.error(f"❌ ML dataset loading failed: {e}")
             return False, {"error": str(e)}
 
-    async def _convert_ml_to_atft_format(self, df: pl.DataFrame) -> Tuple[bool, Dict]:
+    async def _run_safe_training_pipeline(self, dataset_path: Path) -> None:
+        """任意ステップ: SafeTrainingPipeline を実行して品質検証・基準性能を取得"""
+        try:
+            from gogooku3.training.safe_training_pipeline import SafeTrainingPipeline
+        except Exception:
+            # 互換パス（移行中の環境）
+            from src.gogooku3.training.safe_training_pipeline import (
+                SafeTrainingPipeline,  # type: ignore
+            )
+
+        logger.info("🛡️ Running SafeTrainingPipeline (n_splits=2, embargo=20d)...")
+        out_dir = Path("output/safe_training")
+        pipe = SafeTrainingPipeline(
+            data_path=dataset_path,
+            output_dir=out_dir,
+            experiment_name="integrated_safe",
+            verbose=False,
+        )
+        res = pipe.run_pipeline(n_splits=2, embargo_days=20, memory_limit_gb=8.0, save_results=True)
+        # 代表的な指標をログ
+        try:
+            rep = (res or {}).get("final_report", {})
+            baseline = (res or {}).get("step5_baseline", {})
+            logger.info(f"Safe pipeline report: keys={list(rep.keys())[:5]}")
+            if baseline:
+                logger.info("Baseline metrics (subset): " + ", ".join(f"{k}={v}" for k, v in list(baseline.items())[:5]))
+        except Exception:
+            pass
+
+    async def _convert_ml_to_atft_format(self, df: pl.DataFrame) -> tuple[bool, dict]:
         """MLデータセットをATFT-GAT-FAN形式に変換"""
         try:
             logger.info("🔄 Converting ML dataset to ATFT-GAT-FAN format...")
-            
+
             # 出力ディレクトリ（サンプル実行は別ディレクトリへ書き出して本番データを保護）
             out_dir = (
                 f"output/atft_data_sample_{self.sample_size}"
@@ -330,7 +380,9 @@ class CompleteATFTTrainingPipeline:
 
             # Try to import UnifiedFeatureConverter
             try:
-                from scripts.models.unified_feature_converter import UnifiedFeatureConverter
+                from scripts.models.unified_feature_converter import (
+                    UnifiedFeatureConverter,
+                )
                 converter = UnifiedFeatureConverter()
                 # 既存の変換結果があり、再利用可能ならスキップ
                 try:
@@ -382,8 +434,8 @@ class CompleteATFTTrainingPipeline:
             return False, {"error": str(e)}
 
     async def _prepare_atft_training_data(
-        self, conversion_info: Dict
-    ) -> Tuple[bool, Dict]:
+        self, conversion_info: dict
+    ) -> tuple[bool, dict]:
         """ATFT-GAT-FAN学習用データの準備"""
         try:
             logger.info("📋 Preparing ATFT-GAT-FAN training data...")
@@ -417,8 +469,8 @@ class CompleteATFTTrainingPipeline:
             return False, {"error": str(e)}
 
     async def _execute_atft_training_with_results(
-        self, training_data_info: Dict
-    ) -> Tuple[bool, Dict]:
+        self, training_data_info: dict
+    ) -> tuple[bool, dict]:
         """ATFT-GAT-FAN学習の実行（成果再現）"""
         try:
             logger.info(
@@ -457,6 +509,10 @@ class CompleteATFTTrainingPipeline:
                 "train.trainer.check_val_every_n_epoch=1",
                 "train.trainer.enable_progress_bar=true",
             ]
+
+            # 追加のHydraオーバーライド（HPOや詳細設定をパススルー）
+            if self.extra_overrides:
+                cmd.extend(self.extra_overrides)
 
             # 小規模サンプルでの実行時は、minibatch崩壊と検証0件を避けるための保護を入れる
             debug_small_data = (
@@ -531,6 +587,42 @@ class CompleteATFTTrainingPipeline:
             training_info["command"] = cmd
             training_info["return_code"] = result.returncode
 
+            # HPO互換: hpo.output_metrics_json=... が指定されていれば、既存のメトリクスを集約して出力
+            try:
+                out_json = None
+                for ov in self.extra_overrides:
+                    if ov.startswith("hpo.output_metrics_json="):
+                        out_json = ov.split("=", 1)[1]
+                        break
+                if out_json:
+                    metrics_payload = {"rank_ic": {}, "sharpe": {}}
+                    # 既定保存場所から読み取り（存在すれば）
+                    for pth in [
+                        Path("runs/last/metrics_summary.json"),
+                        Path("runs/last/latest_metrics.json"),
+                    ]:
+                        if pth.exists():
+                            try:
+                                payload = json.loads(pth.read_text())
+                                # 代表キーを可能な範囲でマッピング
+                                if "rank_ic" in payload:
+                                    metrics_payload["rank_ic"].update(payload["rank_ic"])  # type: ignore
+                                if "sharpe" in payload:
+                                    metrics_payload["sharpe"].update(payload["sharpe"])  # type: ignore
+                            except Exception:
+                                pass
+                    # ログからSharpeを抽出（単一値の場合のフォールバック）
+                    if not metrics_payload["sharpe"]:
+                        sr = self._extract_sharpe_ratio(training_info.get("log", ""))
+                        if sr is not None:
+                            metrics_payload["sharpe"] = {"avg": sr}
+                    Path(out_json).parent.mkdir(parents=True, exist_ok=True)
+                    with open(out_json, "w", encoding="utf-8") as f:
+                        json.dump(metrics_payload, f, indent=2)
+                    logger.info(f"HPO metrics emitted: {out_json}")
+            except Exception as _e:
+                logger.warning(f"Failed to emit HPO metrics JSON: {_e}")
+
             logger.info("✅ ATFT-GAT-FAN training completed successfully")
             return True, training_info
 
@@ -539,8 +631,8 @@ class CompleteATFTTrainingPipeline:
             return False, {"error": str(e)}
 
     async def _validate_training_results(
-        self, training_info: Dict
-    ) -> Tuple[bool, Dict]:
+        self, training_info: dict
+    ) -> tuple[bool, dict]:
         """学習結果の検証（Sharpe 0.849の再現確認）"""
         try:
             logger.info("🔍 Validating training results...")
@@ -611,7 +703,7 @@ class CompleteATFTTrainingPipeline:
             try:
                 ms_path = Path("runs/last/metrics_summary.json")
                 if ms_path.exists():
-                    with open(ms_path, "r") as mf:
+                    with open(ms_path) as mf:
                         jm = json.load(mf)
                         if isinstance(jm, dict):
                             sharpe = jm.get("avg_sharpe")
@@ -621,7 +713,7 @@ class CompleteATFTTrainingPipeline:
                 try:
                     metrics_path = Path("runs/last/latest_metrics.json")
                     if metrics_path.exists():
-                        with open(metrics_path, "r") as mf:
+                        with open(metrics_path) as mf:
                             jm = json.load(mf)
                             if isinstance(jm, dict):
                                 sharpe = jm.get("avg_sharpe")
@@ -658,7 +750,7 @@ class CompleteATFTTrainingPipeline:
             logger.error(f"❌ Results validation failed: {e}")
             return False, {"error": str(e)}
 
-    async def _run_portfolio_optimization(self) -> Tuple[bool, Dict]:
+    async def _run_portfolio_optimization(self) -> tuple[bool, dict]:
         """検証用予測ファイルを用いてポートフォリオ最適化を実行"""
         try:
             pred_path = Path("runs/last/predictions_val.parquet")
@@ -747,34 +839,34 @@ class CompleteATFTTrainingPipeline:
 
         return pl.DataFrame(data)
 
-    def _validate_ml_dataset(self, df: pl.DataFrame) -> Dict:
+    def _validate_ml_dataset(self, df: pl.DataFrame) -> dict:
         """MLデータセットの検証"""
         # 最小限必要なカラムのみチェック
         essential_columns = [
             "Code",
             "Date",
             "Open",
-            "High", 
+            "High",
             "Low",
             "Close",
             "Volume"
         ]
-        
+
         # リターン系のカラムがあるかチェック（どれか1つあればOK）
         return_columns = ["returns_1d", "feat_ret_1d", "target", "returns"]
         has_return = any(col in df.columns for col in return_columns)
-        
+
         missing_essential = set(essential_columns) - set(df.columns)
-        
+
         # 十分な特徴量があるかチェック（最低50カラム以上）
         has_enough_features = len(df.columns) >= 50
-        
+
         # 検証結果
-        is_valid = (len(missing_essential) == 0 and 
-                   has_return and 
+        is_valid = (len(missing_essential) == 0 and
+                   has_return and
                    has_enough_features and
                    len(df) > 0)
-        
+
         return {
             "valid": is_valid,
             "missing_columns": list(missing_essential),
@@ -784,7 +876,7 @@ class CompleteATFTTrainingPipeline:
             "column_sample": df.columns[:10] if len(df.columns) > 10 else df.columns,
         }
 
-    def _parse_training_output(self, output: str) -> Dict:
+    def _parse_training_output(self, output: str) -> dict:
         """学習出力の解析"""
         lines = output.split("\n")
 
@@ -800,7 +892,7 @@ class CompleteATFTTrainingPipeline:
 
         return {"log": output, "metrics": metrics, "lines": len(lines)}
 
-    def _extract_sharpe_ratio(self, log: str) -> Optional[float]:
+    def _extract_sharpe_ratio(self, log: str) -> float | None:
         """ログからSharpe比率を抽出"""
         import re
 
@@ -812,7 +904,7 @@ class CompleteATFTTrainingPipeline:
             return float(match.group(1))
         return None
 
-    def _save_complete_training_result(self, result: Dict):
+    def _save_complete_training_result(self, result: dict):
         """完全な学習結果の保存"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         result_file = (
@@ -828,7 +920,7 @@ class CompleteATFTTrainingPipeline:
 async def main():
     """メイン実行関数"""
     import argparse
-    parser = argparse.ArgumentParser(description="Complete ATFT-GAT-FAN Training Pipeline")
+    parser = argparse.ArgumentParser(description="Complete ATFT-GAT-FAN Training Pipeline", add_help=True)
     parser.add_argument("--data-path", type=str, help="Path to ML dataset parquet file")
     parser.add_argument("--max-epochs", type=int, default=75, help="Maximum epochs (0 to skip training)")
     parser.add_argument("--batch-size", type=int, default=2048, help="Batch size")
@@ -840,8 +932,14 @@ async def main():
         action="store_true",
         help="Enable advanced FinancialGraphBuilder during training (EWM+shrinkage)",
     )
-    args = parser.parse_args()
-    
+    parser.add_argument(
+        "--run-safe-pipeline",
+        action="store_true",
+        help="Run SafeTrainingPipeline prior to training for leakage checks",
+    )
+    # 既知以外のオプションはHydraオーバーライドとしてそのままtrain_atft.pyに渡す
+    args, unknown = parser.parse_known_args()
+
     if args.dry_run:
         print("=" * 60)
         print("[DRY-RUN] Complete ATFT-GAT-FAN Training Pipeline")
@@ -856,8 +954,13 @@ async def main():
         print("=" * 60)
         return True, {"dry_run": True}
 
-    pipeline = CompleteATFTTrainingPipeline(data_path=args.data_path, sample_size=args.sample_size)
-    
+    pipeline = CompleteATFTTrainingPipeline(
+        data_path=args.data_path,
+        sample_size=args.sample_size,
+        run_safe_pipeline=bool(args.run_safe_pipeline),
+        extra_overrides=unknown,
+    )
+
     # 引数で設定を上書き（0も有効値として扱う）
     if args.max_epochs is not None:
         pipeline.atft_settings["max_epochs"] = int(args.max_epochs)

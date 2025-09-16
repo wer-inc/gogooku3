@@ -515,6 +515,9 @@ python scripts/data/ml_dataset_builder.py
 
 # 完全ATFT学習（内製ルート）
 python scripts/integrated_ml_training_pipeline.py
+
+# 互換エイリアス（ドキュメント互換の最終版エントリ）
+python scripts/integrated_ml_training_pipeline_final.py
 ```
 
 ### 設定カスタマイズ
@@ -524,6 +527,26 @@ python scripts/integrated_ml_training_pipeline.py
 MIN_COVERAGE_FRAC = 0.98  # 特徴量品質閾値
 OUTLIER_CLIP_QUANTILE = 0.01  # 外れ値クリップ
 WALK_FORWARD_EMBARGO_DAYS = 20  # エンバーゴ日数
+```
+
+### 統合パイプラインの高度な使用例
+
+```bash
+# 1) SafeTrainingPipeline を事前実行して検証（学習はスキップ）
+python scripts/integrated_ml_training_pipeline.py \
+  --data-path output/ml_dataset_latest_full.parquet \
+  --run-safe-pipeline --max-epochs 0
+
+# 2) Hydraオーバーライドを透過的に適用（train.* 名前空間）
+python scripts/integrated_ml_training_pipeline.py \
+  train.optimizer.lr=2e-4 train.trainer.max_epochs=10
+
+# 3) HPOメトリクスをJSONで出力
+python scripts/integrated_ml_training_pipeline.py \
+  hpo.output_metrics_json=tmp/hpo.json train.trainer.max_epochs=1
+
+# 4) 高度グラフ学習を有効化（EWM+shrinkage, 既定補完あり）
+python scripts/integrated_ml_training_pipeline.py --adv-graph-train
 ```
 
 ## 📊 データ仕様

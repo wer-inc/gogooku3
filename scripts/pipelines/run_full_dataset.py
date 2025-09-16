@@ -434,7 +434,7 @@ async def main() -> int:
         print("[DRY-RUN] Build fully enriched 5y dataset")
         print("Steps:")
         print(" 0) Prepare trade-spec (JQuants optional or local fallback)")
-        print(" 0.5) Fetch futures data (if --enable-futures)")
+        print(" 0.5) Fetch futures data (if not --disable-futures)")
         print(" 0.6) Fetch short selling data (if --enable-short-selling)")
         print(" 0.7) Fetch sector short selling data (if --enable-sector-short-selling)")
         print(" 0.8) Fetch Nikkei225 index options (if --enable-nk225-option-features)")
@@ -620,7 +620,8 @@ async def main() -> int:
             logger.warning("No listed_info parquet provided/found; sector enrichment will be skipped")
 
         # Offline futures fallback
-        if args.enable_futures or args.futures_parquet is not None:
+        # Mirror online branch: futures are enabled unless --disable-futures is set
+        if (not getattr(args, "disable_futures", False)) or args.futures_parquet is not None:
             if args.futures_parquet is not None and args.futures_parquet.exists():
                 futures_path = args.futures_parquet
                 logger.info(f"Using provided futures parquet: {futures_path}")

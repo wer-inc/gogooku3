@@ -1,0 +1,396 @@
+# Unified Configuration for Gogooku3 Training Pipeline
+# 統合設定ファイル - 環境変数依存を削減し、一元管理を実現
+
+defaults:
+  - _self_
+  - hardware: default
+  - model: atft_gat_fan
+  - data: jpx_safe
+  - train: production
+
+# Experiment settings
+experiment:
+  name: "unified_training"
+  seed: 42
+  output_dir: "output/unified"
+  enable_checkpointing: true
+  checkpoint_interval: 5
+  log_interval: 10
+
+# Data configuration
+data:
+  # Data paths
+  source:
+    data_dir: null  # Auto-detect if not specified
+    data_format: "parquet"
+    use_cache: true
+    cache_dir: "cache/"
+
+  # Data schema
+  schema:
+    date_column: "Date"
+    code_column: "Code"
+    target_column: "target"
+    feature_columns: null  # Auto-detect if null
+
+  # Time series configuration
+  time_series:
+    sequence_length: 60
+    prediction_horizons: [1, 5, 10, 20]
+    drop_historical_columns: true
+    use_tensor_sequences: true
+
+  # Data validation
+  validation:
+    check_missing: true
+    missing_threshold: 0.3  # 30% missing value threshold
+    check_outliers: true
+    outlier_sigma: 3.0
+    check_target_distribution: true
+    target_skew_threshold: 3.0
+
+# Feature engineering configuration
+features:
+  # Quality features
+  quality:
+    enable: true
+    use_cross_sectional_quantiles: true
+    sigma_threshold: 2.0
+    quantile_bins: 5
+    rolling_window: 20
+
+  # Technical indicators
+  technical:
+    enable: true
+    indicators: ["rsi", "macd", "bollinger", "atr", "vwap"]
+    periods: [14, 20, 50]
+
+  # Market features
+  market:
+    enable: true
+    topix_correlation: true
+    sector_relative: true
+    market_regime: true
+
+  # Feature selection
+  selection:
+    method: "mutual_info"  # Options: mutual_info, random_forest, lasso
+    top_k: 100
+    min_importance: 0.01
+
+# Walk-forward validation configuration
+validation:
+  method: "walk_forward"
+  n_splits: 5
+  embargo_days: 20
+  min_train_days: 252
+  test_size_ratio: 0.2
+  purge_overlap: true
+
+# Cross-sectional normalization
+normalization:
+  cross_sectional:
+    enabled: true
+    method: "polars_v2"  # Use Polars-native implementation
+    robust_clip: 5.0
+    cache_stats: true
+
+  batch_norm:
+    enabled: false  # NEVER enable for time-series to prevent leakage
+
+  online_normalization:
+    enabled: true
+    per_batch: true
+
+# Baseline model configuration
+baseline:
+  enable: true
+  model_type: "lightgbm"
+
+  params:
+    n_estimators: 100
+    learning_rate: 0.1
+    max_depth: 6
+    num_leaves: 31
+    subsample: 0.8
+    colsample_bytree: 0.8
+    objective: "regression"
+    metric: "rmse"
+    boosting_type: "gbdt"
+    verbose: -1
+    n_jobs: -1
+    random_state: ${experiment.seed}
+
+  # Baseline feedback to ATFT
+  feedback:
+    enable: true
+    use_as_early_stopping: true
+    use_as_feature: false  # Meta-model approach
+    min_improvement_ratio: 1.1  # ATFT should be 10% better
+
+# ATFT model configuration
+model:
+  architecture: "atft_gat_fan"
+
+  # Model dimensions
+  input_dim: 8  # After feature conversion
+  hidden_dim: 256
+  num_heads: 8
+  num_layers: 6
+  dropout: 0.1
+
+  # Graph attention
+  graph:
+    enable: true
+    num_nodes: 50
+    edge_threshold: 0.3
+    max_edges_per_node: 10
+    include_negative_correlation: true
+    alpha_init: 0.3
+    alpha_min: 0.1
+    alpha_penalty: 1e-3
+
+  # Frequency adaptive normalization
+  fan:
+    enable: true
+    num_frequencies: 32
+    temperature: 1.0
+
+  # Expected performance
+  target_metrics:
+    sharpe_ratio: 0.849
+    information_coefficient: 0.18
+    rank_ic: 0.20
+
+# Training configuration
+train:
+  # Batch settings
+  batch:
+    train_batch_size: 2048
+    val_batch_size: 2048
+    use_day_batch_sampler: true
+    num_workers: 16
+    pin_memory: true
+    prefetch_factor: 2
+
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    lr: 5e-5
+    weight_decay: 1e-5
+    betas: [0.9, 0.999]
+    eps: 1e-8
+
+    # Learning rate schedule
+    scheduler:
+      type: "cosine"
+      warmup_epochs: 5
+      min_lr: 1e-6
+      T_max: 75
+
+  # Training control
+  trainer:
+    max_epochs: 75
+    gradient_clip_val: 1.0
+    accumulate_grad_batches: 1
+    val_check_interval: 1.0
+    precision: "bf16-mixed"
+
+    # Early stopping
+    early_stopping:
+      monitor: "val/rank_ic_5d"
+      patience: 15
+      mode: "max"
+      min_delta: 0.001
+      use_baseline_threshold: ${baseline.feedback.use_as_early_stopping}
+
+  # Loss configuration
+  loss:
+    type: "robust_mse"  # Options: mse, huber, robust_mse
+    huber_delta: 1.0
+    horizon_weights:
+      1: 1.0
+      5: 0.7
+      10: 0.5
+      20: 0.5
+
+  # Stability settings
+  stability:
+    use_ema_teacher: true
+    ema_decay: 0.999
+    use_layerscale: true
+    layerscale_init: 0.1
+    degeneracy_guard: true
+    degeneracy_warmup_steps: 1000
+    output_noise_std: 0.02
+    head_noise_std: 0.05
+
+# Performance optimization
+performance:
+  # Polars optimization
+  use_polars: true
+  polars_lazy: true
+  polars_streaming: true
+  column_projection: true
+
+  # Memory management
+  memory_limit_gb: 8.0
+  clear_cache_interval: 10
+  gradient_checkpointing: false
+
+  # GPU settings
+  enable_gpu: true
+  mixed_precision: true
+  tf32_mode: true
+  cudnn_benchmark: true
+  expandable_segments: true
+
+  # I/O optimization
+  parquet_compression: "snappy"  # Options: none, snappy, gzip, brotli
+  save_top_k_checkpoints: 3
+  cleanup_old_checkpoints: true
+
+# Hyperparameter optimization (Optuna)
+optuna:
+  enable: false
+  study_name: "gogooku3_optimization"
+  n_trials: 100
+  timeout: 3600  # 1 hour per study
+
+  # Search space
+  search_space:
+    learning_rate:
+      type: "loguniform"
+      low: 1e-6
+      high: 1e-3
+
+    batch_size:
+      type: "categorical"
+      choices: [512, 1024, 2048, 4096]
+
+    dropout:
+      type: "uniform"
+      low: 0.0
+      high: 0.3
+
+    num_layers:
+      type: "int"
+      low: 4
+      high: 8
+
+    hidden_dim:
+      type: "categorical"
+      choices: [128, 256, 512]
+
+  # Optimization settings
+  sampler: "TPESampler"
+  pruner: "MedianPruner"
+  direction: "maximize"
+  metric: "val/sharpe_ratio"
+
+# Monitoring and logging
+monitoring:
+  # Logging backends
+  use_tensorboard: true
+  use_wandb: false
+  use_mlflow: false
+
+  # Tensorboard settings
+  tensorboard:
+    log_dir: "runs/"
+    log_graph: true
+    log_hyperparams: true
+
+  # Weights & Biases settings
+  wandb:
+    project: "gogooku3"
+    entity: null
+    tags: ["atft", "production"]
+
+  # MLflow settings
+  mlflow:
+    tracking_uri: "file:./mlruns"
+    experiment_name: ${experiment.name}
+
+  # Metrics to track
+  track_metrics:
+    - "loss/train"
+    - "loss/val"
+    - "sharpe_ratio/train"
+    - "sharpe_ratio/val"
+    - "ic/train"
+    - "ic/val"
+    - "rank_ic/train"
+    - "rank_ic/val"
+    - "learning_rate"
+    - "epoch"
+
+  # Prediction saving
+  save_predictions:
+    enable: true
+    save_interval: 10
+    save_format: "parquet"
+    include_metadata: true
+
+# Inference configuration
+inference:
+  enable: false
+  checkpoint_path: null  # Use best checkpoint if null
+  batch_size: 4096
+  use_tta: false  # Test-time augmentation
+  ensemble:
+    enable: false
+    checkpoints: []  # List of checkpoint paths
+    weights: []  # Ensemble weights
+
+# Environment variables (for backward compatibility)
+# These will be gradually phased out in favor of config values
+env_overrides:
+  USE_AMP: ${performance.mixed_precision}
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  USE_POLARS: ${performance.use_polars}
+  MEMORY_LIMIT_GB: ${performance.memory_limit_gb}
+  DEGENERACY_GUARD: ${train.stability.degeneracy_guard}
+  USE_DAY_BATCH: ${train.batch.use_day_batch_sampler}
+  FORCE_CONVERT: false
+  USE_ADV_GRAPH_TRAIN: ${model.graph.enable}
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ${experiment.output_dir}/runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${experiment.output_dir}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  launcher:
+    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+  sweeper:
+    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    max_batch_size: null
+  help:
+    app_name: ${hydra.job.name}
+    header: |
+      == Gogooku3 Unified Training Configuration ==
+      This configuration file centralizes all settings for the training pipeline.
+    footer: |
+      Powered by Hydra (https://hydra.cc)
+      Use --cfg hydra to Show the Hydra config.
+  hydra_logging:
+    version: 1
+    disable_existing_loggers: false
+    formatters:
+      simple:
+        format: '[%(levelname)s] - %(message)s'
+    root:
+      level: INFO
+      handlers: []
+  job_logging:
+    version: 1
+    disable_existing_loggers: false
+    formatters:
+      simple:
+        format: '[%(levelname)s] - %(message)s'
+    root:
+      level: INFO
+      handlers: []
+  verbose: false

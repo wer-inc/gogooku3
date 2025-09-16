@@ -1,5 +1,37 @@
 # TODO.md - gogooku3-standalone
 
+## 2025-09-16 Integrated ML Training Pipeline — Done ✅
+
+実装完了チェックリスト（受け入れ済み）
+- --run-safe-pipeline: SafeTrainingPipeline を任意実行（n_splits=2, embargo_days=20, 出力: `output/safe_training/`）。
+- Hydraオーバーライド透過: `parse_known_args()` で未知引数を回収し、そのまま `scripts/train_atft.py` へ転送（`train.*` 名前空間で統一）。
+- HPOメトリクス出力: `hpo.output_metrics_json=PATH` 指定で `runs/last/*.json` を集約。なければログから Sharpe 抽出しJSON保存（親ディレクトリ自動作成）。
+- 高度グラフ学習: `--adv-graph-train` で `USE_ADV_GRAPH_TRAIN=1`。既定補完（`GRAPH_CORR_METHOD=ewm_demean`, `EWM_HALFLIFE=30`, `SHRINKAGE_GAMMA=0.1` など）。
+- データ読み込み優先: `--data-path` → `output/ml_dataset_*.parquet`(最新) → フォールバック。`--sample-size` 対応。実データパスを Safe に引き渡し。
+- 失敗時の扱い: ドライラン/非必須は警告で回避。致命扱いは学習段のみ。
+
+出力物
+- `logs/ml_training.log`, `output/atft_data/...`, `runs/last/...`, `output/results/complete_training_result_*.json`, `output/safe_training/...`（Safe実行時）。
+
+使用例（統合パイプライン: `scripts/integrated_ml_training_pipeline.py`）
+```bash
+# ドライラン
+python scripts/integrated_ml_training_pipeline.py --dry-run
+
+# Safe連携（学習スキップ）
+python scripts/integrated_ml_training_pipeline.py \
+  --data-path output/ml_dataset_latest_full.parquet \
+  --run-safe-pipeline --max-epochs 0
+
+# Hydraオーバーライド
+python scripts/integrated_ml_training_pipeline.py \
+  train.optimizer.lr=2e-4 train.trainer.max_epochs=10
+
+# HPOメトリクス出力
+python scripts/integrated_ml_training_pipeline.py \
+  hpo.output_metrics_json=tmp/hpo.json train.trainer.max_epochs=1
+```
+
 ## 2025-09-07 Sector Enrichment Progress (WIP)
 
 ### ✅ Implemented
