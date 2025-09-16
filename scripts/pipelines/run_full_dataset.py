@@ -553,8 +553,10 @@ async def main() -> int:
                     await fetcher.authenticate(_session_aux)
                 except Exception:
                     pass
-                # Futures data (optional)
-                if not args.disable_futures or (args.futures_parquet is not None):
+                # Futures data (disabled - API not available)
+                # NOTE: /derivatives/futures API is not currently available in J-Quants
+                # Implementation kept for future use but disabled by default
+                if False:  # Disabled: was `not args.disable_futures or (args.futures_parquet is not None)`
                     try:
                         logger.info("Fetching futures data for derivatives features")
                         futures_df = await fetcher.get_futures_daily(_session_aux, start_date, end_date)
@@ -628,9 +630,9 @@ async def main() -> int:
         else:
             logger.warning("No listed_info parquet provided/found; sector enrichment will be skipped")
 
-        # Offline futures fallback
-        # Mirror online branch: futures are enabled unless --disable-futures is set
-        if (not getattr(args, "disable_futures", False)) or args.futures_parquet is not None:
+        # Offline futures fallback (disabled - API not available)
+        # NOTE: Futures features are disabled as /derivatives/futures API is not available
+        if False:  # Disabled: was `(not getattr(args, "disable_futures", False)) or args.futures_parquet is not None`
             if args.futures_parquet is not None and args.futures_parquet.exists():
                 futures_path = args.futures_parquet
                 logger.info(f"Using provided futures parquet: {futures_path}")
@@ -732,10 +734,10 @@ async def main() -> int:
         indices_codes=[s.strip() for s in (getattr(args, "indices_codes", None) or "").split(",") if s.strip()] or None,
         statements_parquet=args.statements_parquet,
         listed_info_parquet=listed_info_path,
-        enable_futures=not getattr(args, "disable_futures", False),
-        futures_parquet=futures_path,
-        futures_categories=[s.strip() for s in (getattr(args, "futures_categories", "") or "").split(",") if s.strip()],
-        futures_continuous=args.futures_continuous,
+        enable_futures=False,  # Disabled: /derivatives/futures API not available
+        futures_parquet=None,  # Disabled: was futures_path
+        futures_categories=[],  # Disabled: no categories
+        futures_continuous=False,  # Disabled: was args.futures_continuous
         nk225_parquet=getattr(args, "nk225_parquet", None),
         reit_parquet=getattr(args, "reit_parquet", None),
         jpx400_parquet=getattr(args, "jpx400_parquet", None),
