@@ -241,7 +241,12 @@ class JQuantsAsyncFetcher:
 
         if not all_rows:
             return pl.DataFrame()
-        df = pl.DataFrame(all_rows)
+        # Build as Utf8 first to avoid builder dtype conflicts; cast later via _float_col
+        keys: set[str] = set()
+        for r in all_rows:
+            keys.update(r.keys())
+        schema = {k: pl.Utf8 for k in keys}
+        df = pl.DataFrame(all_rows, schema=schema, orient="row")
         if "Date" in df.columns:
             df = df.with_columns(pl.col("Date").str.strptime(pl.Date, strict=False))
         if "Close" in df.columns:
@@ -348,6 +353,13 @@ class JQuantsAsyncFetcher:
 
         if not all_rows:
             return pl.DataFrame()
+
+        # Pre-sanitize raw payload to avoid schema conflicts during DataFrame construction
+        # Replace known sentinels ("-", "*", "", "null") with None so that Polars can infer dtypes safely
+        for row in all_rows:
+            for k, v in list(row.items()):
+                if isinstance(v, str) and v.strip().lower() in {"-", "*", "", "null"}:
+                    row[k] = None
 
         df = pl.DataFrame(all_rows)
         cols = df.columns
@@ -608,6 +620,11 @@ class JQuantsAsyncFetcher:
                 if isinstance(data, dict):
                     items = data.get("daily_margin_interest", [])
                     if items:
+                        # Normalize sentinels before creating DataFrame
+                        for item in items:
+                            for key, value in item.items():
+                                if isinstance(value, str) and value in ("-", "*", "", "null", "NULL", "None"):
+                                    item[key] = None
                         rows.extend(items)
                     pagination_key = data.get("pagination_key")
                     if not pagination_key:
@@ -631,6 +648,13 @@ class JQuantsAsyncFetcher:
         if not all_rows:
             return pl.DataFrame()
 
+        # Handle PublishReason struct field separately
+        for row in all_rows:
+            if "PublishReason" in row and isinstance(row["PublishReason"], dict):
+                # Convert dict to string representation to avoid schema issues
+                row["PublishReason"] = str(row["PublishReason"])
+
+        # Create DataFrame - let Polars infer types first
         df = pl.DataFrame(all_rows)
 
         # Normalize dtypes
@@ -644,12 +668,14 @@ class JQuantsAsyncFetcher:
         def _float_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Float64).alias(name)
-            # First ensure all values are strings for safe comparison, then handle conversion
-            col_as_str = pl.col(name).cast(pl.Utf8)
+            # Check if column is already numeric
+            if df[name].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]:
+                return pl.col(name).cast(pl.Float64).alias(name)
+            # Otherwise handle string conversion
             return (
-                pl.when((col_as_str == "-") | (col_as_str == "*") | (col_as_str == "") | (col_as_str.is_null()) | (col_as_str == "null"))
+                pl.when(pl.col(name).cast(pl.Utf8).is_in(["-", "*", "", "null", "NULL", "None"]))
                 .then(None)
-                .otherwise(col_as_str.cast(pl.Float64, strict=False))
+                .otherwise(pl.col(name).cast(pl.Float64, strict=False))
                 .alias(name)
             )
 
@@ -657,8 +683,8 @@ class JQuantsAsyncFetcher:
             pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
             _dtcol("PublishedDate") if "PublishedDate" in cols else pl.lit(None, dtype=pl.Date).alias("PublishedDate"),
             _dtcol("ApplicationDate") if "ApplicationDate" in cols else pl.lit(None, dtype=pl.Date).alias("ApplicationDate"),
-            # Keep PublishReason as struct for now - will be processed in feature engineering
-            pl.col("PublishReason") if "PublishReason" in cols else pl.lit(None).alias("PublishReason"),
+            # PublishReason is now a string (was converted from dict above)
+            pl.col("PublishReason").cast(pl.Utf8) if "PublishReason" in cols else pl.lit(None, dtype=pl.Utf8).alias("PublishReason"),
             # Core margin balances
             _float_col("ShortMarginOutstanding"),
             _float_col("LongMarginOutstanding"),
@@ -716,67 +742,150 @@ class JQuantsAsyncFetcher:
 
         all_futures = []
 
-        for category in priority_categories:
-            try:
-                print(f"Fetching futures data for category: {category}")
+        # First try: Range-based fetch with different parameter names
+        try:
+            print(f"Trying range-based futures fetch: {from_date} to {to_date}")
+            async with self.semaphore:
+                url = f"{self.base_url}/derivatives/futures"
+                # Try different parameter combinations for compatibility
+                param_sets = [
+                    {"from": from_date, "to": to_date},
+                    {"from_date": from_date, "to_date": to_date},
+                    {"start_date": from_date, "end_date": to_date}
+                ]
 
-                # Fetch derivatives futures for specific category
-                # Using pagination similar to other endpoints
-                page = 1
-                while True:
-                    async with self.semaphore:
-                        url = f"{self.base_url}/derivatives/futures"
-                        params = {
-                            "from": from_date,
-                            "to": to_date,
-                            "DerivativesProductCategory": category
-                        }
-
-                        headers = {"Authorization": f"Bearer {self.id_token}"}
-                        async with session.get(url, params=params, headers=headers) as resp:
-                            if resp.status == 404:
-                                print(f"No data found for category {category}")
-                                break
-                            elif resp.status != 200:
-                                print(f"API error for {category}: {resp.status}")
-                                break
-
+                for params in param_sets:
+                    headers = {"Authorization": f"Bearer {self.id_token}"}
+                    async with session.get(url, params=params, headers=headers) as resp:
+                        if resp.status == 200:
                             data = await resp.json()
-
-                            if not data or "derivatives_futures" not in data:
+                            # Try different keys in response
+                            for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                                if key in data and data[key]:
+                                    batch = data[key]
+                                    df_batch = pl.DataFrame(batch)
+                                    if not df_batch.is_empty():
+                                        all_futures.append(df_batch)
+                                        print(f"Retrieved {len(df_batch)} futures records with range query")
+                                        break
+                            if all_futures:
                                 break
+                        elif resp.status == 400:
+                            print(f"Bad request with params {params}, trying next...")
+                            continue
+        except Exception as e:
+            print(f"Range-based futures fetch failed: {e}")
 
-                            batch = data["derivatives_futures"]
-                            if not batch:
-                                break
+        # Second try: Category-based fetch (original method)
+        if not all_futures:
+            for category in priority_categories:
+                try:
+                    print(f"Fetching futures data for category: {category}")
 
-                            # Convert to DataFrame and add category info
-                            df_batch = pl.DataFrame(batch)
-                            if not df_batch.is_empty():
-                                df_batch = df_batch.with_columns([
-                                    pl.lit(category).alias("ProductCategory")
-                                ])
-                                all_futures.append(df_batch)
+                    # Fetch derivatives futures for specific category
+                    # Using pagination similar to other endpoints
+                    page = 1
+                    while True:
+                        async with self.semaphore:
+                            url = f"{self.base_url}/derivatives/futures"
+                            params = {
+                                "from": from_date,
+                                "to": to_date,
+                                "DerivativesProductCategory": category
+                            }
 
-                            # Check if we have more pages (simple check)
-                            if len(batch) < 1000:  # Assume full page is 1000 records
-                                break
-                            page += 1
+                            headers = {"Authorization": f"Bearer {self.id_token}"}
+                            async with session.get(url, params=params, headers=headers) as resp:
+                                if resp.status == 404:
+                                    print(f"No data found for category {category}")
+                                    break
+                                elif resp.status == 400:
+                                    # Try single date fetch as fallback
+                                    print(f"Bad request for range, trying date-by-date for {category}")
+                                    break
+                                elif resp.status != 200:
+                                    print(f"API error for {category}: {resp.status}")
+                                    break
 
-                    # Add delay to respect rate limits
-                    await asyncio.sleep(0.1)
+                                data = await resp.json()
 
-            except Exception as e:
-                print(f"Error fetching futures category {category}: {e}")
-                continue
+                                # Try different keys for compatibility
+                                batch = None
+                                for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                                    if key in data and data[key]:
+                                        batch = data[key]
+                                        break
+
+                                if not batch:
+                                    break
+
+                                # Convert to DataFrame and add category info
+                                df_batch = pl.DataFrame(batch)
+                                if not df_batch.is_empty():
+                                    df_batch = df_batch.with_columns([
+                                        pl.lit(category).alias("ProductCategory")
+                                    ])
+                                    all_futures.append(df_batch)
+
+                                # Check if we have more pages (simple check)
+                                if len(batch) < 1000:  # Assume full page is 1000 records
+                                    break
+                                page += 1
+
+                        # Add delay to respect rate limits
+                        await asyncio.sleep(0.1)
+
+                except Exception as e:
+                    print(f"Error fetching futures category {category}: {e}")
+                    continue
+
+        # Third try: Date-by-date fetch if range fetch failed
+        if not all_futures:
+            print("Trying date-by-date futures fetch as final fallback")
+            import datetime as _dt
+
+            def _parse(d: str) -> _dt.date:
+                if "-" in d:
+                    return _dt.datetime.strptime(d, "%Y-%m-%d").date()
+                return _dt.datetime.strptime(d, "%Y%m%d").date()
+
+            start = _parse(from_date)
+            end = _parse(to_date)
+            cur = start
+
+            while cur <= end and len(all_futures) < 100:  # Limit to prevent excessive API calls
+                if cur.weekday() < 5:  # Business days only
+                    date_str = cur.strftime("%Y-%m-%d")
+                    try:
+                        async with self.semaphore:
+                            url = f"{self.base_url}/derivatives/futures"
+                            params = {"date": date_str}
+                            headers = {"Authorization": f"Bearer {self.id_token}"}
+
+                            async with session.get(url, params=params, headers=headers) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                                        if key in data and data[key]:
+                                            batch = data[key]
+                                            df_batch = pl.DataFrame(batch)
+                                            if not df_batch.is_empty():
+                                                all_futures.append(df_batch)
+                                                print(f"Retrieved futures for {date_str}")
+                                                break
+                        await asyncio.sleep(0.1)
+                    except Exception as e:
+                        print(f"Failed to fetch futures for {date_str}: {e}")
+
+                cur += _dt.timedelta(days=1)
 
         if not all_futures:
-            print("No futures data retrieved")
+            print("No futures data retrieved from any method")
             return pl.DataFrame()
 
         # Combine all categories
         df = pl.concat(all_futures, how="vertical")
-        print(f"Retrieved {len(df)} futures records")
+        print(f"Retrieved {len(df)} futures records total")
 
         # Normalize the data structure
         df = self._normalize_futures_data(df)
