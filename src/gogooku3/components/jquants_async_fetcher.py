@@ -1049,6 +1049,11 @@ class JQuantsAsyncFetcher:
                     data = await resp.json()
                 items = data.get("index_option") or data.get("data") or []
                 if items:
+                    # Normalize sentinels before adding to rows
+                    for item in items:
+                        for key, value in item.items():
+                            if isinstance(value, str) and value in ("-", "*", "", "null", "NULL", "None"):
+                                item[key] = None
                     rows.extend(items)
                 pagination_key = data.get("pagination_key")
                 if not pagination_key:
@@ -1073,13 +1078,13 @@ class JQuantsAsyncFetcher:
         def _dtcol(name: str) -> pl.Expr:
             if name not in df.columns:
                 return pl.lit(None, dtype=pl.Date).alias(name)
-            c = pl.col(name)
-            return (
-                pl.when(c.dtype == pl.Utf8)
-                .then(c.str.strptime(pl.Date, strict=False))
-                .otherwise(c.cast(pl.Date))
-                .alias(name)
-            )
+            # Check actual dtype from dataframe
+            if df[name].dtype == pl.Date:
+                return pl.col(name)
+            elif df[name].dtype in [pl.Utf8, pl.Categorical]:
+                return pl.col(name).str.strptime(pl.Date, strict=False).alias(name)
+            else:
+                return pl.col(name).cast(pl.Date).alias(name)
 
         out = df.with_columns(
             [
@@ -1094,7 +1099,15 @@ class JQuantsAsyncFetcher:
         )
 
         def _num(col: str) -> pl.Expr:
-            return pl.when(pl.col(col) == "").then(None).otherwise(pl.col(col)).cast(pl.Float64)
+            # Check if column is already numeric
+            if col in df.columns and df[col].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]:
+                return pl.col(col).cast(pl.Float64)
+            # Otherwise handle string conversion with multiple sentinel values
+            return (
+                pl.when(pl.col(col).cast(pl.Utf8).is_in(["-", "*", "", "null", "NULL", "None"]))
+                .then(None)
+                .otherwise(pl.col(col).cast(pl.Float64, strict=False))
+            )
 
         for c in [
             "WholeDayOpen",
