@@ -11,3 +11,5 @@ TOPIX指数四本値(/indices/topix)
 業種別空売り比率(/markets/short_selling)
 空売り残高報告(/markets/short_selling_positions)
 日々公表信用取引残高(/markets/daily_margin_interest)
+
+python scripts/pipelines/run_full_dataset.py --jquants --start-date 2020-09-16 --end-date 2025-09-16 2>&1 | tee /tmp/full_dataset_run.log

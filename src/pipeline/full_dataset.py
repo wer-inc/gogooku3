@@ -238,7 +238,7 @@ async def enrich_and_save(
             best_score = -1
             start_int = int(start_date.replace('-', ''))
             end_int = int(end_date.replace('-', ''))
-            for cand in sorted((Path('output')).glob('topix_history_*.parquet')):
+            for cand in sorted((Path('output')).rglob('topix_history_*.parquet')):
                 m = re.search(r"topix_history_(\d{8})_(\d{8})\.parquet$", cand.name)
                 if not m:
                     continue
@@ -486,10 +486,10 @@ async def enrich_and_save(
             if futures_parquet and Path(futures_parquet).exists():
                 futures_df = pl.read_parquet(futures_parquet)
             else:
-                # Auto-discover under output/
-                cands = sorted(output_dir.glob("futures_daily_*.parquet"))
-                if cands:
-                    futures_df = pl.read_parquet(cands[-1])
+                # Auto-discover anywhere under output/
+                path = _find_latest("futures_daily_*.parquet")
+                if path:
+                    futures_df = pl.read_parquet(path)
         except Exception as e:
             logger.warning(f"Failed to read futures parquet: {e}")
 
@@ -518,10 +518,8 @@ async def enrich_and_save(
                             futures_df = fut_df
                             # Save for reuse
                             try:
-                                out = (
-                                    output_dir
-                                    / f"futures_daily_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                                )
+                                out = Path('output/raw/futures'); out.mkdir(parents=True, exist_ok=True)
+                                out = out / f"futures_daily_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
                                 fut_df.write_parquet(out)
                                 logger.info(f"Saved futures parquet: {out}")
                             except Exception:
@@ -612,9 +610,9 @@ async def enrich_and_save(
             w_path = margin_weekly_parquet
         else:
             # Auto-discover under output/
-            cands = sorted(output_dir.glob("weekly_margin_interest_*.parquet"))
-            if cands:
-                w_path = cands[-1]
+            alt = _find_latest("weekly_margin_interest_*.parquet")
+            if alt:
+                w_path = alt
         if enable_margin_weekly or (w_path and w_path.exists()):
             if w_path and w_path.exists():
                 wdf = pl.read_parquet(w_path)
@@ -648,9 +646,9 @@ async def enrich_and_save(
             d_path = daily_margin_parquet
         else:
             # Auto-discover under output/
-            cands = sorted(output_dir.glob("daily_margin_interest_*.parquet"))
-            if cands:
-                d_path = cands[-1]
+            alt = _find_latest("daily_margin_interest_*.parquet")
+            if alt:
+                d_path = alt
         if enable_daily_margin or (d_path and d_path.exists()):
             if d_path and d_path.exists():
                 ddf = pl.read_parquet(d_path)
@@ -1071,7 +1069,8 @@ async def enrich_and_save(
                         await fetcher.authenticate(session)
                         topo_df = await fetcher.fetch_topix_data(session, start_date, end_date)
                         if topo_df is not None and not topo_df.is_empty():
-                            topo = output_dir / f"topix_history_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                            raw_dir = Path('output/raw/market'); raw_dir.mkdir(parents=True, exist_ok=True)
+                            topo = raw_dir / f"topix_history_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
                             try:
                                 import pyarrow.parquet as pq
                                 table = topo_df.to_arrow()

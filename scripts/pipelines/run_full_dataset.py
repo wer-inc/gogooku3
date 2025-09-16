@@ -56,11 +56,12 @@ DEFAULT_LOOKBACK_DAYS = 1826  # ~5 years
 
 
 def _find_latest(glob: str) -> Path | None:
-    """Return the latest matching file in `output/` by lexicographic order.
+    """Return the latest matching file anywhere under `output/`.
 
+    Searches recursively to support the refactored folder layout under output/.
     Files are expected to include sortable date tokens in their names.
     """
-    cands = sorted(Path("output").glob(glob))
+    cands = sorted(Path("output").rglob(glob))
     return cands[-1] if cands else None
 
 
@@ -88,7 +89,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-indices",
         action="store_true",
-        help="Enable indices OHLC features (spreads, breadth)",
+        default=True,  # Default enabled
+        help="Enable indices OHLC features (spreads, breadth) (default: enabled)",
     )
     parser.add_argument(
         "--indices-parquet",
@@ -242,7 +244,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-nk225-option-features",
         action="store_true",
-        help="Enable Nikkei225 index option features build and save (default: off)",
+        default=True,  # Default enabled
+        help="Enable Nikkei225 index option features build and save (default: enabled)",
     )
     parser.add_argument(
         "--index-option-parquet",
@@ -309,7 +312,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-short-selling",
         action="store_true",
-        help="Enable short selling data integration (default: off)",
+        default=True,  # Default enabled
+        help="Enable short selling data integration (default: enabled)",
     )
     parser.add_argument(
         "--short-selling-parquet",
@@ -327,7 +331,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-earnings-events",
         action="store_true",
-        help="Enable earnings announcement events data integration (default: off)",
+        default=True,  # Default enabled
+        help="Enable earnings announcement events data integration (default: enabled)",
     )
     parser.add_argument(
         "--earnings-announcements-parquet",
@@ -345,7 +350,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-sector-short-selling",
         action="store_true",
-        help="Enable sector-wise short selling features (default: off)",
+        default=True,  # Default enabled
+        help="Enable sector-wise short selling features (default: enabled)",
     )
     parser.add_argument(
         "--sector-short-selling-parquet",
@@ -508,15 +514,14 @@ async def main() -> int:
         if trades_df is None or trades_df.is_empty():
             logger.warning("No trade-spec data fetched; will try local fallback for flow features")
         else:
-            output_dir = Path("output")
-            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = Path("output/raw/flow"); output_dir.mkdir(parents=True, exist_ok=True)
             trades_spec_path = output_dir / f"trades_spec_history_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
             trades_df.write_parquet(trades_spec_path)
             logger.info(f"Saved trade-spec: {trades_spec_path}")
         # Save listed_info if fetched (even if trade-spec failed)
         if listed_info_path is None:
             # Name by end date for reproducibility
-            listed_info_path = (Path("output") / f"listed_info_history_{end_dt.strftime('%Y%m%d')}.parquet")
+            listed_info_path = (Path("output/raw/jquants") / f"listed_info_history_{end_dt.strftime('%Y%m%d')}.parquet")
         if 'info_df' in locals() and info_df is not None and not info_df.is_empty():
             try:
                 listed_info_path.parent.mkdir(parents=True, exist_ok=True)
@@ -528,7 +533,7 @@ async def main() -> int:
         wmi_path: Path | None = None
         if 'wmi_df' in locals() and wmi_df is not None and not wmi_df.is_empty():
             try:
-                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
                 wmi_path = outdir / f"weekly_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
                 wmi_df.write_parquet(wmi_path)
                 logger.info(f"Saved weekly margin interest: {wmi_path}")
@@ -538,7 +543,7 @@ async def main() -> int:
         dmi_path: Path | None = None
         if 'dmi_df' in locals() and dmi_df is not None and not dmi_df.is_empty():
             try:
-                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
                 dmi_path = outdir / f"daily_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
                 dmi_df.write_parquet(dmi_path)
                 logger.info(f"Saved daily margin interest: {dmi_path}")
@@ -561,7 +566,7 @@ async def main() -> int:
                         logger.info("Fetching futures data for derivatives features")
                         futures_df = await fetcher.get_futures_daily(_session_aux, start_date, end_date)
                         if futures_df is not None and not futures_df.is_empty():
-                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                            outdir = Path("output/raw/futures"); outdir.mkdir(parents=True, exist_ok=True)
                             futures_path = outdir / f"futures_daily_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
                             futures_df.write_parquet(futures_path)
                             logger.info(f"Saved futures data: {futures_path}")
@@ -682,7 +687,8 @@ async def main() -> int:
         logger.warning(f"Failed to normalize Code dtype in base frame: {e}")
 
     # Use freshly built base frame; avoid overriding with older ml_dataset_latest.parquet
-    output_dir = pipeline.output_dir if hasattr(pipeline, "output_dir") else Path("output")
+    # Save datasets under refactored folder
+    output_dir = Path("output/datasets")
 
     logger.info("=== STEP 2: Enrich with TOPIX + statements + flow (trade-spec) + margin weekly ===")
     # Resolve weekly margin parquet (existing style: auto-discover if not provided; skip gracefully if missing)
@@ -788,7 +794,7 @@ async def main() -> int:
     logger.info("Full enriched dataset saved")
     logger.info(f"  Dataset : {pq_path}")
     logger.info(f"  Metadata: {meta_path}")
-    logger.info(f"  Symlink : {output_dir / 'ml_dataset_latest_full.parquet'}")
+    logger.info(f"  Symlink : {Path('output') / 'ml_dataset_latest_full.parquet'}")
 
     # Optionally build Nikkei225 index option features and save as a separate artifact
     try:
