@@ -211,11 +211,22 @@ class CompleteATFTTrainingPipeline:
             for key, value in self.stability_settings.items():
                 os.environ[key] = str(value)
 
-            # ATFT-GAT-FANのパス設定
-            atft_path = Path("/home/ubuntu/gogooku2/apps/ATFT-GAT-FAN")
+            # ATFT-GAT-FANのパス設定（スタンドアロン運用時は任意）
+            # - ATFT_EXTERNAL_PATH: 既存ATFTリポジトリの場所（未設定なら既定パス）
+            # - REQUIRE_ATFT_EXTERNAL: 1/trueで必須化（既定はオプション）
+            ext_path_env = os.getenv("ATFT_EXTERNAL_PATH", "/home/ubuntu/gogooku2/apps/ATFT-GAT-FAN")
+            atft_path = Path(ext_path_env)
+            require_ext = os.getenv("REQUIRE_ATFT_EXTERNAL", "0").lower() in ("1", "true", "yes")
             if not atft_path.exists():
-                logger.error(f"ATFT-GAT-FAN path not found: {atft_path}")
-                return False
+                if require_ext:
+                    logger.error(
+                        f"ATFT-GAT-FAN external path not found: {atft_path} (set ATFT_EXTERNAL_PATH or disable by REQUIRE_ATFT_EXTERNAL=0)"
+                    )
+                    return False
+                else:
+                    logger.warning(
+                        f"ATFT-GAT-FAN external path not found: {atft_path} — continue in standalone mode"
+                    )
 
             # 必要なディレクトリ作成
             (self.output_dir / "atft_data").mkdir(parents=True, exist_ok=True)

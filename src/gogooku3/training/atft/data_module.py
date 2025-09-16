@@ -12,6 +12,15 @@ import polars as pl
 import numpy as np
 from omegaconf import DictConfig
 
+# Prefer the project DayBatchSampler implementation; fall back to internal placeholder
+try:  # pragma: no cover - runtime import guard
+    from gogooku3.data.samplers.day_batch_sampler import (
+        DayBatchSampler as ExtDayBatchSampler,
+    )
+    _USE_EXT_SAMPLER = True
+except Exception:  # pragma: no cover - fallback for environments without full package
+    _USE_EXT_SAMPLER = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,7 +129,7 @@ class StreamingParquetDataset(Dataset):
         return (features - mean) / std
 
 
-class DayBatchSampler(Sampler):
+class _InternalDayBatchSampler(Sampler):
     """Sampler that groups samples by day for batch processing."""
 
     def __init__(
@@ -175,6 +184,13 @@ class DayBatchSampler(Sampler):
         for indices in self.date_indices.values():
             total_batches += (len(indices) + self.batch_size - 1) // self.batch_size
         return total_batches
+
+
+# Bind the sampler symbol used below
+if _USE_EXT_SAMPLER:
+    DayBatchSampler = ExtDayBatchSampler  # type: ignore
+else:  # pragma: no cover - keep internal placeholder
+    DayBatchSampler = _InternalDayBatchSampler  # type: ignore
 
 
 class ProductionDataModuleV2:
