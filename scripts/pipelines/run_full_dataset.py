@@ -146,7 +146,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-daily-margin",
         action="store_true",
-        help="Enable daily margin interest features (default: off)",
+        help="Enable daily margin interest features (default: auto; on when JQuants or parquet present)",
     )
     # Futures options
     parser.add_argument(
@@ -545,65 +545,74 @@ async def main() -> int:
             except Exception as e:
                 logger.warning(f"Failed to save daily margin parquet: {e}")
 
-        # Fetch futures data for derivatives features (optional)
-        if not args.disable_futures or (args.futures_parquet is not None):
-            try:
-                logger.info("Fetching futures data for derivatives features")
-                futures_df = await fetcher.get_futures_daily(session, start_date, end_date)
-                if futures_df is not None and not futures_df.is_empty():
-                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
-                    futures_path = outdir / f"futures_daily_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                    futures_df.write_parquet(futures_path)
-                    logger.info(f"Saved futures data: {futures_path}")
-                else:
-                    logger.warning("No futures data retrieved from API")
-            except Exception as e:
-                logger.warning(f"Failed to fetch futures data: {e}")
+        # Fetch futures/short-selling within a fresh session (previous session closed)
+        try:
+            async with aiohttp.ClientSession() as _session_aux:
+                # Authenticate if needed (reuse token when available)
+                try:
+                    await fetcher.authenticate(_session_aux)
+                except Exception:
+                    pass
+                # Futures data (optional)
+                if not args.disable_futures or (args.futures_parquet is not None):
+                    try:
+                        logger.info("Fetching futures data for derivatives features")
+                        futures_df = await fetcher.get_futures_daily(_session_aux, start_date, end_date)
+                        if futures_df is not None and not futures_df.is_empty():
+                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                            futures_path = outdir / f"futures_daily_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                            futures_df.write_parquet(futures_path)
+                            logger.info(f"Saved futures data: {futures_path}")
+                        else:
+                            logger.warning("No futures data retrieved from API")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch futures data: {e}")
 
-        # Fetch short selling data for short selling features (optional)
-        if args.enable_short_selling:
-            # Fetch short selling ratio data
-            try:
-                logger.info("Fetching short selling ratio data")
-                short_df = await fetcher.get_short_selling(session, start_date, end_date)
-                if short_df is not None and not short_df.is_empty():
-                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
-                    short_selling_path = outdir / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                    short_df.write_parquet(short_selling_path)
-                    logger.info(f"Saved short selling data: {short_selling_path}")
-                else:
-                    logger.warning("No short selling data retrieved from API")
-            except Exception as e:
-                logger.warning(f"Failed to fetch short selling data: {e}")
+                # Short selling data (optional)
+                if args.enable_short_selling:
+                    try:
+                        logger.info("Fetching short selling ratio data")
+                        short_df = await fetcher.get_short_selling(_session_aux, start_date, end_date)
+                        if short_df is not None and not short_df.is_empty():
+                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                            short_selling_path = outdir / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                            short_df.write_parquet(short_selling_path)
+                            logger.info(f"Saved short selling data: {short_selling_path}")
+                        else:
+                            logger.warning("No short selling data retrieved from API")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch short selling data: {e}")
 
-            # Fetch short selling positions data
-            try:
-                logger.info("Fetching short selling positions data")
-                positions_df = await fetcher.get_short_selling_positions(session, start_date, end_date)
-                if positions_df is not None and not positions_df.is_empty():
-                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
-                    short_positions_path = outdir / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                    positions_df.write_parquet(short_positions_path)
-                    logger.info(f"Saved short selling positions data: {short_positions_path}")
-                else:
-                    logger.warning("No short selling positions data retrieved from API")
-            except Exception as e:
-                logger.warning(f"Failed to fetch short selling positions data: {e}")
+                    # Short positions
+                    try:
+                        logger.info("Fetching short selling positions data")
+                        positions_df = await fetcher.get_short_selling_positions(_session_aux, start_date, end_date)
+                        if positions_df is not None and not positions_df.is_empty():
+                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                            short_positions_path = outdir / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                            positions_df.write_parquet(short_positions_path)
+                            logger.info(f"Saved short selling positions data: {short_positions_path}")
+                        else:
+                            logger.warning("No short selling positions data retrieved from API")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch short selling positions data: {e}")
 
-        # Fetch sector-wise short selling data (optional)
-        if args.enable_sector_short_selling:
-            try:
-                logger.info("Fetching sector-wise short selling data")
-                sector_short_df = await fetcher.get_sector_short_selling(session, start_date, end_date)
-                if sector_short_df is not None and not sector_short_df.is_empty():
-                    outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
-                    sector_short_path = outdir / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                    sector_short_df.write_parquet(sector_short_path)
-                    logger.info(f"Saved sector short selling data: {sector_short_path}")
-                else:
-                    logger.warning("No sector short selling data retrieved from API")
-            except Exception as e:
-                logger.warning(f"Failed to fetch sector short selling data: {e}")
+                # Sector-wise short selling (optional)
+                if args.enable_sector_short_selling:
+                    try:
+                        logger.info("Fetching sector-wise short selling data")
+                        sector_short_df = await fetcher.get_sector_short_selling(_session_aux, start_date, end_date)
+                        if sector_short_df is not None and not sector_short_df.is_empty():
+                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                            sector_short_path = outdir / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                            sector_short_df.write_parquet(sector_short_path)
+                            logger.info(f"Saved sector short selling data: {sector_short_path}")
+                        else:
+                            logger.warning("No sector short selling data retrieved from API")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch sector short selling data: {e}")
+        except Exception as e:
+            logger.warning(f"Aux session for futures/short features failed: {e}")
     else:
         # Offline fallback: look for a local trades_spec parquet
         trades_spec_path = _find_latest("trades_spec_history_*.parquet")
@@ -736,7 +745,9 @@ async def main() -> int:
         margin_weekly_parquet=margin_weekly_parquet,
         margin_weekly_lag=getattr(args, "margin_weekly_lag", 3),
         adv_window_days=getattr(args, "adv_window_days", 20),
-        enable_daily_margin=args.enable_daily_margin or bool(daily_margin_parquet is not None and daily_margin_parquet.exists()),
+        # Default behavior: auto-enable daily margin when JQuants is used or a parquet exists
+        enable_daily_margin=(args.jquants or args.enable_daily_margin 
+                             or bool(daily_margin_parquet is not None and daily_margin_parquet.exists())),
         daily_margin_parquet=daily_margin_parquet,
         # Short selling parameters
         enable_short_selling=args.enable_short_selling,

@@ -618,8 +618,12 @@ async def enrich_and_save(
         if enable_margin_weekly or (w_path and w_path.exists()):
             if w_path and w_path.exists():
                 wdf = pl.read_parquet(w_path)
-                wdf = _ensure_code_utf8(wdf, source="weekly_margin") or wdf
-                df = _ensure_code_utf8(df, source="quotes_for_weekly_margin") or df
+                tmp_w = _ensure_code_utf8(wdf, source="weekly_margin")
+                if tmp_w is not None and not tmp_w.is_empty():
+                    wdf = tmp_w
+                tmp_q = _ensure_code_utf8(df, source="quotes_for_weekly_margin")
+                if tmp_q is not None and not tmp_q.is_empty():
+                    df = tmp_q
                 # Validate and attach
                 _validate_code_type_consistency(df, "quotes (weekly margin)")
                 _validate_code_type_consistency(wdf, "weekly_margin")
@@ -650,8 +654,12 @@ async def enrich_and_save(
         if enable_daily_margin or (d_path and d_path.exists()):
             if d_path and d_path.exists():
                 ddf = pl.read_parquet(d_path)
-                ddf = _ensure_code_utf8(ddf, source="daily_margin") or ddf
-                df = _ensure_code_utf8(df, source="quotes_for_daily_margin") or df
+                tmp_d = _ensure_code_utf8(ddf, source="daily_margin")
+                if tmp_d is not None and not tmp_d.is_empty():
+                    ddf = tmp_d
+                tmp_q = _ensure_code_utf8(df, source="quotes_for_daily_margin")
+                if tmp_q is not None and not tmp_q.is_empty():
+                    df = tmp_q
                 # Validate and attach
                 _validate_code_type_consistency(df, "quotes (daily margin)")
                 _validate_code_type_consistency(ddf, "daily_margin")
@@ -1051,8 +1059,6 @@ async def enrich_and_save(
         if (topo is None or not Path(topo).exists()) and jquants:
             try:
                 import os
-
-                import aiohttp
 
                 from src.gogooku3.components.jquants_async_fetcher import (
                     JQuantsAsyncFetcher,  # type: ignore
