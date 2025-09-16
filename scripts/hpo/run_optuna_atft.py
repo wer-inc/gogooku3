@@ -1,254 +1,235 @@
 #!/usr/bin/env python3
 """
-ATFT-GAT-FAN Optuna Hyperparameter Optimization
-Integrates with existing training pipeline using TPE + Pruning + GPU optimization
+Optuna-based Hyperparameter Optimization for ATFT
+ATFT用のOptunaベースのハイパーパラメータ最適化
+
+train.* 名前空間で統一されたオーバーライドを発行
+hpo.output_metrics_jsonでメトリクスを出力
 """
 
+import argparse
 import json
-import os
+import logging
 import subprocess
 import sys
-import tempfile
-import logging
 from pathlib import Path
-from typing import Dict, Any
 
 import optuna
-from optuna.pruners import MedianPruner
-from optuna.samplers import TPESampler
+from optuna import Trial
 
-# Add project root to path
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-
-logging.basicConfig(level=logging.INFO)
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
+
+# Add repo root to path
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 
 class ATFTOptunaOptimizer:
-    """Optuna-based hyperparameter optimization for ATFT-GAT-FAN"""
+    """ATFT用のOptunaハイパーパラメータ最適化"""
 
-    def __init__(self,
-                 study_name: str = "atft_gat_fan_hpo",
-                 n_trials: int = 40,
-                 n_jobs: int = 1,
-                 storage_url: str = None):
+    def __init__(
+        self,
+        data_path: str,
+        study_name: str = "atft_optimization",
+        n_trials: int = 20,
+        max_epochs_per_trial: int = 10,
+        output_dir: str = "output/hpo",
+    ):
+        self.data_path = Path(data_path)
         self.study_name = study_name
         self.n_trials = n_trials
-        self.n_jobs = n_jobs
-        self.storage_url = storage_url or f"sqlite:///optuna_studies/{study_name}.db"
+        self.max_epochs_per_trial = max_epochs_per_trial
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create storage directory
-        Path("optuna_studies").mkdir(exist_ok=True)
-
-    def run_single_trial(self, hparams: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute single training trial with given hyperparameters"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_json = Path(tmpdir) / "hpo_metrics.json"
-
-            # Build Hydra overrides for hyperparameters
-            overrides = [
-                # Learning parameters
-                f"optimizer.lr={hparams['lr']}",
-                f"optimizer.weight_decay={hparams['weight_decay']}",
-
-                # Model architecture
-                f"model.gat.layer_config.dropout={hparams['dropout']}",
-                f"model.gat.layer_config.edge_dropout={hparams['edge_dropout']}",
-                f"model.gat.architecture.heads=[{hparams['n_heads']},{hparams['n_heads']//2}]",
-                f"model.hidden_size={hparams['hidden_size']}",
-
-                # Loss configuration
-                f"loss.huber_delta={hparams['huber_delta']}",
-                f"loss.multi_horizon_weights=[{','.join(map(str, hparams['horizon_weights']))}]",
-
-                # Training settings (optimized for HPO)
-                "trainer.max_epochs=15",  # Reduced for faster iteration
-                "trainer.enable_checkpointing=false",
-                "trainer.num_sanity_val_steps=0",
-                "trainer.accelerator=gpu",
-                "trainer.devices=1",
-                "trainer.precision=bf16-mixed",  # GPU optimization
-
-                # Early stopping for faster pruning
-                "early_stopping.patience=5",
-                "early_stopping.min_delta=0.0001",
-
-                # HPO output
-                f"hpo.output_metrics_json={out_json}",
-                f"hpo.enabled=true",
-            ]
-
-            # Execute training
-            cmd = [
-                sys.executable,
-                "scripts/integrated_ml_training_pipeline.py",
-                *overrides
-            ]
-
-            try:
-                result = subprocess.run(
-                    cmd,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    cwd=ROOT
-                )
-
-                # Read metrics
-                with open(out_json) as f:
-                    metrics = json.load(f)
-
-                return metrics
-
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Training failed: {e.stderr}")
-                # Return poor metrics for failed trials
-                return {
-                    "rank_ic": {"1d": -0.1, "5d": -0.1, "10d": -0.1, "20d": -0.1},
-                    "sharpe": {"1d": -1.0, "5d": -1.0, "10d": -1.0, "20d": -1.0},
-                    "training_failed": True
-                }
-
-    def objective(self, trial: optuna.Trial) -> float:
-        """Optuna objective function - maximizing weighted multi-horizon RankIC"""
-
-        # Define hyperparameter search space
-        hparams = {
-            # Learning parameters
-            "lr": trial.suggest_float("lr", 1e-5, 5e-3, log=True),
-            "weight_decay": trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
-
-            # Model architecture
-            "dropout": trial.suggest_float("dropout", 0.0, 0.4),
-            "edge_dropout": trial.suggest_float("edge_dropout", 0.0, 0.3),
-            "n_heads": trial.suggest_categorical("n_heads", [2, 4, 6, 8]),
-            "hidden_size": trial.suggest_categorical("hidden_size", [64, 128, 256, 384]),
-
-            # Loss configuration
-            "huber_delta": trial.suggest_float("huber_delta", 0.005, 0.05),
-
-            # Multi-horizon weights (normalized to sum=4 for consistency)
-            "horizon_weights": self._suggest_horizon_weights(trial),
-        }
-
-        # Run training trial
-        metrics = self.run_single_trial(hparams)
-
-        if metrics.get("training_failed", False):
-            return -999.0  # Large penalty for failed trials
-
-        # Calculate weighted multi-horizon RankIC score
-        rank_ic = metrics.get("rank_ic", {})
-
-        # Weights prioritize medium-term performance (5d, 10d)
-        weights = {"1d": 0.2, "5d": 0.35, "10d": 0.35, "20d": 0.1}
-
-        weighted_score = sum(
-            weights[horizon] * rank_ic.get(horizon, -0.1)
-            for horizon in weights.keys()
+        # Create study
+        self.study = optuna.create_study(
+            study_name=self.study_name,
+            direction="maximize",  # Maximize Sharpe ratio
+            sampler=optuna.samplers.TPESampler(seed=42),
+            pruner=optuna.pruners.MedianPruner(
+                n_startup_trials=5,
+                n_warmup_steps=5,
+            ),
         )
 
-        # Report for pruning (use 5d RankIC as primary metric)
-        primary_metric = rank_ic.get("5d", -0.1)
-        trial.report(primary_metric, step=0)
+    def objective(self, trial: Trial) -> float:
+        """Optuna objective function"""
 
-        # Optuna minimizes, so return negative for maximization
-        return -weighted_score
+        # Suggest hyperparameters using train.* namespace
+        lr = trial.suggest_float("train.optimizer.lr", 1e-6, 1e-3, log=True)
+        batch_size = trial.suggest_categorical("train.batch.train_batch_size", [512, 1024, 2048])
+        dropout = trial.suggest_float("train.model.dropout", 0.0, 0.3)
+        num_layers = trial.suggest_int("train.model.num_layers", 4, 8)
+        hidden_dim = trial.suggest_categorical("train.model.hidden_dim", [128, 256, 512])
 
-    def _suggest_horizon_weights(self, trial: optuna.Trial) -> list:
-        """Suggest normalized horizon weights that sum to reasonable total"""
-        raw_weights = [
-            trial.suggest_float("weight_1d", 0.1, 2.0),
-            trial.suggest_float("weight_5d", 0.1, 2.0),
-            trial.suggest_float("weight_10d", 0.1, 2.0),
-            trial.suggest_float("weight_20d", 0.1, 2.0),
+        # Create HPO metrics output path
+        trial_dir = self.output_dir / f"trial_{trial.number}"
+        trial_dir.mkdir(exist_ok=True)
+        hpo_metrics_path = trial_dir / "metrics.json"
+
+        # Build command with overrides
+        cmd = [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "integrated_ml_training_pipeline_final.py"),
+            "--data-path", str(self.data_path),
+            f"--max-epochs={self.max_epochs_per_trial}",
+            f"train.optimizer.lr={lr}",
+            f"train.batch.train_batch_size={batch_size}",
+            f"train.model.dropout={dropout}",
+            f"train.model.num_layers={num_layers}",
+            f"train.model.hidden_dim={hidden_dim}",
+            f"hpo.output_metrics_json={hpo_metrics_path}",
         ]
 
-        # Normalize to sum to 4.0 (consistent with current balanced weights)
-        total = sum(raw_weights)
-        return [4.0 * w / total for w in raw_weights]
+        logger.info(f"Trial {trial.number}: Starting with lr={lr:.2e}, batch_size={batch_size}")
 
-    def optimize(self):
-        """Run hyperparameter optimization study"""
+        try:
+            # Run training
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600,  # 1 hour timeout
+            )
 
-        # Create or load study
-        study = optuna.create_study(
-            study_name=self.study_name,
-            direction="minimize",  # We return negative scores
-            sampler=TPESampler(
-                multivariate=True,
-                n_startup_trials=10,
-                seed=42,
-                consider_prior=True,
-                prior_weight=1.0,
-                consider_magic_clip=True,
-                consider_endpoints=False,
-            ),
-            pruner=MedianPruner(
-                n_startup_trials=8,
-                n_warmup_steps=5,
-                interval_steps=1,
-            ),
-            storage=self.storage_url,
-            load_if_exists=True,
-        )
+            # Load metrics from JSON
+            if hpo_metrics_path.exists():
+                with open(hpo_metrics_path) as f:
+                    metrics = json.load(f)
 
+                # Get Sharpe ratio (or other metric)
+                sharpe = metrics.get("sharpe", 0.0)
+
+                # Report intermediate values for pruning
+                for epoch in range(self.max_epochs_per_trial):
+                    if f"epoch_{epoch}_sharpe" in metrics:
+                        trial.report(metrics[f"epoch_{epoch}_sharpe"], epoch)
+                        if trial.should_prune():
+                            raise optuna.TrialPruned()
+
+                logger.info(f"Trial {trial.number} completed: Sharpe={sharpe:.4f}")
+                return sharpe
+
+            else:
+                logger.warning(f"Trial {trial.number}: No metrics file found")
+                return 0.0
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Trial {trial.number} timed out")
+            raise optuna.TrialPruned()
+        except Exception as e:
+            logger.error(f"Trial {trial.number} failed: {e}")
+            raise optuna.TrialPruned()
+
+    def optimize(self) -> None:
+        """Run optimization"""
         logger.info(f"Starting optimization: {self.n_trials} trials")
-        logger.info(f"Study storage: {self.storage_url}")
 
-        # Run optimization
-        study.optimize(
+        self.study.optimize(
             self.objective,
             n_trials=self.n_trials,
-            n_jobs=self.n_jobs,
-            gc_after_trial=True,
-            show_progress_bar=True,
+            catch=(Exception,),
+            callbacks=[self._callback],
         )
 
-        # Report results
-        best_trial = study.best_trial
-        logger.info(f"Best trial score: {-best_trial.value:.4f}")
-        logger.info(f"Best hyperparameters: {best_trial.params}")
-
         # Save results
-        results_file = Path("optuna_studies") / f"{self.study_name}_results.json"
-        with open(results_file, "w") as f:
-            json.dump({
-                "best_score": -best_trial.value,
-                "best_params": best_trial.params,
-                "n_trials": len(study.trials),
-                "study_name": self.study_name,
-            }, f, indent=2)
+        self._save_results()
 
-        logger.info(f"Results saved to: {results_file}")
+    def _callback(self, study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
+        """Callback after each trial"""
+        if trial.value is not None:
+            logger.info(
+                f"Trial {trial.number}: Sharpe={trial.value:.4f} "
+                f"(Best: {study.best_value:.4f})"
+            )
 
-        return study
+    def _save_results(self) -> None:
+        """Save optimization results"""
+        # Best parameters
+        best_params_file = self.output_dir / "best_params.json"
+        with open(best_params_file, "w") as f:
+            json.dump(self.study.best_params, f, indent=2)
+
+        # All trials
+        trials_file = self.output_dir / "all_trials.json"
+        trials_data = []
+        for trial in self.study.trials:
+            trials_data.append({
+                "number": trial.number,
+                "params": trial.params,
+                "value": trial.value,
+                "state": str(trial.state),
+            })
+        with open(trials_file, "w") as f:
+            json.dump(trials_data, f, indent=2)
+
+        # Summary
+        logger.info("\n" + "=" * 60)
+        logger.info("OPTIMIZATION RESULTS")
+        logger.info("=" * 60)
+        logger.info(f"Best Sharpe: {self.study.best_value:.4f}")
+        logger.info("Best parameters:")
+        for key, value in self.study.best_params.items():
+            logger.info(f"  {key}: {value}")
+        logger.info(f"Results saved to: {self.output_dir}")
 
 
 def main():
     """Main entry point"""
-    import argparse
+    parser = argparse.ArgumentParser(
+        description="Optuna-based hyperparameter optimization for ATFT"
+    )
 
-    parser = argparse.ArgumentParser(description="ATFT-GAT-FAN Hyperparameter Optimization")
-    parser.add_argument("--study-name", default="atft_gat_fan_hpo", help="Optuna study name")
-    parser.add_argument("--n-trials", type=int, default=40, help="Number of optimization trials")
-    parser.add_argument("--n-jobs", type=int, default=1, help="Number of parallel jobs")
-    parser.add_argument("--storage-url", help="Optuna storage URL (default: SQLite)")
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        required=True,
+        help="Path to ML dataset",
+    )
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=20,
+        help="Number of optimization trials",
+    )
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=10,
+        help="Maximum epochs per trial",
+    )
+    parser.add_argument(
+        "--study-name",
+        type=str,
+        default="atft_optimization",
+        help="Optuna study name",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="output/hpo",
+        help="Output directory for results",
+    )
 
     args = parser.parse_args()
 
+    # Run optimization
     optimizer = ATFTOptunaOptimizer(
+        data_path=args.data_path,
         study_name=args.study_name,
         n_trials=args.n_trials,
-        n_jobs=args.n_jobs,
-        storage_url=args.storage_url,
+        max_epochs_per_trial=args.max_epochs,
+        output_dir=args.output_dir,
     )
 
-    study = optimizer.optimize()
-
-    return 0
+    optimizer.optimize()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

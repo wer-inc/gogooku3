@@ -29,6 +29,14 @@ help:
 	@echo "make hpo-status                      - Check HPO study status"
 	@echo "make hpo-mock                        - Run mock HPO for testing"
 	@echo "make hpo-test                        - Test HPO functionality"
+	@echo ""
+	@echo "Integrated ML Training:"
+	@echo "make train-integrated                 - Run full integrated ML training pipeline"
+	@echo "make train-integrated-safe            - Run with SafeTrainingPipeline validation first"
+	@echo "make train-integrated-hpo             - Run with hyperparameter optimization"
+	@echo "make train-atft                       - Run ATFT training directly"
+	@echo "make train-safe                       - Run SafeTrainingPipeline only"
+	@echo "make smoke                            - Quick 1-epoch smoke test"
 
 # Python environment setup
 setup:
@@ -227,3 +235,72 @@ hpo-mock:
 hpo-test:
 	@echo "🧪 Testing HPO functionality"
 	python scripts/hpo/test_hpo_basic.py
+
+# Integrated ML Training targets
+.PHONY: train-integrated train-integrated-safe train-integrated-hpo train-atft train-safe smoke
+
+# Default training settings
+OUTPUT_BASE ?= /home/ubuntu/gogooku3-standalone/output/batch
+CONFIG_PATH ?= configs/atft
+CONFIG_NAME ?= config
+
+train-integrated:
+	@echo "🚀 Running integrated ML training pipeline"
+	@echo "   Output: $(OUTPUT_BASE)"
+	python scripts/integrated_ml_training_pipeline.py \
+		--output-base $(OUTPUT_BASE) \
+		--config-path $(CONFIG_PATH) \
+		--config-name $(CONFIG_NAME)
+
+train-integrated-safe:
+	@echo "🛡️ Running integrated pipeline with SafeTrainingPipeline validation"
+	@echo "   Output: $(OUTPUT_BASE)"
+	python scripts/integrated_ml_training_pipeline.py \
+		--output-base $(OUTPUT_BASE) \
+		--run-safe-pipeline \
+		--config-path $(CONFIG_PATH) \
+		--config-name $(CONFIG_NAME)
+
+train-integrated-hpo:
+	@echo "🎯 Running integrated pipeline with hyperparameter optimization"
+	@echo "   Output: $(OUTPUT_BASE)"
+	@echo "   HPO trials: 20"
+	python scripts/integrated_ml_training_pipeline.py \
+		--output-base $(OUTPUT_BASE) \
+		--run-hpo \
+		--hpo-n-trials 20 \
+		--config-path $(CONFIG_PATH) \
+		--config-name $(CONFIG_NAME)
+
+train-atft:
+	@echo "🧠 Running ATFT training directly"
+	@echo "   Config: $(CONFIG_PATH)/$(CONFIG_NAME)"
+	python scripts/train_atft.py \
+		--config-path $(CONFIG_PATH) \
+		--config-name $(CONFIG_NAME)
+
+train-safe:
+	@echo "🛡️ Running SafeTrainingPipeline only"
+	@echo "   Output: $(OUTPUT_BASE)"
+	python scripts/run_safe_training.py \
+		--data-dir $(OUTPUT_BASE) \
+		--n-splits 2 \
+		--embargo-days 20 \
+		--memory-limit 6 \
+		--verbose
+
+smoke:
+	@echo "💨 Running quick smoke test (1 epoch)"
+	@echo "   Output: $(OUTPUT_BASE)"
+	python scripts/smoke_test.py \
+		--output-base $(OUTPUT_BASE) \
+		--max-epochs 1
+
+# Alias for HPO with ATFT
+.PHONY: hpo-atft
+hpo-atft:
+	@echo "🎯 Running Optuna HPO for ATFT model"
+	python scripts/hpo/run_optuna_atft.py \
+		--output-base $(OUTPUT_BASE) \
+		--n-trials 20 \
+		--timeout 3600

@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+>This document is a concise contributor guide for gogooku3.
+
 ## Project Structure & Module Organization
 - Code: `src/gogooku3/` (CLI, utils, features, models, training, graph, compat)
 - Pipelines: `scripts/` (e.g., `run_safe_training.py`, `train_atft.py`, `pipelines/`)
@@ -17,25 +19,26 @@
 - Quality: `pre-commit run --all-files && ruff check src/ --fix && black . && mypy src/gogooku3 && bandit -r src/`
 
 ## Coding Style & Naming Conventions
-- Python 3.10+, 4 spaces; Black (88), isort (`profile=black`), Ruff
-- Type hints required; `mypy` is strict on `src/gogooku3/`
-- Names: modules `snake_case.py`; classes `CamelCase`; funcs/vars `snake_case`
+- Python 3.10+, 4 spaces. Format with Black (line length 88) and isort (`profile=black`); lint with Ruff.
+- Type hints required; `mypy` runs in strict mode on `src/gogooku3/`.
+- Naming: modules `snake_case.py`; classes `CamelCase`; functions/variables `snake_case`.
 
 ## Testing Guidelines
-- Framework: `pytest`; markers: `unit`, `integration`, `slow`, `smoke`, `requires_api`
-- Location: keep tests in `tests/`; fixtures in `tests/fixtures/`
-- Naming: `tests/test_<module>.py::TestClass::test_case`
-- Deterministic: no network in unit tests; gate external calls with `@pytest.mark.requires_api`
+- Framework: `pytest`; markers: `unit`, `integration`, `slow`, `smoke`, `requires_api`.
+- Naming: `tests/test_<module>.py::TestClass::test_case`.
+- Deterministic: no network in unit tests; gate external calls with `@pytest.mark.requires_api`.
+- Run: `pytest -m "not slow"`; add coverage with the command above.
 
 ## Commit & Pull Request Guidelines
-- Commits: Conventional Commits (e.g., `feat(training): add EMA teacher`)
-- PRs: explain what/why, link issues (`Closes #123`), call out config/docs changes, include key metrics/plots, ensure CI green
+- Commits: Conventional Commits (e.g., `feat(training): add EMA teacher`).
+- PRs: explain what/why, link issues (`Closes #123`), call out config/docs changes, include key metrics/plots, and ensure CI is green.
 
 ## Security & Configuration Tips
-- Secrets via env: `JQUANTS_AUTH_EMAIL`, `JQUANTS_AUTH_PASSWORD`, `WANDB_API_KEY` (never commit `.env`)
-- Data safety: use walk-forward CV with 20‑day embargo; fit normalization on train only
-- Artifacts: logs in `_logs/`, caches in `cache/`, outputs in `output/`
+- Secrets via env: `JQUANTS_AUTH_EMAIL`, `JQUANTS_AUTH_PASSWORD`, `WANDB_API_KEY` (never commit `.env`).
+- Data safety: use walk-forward CV with 20‑day embargo; fit normalization on train only.
+- Artifacts: logs in `_logs/`, caches in `cache/`, outputs in `output/`.
 
 ## Architecture Overview
-- Core: ATFT‑GAT‑FAN multi‑horizon forecasting
-- Pipeline: 7‑step SafeTrainingPipeline with strict leakage prevention
+- Core: ATFT‑GAT‑FAN multi‑horizon forecasting.
+- Pipeline: 7‑step `SafeTrainingPipeline` with strict leakage prevention.
+
