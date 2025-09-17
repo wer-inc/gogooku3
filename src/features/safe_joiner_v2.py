@@ -98,8 +98,15 @@ class SafeJoinerV2:
 
         stm = stm.with_columns([
             pl.col("Code").cast(pl.Utf8),
-            pl.col("DisclosedDate").cast(pl.Date)
+            pl.col("DisclosedDate").cast(pl.Date),
         ])
+
+        # join用の正規化コード（4桁）
+        stm = stm.with_columns(
+            pl.col("Code")
+            .map_elements(CodeNormalizer.normalize_code, return_dtype=pl.Utf8)
+            .alias("_join_code")
+        )
 
         # 開示時刻の処理（同日複数開示の解決）
         if "DisclosedTime" in stm.columns:
@@ -180,17 +187,25 @@ class SafeJoinerV2:
 
         # ソート
         stm = stm.sort(["Code", "effective_date"])
-        base_df = base_df.sort(["Code", "Date"])
+        base_df = base_df.with_columns(
+            pl.col("Code")
+            .cast(pl.Utf8)
+            .map_elements(CodeNormalizer.normalize_code, return_dtype=pl.Utf8)
+            .alias("_join_code")
+        )
+
+        base_df = base_df.sort(["_join_code", "Date"])
 
         # as-of結合
         stmt_cols = [col for col in stm.columns if col.startswith("stmt_")]
 
         # Fix column conflicts: exclude "Code" from right DataFrame since it's used in "by" parameter
+        join_cols = ["_join_code", "effective_date"] + stmt_cols
         result = base_df.join_asof(
-            stm.select(["Code", "effective_date"] + stmt_cols),
+            stm.select(join_cols),
             left_on="Date",
             right_on="effective_date",
-            by="Code",
+            by="_join_code",
             strategy="backward"
         )
 
@@ -199,6 +214,12 @@ class SafeJoinerV2:
             result = result.drop("Code_right")
         if "Date_right" in result.columns:
             result = result.drop("Date_right")
+        if "_join_code_right" in result.columns:
+            result = result.drop("_join_code_right")
+
+        # joinキーを削除
+        if "_join_code" in result.columns:
+            result = result.drop("_join_code")
 
         # インパルスと経過日数
         if "effective_date" in result.columns:
@@ -421,27 +442,262 @@ class SafeJoinerV2:
         return result
 
     def _next_business_day_expr(self, date_col: pl.Expr) -> pl.Expr:
-        """次営業日を計算するPolars式（改善版）"""
-        return (pl.when(date_col.dt.weekday() == 4)  # 金曜
-                .then(date_col + pl.duration(days=3))    # 月曜
-                .when(date_col.dt.weekday() == 5)            # 土曜
-                .then(date_col + pl.duration(days=2))    # 月曜
-                .when(date_col.dt.weekday() == 6)            # 日曜
-                .then(date_col + pl.duration(days=1))    # 月曜
-                .otherwise(date_col + pl.duration(days=1)))   # 翌日
+        """次営業日をTradingCalendarUtil経由で取得"""
+        util = self.calendar_util
+
+        def next_bd(value: datetime | None):
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                base = value.date()
+            else:
+                base = value
+            return util.next_business_day(base)
+
+        return date_col.map_elements(next_bd, return_dtype=pl.Date)
+
+    def _pad_calendar(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return df
+
+        df = df.with_columns(pl.col("Date").cast(pl.Date))
+        date_min = df["Date"].min()
+        date_max = df["Date"].max()
+
+        calendar = pl.date_range(date_min, date_max, interval="1d", eager=True, closed="both").to_frame("Date")
+        codes = df["Code"].unique().to_frame("Code")
+
+        expanded = codes.join(calendar, how="cross")
+        expanded = expanded.join(
+            df.with_columns(pl.lit(0, dtype=pl.Int8).alias("is_calendar_pad")),
+            on=["Code", "Date"],
+            how="left"
+        )
+
+        expanded = expanded.with_columns([
+            pl.col("is_calendar_pad").fill_null(1).cast(pl.Int8),
+            pl.col("Date").map_elements(
+                lambda d: self.calendar_util.is_business_day(d),
+                return_dtype=pl.Boolean
+            ).alias("_is_bd")
+        ])
+
+        expanded = expanded.with_columns(
+            pl.col("_is_bd").cast(pl.Int8).alias("is_trading_day")
+        ).drop("_is_bd")
+
+        return expanded.sort(["Code", "Date"])
 
     def _calculate_statement_features(self, stm: pl.DataFrame) -> pl.DataFrame:
-        """財務諸表特徴量を計算（実装済みの場合はそのまま）"""
-        # 既に計算済みの場合はスキップ
-        if any(col.startswith("stmt_") for col in stm.columns):
-            return stm
+        """財務諸表特徴量を計算"""
+        # 既に十分な stmt_* 列が存在する場合は再計算を省略
+        existing_stmt_cols = {col for col in stm.columns if col.startswith("stmt_")}
+        required_stmt_cols = {
+            "stmt_yoy_sales",
+            "stmt_yoy_op",
+            "stmt_yoy_np",
+            "stmt_opm",
+            "stmt_npm",
+            "stmt_progress_op",
+            "stmt_progress_np",
+            "stmt_rev_fore_op",
+            "stmt_rev_fore_np",
+            "stmt_rev_fore_eps",
+            "stmt_rev_div_fore",
+            "stmt_roe",
+            "stmt_roa",
+            "stmt_change_in_est",
+            "stmt_nc_flag",
+        }
+        if required_stmt_cols.issubset(existing_stmt_cols):
+            # 互換用の別名列のみ欠損している場合があるので補完しておく
+            alias_exprs: list[pl.Expr] = []
+            if "stmt_yoy_sales" in existing_stmt_cols and "stmt_revenue_growth" not in existing_stmt_cols:
+                alias_exprs.append(pl.col("stmt_yoy_sales").alias("stmt_revenue_growth"))
+            if "stmt_opm" in existing_stmt_cols and "stmt_profit_margin" not in existing_stmt_cols:
+                alias_exprs.append(pl.col("stmt_opm").alias("stmt_profit_margin"))
+            return stm.with_columns(alias_exprs) if alias_exprs else stm
 
-        # 簡易的な特徴量追加
-        return stm.with_columns([
-            pl.lit(0.0).alias("stmt_revenue_growth"),
-            pl.lit(0.0).alias("stmt_profit_margin"),
-            pl.lit(0.0).alias("stmt_roe")
+        s = stm
+
+        # Code列を正規化（4桁）
+        if "Code" not in s.columns and "LocalCode" in s.columns:
+            s = s.with_columns(
+                pl.col("LocalCode").cast(pl.Utf8).alias("Code")
+            )
+
+        if "Code" in s.columns:
+            s = s.with_columns(pl.col("Code").cast(pl.Utf8))
+
+        # 欠損があっても安全に型変換
+        s = s.with_columns([
+            pl.col("DisclosedDate").cast(pl.Date, strict=False).alias("DisclosedDate"),
         ])
+
+        # 会計年度の導出（FiscalYear が無ければ CurrentFiscalYearStartDate の年を使用）
+        fiscal_year_expr = None
+        if "FiscalYear" in s.columns:
+            fiscal_year_expr = pl.col("FiscalYear").cast(pl.Int32, strict=False)
+        elif "CurrentFiscalYearStartDate" in s.columns:
+            fiscal_year_expr = (
+                pl.col("CurrentFiscalYearStartDate")
+                .cast(pl.Utf8, strict=False)
+                .str.slice(0, 4)
+                .cast(pl.Int32, strict=False)
+            )
+        else:
+            fiscal_year_expr = pl.lit(None, dtype=pl.Int32)
+
+        type_col = "TypeOfCurrentPeriod" if "TypeOfCurrentPeriod" in s.columns else None
+        quarter_expr = (
+            pl.when(pl.col(type_col).str.contains("1Q"))
+            .then(1)
+            .when(pl.col(type_col).str.contains("2Q"))
+            .then(2)
+            .when(pl.col(type_col).str.contains("3Q"))
+            .then(3)
+            .when(pl.col(type_col).str.contains("FY|4Q"))
+            .then(4)
+            .otherwise(0)
+            if type_col
+            else pl.lit(0)
+        )
+
+        s = s.sort(["Code", "DisclosedDate"]).with_columns([
+            fiscal_year_expr.alias("fiscal_year"),
+            quarter_expr.alias("quarter"),
+        ])
+
+        numeric_cols = [
+            "NetSales",
+            "OperatingProfit",
+            "Profit",
+            "ForecastOperatingProfit",
+            "ForecastProfit",
+            "ForecastEarningsPerShare",
+            "ForecastDividendPerShareAnnual",
+            "Equity",
+            "TotalAssets",
+        ]
+        cast_exprs = [
+            pl.col(col).cast(pl.Float64, strict=False).alias(col)
+            for col in numeric_cols
+            if col in s.columns
+        ]
+        if cast_exprs:
+            s = s.with_columns(cast_exprs)
+
+        # 前年同期値を自己結合で取得
+        yoy_base = s.select([
+            pl.col("Code"),
+            pl.col("fiscal_year").alias("base_fy"),
+            pl.col("quarter").alias("base_q"),
+            pl.col("NetSales").alias("yoy_sales_base"),
+            pl.col("OperatingProfit").alias("yoy_op_base"),
+            pl.col("Profit").alias("yoy_np_base"),
+        ])
+
+        s = s.with_columns((pl.col("fiscal_year") - 1).alias("prev_fy"))
+        s = s.join(
+            yoy_base,
+            left_on=["Code", "prev_fy", "quarter"],
+            right_on=["Code", "base_fy", "base_q"],
+            how="left",
+        ).drop(["base_fy", "base_q"])
+
+        # 直近開示値
+        s = s.with_columns([
+            pl.col("NetSales").shift(1).over("Code").alias("prev_sales"),
+            pl.col("OperatingProfit").shift(1).over("Code").alias("prev_op"),
+            pl.col("Profit").shift(1).over("Code").alias("prev_np"),
+            pl.col("ForecastOperatingProfit").shift(1).over("Code").alias("prev_fore_op"),
+            pl.col("ForecastProfit").shift(1).over("Code").alias("prev_fore_np"),
+            pl.col("ForecastEarningsPerShare").shift(1).over("Code").alias("prev_fore_eps"),
+            pl.col("ForecastDividendPerShareAnnual").shift(1).over("Code").alias("prev_fore_div"),
+        ])
+
+        def pct_change(current: pl.Expr, previous: pl.Expr) -> pl.Expr:
+            return (current - previous) / (previous.abs() + 1e-12)
+
+        s = s.with_columns([
+            pct_change(pl.col("NetSales"), pl.col("yoy_sales_base")).alias("stmt_yoy_sales"),
+            pct_change(pl.col("OperatingProfit"), pl.col("yoy_op_base")).alias("stmt_yoy_op"),
+            pct_change(pl.col("Profit"), pl.col("yoy_np_base")).alias("stmt_yoy_np"),
+
+            (pl.col("OperatingProfit") / (pl.col("NetSales") + 1e-12)).alias("stmt_opm"),
+            (pl.col("Profit") / (pl.col("NetSales") + 1e-12)).alias("stmt_npm"),
+
+            (pl.col("OperatingProfit") / (pl.col("ForecastOperatingProfit") + 1e-12)).alias("stmt_progress_op"),
+            (pl.col("Profit") / (pl.col("ForecastProfit") + 1e-12)).alias("stmt_progress_np"),
+
+            pct_change(pl.col("ForecastOperatingProfit"), pl.col("prev_fore_op")).alias("stmt_rev_fore_op"),
+            pct_change(pl.col("ForecastProfit"), pl.col("prev_fore_np")).alias("stmt_rev_fore_np"),
+            pct_change(pl.col("ForecastEarningsPerShare"), pl.col("prev_fore_eps")).alias("stmt_rev_fore_eps"),
+            pct_change(
+                pl.col("ForecastDividendPerShareAnnual").cast(pl.Float64, strict=False),
+                pl.col("prev_fore_div").cast(pl.Float64, strict=False),
+            ).alias("stmt_rev_div_fore"),
+
+            (pl.col("Profit") / (pl.col("Equity") + 1e-12)).alias("stmt_roe"),
+            (pl.col("Profit") / (pl.col("TotalAssets") + 1e-12)).alias("stmt_roa"),
+        ])
+
+        # 会計方針変更等のフラグ
+        change_expr = pl.lit(False)
+        if "ChangesInAccountingEstimates" in s.columns:
+            change_expr = change_expr | (
+                pl.col("ChangesInAccountingEstimates")
+                .cast(pl.Utf8, strict=False)
+                .str.to_lowercase()
+                .is_in(["true", "1", "yes"])
+                .fill_null(False)
+            )
+        s = s.with_columns(change_expr.alias("stmt_change_in_est"))
+
+        nc_expr = pl.lit(False)
+        if "ChangesBasedOnRevisionsOfAccountingStandard" in s.columns:
+            nc_expr = nc_expr | (
+                pl.col("ChangesBasedOnRevisionsOfAccountingStandard")
+                .cast(pl.Utf8, strict=False)
+                .str.to_lowercase()
+                .is_in(["true", "1", "yes"])
+                .fill_null(False)
+            )
+        if "RetrospectiveRestatement" in s.columns:
+            nc_expr = nc_expr | (
+                pl.col("RetrospectiveRestatement")
+                .cast(pl.Utf8, strict=False)
+                .str.to_lowercase()
+                .is_in(["true", "1", "yes"])
+                .fill_null(False)
+            )
+        s = s.with_columns(nc_expr.alias("stmt_nc_flag"))
+
+        # 互換のための別名列を付与
+        alias_exprs = []
+        if "stmt_yoy_sales" in s.columns:
+            alias_exprs.append(pl.col("stmt_yoy_sales").alias("stmt_revenue_growth"))
+        if "stmt_opm" in s.columns:
+            alias_exprs.append(pl.col("stmt_opm").alias("stmt_profit_margin"))
+        if alias_exprs:
+            s = s.with_columns(alias_exprs)
+
+        drop_cols = [
+            "prev_sales",
+            "prev_op",
+            "prev_np",
+            "prev_fore_op",
+            "prev_fore_np",
+            "prev_fore_eps",
+            "prev_fore_div",
+            "yoy_sales_base",
+            "yoy_op_base",
+            "yoy_np_base",
+            "prev_fy",
+        ]
+        s = s.drop([col for col in drop_cols if col in s.columns])
+
+        return s
 
     def _calculate_flow_features(self, flow: pl.DataFrame) -> pl.DataFrame:
         """フロー特徴量を計算"""

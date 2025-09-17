@@ -201,6 +201,14 @@ async def enrich_and_save(
 
     builder = MLDatasetBuilder(output_dir=output_dir)
 
+    def _fill_from_source(frame: pl.DataFrame, target: str, source: str) -> pl.DataFrame:
+        """Fill nulls in ``target`` using ``source`` (creating the column if missing)."""
+        if source not in frame.columns:
+            return frame
+        if target in frame.columns:
+            return frame.with_columns(pl.col(target).fill_null(pl.col(source)).alias(target))
+        return frame.with_columns(pl.col(source).alias(target))
+
     # Ensure base quotes have Code as Utf8 before any joins
     result = _ensure_code_utf8(df_base, source="base_quotes")
     df_base = result if result is not None and not result.is_empty() else df_base
@@ -367,8 +375,21 @@ async def enrich_and_save(
             except Exception as e:
                 logger.warning(f"Indices local selection failed: {e}")
 
-    # Statements attach if not present
-    if not any(c.startswith("stmt_") for c in df.columns):
+    # Statements attach (refresh when coverage missing)
+    stmt_cols = [c for c in df.columns if c.startswith("stmt_")]
+    stmt_signal_cols = [c for c in stmt_cols if c in {"stmt_revenue_growth", "stmt_profit_margin", "stmt_roe"}]
+    needs_stmt_refresh = True
+    if stmt_signal_cols and len(df) > 0:
+        try:
+            non_null_counts = df.select([
+                pl.col(col).is_not_null().sum().alias(col) for col in stmt_signal_cols
+            ]).row(0)
+            needs_stmt_refresh = not any(count > 0 for count in non_null_counts)
+        except Exception:
+            needs_stmt_refresh = True
+    if needs_stmt_refresh:
+        if stmt_cols:
+            df = df.drop(stmt_cols)
         stm_path: Path | None = None
         if statements_parquet and Path(statements_parquet).exists():
             stm_path = statements_parquet
@@ -668,6 +689,36 @@ async def enrich_and_save(
                     enable_z_scores=True,
                 )
                 logger.info(f"Daily margin features attached from: {d_path}")
+
+                # Rename raw identifiers to avoid collisions with other enrichments
+                rename_daily: dict[str, str] = {}
+                if "PublishedDate" in df.columns:
+                    rename_daily["PublishedDate"] = "dmi_published_date"
+                if "ApplicationDate" in df.columns:
+                    rename_daily["ApplicationDate"] = "dmi_application_date"
+                if "PublishReason" in df.columns:
+                    rename_daily["PublishReason"] = "dmi_publish_reason"
+                if rename_daily:
+                    df = df.rename(rename_daily)
+                if "effective_start" in df.columns:
+                    df = df.drop("effective_start")
+
+                # Backfill canonical margin columns with daily data where possible
+                df = _fill_from_source(df, "margin_d_long_wow", "dmi_d_long_1d")
+                df = _fill_from_source(df, "margin_d_short_wow", "dmi_d_short_1d")
+                df = _fill_from_source(df, "margin_d_net_wow", "dmi_d_net_1d")
+                df = _fill_from_source(df, "margin_d_ratio_wow", "dmi_d_ratio_1d")
+                df = _fill_from_source(df, "margin_d_long_to_adv20", "dmi_d_long_to_adv1d")
+                df = _fill_from_source(df, "margin_d_short_to_adv20", "dmi_d_short_to_adv1d")
+                df = _fill_from_source(df, "margin_long_to_adv20", "dmi_long_to_adv20")
+                df = _fill_from_source(df, "margin_short_to_adv20", "dmi_short_to_adv20")
+                df = _fill_from_source(df, "margin_gross_z52", "dmi_z26_total")
+                df = _fill_from_source(df, "ratio_z52", "dmi_z26_d_short_1d")
+                df = _fill_from_source(df, "long_z52", "dmi_z26_long")
+                df = _fill_from_source(df, "short_z52", "dmi_z26_short")
+                df = _fill_from_source(df, "margin_impulse", "dmi_impulse")
+                df = _fill_from_source(df, "margin_days_since", "dmi_days_since_pub")
+                df = _fill_from_source(df, "is_margin_valid", "is_dmi_valid")
             else:
                 logger.info("Daily margin requested but no parquet provided/found; skipping")
         else:
