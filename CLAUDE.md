@@ -8,81 +8,117 @@ ATFT-GAT-FAN: Advanced financial ML system for Japanese stock market prediction 
 
 ## Essential Commands
 
-### Quick Start
+### Quick Start & Development Setup
 ```bash
 # Install package in development mode
 pip install -e .
 
-# Set up environment and credentials
+# Environment setup
 cp .env.example .env
-# Edit .env with your JQuants API credentials:
-# JQUANTS_AUTH_EMAIL, JQUANTS_AUTH_PASSWORD
+# Edit .env with credentials (JQUANTS_AUTH_EMAIL, JQUANTS_AUTH_PASSWORD)
 
 # Verify installation
 python -c "import gogooku3; print(f'✅ Gogooku3 v{gogooku3.__version__}')"
+
+# Pre-commit hooks setup
+pre-commit install
+pre-commit install -t commit-msg
+```
+
+### Core Training Commands
+```bash
+# 🚀 PRIMARY: Integrated ML Training Pipeline
+python scripts/integrated_ml_training_pipeline.py  # Complete ATFT-GAT-FAN training
+
+# With options
+python scripts/integrated_ml_training_pipeline.py \
+  --run-safe-pipeline      # Run SafeTrainingPipeline validation first
+  --data-path output/ml_dataset_latest_full.parquet
+  --adv-graph-train        # Enable advanced graph training
+  train.optimizer.lr=2e-4  # Hydra overrides
+
+# Alternative approaches
+python scripts/train_atft.py --config-path configs/atft --config-name config
+python scripts/run_safe_training.py --verbose --n-splits 2 --memory-limit 6
+
+# Make targets (convenience wrappers)
+make train-integrated       # Full integrated pipeline
+make train-integrated-safe  # With SafeTrainingPipeline
+make train-atft            # Direct ATFT training
+make smoke                  # Quick 1-epoch test
 ```
 
 ### Testing & Validation
 ```bash
-# Single test execution
-pytest tests/unit/test_specific.py::test_function_name -v
-
-# Test suite by category
+# Test execution patterns
+pytest tests/unit/test_specific.py::test_function_name -v  # Single test
 pytest tests/ -v                # All tests
 pytest tests/unit/ -v           # Unit tests only
-pytest tests/integration/ -v    # Integration tests only
-pytest tests/ -k "smoke" -v     # Smoke tests only
+pytest tests/integration/ -v    # Integration tests
 pytest -m "not slow"            # Skip slow tests
+pytest --ignore=tests/exploratory/  # Skip exploratory tests
 
-# Quick validation
-python scripts/smoke_test.py    # 1-epoch basic functionality test
+# Validation scripts
+python scripts/smoke_test.py    # 1-epoch basic test
 python scripts/validate_improvements.py --detailed  # Performance validation
-
-# Feature testing
-python scripts/test_phase1_features.py  # J-Quants Phase 1 features
-python scripts/test_phase2_features.py  # J-Quants Phase 2 features
+python scripts/test_phase1_features.py  # J-Quants Phase 1
+python scripts/test_phase2_features.py  # J-Quants Phase 2
 ```
 
 ### Data Pipeline
 ```bash
-# Recommended: Full dataset with JQuants API
+# Full dataset pipeline (recommended)
+make dataset-full START=2020-09-06 END=2025-09-06
+# Or directly:
 python scripts/pipelines/run_full_dataset.py --jquants --start-date 2020-09-06 --end-date 2025-09-06
 
-# Alternative: Make command
-make dataset-full START=2020-09-06 END=2025-09-06
+# Research configuration with indices
+make dataset-full-research START=2020-09-06 END=2025-09-06
 
-# Raw data fetching only
+# Raw data fetching
 make fetch-all START=2020-09-06 END=2025-09-06
 
 # Build ML dataset from existing data
 python scripts/data/ml_dataset_builder.py
+
+# Check indices features
+make check-indices DATASET=output/ml_dataset_latest_full.parquet
 ```
 
-### Model Training
+### Research & Analysis Workflows
 ```bash
-# 🚀 RECOMMENDED: Safe training pipeline (7-step validation)
-python scripts/run_safe_training.py --verbose --n-splits 2 --memory-limit 6
+# Complete research bundle
+make research-plus  # Runs baseline + lag audit + report
 
-# Complete ATFT-GAT-FAN training with integrated pipeline
-python scripts/integrated_ml_training_pipeline.py
+# Individual research tasks
+make research-baseline DATASET=output/ml_dataset_latest_full.parquet
+make research-lags PATTERN="output/*.parquet"
+make research-report FACTORS=returns_5d,ret_1d_vs_sec HORIZONS=1,5,10,20
+make research-folds SPLITS=output/eval_splits_5fold_20d.json
 
-# Hydra-configured training with config management
-python scripts/train_atft.py --config-path configs/atft --config-name config
-
-# Quick start training script (shows available commands)
-python start_training.py
+# HPO (Hyperparameter Optimization)
+make hpo-setup        # Setup HPO environment
+make hpo-run HPO_TRIALS=20 HPO_STUDY=atft_hpo_production
+make hpo-status       # Check study status
+make hpo-resume       # Resume existing study
 ```
 
-### Modern CLI Interface (New v2.0.0)
+### Service Management
 ```bash
-# Use the new CLI (framework ready, implementation in progress)
-gogooku3 --version
-gogooku3 train --config configs/atft/train/production.yaml
-gogooku3 data --build-dataset
-gogooku3 infer --model-path models/best_model.pth
+# Docker services
+make docker-up        # Start all services (MinIO, ClickHouse, Redis, Dagster)
+make docker-down      # Stop all services
+make docker-logs      # View service logs
 
-# Legacy script execution (maintained for compatibility)
-python -m gogooku3.compat.script_wrappers train_atft
+# Service access points:
+# - MinIO Console: http://localhost:9001 (minioadmin/minioadmin123)
+# - Dagster UI: http://localhost:3001
+# - Grafana: http://localhost:3000 (admin/gogooku123)
+# - Prometheus: http://localhost:9090
+
+# API server
+gogooku3-api         # Start FastAPI server
+# Or: python scripts/run_api.py
 ```
 
 ### Code Quality & Linting
@@ -96,35 +132,43 @@ mypy src/gogooku3              # Type checking
 pre-commit run --all-files      # Run all hooks
 bandit -r src/                 # Security scanning
 
-# Pre-commit setup
-pre-commit install              # Install git hooks
-pre-commit autoupdate          # Update hook versions
+# Cleanup & Maintenance
+make clean-deprecated APPLY=1   # Remove deprecated scripts
+python scripts/audit_unused.py  # Audit unused code
 ```
 
-### Docker Services
+### Modern CLI Interface (v2.0.0)
 ```bash
-# Start all services (MinIO, ClickHouse, Redis, Dagster)
-make docker-up
-# Access points:
-# - MinIO Console: http://localhost:9001 (minioadmin/minioadmin123)
-# - Dagster UI: http://localhost:3001  
-# - Grafana: http://localhost:3000 (admin/gogooku123)
-# - Prometheus: http://localhost:9090
+# New CLI (framework ready, implementation in progress)
+gogooku3 --version
+gogooku3 train --config configs/atft/train/production.yaml
+gogooku3 data --build-dataset
+gogooku3 infer --model-path models/best_model.pth
 
-make docker-down              # Stop all services
-make docker-logs              # View service logs
+# Legacy compatibility
+python -m gogooku3.compat.script_wrappers train_atft
 ```
 
 ## High-Level Architecture
 
-### Package Structure Overview
-The repository has undergone a major migration (v2.0.0) from scripts to a modern Python package structure while maintaining backward compatibility.
+### Training Pipeline Overview
+The primary training flow uses `scripts/integrated_ml_training_pipeline.py` which orchestrates:
+1. **Data Loading**: From `output/batch/` or specified paths
+2. **Optional SafeTrainingPipeline**: 7-step validation (if `--run-safe-pipeline`)
+3. **Graph Construction**: Advanced graph training with EWM correlation
+4. **ATFT Training**: Via Hydra-configured `train_atft.py`
+5. **HPO Integration**: Optional hyperparameter optimization
+
+### Key Integration Points
+- **Data Flow**: JQuants API → Raw Data → ML Dataset → Training
+- **Model Training**: Hydra configs → ATFT-GAT-FAN → Checkpoints
+- **Validation**: SafeTrainingPipeline → Walk-Forward Splits → Metrics
 
 ### Core Package (src/gogooku3/)
 ```
 src/gogooku3/
 ├── __init__.py              # Public API exports
-├── cli.py                   # Modern command-line interface  
+├── cli.py                   # Modern command-line interface
 ├── data/                    # Data processing layer
 │   ├── loaders/            # ProductionDatasetV3, MLDatasetBuilder
 │   ├── safety/             # CrossSectionalNormalizerV2, WalkForwardSplitterV2
@@ -134,33 +178,17 @@ src/gogooku3/
 │   └── sector_mappings.py  # Industry sector classification
 ├── models/                 # ML architecture
 │   ├── atft_gat_fan.py    # ATFT-GAT-FAN model architecture
-│   └── lightgbm_baseline.py # Financial baseline models  
+│   └── lightgbm_baseline.py # Financial baseline models
 ├── graph/                  # Graph neural networks
 │   └── graph_builder.py   # Financial correlation graphs
 ├── training/               # Training pipeline
 │   └── safe_training_pipeline.py # 7-step integrated pipeline
 ├── utils/                  # Core utilities
 │   ├── settings.py         # Pydantic settings management
-│   └── deduplication.py    # Safe data deduplication
-├── inference/              # Model inference (future)
-└── compat/                 # 🆕 Backward compatibility layer
-    ├── aliases.py          # Legacy component aliases  
+│   └── deduplication.py   # Safe data deduplication
+└── compat/                 # Backward compatibility layer
+    ├── aliases.py          # Legacy component aliases
     └── script_wrappers.py  # Script compatibility wrappers
-```
-
-### Legacy Scripts Directory
-```
-scripts/
-├── run_safe_training.py              # ✅ 7-step safe training pipeline
-├── integrated_ml_training_pipeline.py # ✅ Complete ATFT-GAT-FAN training
-├── train_atft.py                     # ✅ Hydra-configured training
-├── data/
-│   ├── ml_dataset_builder.py        # Enhanced dataset construction
-│   └── fetch_jquants_history.py     # JQuants API data fetching
-├── pipelines/
-│   └── run_full_dataset.py          # Full data pipeline execution
-└── maintenance/
-    └── cleanup_deprecated.py        # Legacy cleanup utilities
 ```
 
 ### Critical Data Safety Architecture
@@ -213,53 +241,137 @@ The system implements strict temporal validation to prevent data leakage in fina
 
 ## Key Configuration Files
 
+### Model Configurations
 - `configs/atft/config.yaml`: Main model configuration
 - `configs/atft/train/production.yaml`: Production training settings
 - `configs/atft/data/jpx_safe.yaml`: Safe data handling
-- `pyproject.toml`: Package dependencies and tools configuration
+- `configs/atft/data/jpx_large_scale.yaml`: Large-scale data config
+
+### Pipeline Configurations
+- `configs/pipeline/full_dataset.yaml`: Production dataset pipeline
+- `configs/pipeline/research_full_indices.yaml`: Research with indices
+
+### Project Configuration
+- `pyproject.toml`: Package dependencies and tools
 - `.pre-commit-config.yaml`: Code quality automation
+- `.env`: Environment variables (create from .env.example)
 
 ## Common Workflows & Patterns
 
-### Development Workflow
-1. **Environment Setup**: `pip install -e .` → `cp .env.example .env` → configure credentials
-2. **Code Changes**: Make changes → `pre-commit run --all-files` → run tests
-3. **Testing**: `python scripts/smoke_test.py` → `pytest tests/integration/ -v` for validation
-4. **Training**: `python scripts/run_safe_training.py --verbose --n-splits 2 --memory-limit 6`
+### Complete Training Workflow (Recommended)
+```bash
+# 1. Build dataset
+make dataset-full START=2020-09-06 END=2025-09-06
 
-### Data Processing Workflow
-1. **Raw Data**: `make fetch-all START=2020-09-06 END=2025-09-06`
-2. **Dataset Build**: `python scripts/pipelines/run_full_dataset.py --jquants --start-date 2020-09-06 --end-date 2025-09-06`
-3. **Validation**: `pytest tests/integration/test_migration_smoke.py -v`
-4. **ML Ready**: Output in `output/` directory as `.parquet` files
+# 2. Run integrated training pipeline
+python scripts/integrated_ml_training_pipeline.py \
+  --run-safe-pipeline \
+  --adv-graph-train
 
-### Training Workflow
-1. **Quick Test**: `python scripts/smoke_test.py` (1-epoch validation)
-2. **Safe Pipeline**: `python scripts/run_safe_training.py` (7-step validation)
-3. **Full Training**: `python scripts/integrated_ml_training_pipeline.py`
-4. **Monitor**: Check logs in `logs/` directory and TensorBoard/W&B dashboards
-
-## J-Quants Feature Pipeline
-
-### Feature Addition Order (Recommended)
-```python
-# Optimal order for feature dependencies
-df = builder.add_enhanced_listed_features(df, fetcher)  # Provides market_cap
-df = builder.add_earnings_features(df, fetcher)         # Phase 1
-df = builder.add_short_position_features(df, fetcher)   # Phase 1
-df = builder.add_enhanced_margin_features(df, fetcher)  # Phase 2 (uses market_cap)
-df = builder.add_option_sentiment_features(df, fetcher) # Phase 2
-df = builder.add_enhanced_flow_features(df, fetcher)    # Phase 2
+# 3. Monitor training
+tensorboard --logdir logs/
 ```
 
-### Feature Categories Summary
-- **Phase 1 (16 features)**: Basic events and positions
-- **Phase 2 (28 features)**: Advanced market microstructure
-- **Total**: 44 new J-Quants derived features
+### Research Workflow
+```bash
+# 1. Generate dataset with research config
+make dataset-full-research START=2020-09-06 END=2025-09-06
+
+# 2. Run research analysis
+make research-plus DATASET=output/ml_dataset_latest_full.parquet
+
+# 3. Review reports
+cat reports/research_report.md
+```
+
+### HPO Workflow
+```bash
+# 1. Setup HPO
+make hpo-setup
+
+# 2. Run optimization
+make hpo-run HPO_TRIALS=20
+
+# 3. Check results
+make hpo-status
+
+# 4. Apply best params to training
+python scripts/integrated_ml_training_pipeline.py \
+  --run-hpo \
+  --hpo-n-trials 20
+```
+
+### Development Best Practices
+1. **Environment Setup**: `pip install -e .` → `cp .env.example .env` → configure credentials
+2. **Before Commits**: `pre-commit run --all-files` → `pytest tests/` → `make smoke`
+3. **Testing Changes**: Use `python scripts/smoke_test.py` for quick validation
+4. **Full Validation**: `make train-integrated-safe` with SafeTrainingPipeline
+
+### Pipeline Integration Patterns
+
+#### Integrated ML Training Pipeline
+The main entry point `scripts/integrated_ml_training_pipeline.py` supports:
+- **SafeTrainingPipeline Integration**: `--run-safe-pipeline` for validation
+- **Advanced Graph Training**: `--adv-graph-train` for EWM correlation graphs
+- **Hydra Overrides**: Pass `train.*` namespace configs directly
+- **HPO Integration**: `--run-hpo` with automatic best params application
+
+#### Data Pipeline Integration
+- **JQuants Fetcher**: Async with rate limiting (75 concurrent max)
+- **Feature Builder**: Technical + fundamental + J-Quants features
+- **Dataset Builder**: Polars-based with memory optimization
+
+## Important Configuration Patterns
+
+### Hydra Configuration Override
+When using `integrated_ml_training_pipeline.py`, pass Hydra overrides directly:
+```bash
+# Examples of common overrides
+train.optimizer.lr=2e-4
+train.trainer.max_epochs=10
+data.batch.batch_size=256
+model.gat.num_heads=4
+```
+
+### Environment Variables
+Key variables from `.env`:
+- `JQUANTS_AUTH_EMAIL`, `JQUANTS_AUTH_PASSWORD`: API credentials
+- `OUTPUT_BASE`: Default `/home/ubuntu/gogooku3-standalone/output/batch`
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: GPU optimization
+- `ADV_GRAPH_TRAIN`: Enable advanced graph training
+
+### Graph Training Configuration
+Advanced graph training (`--adv-graph-train`) uses:
+- EWM demean with halflife=30
+- Shrinkage gamma=0.1
+- K=15 nearest neighbors
+- Edge threshold=0.25
 
 ## Common Issues & Solutions
 
-### Environment & Installation Issues
+### Training Pipeline Issues
+**Integrated Pipeline Fails**
+```bash
+# Check data availability
+ls -la output/batch/*.parquet || ls -la output/*.parquet
+
+# Run with verbose logging
+python scripts/integrated_ml_training_pipeline.py --verbose
+
+# Use fallback direct training
+python scripts/train_atft.py --config-path configs/atft --config-name config
+```
+
+**SafeTrainingPipeline Errors**
+```bash
+# Run standalone first to debug
+python scripts/run_safe_training.py --verbose --n-splits 1 --memory-limit 4
+
+# Then integrate
+python scripts/integrated_ml_training_pipeline.py --run-safe-pipeline
+```
+
+### Installation & Environment Issues
 **Package Import Errors**
 ```bash
 # Ensure package is installed in development mode
@@ -274,7 +386,7 @@ python -c "import gogooku3; print(f'✅ Version: {gogooku3.__version__}')"
 
 **Missing Dependencies**
 ```bash
-# Reinstall with dev dependencies  
+# Reinstall with dev dependencies
 pip install -e ".[dev]"
 
 # Check specific dependencies
@@ -344,7 +456,7 @@ python scripts/run_safe_training.py --memory-limit 4 --verbose
 python scripts/smoke_test.py
 ```
 
-**Slow Performance**  
+**Slow Performance**
 ```bash
 # Enable performance optimizations
 export PERF_POLARS_STREAM=1
@@ -354,20 +466,43 @@ export PERF_MEMORY_OPTIMIZATION=1
 nproc
 ```
 
-## Resource Requirements
+## Resource Requirements & Optimization
 
+### Hardware Requirements
 - **Memory**: 8-16GB (training), up to 200GB (batch processing)
-- **GPU**: A100/V100 recommended for production
-- **API Limits**: 75 concurrent JQuants requests
+- **GPU**: A100/V100 recommended, 8GB+ VRAM minimum
+- **CPU**: 24+ cores recommended for data processing
 - **Storage**: 100GB+ for data and models
 
-## Performance Benchmarks
+### Performance Optimization Tips
+```bash
+# GPU memory optimization
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Polars optimization
+export PERF_POLARS_STREAM=1
+export PERF_MEMORY_OPTIMIZATION=1
+
+# Reduce batch size if OOM
+# Edit configs/atft/train/production.yaml
+batch_size: 256  # Reduce from default 512/1024
+```
+
+## Performance Benchmarks & Targets
+
+### Current Performance
 - **Dataset**: 10.6M samples, 3,973 stocks, 5 years
 - **Pipeline Speed**: 1.9s for 7-component pipeline
 - **Memory Usage**: 7GB peak (Polars optimized)
 - **Training**: RankIC@1d: 0.180 (+20% improvement)
 - **GPU Throughput**: 5130 samples/sec
+
+### ATFT-GAT-FAN Target Metrics
+- **Expected Sharpe**: 0.849
+- **Model Parameters**: 5.6M
+- **Batch Size**: 2048 (bf16 mixed precision)
+- **Max Epochs**: 75
+- **Learning Rate**: 5e-5
 
 ## Migration Status & Compatibility
 
@@ -433,3 +568,38 @@ from scripts.run_safe_training import SafeTrainingPipeline  # Still works
 - `MLDatasetBuilder`: Feature orchestration and integration
 - `ProductionDatasetV3`: Polars-based lazy loading
 - `SafeTrainingPipeline`: 7-step validation pipeline
+
+## Debugging Commands
+
+### Quick Diagnostics
+```bash
+# Check system status
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
+free -h  # Memory status
+df -h    # Disk space
+
+# Validate data
+python -c "import polars as pl; print(pl.scan_parquet('output/*.parquet').collect().shape)"
+
+# Test components
+python scripts/smoke_test.py --max-epochs 1
+python scripts/validate_improvements.py --detailed
+```
+
+### Log Analysis
+```bash
+# Check recent errors
+tail -n 100 logs/ml_training.log | grep ERROR
+
+# Monitor training progress
+tail -f logs/$(ls -t logs/ | head -1)/train.log
+
+# TensorBoard monitoring
+tensorboard --logdir logs/
+```
+
+# important-instruction-reminders
+Do what has been asked; nothing more, nothing less.
+NEVER create files unless they're absolutely necessary for achieving your goal.
+ALWAYS prefer editing an existing file to creating a new one.
+NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
