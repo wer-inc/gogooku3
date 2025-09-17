@@ -179,63 +179,61 @@ def add_publish_reason_flags(d: pl.DataFrame) -> pl.DataFrame:
     # Check if PublishReason column exists and has struct data
     publish_reason_dtype = d["PublishReason"].dtype
 
-    if publish_reason_dtype == pl.Null or d["PublishReason"].null_count() == len(d):
-        # All null data - create default zero flags
-        reason_flags = [
-            "Restricted",
-            "DailyPublication",
-            "Monitoring",
-            "RestrictedByJSF",
-            "PrecautionByJSF",
-            "UnclearOrSecOnAlert"
-        ]
+    reason_flags = [
+        "Restricted",
+        "DailyPublication",
+        "Monitoring",
+        "RestrictedByJSF",
+        "PrecautionByJSF",
+        "UnclearOrSecOnAlert"
+    ]
 
-        flag_exprs = [
+    if publish_reason_dtype == pl.Null or d["PublishReason"].null_count() == len(d):
+        d = d.with_columns([
             pl.lit(0, dtype=pl.Int8).alias(f"dmi_reason_{flag.lower()}")
             for flag in reason_flags
-        ]
-
-        d = d.with_columns(flag_exprs)
-
-        # Add total reason count
-        d = d.with_columns([
-            pl.lit(0, dtype=pl.Int8).alias("dmi_reason_count")
         ])
+        d = d.with_columns(pl.lit(0, dtype=pl.Int8).alias("dmi_reason_count"))
 
-    else:
-        # Helper function to safely extract flags from PublishReason struct
+    elif publish_reason_dtype == pl.Struct:
         def get_reason_flag(key: str) -> pl.Expr:
             return (
                 pl.when(pl.col("PublishReason").is_not_null())
                 .then(
-                    pl.when(pl.col("PublishReason").struct.field(key).cast(pl.Utf8) == "1")
-                    .then(1)
-                    .otherwise(0)
+                    pl.col("PublishReason").struct.field(key).cast(pl.Utf8).fill_null("0")
                 )
-                .otherwise(0)
+                .otherwise("0")
+                .eq("1")
                 .cast(pl.Int8)
                 .alias(f"dmi_reason_{key.lower()}")
             )
 
-        # Expand all six PublishReason flags
-        reason_flags = [
-            "Restricted",
-            "DailyPublication",
-            "Monitoring",
-            "RestrictedByJSF",
-            "PrecautionByJSF",
-            "UnclearOrSecOnAlert"
-        ]
+        d = d.with_columns([get_reason_flag(flag) for flag in reason_flags])
+        d = d.with_columns(
+            sum(pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags).alias("dmi_reason_count")
+        )
 
-        flag_exprs = [get_reason_flag(flag) for flag in reason_flags]
+    elif publish_reason_dtype == pl.Utf8:
+        def contains_flag(flag: str) -> pl.Expr:
+            pattern = f"'{flag}': '1'"
+            return (
+                pl.when(pl.col("PublishReason").is_null() | (pl.col("PublishReason").str.len_chars() == 0))
+                .then(0)
+                .otherwise(pl.col("PublishReason").str.contains(pattern).cast(pl.Int8))
+                .alias(f"dmi_reason_{flag.lower()}")
+            )
 
-        d = d.with_columns(flag_exprs)
+        d = d.with_columns([contains_flag(flag) for flag in reason_flags])
+        d = d.with_columns(
+            sum(pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags).alias("dmi_reason_count")
+        )
 
-        # Add total reason count
+    else:
         d = d.with_columns([
-            sum([pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags])
-            .alias("dmi_reason_count")
+            pl.lit(0, dtype=pl.Int8).alias(f"dmi_reason_{flag.lower()}")
+            for flag in reason_flags
         ])
+        d = d.with_columns(pl.lit(0, dtype=pl.Int8).alias("dmi_reason_count"))
 
     # Add regulation classification ordinal mapping
     reg_map = {
