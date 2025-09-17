@@ -27,7 +27,7 @@ class ValidityFlagManager:
         "stmt": {
             "min_days_since": 0,       # 負値でないこと
             "max_days_since": 365,      # 1年以内の開示
-            "required_cols": ["stmt_revenue_growth", "stmt_profit_margin"]
+            "required_cols": ["stmt_yoy_sales", "stmt_opm"]
         },
         "flow": {
             "min_periods": 13,          # 四半期（13週）以上のデータ
@@ -72,18 +72,31 @@ class ValidityFlagManager:
                 (pl.col(f"{stmt_prefix}days_since_statement") <= 365)
             )
 
-        # 必要な財務指標の存在チェック
-        for col in ValidityFlagManager.REQUIREMENTS["stmt"]["required_cols"]:
-            if col in df.columns:
-                conditions.append(pl.col(col).is_not_null())
+        # 必要な財務指標の存在チェック（互換列も許容）
+        stmt_required = ValidityFlagManager.REQUIREMENTS["stmt"]["required_cols"]
+        optional_alias = {
+            "stmt_yoy_sales": f"{stmt_prefix}revenue_growth",
+            "stmt_opm": f"{stmt_prefix}profit_margin",
+        }
+        for col in stmt_required:
+            prefixed = col if col.startswith(stmt_prefix) else f"{stmt_prefix}{col.removeprefix(stmt_prefix)}"
+            if prefixed in df.columns:
+                conditions.append(pl.col(prefixed).is_not_null())
+                continue
+            alias_col = optional_alias.get(col)
+            if alias_col and alias_col in df.columns:
+                conditions.append(pl.col(alias_col).is_not_null())
 
         # YoY計算の前提条件
-        if f"{stmt_prefix}yoy_revenue" in df.columns:
-            conditions.append(
-                pl.col(f"{stmt_prefix}yoy_revenue").is_not_null() &
-                (pl.col(f"{stmt_prefix}yoy_revenue") > -100) &  # -100%以上
-                (pl.col(f"{stmt_prefix}yoy_revenue") < 1000)    # 1000%未満
-            )
+        yoy_candidates = [f"{stmt_prefix}yoy_sales", f"{stmt_prefix}revenue_growth"]
+        for cand in yoy_candidates:
+            if cand in df.columns:
+                conditions.append(
+                    pl.col(cand).is_not_null()
+                    & (pl.col(cand) > -100)
+                    & (pl.col(cand) < 1000)
+                )
+                break
 
         # 全条件を満たす場合に有効
         if conditions:

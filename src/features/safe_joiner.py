@@ -4,7 +4,7 @@ daily_quotes を基盤として各データソースを時間整合性を保っ�
 """
 
 import logging
-from datetime import time
+from datetime import datetime, time
 
 import polars as pl
 
@@ -96,10 +96,8 @@ class SafeJoiner:
             logger.warning("Statements DataFrame is empty, skipping join")
             return base_df
 
-        # base_dfのCode列も確実に文字列型で0埋め
-        base_df = base_df.with_columns([
-            pl.col("Code").cast(pl.Utf8).str.zfill(4)
-        ])
+        # 基盤データの前処理とカレンダー補完
+        base_df = self.prepare_base_quotes(base_df)
 
         # statementsの準備（LocalCode/Code正規化）
         if "LocalCode" in statements_df.columns:
@@ -425,14 +423,51 @@ class SafeJoiner:
         return result
 
     def _next_business_day_expr(self, date_col: pl.Expr) -> pl.Expr:
-        """次営業日を計算するPolars式（簡易版）"""
-        # TODO: calendar_util を使った正確な実装
-        # 簡易版: +1日（週末なら月曜まで）
-        return (pl.when(date_col.dt.weekday() == 4)  # 金曜
-                .then(date_col + pl.duration(days=3))    # 月曜
-                .when(date_col.dt.weekday() == 5)            # 土曜
-                .then(date_col + pl.duration(days=2))    # 月曜
-                .otherwise(date_col + pl.duration(days=1)))   # 翌日
+        """TradingCalendarUtil を使って次営業日を計算"""
+        util = self.calendar_util
+
+        def to_next_bd(value: datetime | None):
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                base = value.date()
+            else:
+                base = value
+            return util.next_business_day(base)
+
+        return date_col.map_elements(to_next_bd, return_dtype=pl.Date)
+
+    def _pad_calendar(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return df
+
+        df = df.with_columns(pl.col("Date").cast(pl.Date))
+        date_min = df["Date"].min()
+        date_max = df["Date"].max()
+
+        calendar = pl.date_range(date_min, date_max, interval="1d", eager=True, closed="both").to_frame("Date")
+        codes = df["Code"].unique().to_frame("Code")
+
+        expanded = codes.join(calendar, how="cross")
+        expanded = expanded.join(
+            df.with_columns(pl.lit(0, dtype=pl.Int8).alias("is_calendar_pad")),
+            on=["Code", "Date"],
+            how="left"
+        )
+
+        expanded = expanded.with_columns([
+            pl.col("is_calendar_pad").fill_null(1).cast(pl.Int8),
+            pl.col("Date").map_elements(
+                lambda d: self.calendar_util.is_business_day(d),
+                return_dtype=pl.Boolean
+            ).alias("_is_bd")
+        ])
+
+        expanded = expanded.with_columns(
+            pl.col("_is_bd").cast(pl.Int8).alias("is_trading_day")
+        ).drop("_is_bd")
+
+        return expanded.sort(["Code", "Date"])
 
     def _calculate_statement_features(self, stm: pl.DataFrame) -> pl.DataFrame:
         """

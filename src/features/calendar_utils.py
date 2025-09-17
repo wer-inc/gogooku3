@@ -6,6 +6,11 @@ Trading Calendar APIを活用した営業日計算
 import logging
 from datetime import datetime, timedelta
 
+try:
+    import jpholiday
+except ImportError:  # pragma: no cover - optional dependency
+    jpholiday = None
+
 import polars as pl
 
 logger = logging.getLogger(__name__)
@@ -53,10 +58,19 @@ class TradingCalendarUtil:
     def is_business_day(self, date: pl.Date) -> bool:
         """指定日が営業日かどうか判定"""
         if self._business_days is None:
-            # カレンダーがない場合は平日を営業日とする簡易版
+            # カレンダーがない場合でも日本の祝日を考慮した平日判定を行う
             if isinstance(date, str):
                 date = datetime.strptime(date, "%Y-%m-%d").date()
-            return date.weekday() < 5
+            if isinstance(date, datetime):
+                date = date.date()
+
+            if date.weekday() >= 5:
+                return False
+
+            if jpholiday is not None and jpholiday.is_holiday(date):
+                return False
+
+            return True
 
         return date in self._business_days
 
