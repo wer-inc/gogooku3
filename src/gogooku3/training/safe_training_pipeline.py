@@ -18,11 +18,14 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 import polars as pl
 import psutil
+
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    import pandas as pd
 
 # Import components from the new structure
 try:
@@ -201,7 +204,7 @@ class SafeTrainingPipeline:
         )
 
         df_enhanced_pd = generator.generate_quality_features(df_pd)
-        df_enhanced = pl.from_pandas(df_enhanced_pd)
+        df_enhanced = self._safe_polars_from_pandas(df_enhanced_pd)
 
         metrics = {
             "original_columns": df.width,
@@ -214,6 +217,42 @@ class SafeTrainingPipeline:
         print(f"  ⏱️ Duration: {metrics['duration_seconds']:.2f}s")
 
         return df_enhanced, metrics
+
+    @staticmethod
+    def _safe_polars_from_pandas(df_pd: "pd.DataFrame") -> pl.DataFrame:
+        """Convert pandas → polars without relying on multiprocessing semaphores.
+
+        The default ``pl.from_pandas`` call internally spins up a worker pool that
+        requires OS-level semaphore support. In restricted sandboxes (like our CI
+        runner) semaphore creation fails and the whole pipeline aborts. We first
+        try a PyArrow-based conversion which stays single-threaded, then fall back
+        to a manual dictionary-based construction, and only as a last resort call
+        ``pl.from_pandas``.
+        """
+
+        try:
+            import pyarrow as pa
+
+            table = pa.Table.from_pandas(df_pd, preserve_index=False, safe=True)
+            return pl.from_arrow(table)
+        except ModuleNotFoundError:
+            logger.warning("pyarrow not available; falling back to safe dict conversion")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "PyArrow conversion failed (%s); falling back to safe dict conversion",
+                exc,
+            )
+
+        try:
+            # Build column-wise to avoid triggering multiprocessing.
+            data_dict = {col: pl.Series(name=col, values=df_pd[col].tolist()) for col in df_pd.columns}
+            return pl.DataFrame(data_dict)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Dict conversion failed (%s); falling back to pl.from_pandas", exc)
+
+        # Final attempt – this may still fail under harsh sandboxes, but we've
+        # exhausted the semaphore-free options.
+        return pl.from_pandas(df_pd)
 
     def _normalize_features(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict]:
         """Step 3: Apply cross-sectional normalization."""
