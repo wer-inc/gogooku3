@@ -416,10 +416,10 @@ class CompleteATFTTrainingPipeline:
                             "metadata": str(_P(out_dir) / "metadata.json"),
                         }
                     else:
-                        file_paths = converter.convert_ml_dataset_to_atft_format(df, out_dir)
+                        file_paths = converter.convert_to_atft_format(df, out_dir)
                 except Exception:
                     # フォールバック: 常に変換
-                    file_paths = converter.convert_ml_dataset_to_atft_format(df, out_dir)
+                    file_paths = converter.convert_to_atft_format(df, out_dir)
             except ImportError:
                 logger.warning("UnifiedFeatureConverter not found, using direct training approach")
                 # Create mock file paths for compatibility
