@@ -1168,6 +1168,12 @@ async def enrich_and_save(
 
         eps = 1e-12
 
+        try:
+            df = builder.add_interaction_features(df)
+            logger.info("Interaction features attached (x_*)")
+        except Exception as e:
+            logger.warning(f"Interaction features attach skipped: {e}")
+
         # Canonical, ordered schema from docs/DATASET.md
         DOC_COLUMNS: list[str] = [
             # 0) Identifiers/Meta (6)
@@ -1200,6 +1206,11 @@ async def enrich_and_save(
             "mkt_bull_200","mkt_trend_up","mkt_high_vol","mkt_squeeze",
             # 3) Cross (8)
             "beta_60d","alpha_1d","alpha_5d","rel_strength_5d","trend_align_mkt","alpha_vs_regime","idio_vol_ratio","beta_stability_60d",
+            # 3.1) Interaction (24)
+            "x_trend_intensity","x_trend_intensity_g","x_rel_sec_mom","x_z_sec_gap_mom","x_mom_sh_5","x_mom_sh_10",
+            "x_mom_sh_5_mktneu","x_rvol5_dir","x_rvol5_bb","x_squeeze_pressure","x_credit_rev_bias","x_pead_effect",
+            "x_pead_times_mkt","x_rev_gate","x_bo_gate","x_alpha_meanrev_stable","x_flow_smart_rel","x_foreign_relsec",
+            "x_tri_align","x_bbpos_rvol5","x_bbneg_rvol5","x_liquidityshock_mom","x_dmi_impulse_dir","x_breadth_rel",
             # 4) Flow (13 enumerated in docs)
             "flow_foreign_net_ratio","flow_individual_net_ratio","flow_activity_ratio","foreign_share_activity","breadth_pos",
             "flow_foreign_net_z","flow_individual_net_z","flow_activity_z",
