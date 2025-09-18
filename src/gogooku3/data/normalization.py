@@ -50,15 +50,23 @@ class CrossSectionalNormalizer:
         """Transform data using fitted statistics."""
         assert self._stats is not None and self.features is not None, "Must call fit() first"
 
-        out = (df.lazy()
-                 .join(self._stats.lazy(), on=self.date_col, how="left")
-                 .with_columns([
-                     ((pl.col(f) - pl.col(f"{f}__mu")) / pl.col(f"{f}__sigma")).alias(f)
-                     for f in self.features
-                 ])
-                 .drop([f"{f}__mu" for f in self.features] +
-                       [f"{f}__sigma" for f in self.features])
-               ).collect(streaming=True)
+        out = (
+            df.lazy()
+            .join(self._stats.lazy(), on=self.date_col, how="left")
+            .with_columns([
+                pl.col(f"{f}__sigma").abs().clip_min(1e-6).alias(f"{f}__sigma_safe")
+                for f in self.features
+            ])
+            .with_columns([
+                ((pl.col(f) - pl.col(f"{f}__mu")) / pl.col(f"{f}__sigma_safe")).alias(f)
+                for f in self.features
+            ])
+            .drop(
+                [f"{f}__mu" for f in self.features]
+                + [f"{f}__sigma" for f in self.features]
+                + [f"{f}__sigma_safe" for f in self.features]
+            )
+        ).collect(streaming=True)
         return out
 
     def fit_transform(self, train: pl.DataFrame) -> pl.DataFrame:

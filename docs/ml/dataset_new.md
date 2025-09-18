@@ -71,6 +71,7 @@
 * `rsi_2`, `rsi_14`, `rsi_delta = diff(rsi_14)`
 * `macd_signal (MACDs_12_26_9)`, `macd_histogram (MACDh_12_26_9)`
 * `bb_pct_b = (Close−BBL)/(BBU−BBL+ε)`、`bb_bw = (BBU−BBL)/(BBM+ε)`
+  * 互換カラム: 出力では `bb_position`/`bb_width` も同値エイリアスとして並走（旧名対応）
 * `atr_14`, `adx_14`, `stoch_k`
   **背景**：反転/継続の二面性を少数の安定窓で表現。
 
@@ -379,3 +380,235 @@ df = df.sort(['Code','Date']).join_asof(
   - 含意: 同一 `Date` における 33 セクター内の相対頻度（その日のスナップショット）
   - 算出: `count(Date×sector33_id) / count(Date)` を window 集計で算出（join 不要）
   - 位置づけ: 任意（必要に応じて生成）。本仕様の必須列ではない
+
+
+---
+
+### 追加
+
+了解です。いただいた **v1.1 フル仕様** は土台が十分に厚いので、ここからは **「掛け合わせ＝相互作用・ゲーティング・残差化」** を狙って、少数精鋭で効く組み合わせを追加します。
+以下は **(A) 高優先度（まず入れる） → (B) 中優先度 → (C) 実装パターン（Polars断片）** の順です。すべて **t 時点の情報のみ** を使い、`is_*_valid` を尊重して **Null伝播/マスク** を行います。
+
+---
+
+## A. 高優先度（まず入れる：汎化とSharpe底上げに効く）
+
+> **設計原則**
+>
+> 1. 連続値どうしは **Z もしくはスケール整合**（÷volなど）してから積。
+> 2. **レジーム/フラグ × 連続値** は「フラグを float 化して乗算」＝ゲーティング。
+> 3. 相互作用は **“市場→セクター→個別” の三階層** を意識（ノイズ減らし）。
+
+### 1) 市場×個別トレンド整合（Trend Alignment Intensity）
+
+* **狙い**：市場トレンドと個別トレンドが同方向のときだけ、個別トレンドを強調。
+* **式**：`trend_intensity = ma_gap_5_20 * mkt_gap_5_20`
+* **ゲート版**：`trend_intensity_g = ma_gap_5_20 * (mkt_trend_up.cast(Float64) * 2 - 1)`
+  （`mkt_trend_up∈{0,1}` を ±1 に射影して乗算）
+* **効果想定**：継続相場（10–20日）で IC 上乗せ、弱地合いでは過信抑制。
+
+### 2) セクター相対モメンタムの強気/弱気整合
+
+* **式**：`rel_to_sec_5d * sec_mom_20`
+  さらに `z_in_sec_ma_gap_5_20 * sec_mom_20` も有効。
+* **効果**：**“強いセクターで相対的にも強い銘柄”** を抽出（5–10日リスキー逆風を回避）。
+
+### 3) リスク調整モメンタム（局所 Sharpe）
+
+* **式**：`mom_sh_5 = returns_5d / (volatility_20d + ε)`、`mom_sh_10`
+* **mkt 中立**：`(returns_5d - beta_60d*mkt_ret_5d) / (volatility_20d + ε)`
+* **効果**：**ボラに見合った上昇**を拾い、ノイズの高い小型株で特に有効。
+
+### 4) 出来高ショック × 価格方向（フロー実体の確認）
+
+* **式**：`rvol_5 = Volume/volume_ma_5`（既存）
+  相互作用：`rvol_5 * returns_1d.sign()`、`rvol_5 * bb_pct_b`
+* **効果**：**出来高伴う上昇/下落**だけを強調（フェイク・ブレイク排除）。
+
+### 5) スクイーズ検知（ショート×上昇）
+
+* **式**：`squeeze_pressure = dmi_short_to_adv20 * rel_strength_5d.clip_min(0)`
+  代替：`dmi_short_to_adv20 * (returns_1d.clip_min(0))`
+* **効果**：**ショート高水準×上昇転換**で踏み上げ捕捉（1–5日寄与）。
+
+### 6) 信用フローの偏り × 反転/継続の切替
+
+* **式**：`rev_bias = (dmi_credit_ratio - 1).zscore_26 * (-z_close_20).clip_min(0)`
+  （**信用買い偏重**が高いほど **過熱×逆張り**を強く出す）
+* **効果**：短期リバーサルの精度向上（特に高ボラ日）。
+
+### 7) PEADゲーティング（決算ドリフトの時間減衰）
+
+* **式**：`pead_score = (stmt_rev_fore_op + stmt_progress_op).fill_null(0)`（出力時は `stmt_progress_*`/`stmt_rev_fore_*` を ±100 にクリップして外れ値を抑制）
+  `pead_effect = pead_score * exp(- stmt_days_since_statement / τ)`（τ≈5営業日）
+* **効果**：**決算サプライズ→ドリフト**の典型を連続値で表現（5–10日）。
+
+### 8) マーケット・レジームゲート × リバーサル/ブレイク
+
+* **式**：`rev_gate = (mkt_high_vol.cast(Float64)) * (-z_close_20).clip_min(0)`
+  `bo_gate = ((~mkt_high_vol).cast(Float64)) * donchian_break_20`
+* **効果**：**高ボラ＝逆張り優位／低ボラ＝ブレイク優位** を自動切替。
+
+### 9) αの平均回帰 × β安定度
+
+* **式**：`alpha_meanrev = (-alpha_1d) * beta_stability_60d`
+* **効果**：βが安定している銘柄ほど **αは翌日戻りやすい** 傾向を利用（1–3日）。
+
+### 10) フロー（週次）× 個別相対強弱
+
+* **式**：`flow_smart_idx * rel_strength_5d`、`flow_foreign_net_z * rel_to_sec_5d`
+* **効果**：**主体別フローが支える相対強さ**を抽出（5–10日）。
+
+---
+
+## B. 中優先度（余力があれば：ノイズを削る・特殊局面で効く）
+
+### 11) 三階層の合成（市場×セクター×個別）
+
+* **式**：`tri_align = (mkt_gap_5_20>0).int8() * (sec_mom_20>0).int8() * (ma_gap_5_20)`
+* **効果**：**追い風×追い風×追い風** のときのみ個別トレンド採用（偽陽性低減）。
+
+### 12) 乖離の符号別相互作用（Hinge）
+
+* **式**：`pos_b = (bb_pct_b - 1).clip_min(0)`、`neg_b = (0 - bb_pct_b).clip_min(0)`
+  `pos_b * rvol_5`、`neg_b * rvol_5`
+* **効果**：**上限側/下限側**で反応を分離（非線形性の直交化）。
+
+### 13) 流動性ショック × 短期モメンタム
+
+* **式**：`liquidity_shock = (turnover_rate / turnover_rate.shift(1) - 1).clip(−p, p)`
+  `liquidity_shock * returns_5d`
+* **効果**：出来高急変を伴う継続/反転の識別。
+
+### 14) 相関変化感度（対TOPIX）
+
+* **式**：`corr_shift = (beta_60d - beta_20d)`（なければβ差近似）
+  `corr_break = corr_shift * returns_5d`
+* **効果**：**共動崩れ**をとらえてリスクイベント検知。
+
+### 15) 決算×市場地合いの符号整合
+
+* **式**：`pead_effect * (mkt_trend_up.cast(Float64)*2-1)`
+* **効果**：良決算でも弱地合いは伸びにくい／逆も然りを織り込む。
+
+### 16) dmi\_impulse × 短期方向
+
+* **式**：`dmi_impulse.cast(Float64) * returns_1d`、`dmi_days_since_pub` を指数減衰で重み付け
+* **効果**：**発表直後だけ** 影響が強い日次信用のクセを抽出。
+
+### 17) ブレッドス × 個別
+
+* **式**：`flow_breadth_pos * rel_strength_5d`
+* **効果**：**広範な買い越し日**に相対強い銘柄の追随期待（5–10日）。
+
+---
+
+## C. 実装パターン（Polars 最小断片）
+
+> **方針**：
+>
+> * 相互作用は **Null を尊重**（どちらかが NaN なら NaN）。
+> * ただし **“ゲート（0/1）×連続値”** は `fill_null(0.0)` で 0 に倒すと扱いやすい。
+> * 過度な次元爆発を避けるため **上記 10〜15 本に限定**。
+
+```python
+import polars as pl
+
+def hinge_pos(col): return pl.col(col).clip_min(0.0)
+def hinge_neg(col): return (-pl.col(col)).clip_min(0.0)
+
+df = df.with_columns([
+    # 1) 市場×個別トレンド
+    (pl.col("ma_gap_5_20") * pl.col("mkt_gap_5_20")).alias("x_trend_intensity"),
+    (pl.col("ma_gap_5_20") * (pl.col("mkt_trend_up").cast(pl.Float64)*2-1)).alias("x_trend_intensity_g"),
+
+    # 2) セクター相対×セクターモメンタム
+    (pl.col("rel_to_sec_5d") * pl.col("sec_mom_20")).alias("x_rel_sec_mom"),
+
+    # 3) 局所Sharpe
+    (pl.col("returns_5d") / (pl.col("volatility_20d")+1e-12)).alias("x_mom_sh_5"),
+    ((pl.col("returns_5d") - pl.col("beta_60d")*pl.col("mkt_ret_5d")) /
+        (pl.col("volatility_20d")+1e-12)).alias("x_mom_sh_5_mktneu"),
+
+    # 4) 出来高ショック×方向
+    (pl.col("volume_ratio_5") * pl.col("returns_1d").sign()).alias("x_rvol5_dir"),
+    (pl.col("volume_ratio_5") * pl.col("bb_pct_b")).alias("x_rvol5_bb"),
+
+    # 5) スクイーズ
+    (pl.col("dmi_short_to_adv20") * hinge_pos("rel_strength_5d")).alias("x_squeeze_pressure"),
+
+    # 6) 信用過熱×逆張り
+    ((pl.col("dmi_credit_ratio") - 1.0).rolling_mean(26).over("Code")
+        .fill_null(0) * hinge_neg("z_close_20")).alias("x_credit_rev_bias"),
+
+    # 7) PEAD 減衰
+    ((pl.col("stmt_rev_fore_op").fill_null(0) + pl.col("stmt_progress_op").fill_null(0)) *
+     ( (-pl.col("stmt_days_since_statement")/5.0).exp() )).alias("x_pead_effect"),
+
+    # 8) レジームゲート
+    (pl.col("mkt_high_vol").cast(pl.Float64) * hinge_neg("z_close_20")).alias("x_rev_gate"),
+    ((1.0 - pl.col("mkt_high_vol").cast(pl.Float64)) *
+     pl.col("ma_gap_5_20").gt(0).cast(pl.Float64)).alias("x_bo_gate"),
+
+    # 9) α平均回帰×β安定
+    ((-pl.col("alpha_1d")) * pl.col("beta_stability_60d")).alias("x_alpha_meanrev_stable"),
+
+    # 10) 週次フロー×相対強弱（Nullは落ちる）
+    (pl.col("flow_smart_idx") * pl.col("rel_strength_5d")).alias("x_flow_smart_rel"),
+    (pl.col("flow_foreign_net_z") * pl.col("rel_to_sec_5d")).alias("x_foreign_relsec"),
+
+    # 11) 三階層の合成（ブール×ブール×連続）
+    (pl.col("mkt_gap_5_20").gt(0).cast(pl.Float64) *
+     pl.col("sec_mom_20").gt(0).cast(pl.Float64) *
+     pl.col("ma_gap_5_20")).alias("x_tri_align"),
+
+    # 12) 乖離の符号別×出来高
+    (hinge_pos("bb_pct_b") * pl.col("volume_ratio_5")).alias("x_bbpos_rvol5"),
+    (hinge_neg("bb_pct_b") * pl.col("volume_ratio_5")).alias("x_bbneg_rvol5"),
+
+    # 13) 流動性ショック×モメンタム
+    (((pl.col("turnover_rate")/(pl.col("turnover_rate").shift(1)+1e-12)) - 1.0)
+        .clip(-0.5, 0.5) * pl.col("returns_5d")).alias("x_liquidityshock_mom"),
+
+    # 15) 決算×地合い
+    (pl.col("x_pead_effect") * (pl.col("mkt_trend_up").cast(pl.Float64)*2-1)).alias("x_pead_times_mkt"),
+
+    # 16) dmi インパルス×方向（インパルス Null は0に）
+    (pl.col("dmi_impulse").cast(pl.Float64).fill_null(0.0) * pl.col("returns_1d")).alias("x_dmi_impulse_dir"),
+
+    # 17) ブレッドス×個別
+    (pl.col("flow_breadth_pos") * pl.col("rel_strength_5d")).alias("x_breadth_rel"),
+])
+```
+
+> **メモ**
+>
+> * `volume_ratio_5` は `Volume/MA5(Volume)` 相当（仕様に合わせて置換）。
+> * `donchian_break_20` が未定義なら `Close > rolling_max_20(Close)` を bool→float 化で代替。
+> * 項目が未算出の列は、まず既存パイプで生成・正規名に合わせてください。
+
+---
+
+## どう効くか（期待・検証の着眼点）
+
+* **短期（1–3日）**：`x_rvol5_dir`、`x_rev_gate`、`x_alpha_meanrev_stable`、`x_squeeze_pressure`。
+* **中期（5–10日）**：`x_trend_intensity(_g)`、`x_rel_sec_mom`、`x_mom_sh_5(_mktneu)`、`x_pead_effect`。
+* **イベント横断**：`x_pead_times_mkt`、`x_dmi_impulse_dir`。
+* **ロバスト化**：`x_tri_align`（偽陽性を下げ Sharpe 底上げ）。
+
+**Ablation 推奨**：Base → +A（高優先度10本）→ +B（中優先度）で **Purged KFold+Embargo** 評価。
+**期待**：RankIC +0.01〜+0.03（短期側）、Sharpe +0.1〜+0.3 の底上げ（データ期間・ユニバース次第）。
+
+---
+
+## 追加の運用ヒント
+
+* **学習時標準化**：相互作用列も **fold内 fit → transform**（`x_cs_z`等）を徹底。
+* **過学習抑制**：似通う相互作用は **L2/Dropout** か **学習率減衰＋早停** で制御。
+* **特徴選択**：Permutation / SHAP で寄与小を整理（ただしゲート類は残すと安定）。
+* **GAT併用**：`x_rel_sec_mom` や `x_flow_smart_rel` を **エッジ重み候補**（同業内）にも使える。
+
+---
+
+このセットは、**価格×需給×イベント×レジーム**をそれぞれ単独で足すのではなく、**“条件が揃ったときだけ強調する”** ための掛け合わせです。まずは **高優先度10本** を入れて再学習→効果を見てから中優先度を段階追加、の順で進めるのが最短で効果的です。
+
