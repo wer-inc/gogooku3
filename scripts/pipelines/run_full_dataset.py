@@ -31,6 +31,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Awaitable
 
 import aiohttp
 import polars as pl
@@ -480,37 +481,112 @@ async def main() -> int:
             return 1
 
         fetcher = JQuantsAsyncFetcher(email, password)
-        async with aiohttp.ClientSession() as session:
+        tcp_limit = int(os.getenv("JQUANTS_TCP_LIMIT", "30"))
+        tcp_limit_per_host = int(os.getenv("JQUANTS_TCP_LIMIT_PER_HOST", "15"))
+        sock_connect_timeout = float(os.getenv("JQUANTS_SOCK_CONNECT_TIMEOUT", "10"))
+        sock_read_timeout = float(os.getenv("JQUANTS_SOCK_READ_TIMEOUT", "60"))
+
+        trades_df: pl.DataFrame | None = pl.DataFrame()
+        wmi_df: pl.DataFrame | None = pl.DataFrame()
+        dmi_df: pl.DataFrame | None = pl.DataFrame()
+        info_df: pl.DataFrame | None = pl.DataFrame()
+
+        connector = aiohttp.TCPConnector(
+            limit=tcp_limit,
+            limit_per_host=tcp_limit_per_host,
+            ttl_dns_cache=300,
+        )
+        timeout = aiohttp.ClientTimeout(
+            total=None,
+            sock_connect=sock_connect_timeout,
+            sock_read=sock_read_timeout,
+        )
+
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             await fetcher.authenticate(session)
+
+            fetch_coroutines: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
+
             logger.info(f"Fetching trade-spec from {start_date} to {end_date}")
-            trades_df = await fetcher.get_trades_spec(session, start_date, end_date)
-            # Fetch weekly margin interest for auto-attach (optional)
-            try:
-                logger.info("Fetching weekly margin interest for margin features")
-                wmi_df = await fetcher.get_weekly_margin_interest(session, start_date, end_date)
-                if wmi_df is not None and not wmi_df.is_empty() and "Code" in wmi_df.columns:
-                    wmi_df = wmi_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
-                    logger.info("Weekly margin: unified Code dtype to Utf8")
-            except Exception as e:
-                logger.warning(f"Failed to fetch weekly margin interest: {e}")
-                wmi_df = pl.DataFrame()
-            # Fetch daily margin interest for high-frequency credit data (optional)
-            try:
-                logger.info("Fetching daily margin interest for daily credit features")
-                dmi_df = await fetcher.get_daily_margin_interest(session, start_date, end_date)
-                if dmi_df is not None and not dmi_df.is_empty() and "Code" in dmi_df.columns:
-                    dmi_df = dmi_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
-                    logger.info("Daily margin: unified Code dtype to Utf8")
-            except Exception as e:
-                logger.warning(f"Failed to fetch daily margin interest: {e}")
-                dmi_df = pl.DataFrame()
-            # Also fetch listed_info for sector/market enrichment
-            try:
-                logger.info("Fetching listed_info for sector/market enrichment")
-                info_df = await fetcher.get_listed_info(session)
-            except Exception as e:
-                logger.warning(f"Failed to fetch listed_info: {e}")
-                info_df = pl.DataFrame()
+            fetch_coroutines.append(
+                (
+                    "trades",
+                    "trade-spec",
+                    fetcher.get_trades_spec(session, start_date, end_date),
+                )
+            )
+
+            logger.info("Fetching weekly margin interest for margin features")
+            fetch_coroutines.append(
+                (
+                    "weekly_margin",
+                    "weekly margin interest",
+                    fetcher.get_weekly_margin_interest(session, start_date, end_date),
+                )
+            )
+
+            logger.info("Fetching daily margin interest for daily credit features")
+            fetch_coroutines.append(
+                (
+                    "daily_margin",
+                    "daily margin interest",
+                    fetcher.get_daily_margin_interest(session, start_date, end_date),
+                )
+            )
+
+            logger.info("Fetching listed_info for sector/market enrichment")
+            fetch_coroutines.append(
+                (
+                    "listed_info",
+                    "listed_info",
+                    fetcher.get_listed_info(session),
+                )
+            )
+
+            results = await asyncio.gather(
+                *(coro for _, _, coro in fetch_coroutines), return_exceptions=True
+            )
+
+            for (key, label, _), result in zip(fetch_coroutines, results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Failed to fetch {label}: {result}")
+                    continue
+                if key == "trades":
+                    trades_df = result
+                elif key == "weekly_margin":
+                    wmi_df = result
+                elif key == "daily_margin":
+                    dmi_df = result
+                elif key == "listed_info":
+                    info_df = result
+
+            metrics_fn = getattr(fetcher, "throttle_metrics", None)
+            if callable(metrics_fn):
+                tmetrics = metrics_fn()
+                logger.info(
+                    "Throttle metrics → hits=%s, recoveries=%s, current_concurrency=%s",
+                    tmetrics.get("hits"),
+                    tmetrics.get("recoveries"),
+                    tmetrics.get("current_concurrency"),
+                )
+
+        if wmi_df is not None and not wmi_df.is_empty() and "Code" in wmi_df.columns:
+            wmi_df = wmi_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+            logger.info("Weekly margin: unified Code dtype to Utf8")
+        else:
+            wmi_df = pl.DataFrame()
+
+        if dmi_df is not None and not dmi_df.is_empty() and "Code" in dmi_df.columns:
+            dmi_df = dmi_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+            logger.info("Daily margin: unified Code dtype to Utf8")
+        else:
+            dmi_df = pl.DataFrame()
+
+        if trades_df is None:
+            trades_df = pl.DataFrame()
+        if info_df is None:
+            info_df = pl.DataFrame()
+
         if trades_df is None or trades_df.is_empty():
             logger.warning("No trade-spec data fetched; will try local fallback for flow features")
         else:
@@ -522,7 +598,7 @@ async def main() -> int:
         if listed_info_path is None:
             # Name by end date for reproducibility
             listed_info_path = (Path("output/raw/jquants") / f"listed_info_history_{end_dt.strftime('%Y%m%d')}.parquet")
-        if 'info_df' in locals() and info_df is not None and not info_df.is_empty():
+        if info_df is not None and not info_df.is_empty():
             try:
                 listed_info_path.parent.mkdir(parents=True, exist_ok=True)
                 info_df.write_parquet(listed_info_path)
@@ -531,7 +607,7 @@ async def main() -> int:
                 logger.warning(f"Failed to save listed_info parquet: {e}")
         # Save weekly margin interest if fetched
         wmi_path: Path | None = None
-        if 'wmi_df' in locals() and wmi_df is not None and not wmi_df.is_empty():
+        if wmi_df is not None and not wmi_df.is_empty():
             try:
                 outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
                 wmi_path = outdir / f"weekly_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
@@ -541,7 +617,7 @@ async def main() -> int:
                 logger.warning(f"Failed to save weekly margin parquet: {e}")
         # Save daily margin interest if fetched
         dmi_path: Path | None = None
-        if 'dmi_df' in locals() and dmi_df is not None and not dmi_df.is_empty():
+        if dmi_df is not None and not dmi_df.is_empty():
             try:
                 outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
                 dmi_path = outdir / f"daily_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
@@ -552,7 +628,17 @@ async def main() -> int:
 
         # Fetch futures/short-selling within a fresh session (previous session closed)
         try:
-            async with aiohttp.ClientSession() as _session_aux:
+            connector_aux = aiohttp.TCPConnector(
+                limit=tcp_limit,
+                limit_per_host=tcp_limit_per_host,
+                ttl_dns_cache=300,
+            )
+            timeout_aux = aiohttp.ClientTimeout(
+                total=None,
+                sock_connect=sock_connect_timeout,
+                sock_read=sock_read_timeout,
+            )
+            async with aiohttp.ClientSession(connector=connector_aux, timeout=timeout_aux) as _session_aux:
                 # Authenticate if needed (reuse token when available)
                 try:
                     await fetcher.authenticate(_session_aux)
@@ -576,48 +662,73 @@ async def main() -> int:
                         logger.warning(f"Failed to fetch futures data: {e}")
 
                 # Short selling data (optional)
+                fetch_aux: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
+
                 if args.enable_short_selling:
-                    try:
-                        logger.info("Fetching short selling ratio data")
-                        short_df = await fetcher.get_short_selling(_session_aux, start_date, end_date)
-                        if short_df is not None and not short_df.is_empty():
-                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
-                            short_selling_path = outdir / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                            short_df.write_parquet(short_selling_path)
-                            logger.info(f"Saved short selling data: {short_selling_path}")
-                        else:
-                            logger.warning("No short selling data retrieved from API")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch short selling data: {e}")
+                    logger.info("Fetching short selling ratio data")
+                    fetch_aux.append(
+                        (
+                            "short_selling",
+                            "short selling data",
+                            fetcher.get_short_selling(_session_aux, start_date, end_date),
+                        )
+                    )
 
-                    # Short positions
-                    try:
-                        logger.info("Fetching short selling positions data")
-                        positions_df = await fetcher.get_short_selling_positions(_session_aux, start_date, end_date)
-                        if positions_df is not None and not positions_df.is_empty():
-                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
-                            short_positions_path = outdir / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                            positions_df.write_parquet(short_positions_path)
-                            logger.info(f"Saved short selling positions data: {short_positions_path}")
-                        else:
-                            logger.warning("No short selling positions data retrieved from API")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch short selling positions data: {e}")
+                    logger.info("Fetching short selling positions data")
+                    fetch_aux.append(
+                        (
+                            "short_positions",
+                            "short selling positions data",
+                            fetcher.get_short_selling_positions(_session_aux, start_date, end_date),
+                        )
+                    )
 
-                # Sector-wise short selling (optional)
                 if args.enable_sector_short_selling:
-                    try:
-                        logger.info("Fetching sector-wise short selling data")
-                        sector_short_df = await fetcher.get_sector_short_selling(_session_aux, start_date, end_date)
-                        if sector_short_df is not None and not sector_short_df.is_empty():
-                            outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
-                            sector_short_path = outdir / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                            sector_short_df.write_parquet(sector_short_path)
-                            logger.info(f"Saved sector short selling data: {sector_short_path}")
-                        else:
-                            logger.warning("No sector short selling data retrieved from API")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch sector short selling data: {e}")
+                    logger.info("Fetching sector-wise short selling data")
+                    fetch_aux.append(
+                        (
+                            "sector_short",
+                            "sector short selling data",
+                            fetcher.get_sector_short_selling(_session_aux, start_date, end_date),
+                        )
+                    )
+
+                if fetch_aux:
+                    aux_results = await asyncio.gather(
+                        *(coro for _, _, coro in fetch_aux), return_exceptions=True
+                    )
+
+                    for (key, label, _), result in zip(fetch_aux, aux_results):
+                        if isinstance(result, Exception):
+                            logger.warning(f"Failed to fetch {label}: {result}")
+                            continue
+
+                        if key == "short_selling":
+                            if result is None or result.is_empty():
+                                logger.warning("No short selling data retrieved from API")
+                            else:
+                                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                                short_selling_path = outdir / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                                result.write_parquet(short_selling_path)
+                                logger.info(f"Saved short selling data: {short_selling_path}")
+
+                        elif key == "short_positions":
+                            if result is None or result.is_empty():
+                                logger.warning("No short selling positions data retrieved from API")
+                            else:
+                                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                                short_positions_path = outdir / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                                result.write_parquet(short_positions_path)
+                                logger.info(f"Saved short selling positions data: {short_positions_path}")
+
+                        elif key == "sector_short":
+                            if result is None or result.is_empty():
+                                logger.warning("No sector short selling data retrieved from API")
+                            else:
+                                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                                sector_short_path = outdir / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                                result.write_parquet(sector_short_path)
+                                logger.info(f"Saved sector short selling data: {sector_short_path}")
         except Exception as e:
             logger.warning(f"Aux session for futures/short features failed: {e}")
     else:
@@ -795,6 +906,25 @@ async def main() -> int:
     logger.info(f"  Dataset : {pq_path}")
     logger.info(f"  Metadata: {meta_path}")
     logger.info(f"  Symlink : {Path('output') / 'ml_dataset_latest_full.parquet'}")
+
+    # Also save a day-level TOPIX market-features artifact for auditing/consumers
+    try:
+        df_saved = pl.read_parquet(pq_path)
+        mkt_cols = [c for c in df_saved.columns if c.startswith("mkt_")]
+        if mkt_cols:
+            topix_daily = (
+                df_saved.select(["Date"] + mkt_cols)
+                .group_by("Date")
+                .agg([pl.all().first()])
+                .sort("Date")
+            )
+            out_topix = output_dir / f"topix_market_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+            topix_daily.write_parquet(out_topix)
+            logger.info(f"Saved TOPIX market features: {out_topix}")
+        else:
+            logger.warning("No mkt_* columns found in saved dataset; TOPIX market artifact not written")
+    except Exception as e:
+        logger.warning(f"TOPIX market features save skipped: {e}")
 
     # Optionally build Nikkei225 index option features and save as a separate artifact
     try:

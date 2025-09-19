@@ -1,0 +1,61 @@
+# @package _global_
+# Default batch inference configuration for ATFT-GAT-FAN
+
+defaults:
+  - _self_
+
+inference:
+  batch_size: 2048
+  num_workers: 8
+  prefetch_factor: null
+  pin_memory: true
+  checkpoint_path: null  # dynamically set by caller
+  use_ema: true
+  output_dir: output/predictions
+  save_raw_predictions: true
+  save_aggregated: true
+  use_amp: true
+  amp_dtype: bf16
+  calculate_metrics: true
+  metrics:
+    - IC
+    - RankIC
+    - Sharpe
+    - Calmar
+    - MaxDrawdown
+  prediction_horizons: [1, 5, 10, 20]
+  apply_ranking: true
+  apply_sigmoid: false
+  clip_predictions: true
+  clip_range: [-3.0, 3.0]
+
+# Data loader configuration used during inference
+data:
+  time_series:
+    sequence_length: 60
+    use_tensor_sequences: true
+  split:
+    method: test_only
+    test_ratio: 1.0
+
+# Model specific flags
+data_module:
+  use_gpu_acceleration: true
+
+model:
+  load_strict: false
+  eval_mode: true
+
+hardware:
+  device: cuda
+  precision: bf16-mixed
+
+hydra:
+  run:
+    dir: outputs/inference/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/inference/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job_logging:
+    formatters:
+      simple:
+        format: "[%(asctime)s][%(name)s][%(levelname)s] - %(message)s"

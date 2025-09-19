@@ -210,11 +210,12 @@ addopts = [
 ]
 markers = [
     "unit: Unit tests for individual components",
-    "integration: Integration tests for workflows", 
+    "integration: Integration tests for workflows",
     "slow: Tests that take more than 5 seconds",
     "requires_api: Tests that require external API access",
     "exploratory: Manual exploratory tests (not run in CI)",
     "smoke: marks tests as smoke tests",
+    "critical: Critical tests that prevent major issues (always run in CI)",
 ]
 filterwarnings = [
     "error::FutureWarning",

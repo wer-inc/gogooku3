@@ -1,0 +1,15 @@
+# @package experiment
+name: "atft_gat_fan_baseline"
+seed: 42
+output_dir: "output/experiments/atft_gat_fan"
+expected_sharpe: 0.849
+enable_checkpointing: true
+checkpoint_interval: 5
+log_interval: 10
+tracking:
+  mlflow:
+    enabled: true
+    experiment_name: ${experiment.name}
+  wandb:
+    enabled: ${oc.env:WANDB_ENABLED,false}
+    project: ${experiment.name}

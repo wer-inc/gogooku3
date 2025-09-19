@@ -1,0 +1,13 @@
+- data.source.data_dir=output/atft_data
+- data.use_day_batch_sampler=false
+- train.batch.train_batch_size=128
+- train.optimizer.lr=5e-05
+- train.trainer.max_epochs=1
+- train.trainer.precision=bf16-mixed
+- train.trainer.enable_progress_bar=true
+- train.batch.num_workers=0
+- train.batch.prefetch_factor=null
+- train.batch.persistent_workers=false
+- train.batch.pin_memory=false
+- +train.trainer.limit_train_batches=5
+- +train.trainer.limit_val_batches=2

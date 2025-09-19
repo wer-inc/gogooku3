@@ -131,8 +131,8 @@ class MarketFeaturesGenerator:
         ]).drop("ret_std_60")
 
         # ========== 時系列Z-score (252日、min_periods=252) ==========
-        def z_score(col_name: str, window: int = 252, min_periods: int = 252) -> pl.Expr:
-            """時系列Z-scoreを計算"""
+        def z_score(col_name: str, window: int = 252, min_periods: int = 60) -> pl.Expr:
+            """時系列Z-scoreを計算（短期レンジでも計算可能なよう min_periods を緩和）"""
             mu = pl.col(col_name).rolling_mean(window, min_periods=min_periods)
             sd = pl.col(col_name).rolling_std(window, min_periods=min_periods) + 1e-12
             return ((pl.col(col_name) - mu) / sd).alias(f"{col_name}_z")

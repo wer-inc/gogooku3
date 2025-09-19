@@ -16,10 +16,15 @@ Notes:
 """
 
 import asyncio
+import logging
+import math
 import os
+import time
 
+from contextlib import nullcontext
 import aiohttp
 import polars as pl
+from typing import Any, Iterable, Tuple
 
 
 def enforce_code_column_types(df: pl.DataFrame) -> pl.DataFrame:
@@ -117,6 +122,22 @@ class JQuantsAsyncFetcher:
         self.max_concurrent = max_concurrent or int(os.getenv("MAX_CONCURRENT_FETCH", 32))
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
 
+        # Adaptive throttling configuration/state
+        self._current_concurrency = self.max_concurrent
+        self._max_concurrency_ceiling = self.max_concurrent
+        self._min_concurrency = max(1, int(os.getenv("JQUANTS_MIN_CONCURRENCY", "4")))
+        self._min_concurrency = min(self._min_concurrency, self._max_concurrency_ceiling)
+        self._throttle_backoff = float(os.getenv("JQUANTS_THROTTLE_BACKOFF", "0.6"))
+        self._throttle_sleep_seconds = float(os.getenv("JQUANTS_THROTTLE_SLEEP", "30"))
+        self._recovery_step = int(os.getenv("JQUANTS_THROTTLE_STEP", "2"))
+        self._success_threshold = int(os.getenv("JQUANTS_THROTTLE_RECOVERY_SUCCESS", "180"))
+        self._retry_statuses: Tuple[int, ...] = (429, 503)
+        self._success_streak = 0
+        self._throttle_hits = 0
+        self._throttle_recoveries = 0
+        self._throttle_history: list[dict[str, Any]] = []
+        self._logger = logging.getLogger(__name__)
+
     async def _ensure_session_health(self, session: aiohttp.ClientSession) -> bool:
         """
         Check if session is healthy and can be used for API calls.
@@ -128,6 +149,123 @@ class JQuantsAsyncFetcher:
             return not session.closed
         except Exception:
             return False
+
+    def _apply_concurrency(self, new_limit: int, *, reason: str) -> None:
+        new_limit = max(self._min_concurrency, min(self._max_concurrency_ceiling, new_limit))
+        if new_limit == self._current_concurrency:
+            return
+        self._current_concurrency = new_limit
+        self.semaphore = asyncio.Semaphore(new_limit)
+        self._logger.info("Adjusted JQuants concurrency → %s (reason=%s)", new_limit, reason)
+
+    def _record_success(self) -> None:
+        self._success_streak += 1
+        if (
+            self._success_streak >= self._success_threshold
+            and self._current_concurrency < self._max_concurrency_ceiling
+        ):
+            new_limit = min(
+                self._max_concurrency_ceiling,
+                self._current_concurrency + max(1, self._recovery_step),
+            )
+            if new_limit > self._current_concurrency:
+                self._throttle_recoveries += 1
+                self._apply_concurrency(new_limit, reason="recovery")
+                self._success_streak = 0
+
+    async def _handle_throttle(
+        self,
+        label: str,
+        resp: aiohttp.ClientResponse,
+    ) -> None:
+        status = resp.status
+        self._throttle_hits += 1
+        self._success_streak = 0
+
+        retry_after = resp.headers.get("Retry-After")
+        delay = self._throttle_sleep_seconds
+        if retry_after:
+            try:
+                delay = max(delay, float(retry_after))
+            except (TypeError, ValueError):
+                pass
+
+        scaled = max(1, math.floor(self._current_concurrency * self._throttle_backoff))
+        if scaled < self._current_concurrency:
+            self._apply_concurrency(scaled, reason=f"throttle:{label}:{status}")
+
+        self._throttle_history.append(
+            {
+                "label": label,
+                "status": status,
+                "delay": delay,
+                "concurrency": self._current_concurrency,
+                "timestamp": time.time(),
+            }
+        )
+        if len(self._throttle_history) > 64:
+            self._throttle_history.pop(0)
+
+        self._logger.warning(
+            "JQuants throttle detected (%s, status=%s). Sleeping %.1fs.",
+            label,
+            status,
+            delay,
+        )
+        await asyncio.sleep(delay)
+
+    async def _request_json(
+        self,
+        session: aiohttp.ClientSession,
+        method: str,
+        url: str,
+        *,
+        label: str,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        json_payload: Any = None,
+        data: Any = None,
+        expected_statuses: Iterable[int] = (200,),
+        decode_json: bool = True,
+        use_semaphore: bool = True,
+    ) -> Tuple[int, Any]:
+        while True:
+            cm = self.semaphore if use_semaphore else nullcontext()
+            async with cm:
+                try:
+                    async with session.request(
+                        method,
+                        url,
+                        params=params,
+                        headers=headers,
+                        json=json_payload,
+                        data=data,
+                    ) as resp:
+                        status = resp.status
+                        if status in self._retry_statuses:
+                            await self._handle_throttle(label, resp)
+                            continue
+
+                        payload: Any = None
+                        if decode_json:
+                            try:
+                                payload = await resp.json()
+                            except Exception:
+                                payload = None
+
+                        self._record_success()
+                        return status, payload
+                except aiohttp.ClientError:
+                    self._success_streak = 0
+                    raise
+
+    def throttle_metrics(self) -> dict[str, Any]:
+        return {
+            "hits": self._throttle_hits,
+            "recoveries": self._throttle_recoveries,
+            "current_concurrency": self._current_concurrency,
+            "history": list(self._throttle_history),
+        }
 
     async def _safe_api_call(self, session: aiohttp.ClientSession, api_func, *args, **kwargs):
         """
@@ -180,11 +318,17 @@ class JQuantsAsyncFetcher:
         url = f"{self.base_url}/listed/info"
         headers = {"Authorization": f"Bearer {self.id_token}"}
         params = {"date": date} if date else None
-        async with session.get(url, headers=headers, params=params) as resp:
-            if resp.status != 200:
-                return pl.DataFrame()
-            data = await resp.json()
-            df = pl.DataFrame(data.get("info", []))
+        status, data = await self._request_json(
+            session,
+            "GET",
+            url,
+            label="listed_info",
+            params=params,
+            headers=headers,
+        )
+        if status != 200 or not isinstance(data, dict):
+            return pl.DataFrame()
+        df = pl.DataFrame(data.get("info", []))
         # Optional filter using scripts/components if available
         try:  # pragma: no cover - optional path
             from scripts.components.market_code_filter import (
@@ -206,12 +350,18 @@ class JQuantsAsyncFetcher:
         url = f"{self.base_url}/markets/trades_spec"
         headers = {"Authorization": f"Bearer {self.id_token}"}
         params = {"from": from_date, "to": to_date}
-        async with session.get(url, headers=headers, params=params) as resp:
-            if resp.status != 200:
-                return pl.DataFrame()
-            data = await resp.json()
-            items = data.get("trades_spec", [])
-            return pl.DataFrame(items) if items else pl.DataFrame()
+        status, data = await self._request_json(
+            session,
+            "GET",
+            url,
+            label="trades_spec",
+            params=params,
+            headers=headers,
+        )
+        if status != 200 or not isinstance(data, dict):
+            return pl.DataFrame()
+        items = data.get("trades_spec", [])
+        return pl.DataFrame(items) if items else pl.DataFrame()
 
     async def fetch_topix_data(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -228,16 +378,22 @@ class JQuantsAsyncFetcher:
             params = {"from": from_date, "to": to_date}
             if pagination_key:
                 params["pagination_key"] = pagination_key
-            async with session.get(url, headers=headers, params=params) as resp:
-                if resp.status != 200:
-                    break
-                data = await resp.json()
-                rows = data.get("topix", [])
-                if rows:
-                    all_rows.extend(rows)
-                pagination_key = data.get("pagination_key")
-                if not pagination_key:
-                    break
+            status, data = await self._request_json(
+                session,
+                "GET",
+                url,
+                label="topix",
+                params=params,
+                headers=headers,
+            )
+            if status != 200 or not isinstance(data, dict):
+                break
+            rows = data.get("topix", [])
+            if rows:
+                all_rows.extend(rows)
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
 
         if not all_rows:
             return pl.DataFrame()
@@ -286,16 +442,17 @@ class JQuantsAsyncFetcher:
                 params = {"code": code, "from": from_date, "to": to_date}
                 if pagination_key:
                     params["pagination_key"] = pagination_key
-                async with session.get(base_url, headers=headers, params=params) as resp:
-                    if resp.status != 200:
-                        break
-                    data = await resp.json()
-                # Try common container keys
-                items = (
-                    (data.get("indices") if isinstance(data, dict) else None)
-                    or (data.get("data") if isinstance(data, dict) else None)
-                    or []
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label=f"indices:{code}",
+                    params=params,
+                    headers=headers,
                 )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("indices") or data.get("data") or []
                 if items:
                     # Ensure Code is set if API omits it in each row
                     for it in items:
@@ -314,15 +471,17 @@ class JQuantsAsyncFetcher:
                 params = {"from": from_date, "to": to_date}
                 if pagination_key:
                     params["pagination_key"] = pagination_key
-                async with session.get(base_url, headers=headers, params=params) as resp:
-                    if resp.status != 200:
-                        break
-                    data = await resp.json()
-                items = (
-                    (data.get("indices") if isinstance(data, dict) else None)
-                    or (data.get("data") if isinstance(data, dict) else None)
-                    or []
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label="indices:all",
+                    params=params,
+                    headers=headers,
                 )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("indices") or data.get("data") or []
                 if items:
                     rows.extend(items)
                 pagination_key = data.get("pagination_key") if isinstance(data, dict) else None
@@ -334,13 +493,12 @@ class JQuantsAsyncFetcher:
         if codes:
             # Concurrency-limited fan-out by code
             async def _runner(code: str) -> None:
-                async with self.semaphore:
-                    try:
-                        rows = await _fetch_for_code(code)
-                        if rows:
-                            all_rows.extend(rows)
-                    except Exception:
-                        pass
+                try:
+                    rows = await _fetch_for_code(code)
+                    if rows:
+                        all_rows.extend(rows)
+                except Exception:
+                    pass
 
             tasks = [asyncio.create_task(_runner(c)) for c in codes]
             if tasks:
@@ -421,18 +579,21 @@ class JQuantsAsyncFetcher:
                 params = {"date": date_str}
                 if pagination_key:
                     params["pagination_key"] = pagination_key
-                async with session.get(url, headers=headers, params=params) as resp:
-                    if resp.status != 200:
-                        break
-                    data = await resp.json()
-                if isinstance(data, dict):
-                    items = data.get("weekly_margin_interest", [])
-                    if items:
-                        rows.extend(items)
-                    pagination_key = data.get("pagination_key")
-                    if not pagination_key:
-                        break
-                else:
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    url,
+                    label=f"weekly_margin:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("weekly_margin_interest", [])
+                if items:
+                    rows.extend(items)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
                     break
             return rows
 
@@ -492,17 +653,17 @@ class JQuantsAsyncFetcher:
                 params = {"from": from_date, "to": to_date}
                 if pagination_key:
                     params["pagination_key"] = pagination_key
-                async with session.get(base_url, headers=headers, params=params) as resp:
-                    if resp.status != 200:
-                        break
-                    data = await resp.json()
-                # Try common keys
-                items = (
-                    data.get("futures")
-                    or data.get("derivatives")
-                    or data.get("data")
-                    or []
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label="futures_range",
+                    params=params,
+                    headers=headers,
                 )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("futures") or data.get("derivatives") or data.get("data") or []
                 if items:
                     rows.extend(items)
                 pagination_key = data.get("pagination_key")
@@ -528,10 +689,16 @@ class JQuantsAsyncFetcher:
                     params = {"date": date_str}
                     if pagination_key:
                         params["pagination_key"] = pagination_key
-                    async with session.get(base_url, headers=headers, params=params) as resp:
-                        if resp.status != 200:
-                            break
-                        data = await resp.json()
+                    status, data = await self._request_json(
+                        session,
+                        "GET",
+                        base_url,
+                        label=f"futures_date:{date_str}",
+                        params=params,
+                        headers=headers,
+                    )
+                    if status != 200 or not isinstance(data, dict):
+                        break
                     items = data.get("futures") or data.get("derivatives") or data.get("data") or []
                     if items:
                         rows.extend(items)
@@ -610,26 +777,27 @@ class JQuantsAsyncFetcher:
                 params = {"date": date_str}
                 if pagination_key:
                     params["pagination_key"] = pagination_key
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    url,
+                    label=f"daily_margin:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
 
-                async with self.semaphore:
-                    async with session.get(url, headers=headers, params=params) as resp:
-                        if resp.status != 200:
-                            break
-                        data = await resp.json()
-
-                if isinstance(data, dict):
-                    items = data.get("daily_margin_interest", [])
-                    if items:
-                        # Normalize sentinels before creating DataFrame
-                        for item in items:
-                            for key, value in item.items():
-                                if isinstance(value, str) and value in ("-", "*", "", "null", "NULL", "None"):
-                                    item[key] = None
-                        rows.extend(items)
-                    pagination_key = data.get("pagination_key")
-                    if not pagination_key:
-                        break
-                else:
+                items = data.get("daily_margin_interest", [])
+                if items:
+                    # Normalize sentinels before creating DataFrame
+                    for item in items:
+                        for key, value in item.items():
+                            if isinstance(value, str) and value in ("-", "*", "", "null", "NULL", "None"):
+                                item[key] = None
+                    rows.extend(items)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
                     break
             return rows
 
@@ -745,34 +913,38 @@ class JQuantsAsyncFetcher:
         # First try: Range-based fetch with different parameter names
         try:
             print(f"Trying range-based futures fetch: {from_date} to {to_date}")
-            async with self.semaphore:
-                url = f"{self.base_url}/derivatives/futures"
-                # Try different parameter combinations for compatibility
-                param_sets = [
-                    {"from": from_date, "to": to_date},
-                    {"from_date": from_date, "to_date": to_date},
-                    {"start_date": from_date, "end_date": to_date}
-                ]
+            url = f"{self.base_url}/derivatives/futures"
+            # Try different parameter combinations for compatibility
+            param_sets = [
+                {"from": from_date, "to": to_date},
+                {"from_date": from_date, "to_date": to_date},
+                {"start_date": from_date, "end_date": to_date}
+            ]
 
-                for params in param_sets:
-                    headers = {"Authorization": f"Bearer {self.id_token}"}
-                    async with session.get(url, params=params, headers=headers) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            # Try different keys in response
-                            for key in ["futures", "derivatives", "data", "derivatives_futures"]:
-                                if key in data and data[key]:
-                                    batch = data[key]
-                                    df_batch = pl.DataFrame(batch)
-                                    if not df_batch.is_empty():
-                                        all_futures.append(df_batch)
-                                        print(f"Retrieved {len(df_batch)} futures records with range query")
-                                        break
-                            if all_futures:
+            for params in param_sets:
+                headers = {"Authorization": f"Bearer {self.id_token}"}
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    url,
+                    label="futures_range_alt",
+                    params=params,
+                    headers=headers,
+                )
+                if status == 200 and isinstance(data, dict):
+                    for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                        if key in data and data[key]:
+                            batch = data[key]
+                            df_batch = pl.DataFrame(batch)
+                            if not df_batch.is_empty():
+                                all_futures.append(df_batch)
+                                print(f"Retrieved {len(df_batch)} futures records with range query")
                                 break
-                        elif resp.status == 400:
-                            print(f"Bad request with params {params}, trying next...")
-                            continue
+                    if all_futures:
+                        break
+                elif status == 400:
+                    print(f"Bad request with params {params}, trying next...")
+                    continue
         except Exception as e:
             print(f"Range-based futures fetch failed: {e}")
 
@@ -786,51 +958,51 @@ class JQuantsAsyncFetcher:
                     # Using pagination similar to other endpoints
                     page = 1
                     while True:
-                        async with self.semaphore:
-                            url = f"{self.base_url}/derivatives/futures"
-                            params = {
-                                "from": from_date,
-                                "to": to_date,
-                                "DerivativesProductCategory": category
-                            }
+                        url = f"{self.base_url}/derivatives/futures"
+                        params = {
+                            "from": from_date,
+                            "to": to_date,
+                            "DerivativesProductCategory": category
+                        }
 
-                            headers = {"Authorization": f"Bearer {self.id_token}"}
-                            async with session.get(url, params=params, headers=headers) as resp:
-                                if resp.status == 404:
-                                    print(f"No data found for category {category}")
-                                    break
-                                elif resp.status == 400:
-                                    # Try single date fetch as fallback
-                                    print(f"Bad request for range, trying date-by-date for {category}")
-                                    break
-                                elif resp.status != 200:
-                                    print(f"API error for {category}: {resp.status}")
-                                    break
+                        headers = {"Authorization": f"Bearer {self.id_token}"}
+                        status, data = await self._request_json(
+                            session,
+                            "GET",
+                            url,
+                            label=f"futures_category:{category}",
+                            params=params,
+                            headers=headers,
+                        )
+                        if status == 404:
+                            print(f"No data found for category {category}")
+                            break
+                        if status == 400:
+                            print(f"Bad request for range, trying date-by-date for {category}")
+                            break
+                        if status != 200 or not isinstance(data, dict):
+                            print(f"API error for {category}: {status}")
+                            break
 
-                                data = await resp.json()
+                        batch = None
+                        for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                            if key in data and data[key]:
+                                batch = data[key]
+                                break
 
-                                # Try different keys for compatibility
-                                batch = None
-                                for key in ["futures", "derivatives", "data", "derivatives_futures"]:
-                                    if key in data and data[key]:
-                                        batch = data[key]
-                                        break
+                        if not batch:
+                            break
 
-                                if not batch:
-                                    break
+                        df_batch = pl.DataFrame(batch)
+                        if not df_batch.is_empty():
+                            df_batch = df_batch.with_columns([
+                                pl.lit(category).alias("ProductCategory")
+                            ])
+                            all_futures.append(df_batch)
 
-                                # Convert to DataFrame and add category info
-                                df_batch = pl.DataFrame(batch)
-                                if not df_batch.is_empty():
-                                    df_batch = df_batch.with_columns([
-                                        pl.lit(category).alias("ProductCategory")
-                                    ])
-                                    all_futures.append(df_batch)
-
-                                # Check if we have more pages (simple check)
-                                if len(batch) < 1000:  # Assume full page is 1000 records
-                                    break
-                                page += 1
+                        if len(batch) < 1000:
+                            break
+                        page += 1
 
                         # Add delay to respect rate limits
                         await asyncio.sleep(0.1)
@@ -857,22 +1029,27 @@ class JQuantsAsyncFetcher:
                 if cur.weekday() < 5:  # Business days only
                     date_str = cur.strftime("%Y-%m-%d")
                     try:
-                        async with self.semaphore:
-                            url = f"{self.base_url}/derivatives/futures"
-                            params = {"date": date_str}
-                            headers = {"Authorization": f"Bearer {self.id_token}"}
+                        url = f"{self.base_url}/derivatives/futures"
+                        params = {"date": date_str}
+                        headers = {"Authorization": f"Bearer {self.id_token}"}
 
-                            async with session.get(url, params=params, headers=headers) as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    for key in ["futures", "derivatives", "data", "derivatives_futures"]:
-                                        if key in data and data[key]:
-                                            batch = data[key]
-                                            df_batch = pl.DataFrame(batch)
-                                            if not df_batch.is_empty():
-                                                all_futures.append(df_batch)
-                                                print(f"Retrieved futures for {date_str}")
-                                                break
+                        status, data = await self._request_json(
+                            session,
+                            "GET",
+                            url,
+                            label=f"futures_single_date:{date_str}",
+                            params=params,
+                            headers=headers,
+                        )
+                        if status == 200 and isinstance(data, dict):
+                            for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                                if key in data and data[key]:
+                                    batch = data[key]
+                                    df_batch = pl.DataFrame(batch)
+                                    if not df_batch.is_empty():
+                                        all_futures.append(df_batch)
+                                        print(f"Retrieved futures for {date_str}")
+                                        break
                         await asyncio.sleep(0.1)
                     except Exception as e:
                         print(f"Failed to fetch futures for {date_str}: {e}")
@@ -1041,12 +1218,18 @@ class JQuantsAsyncFetcher:
                 params = {"date": date_str}
                 if pagination_key:
                     params["pagination_key"] = pagination_key
-                async with session.get(base_url, headers=headers, params=params) as resp:
-                    if resp.status == 404:
-                        break
-                    if resp.status != 200:
-                        break
-                    data = await resp.json()
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label=f"index_option:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status == 404:
+                    break
+                if status != 200 or not isinstance(data, dict):
+                    break
                 items = data.get("index_option") or data.get("data") or []
                 if items:
                     # Normalize sentinels before adding to rows
@@ -1157,32 +1340,32 @@ class JQuantsAsyncFetcher:
         """
         all_data = []
 
-        async with self.semaphore:
-            url = f"{self.base_url}/markets/short_selling"
-            params = {"from": from_date, "to": to_date}
-            headers = {"Authorization": f"Bearer {self.id_token}"}
+        url = f"{self.base_url}/markets/short_selling"
+        params = {"from": from_date, "to": to_date}
+        headers = {"Authorization": f"Bearer {self.id_token}"}
 
-            try:
-                async with session.get(url, params=params, headers=headers) as resp:
-                    if resp.status == 404:
-                        print("No short selling data found")
-                        return pl.DataFrame()
-                    elif resp.status != 200:
-                        print(f"API error for short selling: {resp.status}")
-                        return pl.DataFrame()
-
-                    data = await resp.json()
-
-                    if not data or "short_selling" not in data:
-                        return pl.DataFrame()
-
-                    batch = data["short_selling"]
-                    if batch:
-                        all_data.extend(batch)
-
-            except Exception as e:
-                print(f"Error fetching short selling data: {e}")
+        try:
+            status, data = await self._request_json(
+                session,
+                "GET",
+                url,
+                label="short_selling",
+                params=params,
+                headers=headers,
+            )
+            if status == 404:
+                print("No short selling data found")
                 return pl.DataFrame()
+            if status != 200 or not isinstance(data, dict):
+                print(f"API error for short selling: {status}")
+                return pl.DataFrame()
+
+            batch = data.get("short_selling")
+            if batch:
+                all_data.extend(batch)
+        except Exception as e:
+            print(f"Error fetching short selling data: {e}")
+            return pl.DataFrame()
 
         if not all_data:
             return pl.DataFrame()
@@ -1209,32 +1392,32 @@ class JQuantsAsyncFetcher:
         """
         all_data = []
 
-        async with self.semaphore:
-            url = f"{self.base_url}/markets/short_selling_positions"
-            params = {"from": from_date, "to": to_date}
-            headers = {"Authorization": f"Bearer {self.id_token}"}
+        url = f"{self.base_url}/markets/short_selling_positions"
+        params = {"from": from_date, "to": to_date}
+        headers = {"Authorization": f"Bearer {self.id_token}"}
 
-            try:
-                async with session.get(url, params=params, headers=headers) as resp:
-                    if resp.status == 404:
-                        print("No short selling positions data found")
-                        return pl.DataFrame()
-                    elif resp.status != 200:
-                        print(f"API error for short selling positions: {resp.status}")
-                        return pl.DataFrame()
-
-                    data = await resp.json()
-
-                    if not data or "short_selling_positions" not in data:
-                        return pl.DataFrame()
-
-                    batch = data["short_selling_positions"]
-                    if batch:
-                        all_data.extend(batch)
-
-            except Exception as e:
-                print(f"Error fetching short selling positions data: {e}")
+        try:
+            status, data = await self._request_json(
+                session,
+                "GET",
+                url,
+                label="short_selling_positions",
+                params=params,
+                headers=headers,
+            )
+            if status == 404:
+                print("No short selling positions data found")
                 return pl.DataFrame()
+            if status != 200 or not isinstance(data, dict):
+                print(f"API error for short selling positions: {status}")
+                return pl.DataFrame()
+
+            batch = data.get("short_selling_positions")
+            if batch:
+                all_data.extend(batch)
+        except Exception as e:
+            print(f"Error fetching short selling positions data: {e}")
+            return pl.DataFrame()
 
         if not all_data:
             return pl.DataFrame()
@@ -1261,39 +1444,36 @@ class JQuantsAsyncFetcher:
         """
         all_data = []
 
-        async with self.semaphore:
-            url = f"{self.base_url}/fins/announcement"
-            params = {"from": from_date, "to": to_date}
-            headers = {"Authorization": f"Bearer {self.id_token}"}
+        url = f"{self.base_url}/fins/announcement"
+        params = {"from": from_date, "to": to_date}
+        headers = {"Authorization": f"Bearer {self.id_token}"}
 
-            try:
-                async with session.get(url, params=params, headers=headers) as resp:
-                    if resp.status == 404:
-                        print(f"Earnings announcements endpoint not found: {url}")
-                        return pl.DataFrame()
-
-                    if resp.status == 429:
-                        retry_after = int(resp.headers.get("Retry-After", 30))
-                        print(f"Rate limited. Waiting {retry_after} seconds...")
-                        await asyncio.sleep(retry_after)
-                        return await self.get_earnings_announcements(session, from_date, to_date)
-
-                    if resp.status != 200:
-                        print(f"Error fetching earnings announcements: {resp.status}")
-                        return pl.DataFrame()
-
-                    data = await resp.json()
-                    if "announcement" in data:
-                        all_data.extend(data["announcement"])
-                    elif isinstance(data, list):
-                        all_data.extend(data)
-
-            except asyncio.TimeoutError:
-                print(f"Timeout fetching earnings announcements for {from_date} to {to_date}")
+        try:
+            status, data = await self._request_json(
+                session,
+                "GET",
+                url,
+                label="earnings_announcements",
+                params=params,
+                headers=headers,
+            )
+            if status == 404:
+                print(f"Earnings announcements endpoint not found: {url}")
                 return pl.DataFrame()
-            except Exception as e:
-                print(f"Error fetching earnings announcements: {e}")
+            if status != 200 or data is None:
+                print(f"Error fetching earnings announcements: {status}")
                 return pl.DataFrame()
+
+            if isinstance(data, dict) and "announcement" in data:
+                all_data.extend(data.get("announcement") or [])
+            elif isinstance(data, list):
+                all_data.extend(data)
+        except asyncio.TimeoutError:
+            print(f"Timeout fetching earnings announcements for {from_date} to {to_date}")
+            return pl.DataFrame()
+        except Exception as e:
+            print(f"Error fetching earnings announcements: {e}")
+            return pl.DataFrame()
 
         if not all_data:
             return pl.DataFrame()
@@ -1373,39 +1553,36 @@ class JQuantsAsyncFetcher:
         """
         all_data = []
 
-        async with self.semaphore:
-            url = f"{self.base_url}/markets/short_selling"
-            params = {"from": from_date, "to": to_date}
-            headers = {"Authorization": f"Bearer {self.id_token}"}
+        url = f"{self.base_url}/markets/short_selling"
+        params = {"from": from_date, "to": to_date}
+        headers = {"Authorization": f"Bearer {self.id_token}"}
 
-            try:
-                async with session.get(url, params=params, headers=headers) as resp:
-                    if resp.status == 404:
-                        print(f"Sector short selling endpoint not found: {url}")
-                        return pl.DataFrame()
-
-                    if resp.status == 429:
-                        retry_after = int(resp.headers.get("Retry-After", 30))
-                        print(f"Rate limited. Waiting {retry_after} seconds...")
-                        await asyncio.sleep(retry_after)
-                        return await self.get_sector_short_selling(session, from_date, to_date)
-
-                    if resp.status != 200:
-                        print(f"Error fetching sector short selling: {resp.status}")
-                        return pl.DataFrame()
-
-                    data = await resp.json()
-                    if "short_selling" in data:
-                        all_data.extend(data["short_selling"])
-                    elif isinstance(data, list):
-                        all_data.extend(data)
-
-            except asyncio.TimeoutError:
-                print(f"Timeout fetching sector short selling for {from_date} to {to_date}")
+        try:
+            status, data = await self._request_json(
+                session,
+                "GET",
+                url,
+                label="sector_short_selling",
+                params=params,
+                headers=headers,
+            )
+            if status == 404:
+                print(f"Sector short selling endpoint not found: {url}")
                 return pl.DataFrame()
-            except Exception as e:
-                print(f"Error fetching sector short selling: {e}")
+            if status != 200 or data is None:
+                print(f"Error fetching sector short selling: {status}")
                 return pl.DataFrame()
+
+            if isinstance(data, dict) and "short_selling" in data:
+                all_data.extend(data["short_selling"])
+            elif isinstance(data, list):
+                all_data.extend(data)
+        except asyncio.TimeoutError:
+            print(f"Timeout fetching sector short selling for {from_date} to {to_date}")
+            return pl.DataFrame()
+        except Exception as e:
+            print(f"Error fetching sector short selling: {e}")
+            return pl.DataFrame()
 
         if not all_data:
             return pl.DataFrame()

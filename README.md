@@ -612,6 +612,10 @@ python scripts/integrated_ml_training_pipeline.py --adv-graph-train
    pip install -r requirements.txt --force-reinstall
    ```
 
+4. **DataLoaderハング問題**
+   - 解決済み: ImportError による無限ハングを修正
+   - 詳細: [docs/fixes/dataloader_hanging_fix.md](docs/fixes/dataloader_hanging_fix.md)
+
 ### ログ確認
 
 ```bash
