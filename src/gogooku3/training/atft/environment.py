@@ -115,7 +115,8 @@ class ATFTEnvironment:
 
     def _setup_cuda(self) -> None:
         """Configure CUDA settings for optimal performance."""
-        if torch.cuda.is_available():
+        force_gpu = os.getenv("FORCE_GPU", "0") == "1"
+        if torch.cuda.is_available() or force_gpu:
             # Enable TF32 for A100 GPUs
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
@@ -175,15 +176,18 @@ class ATFTEnvironment:
         Returns:
             torch.device object
         """
-        if torch.cuda.is_available():
+        force_gpu = os.getenv("FORCE_GPU", "0") == "1"
+        if torch.cuda.is_available() or force_gpu:
             if gpu_id is not None:
                 device = torch.device(f"cuda:{gpu_id}")
             else:
                 device = torch.device("cuda")
-
-            gpu_name = torch.cuda.get_device_name(device)
-            memory_gb = torch.cuda.get_device_properties(device).total_memory / 1e9
-            logger.info(f"🚀 Using GPU: {gpu_name} ({memory_gb:.1f}GB)")
+            try:
+                gpu_name = torch.cuda.get_device_name(device)
+                memory_gb = torch.cuda.get_device_properties(device).total_memory / 1e9
+                logger.info(f"🚀 Using GPU: {gpu_name} ({memory_gb:.1f}GB)")
+            except Exception:
+                logger.info("🚀 Using GPU device (properties unavailable during init)")
         else:
             device = torch.device("cpu")
             logger.warning("⚠️ GPU not available, using CPU")

@@ -3473,8 +3473,35 @@ def train(config: DictConfig) -> None:
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", message=".*worker.*")
 
-    # デバイス設定
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # デバイス設定（GPU優先 + 環境変数で上書き可能）
+    def _resolve_device() -> torch.device:
+        dev_env = os.getenv("DEVICE", "").strip()
+        acc_env = os.getenv("ACCELERATOR", "").lower().strip()
+        force_gpu = os.getenv("FORCE_GPU", "0") == "1"
+        require_gpu = os.getenv("REQUIRE_GPU", "0") == "1"
+        # Prefer explicit device if provided
+        if dev_env:
+            try:
+                if dev_env.startswith("cuda") and not torch.cuda.is_available():
+                    if require_gpu:
+                        raise RuntimeError("GPU required but not available (CUDA not initialized)")
+                    logger.warning("CUDA not available; falling back to CPU despite DEVICE=cuda")
+                    return torch.device("cpu")
+                return torch.device(dev_env)
+            except Exception:
+                logger.warning(f"Invalid DEVICE='{dev_env}', falling back to auto")
+        # Accelerator or FORCE_GPU hints
+        if force_gpu or acc_env in ("gpu", "cuda"):
+            if not torch.cuda.is_available():
+                if require_gpu:
+                    raise RuntimeError("GPU required but not available (torch.cuda.is_available=False)")
+                logger.warning("GPU hint given but CUDA unavailable; using CPU")
+                return torch.device("cpu")
+            return torch.device("cuda")
+        # Default: auto
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    device = _resolve_device()
     logger.info(f"Using device: {device}")
 
     use_amp = use_amp_env and device.type == "cuda"
@@ -4854,24 +4881,78 @@ def train(config: DictConfig) -> None:
         except Exception:
             return None
 
-    preset_w = _parse_weight_map(
-        os.getenv("HWEIGHTS", "1:0.35,2:0.15,3:0.15,5:0.20,10:0.15")
-    )
+    # Resolve horizon weights with robust fallbacks:
+    # 1) If env HWEIGHTS is provided, parse it.
+    # 2) Else, try Hydra config: train.loss.horizon_weights (dict or list) or prediction.horizon_weights (list).
+    # 3) Else, derive from data horizons using sqrt-inv scheme and normalize.
+    preset_w = _parse_weight_map(os.getenv("HWEIGHTS", None))
 
     # CS-IC 補助ロスの制御（デフォルトON, λ=0.05）
     use_cs_ic_env = os.getenv("USE_CS_IC", "1") == "1"
     cs_ic_weight_env = float(os.getenv("CS_IC_WEIGHT", "0.05"))
 
-    # Horizon consistency check
-    data_horizons = set(final_config.data.time_series.prediction_horizons)
-    if preset_w:
-        weight_horizons = set(preset_w.keys())
-        if data_horizons != weight_horizons:
-            logger.error(
-                f"Horizon mismatch: data={data_horizons}, weights={weight_horizons}"
-            )
-            raise ValueError(
-                f"Horizon weights must match data horizons: {data_horizons}"
+    # Horizon resolution and consistency (auto-fix by default)
+    data_h_list = list(getattr(final_config.data.time_series, "prediction_horizons", [1, 5, 10, 20]))
+    data_h_set = set(int(h) for h in data_h_list)
+
+    def _normalize_weights_map(wmap: dict[int, float] | None) -> dict[int, float] | None:
+        if not wmap:
+            return None
+        try:
+            s = float(sum(float(v) for v in wmap.values()))
+            if s <= 0:
+                return None
+            return {int(k): float(v) / s for k, v in wmap.items()}
+        except Exception:
+            return None
+
+    def _from_cfg_or_default() -> dict[int, float]:
+        # Try Hydra config first
+        try:
+            from omegaconf import OmegaConf  # local import to avoid top-level dep
+            cfg_map = OmegaConf.select(final_config, "train.loss.horizon_weights")
+            if isinstance(cfg_map, dict):
+                parsed = {int(k): float(v) for k, v in cfg_map.items()}
+                nw = _normalize_weights_map(parsed)
+                if nw and set(nw.keys()) == data_h_set:
+                    return nw
+            # list alignment case (train.loss.horizon_weights or prediction.horizon_weights)
+            if isinstance(cfg_map, list) and len(cfg_map) == len(data_h_list):
+                parsed = {int(h): float(w) for h, w in zip(data_h_list, cfg_map)}
+                nw = _normalize_weights_map(parsed)
+                if nw:
+                    return nw
+            pred_hw = OmegaConf.select(final_config, "prediction.horizon_weights")
+            if isinstance(pred_hw, list) and len(pred_hw) == len(data_h_list):
+                parsed = {int(h): float(w) for h, w in zip(data_h_list, pred_hw)}
+                nw = _normalize_weights_map(parsed)
+                if nw:
+                    return nw
+        except Exception:
+            pass
+        # Fallback: sqrt-inv scheme
+        import math as _m
+        base = {int(h): 1.0 / _m.sqrt(float(h)) for h in data_h_list}
+        return _normalize_weights_map(base) or {int(h): 1.0 / len(data_h_list) for h in data_h_list}
+
+    if preset_w is None:
+        preset_w = _from_cfg_or_default()
+    else:
+        # If provided but mismatched, auto-fix unless STRICT_HWEIGHTS=1
+        weight_h_set = set(int(k) for k in preset_w.keys())
+        if weight_h_set != data_h_set:
+            if os.getenv("STRICT_HWEIGHTS", "0") == "1":
+                logger.error(f"Horizon mismatch: data={data_h_set}, weights={weight_h_set}")
+                raise ValueError(f"Horizon weights must match data horizons: {data_h_set}")
+            # Auto-correct: drop extras, fill missing with sqrt-inv, then normalize
+            import math as _m
+            fixed = {int(h): float(preset_w[h]) for h in data_h_list if h in preset_w}
+            for h in data_h_list:
+                if int(h) not in fixed:
+                    fixed[int(h)] = 1.0 / _m.sqrt(float(h))
+            preset_w = _normalize_weights_map(fixed)
+            logger.warning(
+                f"[HWEIGHTS] Auto-corrected weights to match horizons {sorted(data_h_list)}"
             )
 
     criterion = MultiHorizonLoss(

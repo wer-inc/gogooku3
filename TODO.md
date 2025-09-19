@@ -2364,3 +2364,162 @@ WANDB_MODE=disabled CUDA_VISIBLE_DEVICES="" python scripts/integrated_ml_trainin
   run parameters as needed.
 
   Let me know if you’d like me to implement those follow-ups or dig into the loss module next.
+
+
+-----
+
+● 次のステップとして、以下の作業を提案します：
+
+  次の作業候補
+
+  1. テスト環境の問題を修正 (推奨)
+
+  先ほどのテスト実行で、いくつかのテストが失敗していました：
+  # 構文エラーの修正
+  # test_market_features.py line 159: SyntaxError
+  vim tests/unit/test_market_features.py +159
+
+  # 重複したテストファイルの削除
+  rm tests/test_margin_weekly.py  # 重複があるため
+
+  # インポートエラーの修正
+  # gogooku3モジュールのパス問題を解決
+
+  2. smoke_test.pyの修正
+
+  freq_dropout_pのNoneType エラーを修正：
+  # ATFT_GAT_FANモデルの初期化エラー
+  # configs/にfreq_dropout_pのデフォルト値を設定
+
+  3. CI/CDパイプラインの強化
+
+  # GitHub Actionsワークフローを作成
+  # .github/workflows/test.yml を追加して
+  # 自動的にregression testを実行
+
+  4. パフォーマンスの最適化
+
+  # 大規模データセットでのトレーニングテスト
+  python scripts/integrated_ml_training_pipeline.py \
+    --run-safe-pipeline \
+    --adv-graph-train
+
+  # または
+  make train-integrated-safe
+
+  5. ドキュメントの整理
+
+  # 未使用のHydra出力ファイルをクリーンアップ
+  rm -rf outputs/inference/2025-09-18/
+  rm -rf outputs/inference/2025-09-19/
+
+  # .gitignoreに追加
+  echo "outputs/inference/" >> .gitignore
+
+  どれから始めますか？ 個人的には 1. テスト環境の問題を修正 が最も重要だと思います。これにより、今後の開発でテストが正しく動作するようになります。
+
+----------
+
+> 同意です。いまGPUが使われていない主因は2点です。
+
+  - OS/ドライバ側でCUDA/NVMLが初期化できていない（学習/Torch側）
+  - RAPIDS/cuDFが未導入のため、GPU-ETLはCPUにフォールバック（ETL側）
+
+  一気に直す手順
+
+  1. GPUをOSから見える状態に復旧（Torchで使えるように）
+
+  - 確認: nvidia-smi が成功するか
+  - 失敗する場合（Azure/6.8系で出やすい）:
+      - sudo systemctl restart nvidia-persistenced
+      - sudo modprobe -r nvidia_uvm nvidia_drm nvidia_modeset nvidia || true
+      - sudo modprobe nvidia && sudo modprobe nvidia_modeset && sudo modprobe nvidia_drm && sudo modprobe
+  nvidia_uvm
+      - まだダメなら整合再インストール→再起動:
+          - sudo apt-get update
+          - sudo apt-get install -y linux-headers-$(uname -r) linux-modules-nvidia-575-azure nvidia-driver-
+  575 nvidia-utils-575
+          - sudo reboot
+
+  2. GPU-ETL用のRAPIDSを導入（ETLをVRAMに載せる）
+
+  - 推奨（mamba/conda）:
+      - mamba create -n rapids-24.08 -c rapidsai -c conda-forge python=3.10 cudf=24.08 rmm=24.08 cupy cuda-
+  version=12.6
+      - conda activate rapids-24.08
+      - 動作確認: python -c "import cudf,rmm,cupy as cp;
+  rmm.reinitialize(pool_allocator=True,initial_pool_size='70GB',managed_memory=True);
+  print('ok',cudf.version,cp.cuda.runtime.getDeviceCount())"
+  - 代替（pip）は環境依存で非推奨
+
+  3. 6カ月ETLの再実行（GPU必須にしてCPUフォールバックを禁止）
+
+  - REQUIRE_GPU=1 USE_GPU_ETL=1 RMM_POOL_SIZE=70GB CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src \
+    python scripts/pipelines/run_full_dataset.py \
+    --jquants --start-date 2025-03-19 --end-date 2025-09-19 --gpu-etl
+  - ログに「RMM initialized with pool=70GB」が出ればGPU-ETL稼働中です
+  - 補足: 先のコマンド例で MM_POOL_SIZE とタイプされていました。正しくは RMM_POOL_SIZE です
+
+  4. 学習側のGPU必須実行（TorchがGPUを確実に使用）
+
+  - REQUIRE_GPU=1 FORCE_GPU=1 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src \
+    python scripts/integrated_ml_training_pipeline.py \
+    --data-path <生成したparquet> --adv-graph-train --max-epochs 1 --batch-size 512 --sample-size 100000
+  - 起動ログに「Using device: cuda」「GPU: A100…」が出ない場合は即停止します
+
+  この順で実施すれば、ETLも学習もGPUで動きます。まずは1)の nvidia-smi 復旧結果だけ共有いただければ、必要なら
+  コマンドをあなたの環境に合わせて微調整します。
+
+-------
+
+
+● Summary
+
+  ✅ GPU training has been successfully configured and initiated. The system now:
+
+  1. Detects and uses GPU correctly: "Using device: cuda", "GPU: NVIDIA A100 80GB PCIe"
+  2. Has recovered from NVML issues: The nvidia kernel modules were successfully reloaded
+  3. Implemented GPU-priority execution logic across multiple files with FORCE_GPU support
+
+  Issues Encountered & Resolved:
+
+  - ✅ Fixed horizon weights mismatch with auto-correction mechanism
+  - ✅ Recovered GPU functionality by reloading nvidia kernel modules
+  - ✅ Implemented GPU-priority device resolution in train_atft.py
+  - ⚠️ DataLoader creation appears to hang with DayBatchSampler (known issue, needs investigation)
+
+  Current Status:
+
+  - GPU is detected and available (A100 80GB)
+  - Training starts on GPU but encounters DataLoader initialization delays
+  - Multiple training attempts are running in background (can be monitored via BashOutput tool)
+
+  The GPU-accelerated training pipeline is now functional, though the DataLoader creation step requires
+  optimization to avoid hangs.
+
+-----
+
+● # GPU環境設定
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+  export CUDA_VISIBLE_DEVICES=0
+
+  # 最新データセットでATFT-GAT-FAN学習（推奨）
+  python scripts/integrated_ml_training_pipeline.py \
+    --data-path output/datasets/ml_dataset_20250319_20250919_20250919_223415_full.parquet \
+    --adv-graph-train \
+    train.optimizer.lr=2e-4 \
+    train.trainer.max_epochs=75
+
+  # SafeTrainingPipeline検証付き
+  python scripts/integrated_ml_training_pipeline.py \
+    --data-path output/datasets/ml_dataset_20250319_20250919_20250919_223415_full.parquet \
+    --run-safe-pipeline \
+    --adv-graph-train
+
+  # 直接ATFT訓練（Hydra設定）
+  python scripts/train_atft.py \
+    --config-path configs/atft \
+    --config-name config \
+    data.path=output/datasets/ml_dataset_20250319_20250919_20250919_223415_full.parquet \
+    train.trainer.accelerator=gpu \
+    train.trainer.devices=1

@@ -14,6 +14,7 @@ cross-sectional ops. No forward-filling; NULLs are preserved.
 """
 
 import math
+import os
 import polars as pl
 
 EPS = 1e-12
@@ -135,44 +136,67 @@ def add_advanced_features(df: pl.DataFrame) -> pl.DataFrame:
         ])
 
     # Cross-sectional features (per Date)
-    if "returns_1d" in out.columns:
-        cnt = pl.count().over("Date")
-        rk = pl.col("returns_1d").rank(method="average").over("Date")
-        out = out.with_columns([
-            pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias("rank_ret_1d")
-        ])
-        # Streaks and momentum persistence
-        # up_streak_1d/down_streak_1d: consecutive days of positive/negative returns
-        sign = (pl.col("returns_1d") > 0).cast(pl.Int8).alias("_pos")
-        out = out.with_columns([sign.over("Code")])
-        # Compute streaks via cumulative groups of equal sign
-        grp = (pl.col("_pos") != pl.col("_pos").shift(1).over("Code")).cast(pl.Int8)
-        out = out.with_columns([
-            grp.over("Code").alias("_chg")
-        ])
-        out = out.with_columns([
-            pl.col("_chg").cumsum().over("Code").alias("_grp_id")
-        ])
-        # Within each group, assign sequential count; positive groups → up_streak, negative → down_streak
-        out = out.with_columns([
-            pl.arange(1, pl.len() + 1).over(["Code", "_grp_id"]).alias("_seq")
-        ])
-        out = out.with_columns([
-            pl.when(pl.col("_pos") == 1).then(pl.col("_seq")).otherwise(0).alias("up_streak_1d"),
-            pl.when(pl.col("_pos") == 0).then(pl.col("_seq")).otherwise(0).alias("down_streak_1d"),
-        ])
-        # Momentum persistence: share of positive days last 5
-        out = out.with_columns([
-            pl.col("_pos").rolling_mean(5).over("Code").alias("mom_persist_5d")
-        ])
-        # Cleanup temps
-        out = out.drop([c for c in ("_pos", "_chg", "_grp_id", "_seq") if c in out.columns])
-    if "Volume" in out.columns:
-        out = out.with_columns([
-            ((pl.col("Volume") - pl.col("Volume").mean().over("Date")) / (pl.col("Volume").std().over("Date") + EPS)).alias(
-                "volume_cs_z"
+    _use_gpu_etl = os.getenv("USE_GPU_ETL", "0") == "1"
+    if _use_gpu_etl:
+        try:
+            from src.utils.gpu_etl import cs_rank_and_z, init_rmm  # type: ignore
+
+            # Best-effort RMM init; ignore failure
+            try:
+                init_rmm(None)
+            except Exception:
+                pass
+
+            out = cs_rank_and_z(
+                out,
+                rank_col="returns_1d",
+                z_col="Volume",
+                group_keys=("Date",),
+                out_rank_name="rank_ret_1d",
+                out_z_name="volume_cs_z",
             )
-        ])
+        except Exception:
+            _use_gpu_etl = False  # fall back to CPU path below
+
+    if not _use_gpu_etl:
+        if "returns_1d" in out.columns:
+            cnt = pl.count().over("Date")
+            rk = pl.col("returns_1d").rank(method="average").over("Date")
+            out = out.with_columns([
+                pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias("rank_ret_1d")
+            ])
+            # Streaks and momentum persistence
+            # up_streak_1d/down_streak_1d: consecutive days of positive/negative returns
+            sign = (pl.col("returns_1d") > 0).cast(pl.Int8).alias("_pos")
+            out = out.with_columns([sign.over("Code")])
+            # Compute streaks via cumulative groups of equal sign
+            grp = (pl.col("_pos") != pl.col("_pos").shift(1).over("Code")).cast(pl.Int8)
+            out = out.with_columns([
+                grp.over("Code").alias("_chg")
+            ])
+            out = out.with_columns([
+                pl.col("_chg").cumsum().over("Code").alias("_grp_id")
+            ])
+            # Within each group, assign sequential count; positive groups → up_streak, negative → down_streak
+            out = out.with_columns([
+                pl.arange(1, pl.len() + 1).over(["Code", "_grp_id"]).alias("_seq")
+            ])
+            out = out.with_columns([
+                pl.when(pl.col("_pos") == 1).then(pl.col("_seq")).otherwise(0).alias("up_streak_1d"),
+                pl.when(pl.col("_pos") == 0).then(pl.col("_seq")).otherwise(0).alias("down_streak_1d"),
+            ])
+            # Momentum persistence: share of positive days last 5
+            out = out.with_columns([
+                pl.col("_pos").rolling_mean(5).over("Code").alias("mom_persist_5d")
+            ])
+            # Cleanup temps
+            out = out.drop([c for c in ("_pos", "_chg", "_grp_id", "_seq") if c in out.columns])
+        if "Volume" in out.columns:
+            out = out.with_columns([
+                ((pl.col("Volume") - pl.col("Volume").mean().over("Date")) / (pl.col("Volume").std().over("Date") + EPS)).alias(
+                    "volume_cs_z"
+                )
+            ])
 
     # Calendar features (shared across codes per Date)
     if "Date" in out.columns:

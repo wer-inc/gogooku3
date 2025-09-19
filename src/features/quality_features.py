@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import polars as pl
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -156,18 +157,31 @@ class QualityFinancialFeaturesGenerator:
 
                 # Z-score計算（ローリングまたはCS分位）
                 if self.use_cross_sectional_quantiles:
-                    # 日次クロスセクション分位
-                    volume_z = (
-                        (pl.col('adjustment_volume') -
-                         pl.col('adjustment_volume').mean().over('date')) /
-                        (pl.col('adjustment_volume').std().over('date') + 1e-12)
-                    )
+                    # GPU-ETL（任意）: USE_GPU_ETL=1 ならcuDFでz-scoreを計算
+                    use_gpu = os.getenv("USE_GPU_ETL", "0") == "1"
+                    if use_gpu:
+                        try:
+                            from src.utils.gpu_etl import cs_z  # type: ignore
 
-                    turnover_z = (
-                        (pl.col('turnover_value') -
-                         pl.col('turnover_value').mean().over('date')) /
-                        (pl.col('turnover_value').std().over('date') + 1e-12)
-                    )
+                            df = cs_z(df, value_col='adjustment_volume', group_keys=('date',), out_name='__vol_cs_z')
+                            df = cs_z(df, value_col='turnover_value', group_keys=('date',), out_name='__tov_cs_z')
+                            volume_z = pl.col('__vol_cs_z')
+                            turnover_z = pl.col('__tov_cs_z')
+                        except Exception:
+                            use_gpu = False
+                    if not use_gpu:
+                        # 日次クロスセクション分位（CPU）
+                        volume_z = (
+                            (pl.col('adjustment_volume') -
+                             pl.col('adjustment_volume').mean().over('date')) /
+                            (pl.col('adjustment_volume').std().over('date') + 1e-12)
+                        )
+
+                        turnover_z = (
+                            (pl.col('turnover_value') -
+                             pl.col('turnover_value').mean().over('date')) /
+                            (pl.col('turnover_value').std().over('date') + 1e-12)
+                        )
                 else:
                     # ローリングZ-score
                     volume_z = (
@@ -205,6 +219,10 @@ class QualityFinancialFeaturesGenerator:
                 if self.verbose:
                     logger.debug(f"Added {len(flow_exprs)} Flow indicators")
 
+            # GPUで追加した一時列はクリーンアップ
+            drop_tmp = [c for c in ('__vol_cs_z', '__tov_cs_z') if c in df.columns]
+            if drop_tmp:
+                df = df.drop(drop_tmp)
             return df
 
         except Exception as e:
@@ -220,13 +238,34 @@ class QualityFinancialFeaturesGenerator:
             vol_flag_exprs = []
 
             if self.use_cross_sectional_quantiles:
-                # 同日クロスセクション分位
-                vol_quantile = pl.col(self.volatility_column).rank(method='average').over('date') / pl.col(self.volatility_column).count().over('date')
+                # 同日クロスセクション分位（GPU-ETL対応）
+                use_gpu = os.getenv("USE_GPU_ETL", "0") == "1"
+                vol_quantile = None
+                if use_gpu:
+                    try:
+                        from src.utils.gpu_etl import cs_rank_and_z  # type: ignore
+
+                        # cs_rank_and_z でランク正規化（0..1）を取得
+                        tmp = cs_rank_and_z(
+                            df.select(['date', self.volatility_column]).with_row_count('__rid__'),
+                            rank_col=self.volatility_column,
+                            z_col=self.volatility_column,
+                            group_keys=("date",),
+                            out_rank_name="__vol_q",
+                            out_z_name="__dummy",
+                        )
+                        tmp = tmp.sort('__rid__').select(['__vol_q'])
+                        df = df.hstack([tmp])
+                        vol_quantile = pl.col('__vol_q')
+                    except Exception:
+                        use_gpu = False
+                if not use_gpu:
+                    vol_quantile = pl.col(self.volatility_column).rank(method='average').over('date') / pl.col(self.volatility_column).count().over('date')
 
                 vol_flag_exprs.extend([
                     (vol_quantile >= 0.8).alias('high_vol_flag'),
                     (vol_quantile <= 0.2).alias('low_vol_flag'),
-                    vol_quantile.alias('vol_cs_quantile')
+                    (vol_quantile).alias('vol_cs_quantile')
                 ])
             else:
                 # ローリング分位
@@ -246,6 +285,9 @@ class QualityFinancialFeaturesGenerator:
                 if self.verbose:
                     logger.debug(f"Added {len(vol_flag_exprs)} volatility flags")
 
+            # GPU一時列の掃除
+            if '__vol_q' in df.columns:
+                df = df.drop(['__vol_q'])
             return df
 
         except Exception as e:
