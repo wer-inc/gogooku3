@@ -252,12 +252,12 @@ hpo-test:
 .PHONY: train-gpu-latest train-gpu-latest-safe
 
 train-gpu-latest:
-	@echo "🚀 Running GPU training with latest dataset"
-	@./scripts/train_gpu_latest.sh
+	@echo "🚀 Launching GPU training (background)"
+	@./scripts/launch_train_gpu_latest.sh
 
 train-gpu-latest-safe:
-	@echo "🚀 Running GPU training with SafeTrainingPipeline validation"
-	@./scripts/train_gpu_latest.sh --safe
+	@echo "🚀 Launching GPU training with SafeTrainingPipeline validation (background)"
+	@./scripts/launch_train_gpu_latest.sh --safe
 
 # Integrated ML Training targets
 .PHONY: train-integrated train-integrated-safe train-integrated-hpo train-atft train-safe smoke

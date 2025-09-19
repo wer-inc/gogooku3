@@ -96,13 +96,6 @@ logging:
   log_grad_norm: true
   log_learning_rate: true
 
-# Hardware optimizations
-hardware_optimizations:
-  compile_model: true
-  channels_last: true
-  tf32: true
-  cudnn_benchmark: true
-  gradient_checkpointing: false
 
 # Mixed precision settings
 grad_scaler:
