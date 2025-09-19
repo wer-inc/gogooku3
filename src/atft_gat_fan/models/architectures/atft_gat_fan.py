@@ -374,13 +374,32 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
     def _build_freq_dropout(self) -> nn.Module | None:
         """周波数領域のDropout設定"""
-        freq_dropout_p = float(getattr(self.config, "freq_dropout_p", 0.0))
+        # Try to get freq_dropout_p from improvements section first, then from root
+        if hasattr(self.config, "improvements") and hasattr(self.config.improvements, "freq_dropout_p"):
+            freq_dropout_p = self.config.improvements.freq_dropout_p
+        else:
+            freq_dropout_p = getattr(self.config, "freq_dropout_p", 0.0)
+
+        # Handle None values
+        if freq_dropout_p is None:
+            freq_dropout_p = 0.0
+
+        freq_dropout_p = float(freq_dropout_p)
         if freq_dropout_p <= 0:
             return None
+
+        # Try to get min/max width from improvements section first
+        if hasattr(self.config, "improvements"):
+            min_width = getattr(self.config.improvements, "freq_dropout_min_width", 0.05)
+            max_width = getattr(self.config.improvements, "freq_dropout_max_width", 0.2)
+        else:
+            min_width = getattr(self.config, "freq_dropout_min_width", 0.05)
+            max_width = getattr(self.config, "freq_dropout_max_width", 0.2)
+
         return FreqDropout1D(
             p=freq_dropout_p,
-            min_width=float(getattr(self.config, "freq_dropout_min_width", 0.05)),
-            max_width=float(getattr(self.config, "freq_dropout_max_width", 0.2)),
+            min_width=float(min_width) if min_width is not None else 0.05,
+            max_width=float(max_width) if max_width is not None else 0.2,
         )
 
     def _build_curriculum(self) -> CurriculumScheduler | None:

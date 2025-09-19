@@ -21,7 +21,8 @@ from dataclasses import dataclass, asdict
 # Load environment variables
 env_path = Path(__file__).parent.parent.parent / ".env"
 if env_path.exists():
-    load_dotenv(env_path)
+    # override=True so that .env values replace empty/existing envs
+    load_dotenv(env_path, override=True)
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -931,7 +932,11 @@ class JQuantsPipelineV4Optimized:
                     logger.info(f"Saved to {events_path}")
         else:
             logger.info("Creating sample data...")
-            from data.ml_dataset_builder import create_sample_data
+            # Use stable facade import (avoids package path issues)
+            try:
+                from src.gogooku3.pipeline.builder import create_sample_data
+            except Exception:
+                from scripts.data.ml_dataset_builder import create_sample_data  # fallback
             price_df = create_sample_data(100, 300)
             statements_df = None
             events = []

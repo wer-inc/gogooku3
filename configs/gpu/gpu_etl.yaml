@@ -1,0 +1,40 @@
+# GPU-ETL Configuration
+# GPUを使用したデータETL処理の設定
+
+gpu_etl:
+  enabled: true  # GPU-ETLを有効化
+
+  # RMM (RAPIDS Memory Manager) 設定
+  rmm:
+    pool_size: "70GB"  # GPUメモリプールサイズ
+    managed_memory: false  # 管理メモリモード（問題がある場合はfalse）
+
+  # CUDA設定
+  cuda:
+    visible_devices: "0"  # 使用するGPUデバイス番号
+    allow_growth: false  # メモリを必要に応じて増やす（RMMと競合するためfalse推奨）
+
+  # データ処理設定
+  processing:
+    use_gpu_for:
+      - cross_sectional_normalization  # 断面正規化
+      - rank_computation  # ランク計算
+      - z_score  # Z-スコア計算
+      - correlation_matrix  # 相関行列計算
+
+    # フォールバック設定
+    fallback_to_cpu: true  # GPU処理失敗時にCPUにフォールバック
+    log_gpu_usage: true  # GPU使用状況をログ出力
+
+  # パフォーマンスチューニング
+  performance:
+    batch_size_multiplier: 2.0  # GPU処理時のバッチサイズ倍率
+    prefetch_factor: 4  # データプリフェッチ係数
+
+# デフォルト環境変数（.envファイルで上書き可能）
+environment:
+  REQUIRE_GPU: "1"
+  USE_GPU_ETL: "1"
+  RMM_POOL_SIZE: "70GB"
+  CUDA_VISIBLE_DEVICES: "0"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"

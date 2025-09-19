@@ -10,6 +10,7 @@ help:
 	@echo "make run          - Start Dagster UI"
 	@echo "make clean        - Clean up environment"
 	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset"
+	@echo "make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD - Build dataset with GPU-ETL enabled"
 	@echo "make dataset-full-prod START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/full_dataset.yaml"
 	@echo "make dataset-full-research START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/research_full_indices.yaml"
 	@echo "make check-indices  DATASET=output/ml_dataset_latest_full.parquet - Validate indices features"
@@ -37,6 +38,10 @@ help:
 	@echo "make train-atft                       - Run ATFT training directly"
 	@echo "make train-safe                       - Run SafeTrainingPipeline only"
 	@echo "make smoke                            - Quick 1-epoch smoke test"
+	@echo ""
+	@echo "GPU Training with Latest Dataset:"
+	@echo "make train-gpu-latest                 - GPU training with auto-detected latest dataset"
+	@echo "make train-gpu-latest-safe            - GPU training with SafeTrainingPipeline validation"
 
 # Python environment setup
 setup:
@@ -100,6 +105,13 @@ minio-create-bucket:
 .PHONY: dataset-full
 dataset-full:
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END}
+
+# GPU-ETL acceleration enabled dataset generation
+.PHONY: dataset-full-gpu
+dataset-full-gpu:
+	@echo "🚀 Running dataset generation with GPU-ETL enabled"
+	@export REQUIRE_GPU=1 USE_GPU_ETL=1 RMM_POOL_SIZE=70GB CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src && \
+	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --gpu-etl
 
 .PHONY: dataset-full-prod
 dataset-full-prod:
@@ -235,6 +247,17 @@ hpo-mock:
 hpo-test:
 	@echo "🧪 Testing HPO functionality"
 	python scripts/hpo/test_hpo_basic.py
+
+# GPU Training with Latest Dataset
+.PHONY: train-gpu-latest train-gpu-latest-safe
+
+train-gpu-latest:
+	@echo "🚀 Running GPU training with latest dataset"
+	@./scripts/train_gpu_latest.sh
+
+train-gpu-latest-safe:
+	@echo "🚀 Running GPU training with SafeTrainingPipeline validation"
+	@./scripts/train_gpu_latest.sh --safe
 
 # Integrated ML Training targets
 .PHONY: train-integrated train-integrated-safe train-integrated-hpo train-atft train-safe smoke

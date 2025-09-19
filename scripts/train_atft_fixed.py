@@ -3470,8 +3470,35 @@ def train(config: DictConfig) -> None:
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", message=".*worker.*")
 
-    # デバイス設定
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # デバイス設定（GPU優先 + 環境変数で上書き可能）
+    def _resolve_device() -> torch.device:
+        dev_env = os.getenv("DEVICE", "").strip()
+        acc_env = os.getenv("ACCELERATOR", "").lower().strip()
+        force_gpu = os.getenv("FORCE_GPU", "0") == "1"
+        require_gpu = os.getenv("REQUIRE_GPU", "0") == "1"
+        # Prefer explicit device if provided
+        if dev_env:
+            try:
+                if dev_env.startswith("cuda") and not torch.cuda.is_available():
+                    if require_gpu:
+                        raise RuntimeError("GPU required but not available (CUDA not initialized)")
+                    logger.warning("CUDA not available; falling back to CPU despite DEVICE=cuda")
+                    return torch.device("cpu")
+                return torch.device(dev_env)
+            except Exception:
+                logger.warning(f"Invalid DEVICE='{dev_env}', falling back to auto")
+        # Accelerator or FORCE_GPU hints
+        if force_gpu or acc_env in ("gpu", "cuda"):
+            if not torch.cuda.is_available():
+                if require_gpu:
+                    raise RuntimeError("GPU required but not available (torch.cuda.is_available=False)")
+                logger.warning("GPU hint given but CUDA unavailable; using CPU")
+                return torch.device("cpu")
+            return torch.device("cuda")
+        # Default: auto
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    device = _resolve_device()
     logger.info(f"Using device: {device}")
 
     use_amp = use_amp_env and device.type == "cuda"

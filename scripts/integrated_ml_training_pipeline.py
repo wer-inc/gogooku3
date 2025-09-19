@@ -60,10 +60,10 @@ class CompleteATFTTrainingPipeline:
             "input_dim": 8,
             "sequence_length": 20,
             "prediction_horizons": [1, 5, 10, 20],
-            "batch_size": 2048,
-            "learning_rate": 5e-5,
+            "batch_size": 4096,
+            "learning_rate": 2e-4,
             "max_epochs": 75,
-            "precision": "bf16-mixed",
+            "precision": "16-mixed",
         }
 
         # 安定性設定（ATFT-GAT-FANの成果から）
@@ -525,6 +525,11 @@ class CompleteATFTTrainingPipeline:
             if self.extra_overrides:
                 cmd.extend(self.extra_overrides)
 
+            # まずGPU/CPU計画を判定（この結果を以降の設定に利用）
+            force_gpu = os.getenv("FORCE_GPU", "0") == "1"
+            acc_env = os.getenv("ACCELERATOR", "").lower()
+            use_gpu_plan = (torch.cuda.is_available() or force_gpu) and acc_env != "cpu"
+
             # 小規模サンプルでの実行時は、minibatch崩壊と検証0件を避けるための保護を入れる
             debug_small_data = (
                 self.sample_size is not None and int(self.sample_size) > 0
@@ -536,15 +541,16 @@ class CompleteATFTTrainingPipeline:
                 logger.info(
                     f"[debug-small] Override sequence_length -> {debug_seq_len} to ensure non-empty validation"
                 )
-                # マルチプロセスDataLoaderはサンドボックス環境でPermissionErrorを起こすため無効化
-                cmd.extend(
-                    [
-                        "train.batch.num_workers=0",
-                        "train.batch.prefetch_factor=null",
-                        "train.batch.persistent_workers=false",
-                        "train.batch.pin_memory=false",
-                    ]
-                )
+                if not use_gpu_plan:
+                    # CPU計画時のみ DataLoader を単純化
+                    cmd.extend(
+                        [
+                            "train.batch.num_workers=0",
+                            "train.batch.prefetch_factor=null",
+                            "train.batch.persistent_workers=false",
+                            "train.batch.pin_memory=false",
+                        ]
+                    )
 
             # 学習実行（リポジトリ直下で実行）
             # Ensure train script sees data directory via config override
@@ -552,21 +558,46 @@ class CompleteATFTTrainingPipeline:
             # 恒久運用ではValidatorを有効化
             env.pop("VALIDATE_CONFIG", None)
             env["HYDRA_FULL_ERROR"] = "1"  # 詳細なエラー情報を取得
-            if "train.batch.prefetch_factor=null" not in cmd:
-                cmd.append("train.batch.prefetch_factor=null")
-            if "train.batch.persistent_workers=false" not in cmd:
-                cmd.append("train.batch.persistent_workers=false")
-            if "train.batch.pin_memory=false" not in cmd:
-                cmd.append("train.batch.pin_memory=false")
+            # GPU/CPU の実行方針に応じて DataLoader 関連を調整（上の判定を再利用）
+
+            if use_gpu_plan:
+                # GPU 実行: データローダ最適化を有効化（上書き）
+                # 既存のCPU向けオーバーライドが混入していれば取り除く
+                for bad in [
+                    "train.batch.prefetch_factor=null",
+                    "train.batch.persistent_workers=false",
+                    "train.batch.pin_memory=false",
+                ]:
+                    if bad in cmd:
+                        cmd.remove(bad)
+                # 推奨GPU設定を付与（未指定の場合）
+                if not any(s.startswith("train.batch.persistent_workers=") for s in cmd):
+                    cmd.append("train.batch.persistent_workers=true")
+                if not any(s.startswith("train.batch.pin_memory=") for s in cmd):
+                    cmd.append("train.batch.pin_memory=true")
+                if not any(s.startswith("train.batch.prefetch_factor=") for s in cmd):
+                    cmd.append("train.batch.prefetch_factor=8")
+                env.setdefault("ACCELERATOR", "gpu")
+                env.setdefault("CUDA_VISIBLE_DEVICES", os.getenv("CUDA_VISIBLE_DEVICES", "0"))
+                # GPUログを明示
+                logger.info("[pipeline] Using GPU execution plan (persistent_workers, pin_memory, prefetch_factor=8)")
+            else:
+                # CPU 実行: DataLoader を単純化
+                if "train.batch.prefetch_factor=null" not in cmd:
+                    cmd.append("train.batch.prefetch_factor=null")
+                if "train.batch.persistent_workers=false" not in cmd:
+                    cmd.append("train.batch.persistent_workers=false")
+                if "train.batch.pin_memory=false" not in cmd:
+                    cmd.append("train.batch.pin_memory=false")
             logger.info(f"Running command: {' '.join(cmd)}")
-            if not torch.cuda.is_available() or os.getenv("ACCELERATOR", "").lower() == "cpu":
+            if not use_gpu_plan:
                 if env.get("USE_DAY_BATCH", "1") not in ("0", "false", "False"):
                     logger.info("[pipeline] Forcing USE_DAY_BATCH=0 for CPU execution")
                 env["USE_DAY_BATCH"] = "0"
                 env.setdefault("NUM_WORKERS", "0")
                 env.setdefault("PERSISTENT_WORKERS", "0")
                 env.setdefault("PREFETCH_FACTOR", "0")
-            if debug_small_data:
+            if debug_small_data and not use_gpu_plan:
                 # 分割とgapの保守設定（検証期間を十分確保）
                 env.setdefault("TRAIN_RATIO", "0.6")
                 # VAL_RATIOは非累積（trainとは独立比率）で扱われる
@@ -945,8 +976,8 @@ async def main():
     import argparse
     parser = argparse.ArgumentParser(description="Complete ATFT-GAT-FAN Training Pipeline", add_help=True)
     parser.add_argument("--data-path", type=str, help="Path to ML dataset parquet file")
-    parser.add_argument("--max-epochs", type=int, default=75, help="Maximum epochs (0 to skip training)")
-    parser.add_argument("--batch-size", type=int, default=2048, help="Batch size")
+    parser.add_argument("--max-epochs", type=int, default=None, help="Maximum epochs (0 to skip training)")
+    parser.add_argument("--batch-size", type=int, default=None, help="Batch size")
     parser.add_argument("--lr", type=float, default=None, help="Learning rate override (e.g., 2e-4)")
     parser.add_argument("--sample-size", type=int, help="Sample size for testing")
     parser.add_argument("--dry-run", action="store_true", help="Show planned steps and exit")

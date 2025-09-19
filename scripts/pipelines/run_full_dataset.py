@@ -32,6 +32,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Awaitable
+from dotenv import load_dotenv
 
 import aiohttp
 import polars as pl
@@ -40,6 +41,15 @@ import polars as pl
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Load .env from project root (for JQuants credentials etc.)
+env_path = ROOT / ".env"
+try:
+    if env_path.exists():
+        # override=True so that .env values win over empty/placeholder envs
+        load_dotenv(env_path, override=True)
+except Exception:
+    pass
 
 # Import JQuants fetcher to get trade-spec directly (moved out of _archive)
 from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
@@ -79,6 +89,19 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--end-date", type=str, default=None, help="YYYY-MM-DD (default: today)"
+    )
+    # GPU-ETL (デフォルトで有効、--no-gpu-etlで無効化可能)
+    parser.add_argument(
+        "--gpu-etl",
+        action="store_true",
+        default=True,  # デフォルトで有効
+        help="Enable GPU ETL path (cuDF/RAPIDS). Enabled by default. Use --no-gpu-etl to disable.",
+    )
+    parser.add_argument(
+        "--no-gpu-etl",
+        dest="gpu_etl",
+        action="store_false",
+        help="Disable GPU ETL and use CPU only",
     )
     parser.add_argument(
         "--topix-parquet",
@@ -382,6 +405,29 @@ async def main() -> int:
     Follows the documented 3-step flow and persists artifacts under `output/`.
     """
     args = _parse_args()
+
+    # GPU-ETLのデフォルト設定：環境変数またはコマンドライン引数から判定
+    # 優先順位: コマンドライン引数 > 環境変数 > デフォルト(True)
+    gpu_etl_enabled = getattr(args, "gpu_etl", os.getenv("USE_GPU_ETL", "1") == "1")
+
+    # Propagate GPU-ETL flag to env for downstream modules
+    if gpu_etl_enabled:
+        os.environ["USE_GPU_ETL"] = "1"
+        logger.info("GPU-ETL: enabled (will use RAPIDS/cuDF if available)")
+        # Best-effort RMM init with large pool if provided
+        try:
+            from src.utils.gpu_etl import init_rmm  # type: ignore
+
+            pool = os.getenv("RMM_POOL_SIZE", "70GB")
+            ok = init_rmm(pool)
+            if ok:
+                logger.info(f"RMM initialized with pool={pool}")
+            else:
+                logger.info("RMM initialization skipped or failed (continuing)")
+        except Exception:
+            pass
+    else:
+        os.environ.pop("USE_GPU_ETL", None)
 
     # Load YAML config if provided (CLI takes precedence)
     if getattr(args, "config", None) is not None and args.config and args.config.exists():

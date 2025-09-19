@@ -156,7 +156,6 @@ class TestMarketFeaturesGenerator:
         calculated_beta = result_df.select('beta_60d').to_series().drop_nulls().mean()
         assert abs(calculated_beta - beta) < 0.3, f"β calculation inaccurate: expected ~{beta}, got {calculated_beta}"
 
-        print(".3f"
     def test_regime_flags_calculation(self, sample_topix_data):
         """レジームフラグ計算のテスト"""
         from src.features.market_features import MarketFeaturesGenerator

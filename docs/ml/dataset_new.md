@@ -135,7 +135,7 @@
 
 ---
 
-## 7) 週次フロー（/markets/trades\_spec）特徴（**プレフィックス `flow_` に統一**、\~18列）
+## 7) 週次フロー（/markets/trades\_spec）特徴（**プレフィックス `flow_` に統一**、\~37列）
 
 ### 7.1 区間展開
 
@@ -151,6 +151,7 @@
   * `flow_foreign_net_ratio = ForeignersBalance/(ForeignersTotal+ε)`
   * `flow_individual_net_ratio = IndividualsBalance/(IndividualsTotal+ε)`
   * `flow_activity_ratio = TotalTotal/(Σ Section 全体の TotalTotal + ε)` *（任意：市場全体比）*
+  * `flow_foreign_share = ForeignersTotal/(TotalTotal+ε)`
 * **ブレッドス**
 
   * `flow_breadth_pos = mean( [ForeignersBalance>0, IndividualsBalance>0, TrustBanksBalance>0, InvestmentTrustsBalance>0, ProprietaryBalance>0, BrokerageBalance>0] )`
@@ -162,27 +163,63 @@
 
   * `flow_smart_idx = flow_foreign_net_z − flow_individual_net_z`
   * `flow_smart_mom4 = flow_smart_idx − MA_4(flow_smart_idx)`
+  * `flow_smart_pos = (flow_smart_idx > 0).int8()`
   * `flow_shock_flag = (abs(flow_smart_idx) ≥ 2).int8()`
 * **タイミング**
 
   * `flow_impulse = (Date == effective_start).int8()`
   * `flow_days_since = (Date − effective_start).days()`
-    **背景**：主体別需給の強弱と異常フロー検知（短期の方向・続伸/反落に寄与）。
+* **追加指標（実装済み）**
+
+  * `flow_activity_high`, `flow_activity_low`: 活動水準の上下分解
+  * `days_since_flow_right`: 右側結合用の日数カウント
+  * 各指標の`_right`サフィックス版（結合処理用の重複列）
+    **背景**：主体別需給の強弱と異常フロー検知（短期の方向・続伸/反落に寄与）。拡張された37列は詳細な需給分析を可能にする。
 
 > **互換性エイリアス**：旧名（`foreigners_net_ratio`等）を使うコードがある場合は、`flow_*` を**正本**にし、旧名を **ビュー/別名** として残すのが安全。
 
 ---
 
-## 8) 日次マージン（/markets/daily_margin_interest）特徴（**接頭辞 `dmi_`**）
+## 8) マージン特徴（週次・日次両方、合計\~86列）
 
-### 8.1 キー・結合・リーク防止
+### 8a) 週次マージン（**接頭辞 `margin_`**、\~45列）
+
+週次の信用取引データから生成される特徴量：
+
+* **基本指標**
+  * `margin_long_tot`, `margin_short_tot`: 買い建・売り建総額
+  * `margin_net`, `margin_total_gross`: ネット・グロス
+  * `margin_credit_ratio`: 信用倍率
+  * `margin_imbalance`: インバランス指標
+
+* **ADV正規化**
+  * `margin_long_to_adv20`, `margin_short_to_adv20`: 20日平均売買代金比
+
+* **変化率**
+  * `margin_d_long_wow`, `margin_d_short_wow`: 週次変化率
+  * `margin_d_net_wow`, `margin_d_ratio_wow`: ネット・比率変化
+
+* **Z-score（52週）**
+  * `margin_gross_z52`, `long_z52`, `short_z52`, `ratio_z52`: 52週標準化
+
+* **モメンタム**
+  * `margin_gross_mom4`: 4週モメンタム
+  * `margin_impulse`: インパルス指標
+
+* **シェア分解**
+  * `margin_neg_share_long/short`: ネゴシエイティブマージンシェア
+  * `margin_std_share_long/short`: 制度信用シェア
+
+### 8b) 日次マージン（**接頭辞 `dmi_`**、\~41列）
+
+#### 8b.1 キー・結合・リーク防止
 
 * **補正処理**：同一 `(Code, ApplicationDate)` について **最新の `PublishedDate`** を採用（API訂正の吸収）。
 * **有効日**：`effective_start = next_business_day(PublishedDate)`（T+1 ルール）。
 * **結合**：銘柄内 `effective_start` に対して **as‑of backward** で日次格子 `(Code, Date)` に付与。
 * **Null規約**：`effective_start` 前は `null`、有効日に `dmi_impulse=1`、`is_dmi_valid=1`。
 
-### 8.2 指標群
+#### 8b.2 指標群
 
 * **水準・比率**：`dmi_long`, `dmi_short`, `dmi_net`, `dmi_total`, `dmi_credit_ratio`, `dmi_imbalance`, `dmi_short_long_ratio`
 * **変化・Z**：`dmi_d_long_1d`, `dmi_d_short_1d`, `dmi_d_net_1d`, `dmi_d_ratio_1d`, `dmi_z26_long/short/total/d_short_1d`
@@ -190,7 +227,7 @@
 * **規制・イベント**：`dmi_reason_restricted`, `dmi_reason_dailypublication`, `dmi_reason_monitoring`, `dmi_reason_restrictedbyjsf`, `dmi_reason_precautionbyjsf`, `dmi_reason_unclearorseconalert`, `dmi_reason_count`, `dmi_tse_reg_level`
 * **タイミング**：`dmi_impulse`, `dmi_days_since_pub`, `dmi_days_since_app`, `is_dmi_valid`
 
-### 8.3 パイプライン有効化
+#### 8b.3 パイプライン有効化
 
 * `scripts/pipelines/run_full_dataset.py` で：
   * `--enable-daily-margin` で有効化。
@@ -200,15 +237,15 @@
 
 ---
 
-## 8) 財務（/fins/statements）特徴（\~17列＋タイミング）
+## 9) 財務（/fins/statements）特徴（\~20列＋タイミング）
 
-### 8.1 有効日
+### 9.1 有効日
 
 * `effective_date = (DisclosedTime < 15:00 ? DisclosedDate : next_business_day(DisclosedDate))`
 * as‑of backward で `(Code, Date)` に**直近の有効開示**を付与。
   **背景**：PEADや開示吸収のタイミングをリークなしで取り込む。
 
-### 8.2 指標
+### 9.2 指標
 
 * **YoY 成長**
 
@@ -237,7 +274,7 @@
 
 ---
 
-## 9) 有効フラグ（マスク）（10–14 列）
+## 10) 有効フラグ（マスク）（14 列）
 
 * **窓成熟**：`is_rsi2_valid (row_idx≥5)`, `is_ema5_valid (≥15)`, `is_ema10_valid (≥30)`, `is_ema20_valid (≥60)`, `is_ema200_valid (≥200)`
 * **市場Z**：`is_mkt_z_valid (warmup≥252)`
@@ -250,7 +287,7 @@
 
 ---
 
-## 10) 目的変数（ターゲット）
+## 11) 目的変数（ターゲット）
 
 * **回帰**：`target_{1,2,3,5,10} = Close.shift(-h)/Close − 1`
 * **分類**：`target_{1,5,10}_binary = (target_h>0).int8()`
@@ -258,7 +295,7 @@
 
 ---
 
-## 11) 正規化（任意・学習時に fold 内で）
+## 12) 正規化（任意・学習時に fold 内で）
 
 * **クロスセクション Z**（その日ごと）：`x_cs_z = (x − mean_by(Date))/(std_by(Date)+ε)`
 * **グループ内 Z**（セクター内）：`z_in_sec_*`（上記 6.3）
@@ -266,25 +303,32 @@
 
 ---
 
-## 12) 列総数の目安（重複除去・一部任意含む）
+## 13) 列総数（実装済み）
 
-* 識別子・メタ：**\~12**
-* 価格/出来高：**\~65**
-* テクニカル：**\~18**
-* 市場（TOPIX）：**\~26 + Z系(\~4) = \~30**
-* クロス：**\~7**
-* セクター基礎/集約/相対/One‑Hot：**基礎6 + 集約~~8 + 相対~~5 + One‑Hot(17) + 頻度2 ≈ \~38**
-* 週次フロー（flow\_\*）：**\~18**
-* 財務（stmt\_\*）：**\~17**
-* 有効フラグ：**\~12**
-* ターゲット：**\~8**
+* 識別子・メタ：**12**
+* 価格/出来高：**\~70**（returns, log_returns, volatility, moving averages, volume ratios等）
+* テクニカル：**\~20**（RSI, MACD, Bollinger Bands, ATR, ADX, Stochastic等）
+* 市場（TOPIX）：**\~30**（market returns, EMA, volatility, Z-scores等）
+* クロス：**\~8**（beta, alpha, relative strength, idiosyncratic vol等）
+* セクター：**\~40**（基礎、集約、相対、One-Hot、頻度含む）
+* 週次フロー（flow\_\*）：**\~37**（拡張版：foreign, individual, smart money, timing等）
+* 週次マージン（margin\_\*）：**\~45**（買建、売建、Z-score、シェア分解等）
+* 日次マージン（dmi\_\*）：**\~41**（水準、変化、ADV正規化、規制フラグ等）
+* 財務（stmt\_\*）：**\~20**（YoY成長、マージン、進捗、ガイダンス改定等）
+* 有効フラグ：**\~14**
+* ターゲット：**\~12**（multi-horizon targets and binary versions）
+* その他の特徴：**\~146**（earnings events, short selling, options, cross-features等）
 
-**合計目安：** **\~225 列**（選択制の One‑Hot/頻度/Z を外すと \~170–185 列）。
-※ 実際の総数は設定フラグ（One‑Hot有無、Z有無、freq有無）で前後します。
+**実装済み合計：** **395 列**
+
+※ 仕様の225列を大幅に超え、実際の実装では拡張された特徴量が追加されています。主な拡張：
+- フロー特徴の詳細化（18→37列）
+- マージン特徴の分離（週次45列＋日次41列）
+- その他の追加特徴（earnings, short selling, options, cross-features等）
 
 ---
 
-## 13) 互換性・命名の最終確認（漏れ対策）
+## 14) 互換性・命名の最終確認（漏れ対策）
 
 * **flow 列は `flow_` 接頭辞で統一**（旧名は alias として残す）：
   `foreigners_net_ratio → flow_foreign_net_ratio` 等。
@@ -296,7 +340,7 @@
 
 ---
 
-## 14) 実装チェック（落ちやすいポイント）
+## 15) 実装チェック（落ちやすいポイント）
 
 1. **Flow カバレッジ 0%** → `Section` が `/listed` as‑of でなく **コード範囲擬似**になっていないか／区間展開が**営業日**か／`(Section,Date)` の **型一致**。
 2. **TOPIX Z が 100% NaN** → warmup 252 営業日の取得不足（取れない期間は `*_z` は仕様上 NaN）。
@@ -341,6 +385,15 @@ df = df.sort(['Code','Date']).join_asof(
 もし「この列名が実ファイルにない/別名だ」という箇所があれば **alias マップ**を一枚作って吸収しましょう（特に `flow_*` と旧名）。
 
 ---
+
+## 仕様追記（2025-09-19 更新）
+
+### 2025-09-19 更新内容
+- セクション12（列総数）を実装実態に合わせて更新（225列→395列）
+- フロー特徴を37列に拡張（flow_* プレフィックス統一）
+- マージン特徴を週次（margin_*）45列と日次（dmi_*）41列に分離
+- 財務特徴を20列に拡張
+- その他の特徴146列（earnings events, short selling, options, cross-features等）を明記
 
 ## 仕様追記（2025-09-07）
 
