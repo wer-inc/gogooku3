@@ -2523,3 +2523,60 @@ WANDB_MODE=disabled CUDA_VISIBLE_DEVICES="" python scripts/integrated_ml_trainin
     data.path=output/datasets/ml_dataset_20250319_20250919_20250919_223415_full.parquet \
     train.trainer.accelerator=gpu \
     train.trainer.devices=1
+
+----
+
+• Ran ps -eo pid,cmd | grep train_atft.py | grep -v grep | awk '{print $1}'
+
+> 状況は Hydra の構造化コンフィグが hardware_optimizations.* を受け付けず、学習が即座に失敗→再実行を繰り返し
+  ていたため、6時間経っても終わらなかっただけで、GPUジョブが止まっていたわけではありません。
+
+  対応済み内容
+
+  - configs/atft/train/production.yaml から struct モデル外だった hardware_optimizations セクションを削除（精
+  度・バッチなどの変更は維持）。
+  - scripts/train_gpu_latest.sh から hardware_optimizations.* の Hydra オーバーライドを完全に削除。
+  - エラーで残っていた python scripts/train_atft.py ... プロセスは一覧で 0 件になっていることを確認済み。
+
+  これで Hydra が即終了するループは解消されています。あとは改めて
+
+  make train-gpu-latest
+
+  を実行し、ログ (tail -f logs/ml_training.log) に hydra.errors.ConfigCompositionException が再登場しないこ
+  と、エポックが進んでいることをご確認ください。もし再度エラーが出る場合は、その直後のログを共有いただければ
+  追加で見直します。
+
+----
+
+make train-gpu-latest
+🚀 Running GPU training with latest dataset
+🚀 GPU Training with Latest Dataset
+✓ Found latest dataset: output/datasets/ml_dataset_latest_full.parquet
+Running standard GPU training...
+============================================================
+Complete ATFT-GAT-FAN Training Pipeline
+Target Sharpe Ratio: 0.849
+============================================================
+2025-09-19 14:15:33,683 - __main__ - INFO - 🚀 Complete ATFT-GAT-FAN Training Pipeline started
+2025-09-19 14:15:33,683 - __main__ - INFO - 🎯 Target Sharpe Ratio: 0.849
+2025-09-19 14:15:33,683 - __main__ - INFO - 🔧 Setting up ATFT-GAT-FAN environment...
+2025-09-19 14:15:33,683 - __main__ - INFO - ✅ ATFT-GAT-FAN environment setup completed
+2025-09-19 14:15:33,683 - __main__ - INFO - 📊 Loading and validating ML dataset...
+2025-09-19 14:15:33,684 - __main__ - INFO - 📂 Loading ML dataset from: output/datasets/ml_dataset_latest_full.parquet
+2025-09-19 14:15:33,790 - __main__ - INFO - ✅ ML dataset loaded: (480973, 395)
+2025-09-19 14:15:33,790 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-09-19 14:15:33,794 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-09-19 14:15:33,828 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-09-19 14:15:33,828 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-09-19 14:15:33,828 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 3900 train files
+2025-09-19 14:15:33,828 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-09-19 14:15:33,949 - __main__ - INFO - [pipeline] Using GPU execution plan (persistent_workers, pin_memory, prefetch_factor=8)
+2025-09-19 14:15:33,949 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=4096 train.optimizer.lr=0.0002 train.trainer.max_epochs=75 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true train.batch.train_batch_size=4096 train.batch.val_batch_size=6144 train.batch.test_batch_size=6144 train.batch.num_workers=16 train.batch.prefetch_factor=8 train.trainer.accumulate_grad_batches=1 train.trainer.precision=16-mixed train.trainer.val_check_interval=1.0 train.optimizer.lr=2e-4 train.trainer.max_epochs=75 train.batch.persistent_workers=true train.batch.pin_memory=true
+2025-09-19 21:47:37,078 - __main__ - ERROR - Training failed: INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+
+❌ Complete training pipeline failed: ATFT training failed
+✅ Training completed successfully
+
+---
