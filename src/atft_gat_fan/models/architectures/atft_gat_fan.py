@@ -9,6 +9,20 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
+from ..components import (
+    FrequencyAdaptiveNorm,
+    FreqDropout1D,
+    MultiLayerGAT,
+    SliceAdaptiveNorm,
+    TemporalFusionTransformer,
+    VariableSelectionNetwork,
+)
+from src.training.curriculum import (
+    CurriculumScheduler,
+    create_research_curriculum,
+    create_simple_curriculum,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,69 +53,73 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
         logger.info(f"ATFT-GAT-FAN initialized with {self.n_dynamic_features} dynamic features")
 
+        # Curriculum scheduler (optional)
+        self.curriculum_scheduler = self._build_curriculum()
+        self.curriculum_horizon_weights: dict[int, float] | None = None
+        self.curriculum_active_horizons: set[str] | None = None
+
     def _calculate_feature_dims(self):
         """特徴量次元の計算（ML_DATASET_COLUMNS.md準拠）"""
         data_config = self.config.data.features
 
-        # 基本特徴量
-        n_basic = len(data_config.basic.price_volume) + len(data_config.basic.flags)
+        from omegaconf import DictConfig, ListConfig
 
-        # テクニカル指標（拡張）
-        n_technical = (
-            len(data_config.technical.momentum) +
-            len(data_config.technical.volatility) +
-            len(data_config.technical.trend) +
-            len(data_config.technical.moving_averages) +
-            len(data_config.technical.macd) +
-            len(getattr(data_config.technical, 'bollinger_bands', []))
+        def _collect_feature_names(node):
+            names = []
+            if node is None:
+                return names
+            if isinstance(node, (list, tuple, set, ListConfig)):
+                for item in node:
+                    if isinstance(item, str):
+                        names.append(item)
+                    else:
+                        names.extend(_collect_feature_names(item))
+            elif isinstance(node, (dict, DictConfig)):
+                for value in node.values():
+                    names.extend(_collect_feature_names(value))
+            return names
+
+        basic_features = _collect_feature_names(getattr(data_config, 'basic', None))
+        technical_features = _collect_feature_names(getattr(data_config, 'technical', None))
+        ma_features = _collect_feature_names(getattr(data_config, 'ma_derived', None))
+        interaction_features = _collect_feature_names(getattr(data_config, 'returns_ma_interaction', None))
+        flow_features = _collect_feature_names(getattr(data_config, 'flow', None))
+
+        returns_cfg = getattr(data_config, 'returns', None)
+        if returns_cfg is not None and hasattr(returns_cfg, 'columns'):
+            return_features = list(returns_cfg.columns)
+        else:
+            return_features = []
+
+        current_feature_names = (
+            basic_features
+            + technical_features
+            + ma_features
+            + interaction_features
+            + flow_features
+            + return_features
         )
 
-        # MA派生特徴量
-        n_ma_derived = 0
-        if hasattr(data_config, 'ma_derived') and data_config.ma_derived is not None:
-            for category in ['price_deviations', 'ma_gaps', 'ma_slopes', 'ma_crosses', 'ma_ribbon']:
-                if hasattr(data_config.ma_derived, category):
-                    category_data = getattr(data_config.ma_derived, category)
-                    if category_data is not None:
-                        n_ma_derived += len(category_data)
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_feature_names = []
+        for name in current_feature_names:
+            if name not in seen:
+                seen.add(name)
+                unique_feature_names.append(name)
 
-        # リターン×MA相互作用特徴量
-        n_interaction = 0
-        if hasattr(data_config, 'returns_ma_interaction') and data_config.returns_ma_interaction is not None:
-            for category in ['momentum', 'interactions']:
-                if hasattr(data_config.returns_ma_interaction, category):
-                    category_data = getattr(data_config.returns_ma_interaction, category)
-                    if category_data is not None:
-                        n_interaction += len(category_data)
-
-        # フロー特徴量
-        flow_data = getattr(data_config, 'flow', [])
-        if flow_data is not None:
-            if hasattr(flow_data, '__len__') and not isinstance(flow_data, str):
-                try:
-                    n_flow = len(flow_data)
-                except TypeError:
-                    n_flow = 0
-            else:
-                n_flow = 0
-        else:
-            n_flow = 0
-
-        # リターン特徴量
-        n_returns = len(data_config.returns.columns)
-
-        # 現在値特徴量の合計
-        self.n_current_features = n_basic + n_technical + n_ma_derived + n_interaction + n_flow + n_returns
+        self.n_current_features = len(unique_feature_names)
 
         # 履歴特徴量の計算
         n_historical = 0
-        if hasattr(data_config, 'historical') and data_config.historical is not None:
+        historical_cfg = getattr(data_config, 'historical', None)
+        if historical_cfg is not None:
             try:
-                for hist_name, hist_config in data_config.historical.items():
-                    if hasattr(hist_config, 'range'):
-                        n_historical += (hist_config.range[1] - hist_config.range[0] + 1)
+                for hist_cfg in historical_cfg.values():
+                    rng = getattr(hist_cfg, 'range', None)
+                    if rng is not None and len(rng) == 2:
+                        n_historical += (rng[1] - rng[0] + 1)
             except (AttributeError, TypeError):
-                # historicalが空辞書やNoneの場合
                 n_historical = 0
 
         self.n_historical_features = n_historical
@@ -109,12 +127,31 @@ class ATFT_GAT_FAN(pl.LightningModule):
         # 合計特徴量数
         self.n_dynamic_features = self.n_current_features + self.n_historical_features
 
+        if self.n_dynamic_features <= 0:
+            try:
+                fallback_dim = int(getattr(getattr(self.config.data, "features", {}), "input_dim", 0))
+            except Exception:
+                fallback_dim = 0
+            if fallback_dim > 0:
+                logger.warning(
+                    "Dynamic feature dimension inferred as 0; falling back to config input_dim=%d",
+                    fallback_dim,
+                )
+                self.n_dynamic_features = fallback_dim
+
         # 静的特徴量（market_code_nameのエンコーディング後の次元）
         self.n_static_features = 10  # 仮の値（実際はエンコーディング方法による）
 
-        logger.info(f"Feature dimensions - Basic: {n_basic}, Technical: {n_technical}, "
-                   f"MA-derived: {n_ma_derived}, Interaction: {n_interaction}, "
-                   f"Flow: {n_flow}, Returns: {n_returns}")
+        logger.info(
+            "Feature dimensions - Basic: %d, Technical: %d, MA-derived: %d, "
+            "Interaction: %d, Flow: %d, Returns: %d",
+            len(basic_features),
+            len(technical_features),
+            len(ma_features),
+            len(interaction_features),
+            len(flow_features),
+            len(return_features),
+        )
         logger.info(f"Total current features: {self.n_current_features}, "
                    f"Historical: {self.n_historical_features}, Total: {self.n_dynamic_features}")
 
@@ -127,66 +164,243 @@ class ATFT_GAT_FAN(pl.LightningModule):
     def _build_model(self):
         """モデルアーキテクチャの構築"""
 
-        # 入力投影層
+        self.hidden_size = int(getattr(self.config.model, "hidden_size", 128))
+        self.gat_output_dim = 0
+        self.gat_edge_weight = 0.0
+        self.gat_entropy_weight = 0.0
+
+        # Variable Selection Network (feature-wise gating)
+        self.variable_selection = self._build_variable_selection()
+
+        # 入力投影層（VSN出力後の調整）
         self.input_projection = self._build_input_projection()
 
-        # Temporal Fusion Transformer
+        # Temporal Fusion Transformer backbone
         self.tft = self._build_tft()
 
-        # Graph Attention Network
-        if self.config.model.gat.enabled:
-            self.gat = self._build_gat()
+        # Graph Attention Network (銘柄間メッセージパッシング)
+        self.gat = self._build_gat() if getattr(self.config.model.gat, "enabled", False) else None
 
-        # 適応正規化
+        self.combined_feature_dim = self.hidden_size + (self.gat_output_dim if self.gat is not None else 0)
+        self.backbone_projection = nn.Linear(self.combined_feature_dim, self.hidden_size)
+
+        # 適応正規化 (FAN/SAN)
         self.adaptive_norm = self._build_adaptive_normalization()
 
-        # FreqDropout（オプション）
-        freq_dropout_p = getattr(self.config, 'freq_dropout_p', 0.0)
-        if freq_dropout_p is not None and isinstance(freq_dropout_p, (int, float)) and freq_dropout_p > 0:
-            from ...components.freq_dropout import FreqDropout1D
-            self.freq_dropout = FreqDropout1D(
-                p=freq_dropout_p,
-                min_width=getattr(self.config, 'freq_dropout_min_width', 0.05),
-                max_width=getattr(self.config, 'freq_dropout_max_width', 0.2)
-            )
-        else:
-            self.freq_dropout = None
+        # 周波数Dropout（オプション）
+        self.freq_dropout = self._build_freq_dropout()
 
-        # 予測ヘッド（改善版）
+        # 予測ヘッド（RegimeMoE / Multi-horizon 等）
         self.prediction_head = self._build_prediction_head()
 
-    def _build_input_projection(self):
-        """入力投影層"""
-        return nn.Sequential(
-            nn.Linear(self.n_dynamic_features, self.config.model.hidden_size),
-            nn.LayerNorm(self.config.model.hidden_size) if self.config.model.input_projection.use_layer_norm else nn.Identity(),
-            nn.Dropout(self.config.model.input_projection.dropout)
+        # ランタイムで更新する正則化メトリクスの初期化
+        self._vsn_sparsity_loss = torch.tensor(0.0)
+        self._last_variable_gates: torch.Tensor | None = None
+        self._gat_attention_entropy: torch.Tensor | None = None
+        self._gat_edge_reg_value: torch.Tensor | None = None
+        self._last_attention_weights = None
+
+    def _get_training_config(self):
+        if hasattr(self.config, 'training') and self.config.training is not None:
+            return self.config.training
+        if hasattr(self.config, 'train') and self.config.train is not None:
+            return self.config.train
+        from omegaconf import OmegaConf
+        return OmegaConf.create({})
+
+    def _build_variable_selection(self) -> VariableSelectionNetwork:
+        """Variable Selection Networkの構築"""
+        # Safely get tft config
+        try:
+            tft_cfg = getattr(self.config.model, "tft", None)
+        except Exception:
+            tft_cfg = None
+
+        # Handle None or non-dict values
+        if tft_cfg is None or not hasattr(tft_cfg, '__getitem__'):
+            vsn_cfg = {}
+        else:
+            try:
+                vsn_cfg = tft_cfg.get("variable_selection", {}) if hasattr(tft_cfg, "get") else tft_cfg.get("variable_selection") if callable(getattr(tft_cfg, "get", None)) else {}
+            except Exception:
+                vsn_cfg = {}
+
+        dropout = float(getattr(vsn_cfg, "dropout", 0.1) if hasattr(vsn_cfg, "__getattr__") else vsn_cfg.get("dropout", 0.1) if isinstance(vsn_cfg, dict) else 0.1)
+        use_sigmoid = bool(getattr(vsn_cfg, "use_sigmoid", True) if hasattr(vsn_cfg, "__getattr__") else vsn_cfg.get("use_sigmoid", True) if isinstance(vsn_cfg, dict) else True)
+        sparsity_coeff = float(getattr(vsn_cfg, "sparsity_coefficient", 0.0) if hasattr(vsn_cfg, "__getattr__") else vsn_cfg.get("sparsity_coefficient", 0.0) if isinstance(vsn_cfg, dict) else 0.0)
+
+        self.vsn_sparsity_weight = sparsity_coeff
+
+        return VariableSelectionNetwork(
+            input_size=1,
+            num_features=self.n_dynamic_features,
+            hidden_size=self.hidden_size,
+            dropout=dropout,
+            use_sigmoid=use_sigmoid,
+            sparsity_coefficient=sparsity_coeff,
         )
 
-    def _build_tft(self):
+    def _reconfigure_dynamic_feature_dim(self, new_dim: int, device: torch.device) -> None:
+        """Rebuild feature-dependent modules when runtime feature dimension differs."""
+        if new_dim <= 0:
+            raise ValueError("new_dim must be positive")
+        if new_dim == self.n_dynamic_features:
+            return
+        logger.warning(
+            "Dynamic feature dimension mismatch detected (expected %d, got %d). "
+            "Rebuilding variable selection network.",
+            self.n_dynamic_features,
+            new_dim,
+        )
+        self.n_dynamic_features = new_dim
+        self.variable_selection = self._build_variable_selection().to(device)
+
+    def _ensure_backbone_projection(self, input_dim: int, device: torch.device) -> None:
+        """Resize backbone projection when combined features dimensionality shifts."""
+        if input_dim == self.combined_feature_dim and hasattr(self, "backbone_projection"):
+            return
+        logger.warning(
+            "Adjusting backbone projection input dim from %d to %d",
+            getattr(self, "combined_feature_dim", -1),
+            input_dim,
+        )
+        self.combined_feature_dim = input_dim
+        self.backbone_projection = nn.Linear(input_dim, self.hidden_size).to(device)
+
+    def _build_input_projection(self) -> nn.Module:
+        """VSN後の正規化・Dropout を含む投影層"""
+        proj_cfg = getattr(self.config.model, "input_projection", None)
+        if proj_cfg is None:
+            use_layer_norm = True
+            dropout = 0.1
+        else:
+            use_layer_norm = bool(getattr(proj_cfg, "use_layer_norm", True))
+            dropout = float(getattr(proj_cfg, "dropout", 0.1))
+
+        layers: list[nn.Module] = [nn.Linear(self.hidden_size, self.hidden_size)]
+        if use_layer_norm:
+            layers.append(nn.LayerNorm(self.hidden_size))
+        layers.append(nn.Dropout(dropout))
+        return nn.Sequential(*layers)
+
+    def _build_tft(self) -> TemporalFusionTransformer:
         """Temporal Fusion Transformerの構築"""
-        # 入力投影後の次元を使用
-        projected_features = self.config.model.hidden_size
+        tft_cfg = getattr(self.config.model, "tft", {})
+        lstm_cfg = getattr(tft_cfg, "lstm", {})
+        att_cfg = getattr(tft_cfg, "attention", {})
+        temporal_cfg = getattr(tft_cfg, "temporal", {})
+
+        num_layers = int(getattr(lstm_cfg, "layers", 1))
+        dropout = float(getattr(lstm_cfg, "dropout", 0.1))
+        num_heads = int(getattr(att_cfg, "heads", 4))
+        att_dropout = float(getattr(att_cfg, "dropout", dropout))
+        use_positional = bool(getattr(temporal_cfg, "use_positional_encoding", True))
+        max_seq_len = int(getattr(temporal_cfg, "max_sequence_length", 64))
+
         return TemporalFusionTransformer(
-            hidden_size=self.config.model.hidden_size,
-            n_dynamic_features=projected_features,  # 投影後の次元を使用
-            n_static_features=self.n_static_features,
-            config=self.config.model.tft
+            input_size=self.hidden_size,
+            hidden_size=self.hidden_size,
+            num_heads=num_heads,
+            num_layers=num_layers,
+            dropout=max(dropout, att_dropout),
+            use_positional_encoding=use_positional,
+            max_sequence_length=max_seq_len,
         )
 
-    def _build_gat(self):
+    def _build_gat(self) -> MultiLayerGAT | None:
         """Graph Attention Networkの構築"""
-        return GraphAttentionNetwork(
-            hidden_size=self.config.model.hidden_size,
-            config=self.config.model.gat
+        gat_cfg = getattr(self.config.model, "gat", None)
+        if gat_cfg is None or not getattr(gat_cfg, "enabled", False):
+            return None
+
+        arch_cfg = getattr(gat_cfg, "architecture", {})
+        hidden_channels = list(getattr(arch_cfg, "hidden_channels", [self.hidden_size]))
+        heads = list(getattr(arch_cfg, "heads", [4] * len(hidden_channels)))
+        concat = list(getattr(arch_cfg, "concat", [True] * len(hidden_channels)))
+        num_layers = int(getattr(arch_cfg, "num_layers", len(hidden_channels)))
+
+        layer_cfg = getattr(gat_cfg, "layer_config", {})
+        dropout = float(getattr(layer_cfg, "dropout", 0.2))
+        edge_dropout = float(getattr(layer_cfg, "edge_dropout", 0.1))
+        edge_cfg = getattr(gat_cfg, "edge_features", {})
+        edge_dim = int(getattr(edge_cfg, "edge_dim", 0)) or None
+
+        reg_cfg = getattr(gat_cfg, "regularization", {})
+        edge_penalty = float(getattr(reg_cfg, "edge_weight_penalty", 0.0))
+        entropy_penalty = float(getattr(reg_cfg, "attention_entropy_penalty", 0.0))
+
+        self.gat_output_dim = hidden_channels[-1] * (heads[-1] if concat[-1] else 1)
+        self.gat_entropy_weight = entropy_penalty
+        self.gat_edge_weight = edge_penalty
+
+        return MultiLayerGAT(
+            num_layers=num_layers,
+            in_channels=self.hidden_size,
+            hidden_channels=hidden_channels,
+            heads=heads,
+            concat_list=concat,
+            dropout=dropout,
+            edge_dropout=edge_dropout,
+            edge_dim=edge_dim,
+            edge_weight_penalty=edge_penalty,
+            attention_entropy_penalty=entropy_penalty,
+            use_graph_norm=True,
         )
 
-    def _build_adaptive_normalization(self):
-        """適応正規化層の構築"""
-        return AdaptiveNormalization(
-            hidden_size=self.config.model.hidden_size,
-            config=self.config.model.adaptive_normalization
+    def _build_adaptive_normalization(self) -> nn.Module:
+        """適応正規化層の構築 (FAN -> SAN)"""
+        norm_cfg = getattr(self.config.model, "adaptive_normalization", {})
+        fan_cfg = getattr(norm_cfg, "fan", {})
+        san_cfg = getattr(norm_cfg, "san", {})
+
+        fan_enabled = bool(getattr(fan_cfg, "enabled", True))
+        san_enabled = bool(getattr(san_cfg, "enabled", True))
+
+        fan = FrequencyAdaptiveNorm(
+            num_features=self.hidden_size,
+            window_sizes=list(getattr(fan_cfg, "window_sizes", [5, 10, 20])),
+            aggregation=str(getattr(fan_cfg, "aggregation", "weighted_mean")),
+            learn_weights=bool(getattr(fan_cfg, "learn_weights", True)),
+        ) if fan_enabled else nn.Identity()
+
+        san = SliceAdaptiveNorm(
+            num_features=self.hidden_size,
+            num_slices=int(getattr(san_cfg, "num_slices", 3)),
+            overlap=float(getattr(san_cfg, "overlap", 0.5)),
+            slice_aggregation=str(getattr(san_cfg, "slice_aggregation", "learned")),
+        ) if san_enabled else nn.Identity()
+
+        return nn.Sequential(fan, san)
+
+    def _build_freq_dropout(self) -> nn.Module | None:
+        """周波数領域のDropout設定"""
+        freq_dropout_p = float(getattr(self.config, "freq_dropout_p", 0.0))
+        if freq_dropout_p <= 0:
+            return None
+        return FreqDropout1D(
+            p=freq_dropout_p,
+            min_width=float(getattr(self.config, "freq_dropout_min_width", 0.05)),
+            max_width=float(getattr(self.config, "freq_dropout_max_width", 0.2)),
         )
+
+    def _build_curriculum(self) -> CurriculumScheduler | None:
+        """Build curriculum scheduler if enabled in config."""
+        training_cfg = self._get_training_config()
+        curriculum_cfg = getattr(training_cfg, "curriculum", None)
+        if curriculum_cfg is None or not getattr(curriculum_cfg, "enabled", False):
+            return None
+
+        trainer_cfg = getattr(training_cfg, "trainer", None)
+        max_epochs = int(getattr(trainer_cfg, "max_epochs", 100))
+        profile = str(getattr(curriculum_cfg, "profile", "research")).lower()
+
+        if profile == "simple":
+            scheduler = create_simple_curriculum(max_epochs=max_epochs)
+        else:
+            scheduler = create_research_curriculum(max_epochs=max_epochs)
+
+        logger.info("Curriculum scheduler enabled (%s)", profile)
+        return scheduler
 
     def _build_prediction_head(self):
         """予測ヘッドの構築（Multi-horizon / RegimeMoE 対応）"""
@@ -203,11 +417,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
             )
 
         # Multi-horizon prediction head（従来）
-        use_multi_horizon = getattr(self.config.training, 'use_multi_horizon_heads', True)
+        training_cfg = self._get_training_config()
+        use_multi_horizon = getattr(training_cfg, 'use_multi_horizon_heads', True)
         if use_multi_horizon:
             return MultiHorizonPredictionHeads(
                 hidden_size=self.config.model.hidden_size,
-                config=self.config.model.prediction_head
+                config=self.config.model.prediction_head,
+                training_cfg=training_cfg
             )
         else:
             # Backward compatibility: single horizon head
@@ -230,16 +446,23 @@ class ATFT_GAT_FAN(pl.LightningModule):
         except Exception:
             self._median_q_idx = 0
 
+        training_cfg = self._get_training_config()
+        loss_cfg = getattr(training_cfg, "loss", None)
+        aux_cfg = getattr(loss_cfg, "auxiliary", None) if loss_cfg is not None else None
+
         # 補助損失
-        if self.config.train.loss.auxiliary.sharpe_loss.enabled:
+        sharpe_cfg = getattr(aux_cfg, "sharpe_loss", None) if aux_cfg is not None else None
+        if getattr(sharpe_cfg, "enabled", False):
             self.sharpe_loss = SharpeLoss(
-                weight=self.config.train.loss.auxiliary.sharpe_loss.weight,
-                min_periods=self.config.train.loss.auxiliary.sharpe_loss.min_periods
+                weight=float(getattr(sharpe_cfg, "weight", 0.1)),
+                min_periods=int(getattr(sharpe_cfg, "min_periods", 20))
             )
+        else:
+            self.sharpe_loss = None
 
         # ランキング損失（任意）
         try:
-            rk_cfg = self.config.train.loss.auxiliary.ranking_loss
+            rk_cfg = getattr(aux_cfg, "ranking_loss", None)
             if getattr(rk_cfg, 'enabled', False):
                 from ....losses.pairwise_rank_loss import PairwiseRankLoss
 
@@ -256,7 +479,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
         # 意思決定層（任意）
         try:
-            dl_cfg = self.config.train.loss.auxiliary.decision_layer
+            dl_cfg = getattr(aux_cfg, "decision_layer", None)
             if getattr(dl_cfg, 'enabled', False):
                 from ....losses.decision_layer import DecisionLayer, DecisionLossConfig
 
@@ -270,7 +493,9 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 ))
 
                 # Decision Layer スケジューラ（有効な場合）
-                sched_cfg = self.config.train.loss.auxiliary.get('decision_layer_schedule', {})
+                sched_cfg = {}
+                if aux_cfg is not None:
+                    sched_cfg = getattr(aux_cfg, 'decision_layer_schedule', {})
                 if sched_cfg.get('enabled', False):
                     from ....training.decision_scheduler import create_decision_scheduler_from_config
                     self.decision_scheduler = create_decision_scheduler_from_config(
@@ -291,8 +516,25 @@ class ATFT_GAT_FAN(pl.LightningModule):
         """
         Enhanced forward pass with regime features support
         """
+        if torch.is_tensor(batch):
+            batch = {"dynamic_features": batch}
+        elif not isinstance(batch, dict):
+            raise TypeError(
+                "ATFT_GAT_FAN.forward expects a dict batch or feature tensor"
+            )
+
         # 入力データの展開
-        dynamic_features = batch['dynamic_features']  # [batch, seq_len, n_features]
+        dynamic_features = batch.get('dynamic_features')
+        if dynamic_features is None and 'features' in batch:
+            dynamic_features = batch['features']
+        if dynamic_features is None:
+            raise KeyError("Batch must contain 'dynamic_features' or 'features'")
+        if dynamic_features.dim() == 2:
+            dynamic_features = dynamic_features.unsqueeze(0)
+        dynamic_features = dynamic_features.to(torch.float32)
+        current_feature_dim = dynamic_features.size(-1)
+        if current_feature_dim != self.n_dynamic_features:
+            self._reconfigure_dynamic_feature_dim(current_feature_dim, dynamic_features.device)
         static_features = batch.get('static_features', None)  # [batch, n_static]
         edge_index = batch.get('edge_index', None)
         edge_attr = batch.get('edge_attr', None)
@@ -300,24 +542,57 @@ class ATFT_GAT_FAN(pl.LightningModule):
         # レジーム特徴量（J-UVX + KAMA/VIDYA + market regimes）
         regime_features = batch.get('regime_features', None)  # [batch, regime_dim]
 
+        # Variable Selection Network (feature gating)
+        vsn_input = dynamic_features.unsqueeze(-1)
+        selected_features, feature_gates, sparsity_loss = self.variable_selection(vsn_input)
+        self._vsn_sparsity_loss = sparsity_loss
+        self._last_variable_gates = feature_gates.detach()
+
         # 入力投影
-        x = self.input_projection(dynamic_features)
+        projected = self.input_projection(selected_features)
 
         # Temporal Fusion Transformer
-        tft_output = self.tft(x, static_features)
+        return_attention = self.training and self.gat is not None and self.gat_entropy_weight > 0
+        tft_output, attn_weights = self.tft(
+            projected,
+            return_attention_weights=return_attention,
+        )
+        self._last_tft_attention = attn_weights
 
         # Graph Attention Network（有効な場合）
-        if self.config.model.gat.enabled and edge_index is not None:
-            graph_output = self.gat(tft_output, edge_index, edge_attr)
-            combined_features = torch.cat([tft_output, graph_output], dim=-1)
+        gat_features = None
+        self._gat_attention_entropy = None
+        self._gat_edge_reg_value = None
+        if self.gat is not None and edge_index is not None:
+            last_step = tft_output[:, -1, :]  # [batch, hidden]
+            if return_attention:
+                gat_emb, attention_weights = self.gat(
+                    last_step, edge_index, edge_attr, return_attention_weights=True
+                )
+                self._gat_attention_entropy = self.gat.get_attention_entropy(attention_weights)
+                # Use final layer attention weights for edge regularization proxy
+                _, att_tensor = attention_weights[-1]
+                self._gat_edge_reg_value = att_tensor.pow(2).mean()
+                self._last_attention_weights = attention_weights
+            else:
+                gat_emb = self.gat(last_step, edge_index, edge_attr)
+                self._last_attention_weights = None
+
+            gat_features = gat_emb.unsqueeze(1).expand(-1, tft_output.size(1), -1)
+
+        # Combine temporal and graph context
+        if gat_features is not None:
+            combined_features = torch.cat([tft_output, gat_features], dim=-1)
         else:
             combined_features = tft_output
 
         # FreqDropout適用（オプション）
-        if self.freq_dropout is not None:
+        if self.freq_dropout is not None and self.training:
             combined_features = self.freq_dropout(combined_features)
 
-        # 適応正規化
+        # Project back to hidden size and apply adaptive normalization
+        self._ensure_backbone_projection(combined_features.size(-1), combined_features.device)
+        combined_features = self.backbone_projection(combined_features)
         normalized_features = self.adaptive_norm(combined_features)
 
         # 予測（Multi-horizon対応 + レジーム特徴量対応）
@@ -357,6 +632,15 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
         return output
 
+    def on_train_epoch_start(self) -> None:
+        if self.curriculum_scheduler is None:
+            return
+
+        phase = self.curriculum_scheduler.get_phase_config(self.current_epoch)
+        self.curriculum_horizon_weights = phase.horizon_weights
+        self.curriculum_active_horizons = {f'horizon_{h}d' for h in phase.prediction_horizons}
+        self.log('curriculum/phase', phase.name, prog_bar=False, on_step=False, on_epoch=True)
+
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int):
         """学習ステップ（Multi-horizon対応）"""
         # Decision Layer スケジューラ更新（エポック開始時に一度だけ）
@@ -379,13 +663,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
         if output_type == 'multi_horizon':
             # Multi-horizon training: 各horizonでの損失計算
-            # 新しいconfig構造から重みを取得
-            if (hasattr(self.config.training, 'prediction') and
-                hasattr(self.config.training.prediction, 'horizon_weights')):
-                horizon_weight_list = self.config.training.prediction.horizon_weights
-                horizon_weights = {
-                    f'horizon_{h}d': w for h, w in zip(self.prediction_horizons, horizon_weight_list)
-                }
+            # Horizon weights (curriculum優先)
+            if self.curriculum_horizon_weights:
+                horizon_weights = {f'horizon_{h}d': w for h, w in self.curriculum_horizon_weights.items()}
+            elif hasattr(self.config.training, 'prediction') and hasattr(self.config.training.prediction, 'horizons'):
+                horizons_cfg = list(self.config.training.prediction.horizons)
+                weight_list = list(getattr(self.config.training.prediction, 'horizon_weights', [1.0] * len(horizons_cfg)))
+                horizon_weights = {f'horizon_{h}d': w for h, w in zip(horizons_cfg, weight_list)}
             else:
                 # フォールバック: 従来の設定またはデフォルト
                 horizon_weights = getattr(self.config.training, 'horizon_weights', {
@@ -393,6 +677,9 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 })
 
             for horizon_key, pred in predictions.items():
+                if self.curriculum_active_horizons and horizon_key not in self.curriculum_active_horizons:
+                    continue
+
                 # Extract corresponding target for this horizon
                 if horizon_key in batch:
                     target = batch[horizon_key]
@@ -457,6 +744,24 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 self.log('train_pos_l2', comps['decision_pos_l2'], prog_bar=False)
                 self.log('train_fee', comps['decision_fee'], prog_bar=False)
 
+        # Variable selection sparsity正則化
+        if isinstance(self._vsn_sparsity_loss, torch.Tensor) and self._vsn_sparsity_loss.numel() > 0:
+            total_loss = total_loss + self._vsn_sparsity_loss
+            self.log('train_vsn_sparsity', self._vsn_sparsity_loss.detach(), prog_bar=False)
+
+        # GAT正則化 (edge weight / attention entropy)
+        if self.gat is not None:
+            if (self._gat_edge_reg_value is not None and isinstance(self._gat_edge_reg_value, torch.Tensor)
+                    and self.gat_edge_weight > 0):
+                edge_reg = self.gat_edge_weight * self._gat_edge_reg_value
+                total_loss = total_loss + edge_reg
+                self.log('train_gat_edge_penalty', self._gat_edge_reg_value.detach(), prog_bar=False)
+            if (self._gat_attention_entropy is not None and isinstance(self._gat_attention_entropy, torch.Tensor)
+                    and self.gat_entropy_weight > 0):
+                entropy_reg = -self.gat_entropy_weight * self._gat_attention_entropy
+                total_loss = total_loss + entropy_reg
+                self.log('train_gat_entropy', self._gat_attention_entropy.detach(), prog_bar=False)
+
         # ログ記録
         self.log('train_loss', total_loss, prog_bar=True)
 
@@ -490,6 +795,8 @@ class ATFT_GAT_FAN(pl.LightningModule):
         if output_type == 'multi_horizon':
             # Multi-horizon validation
             for horizon_key, pred in predictions.items():
+                if self.curriculum_active_horizons and horizon_key not in self.curriculum_active_horizons:
+                    continue
                 if horizon_key in batch:
                     target = batch[horizon_key]
                 elif 'targets' in batch:
@@ -540,28 +847,35 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
     def configure_optimizers(self):
         """オプティマイザーの設定"""
-        optimizer_config = self.config.train.optimizer
+        training_cfg = self._get_training_config()
+        optimizer_config = getattr(training_cfg, "optimizer", None)
 
-        if optimizer_config.type == 'AdamW':
+        opt_type = str(getattr(optimizer_config, "type", "AdamW")) if optimizer_config is not None else "AdamW"
+        lr = float(getattr(optimizer_config, "lr", 1e-3)) if optimizer_config is not None else 1e-3
+        weight_decay = float(getattr(optimizer_config, "weight_decay", 0.0)) if optimizer_config is not None else 0.0
+        betas = getattr(optimizer_config, "betas", (0.9, 0.999)) if optimizer_config is not None else (0.9, 0.999)
+        eps = float(getattr(optimizer_config, "eps", 1e-8)) if optimizer_config is not None else 1e-8
+
+        if opt_type.lower() == 'adamw':
             optimizer = torch.optim.AdamW(
                 self.parameters(),
-                lr=optimizer_config.lr,
-                weight_decay=optimizer_config.weight_decay,
-                betas=tuple(optimizer_config.betas),
-                eps=optimizer_config.eps
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=tuple(betas),
+                eps=eps
             )
         else:
-            raise ValueError(f"Unsupported optimizer: {optimizer_config.type}")
+            raise ValueError(f"Unsupported optimizer: {opt_type}")
 
         # スケジューラー設定
-        scheduler_config = self.config.train.scheduler
+        scheduler_config = getattr(training_cfg, "scheduler", None)
 
-        if scheduler_config.type == 'CosineAnnealingWarmRestarts':
+        if scheduler_config is not None and getattr(scheduler_config, 'type', '') == 'CosineAnnealingWarmRestarts':
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 optimizer,
-                T_0=scheduler_config.T_0,
-                T_mult=scheduler_config.T_mult,
-                eta_min=scheduler_config.eta_min
+                T_0=int(getattr(scheduler_config, 'T_0', 10)),
+                T_mult=int(getattr(scheduler_config, 'T_mult', 1)),
+                eta_min=float(getattr(scheduler_config, 'eta_min', 1e-6))
             )
         else:
             scheduler = None
@@ -576,86 +890,6 @@ class ATFT_GAT_FAN(pl.LightningModule):
             }
         else:
             return optimizer
-
-
-# 基本コンポーネント（簡易実装）
-class TemporalFusionTransformer(nn.Module):
-    """Temporal Fusion Transformer (簡易実装)"""
-    def __init__(self, hidden_size: int, n_dynamic_features: int, n_static_features: int, config: DictConfig):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.config = config
-
-        # LSTMエンコーダー
-        self.lstm = nn.LSTM(
-            input_size=n_dynamic_features,
-            hidden_size=hidden_size,
-            num_layers=config.lstm.layers,
-            dropout=config.lstm.dropout,
-            batch_first=True
-        )
-
-        # 静的特徴量エンコーダー
-        if n_static_features > 0:
-            self.static_encoder = nn.Linear(n_static_features, hidden_size)
-        else:
-            self.static_encoder = None
-
-    def forward(self, x: torch.Tensor, static_features: torch.Tensor | None = None):
-        # LSTM処理
-        lstm_out, _ = self.lstm(x)
-
-        # 静的特徴量の統合
-        if static_features is not None and self.static_encoder is not None:
-            static_encoded = self.static_encoder(static_features)
-            # 簡易的な統合（実際にはより複雑な処理が必要）
-            combined = lstm_out + static_encoded.unsqueeze(1)
-        else:
-            combined = lstm_out
-
-        return combined
-
-
-class GraphAttentionNetwork(nn.Module):
-    """Graph Attention Network (簡易実装)"""
-    def __init__(self, hidden_size: int, config: DictConfig):
-        super().__init__()
-        self.config = config
-
-        # 簡易的なGAT層
-        self.attention = nn.MultiheadAttention(
-            embed_dim=hidden_size,
-            num_heads=config.architecture.heads[0],
-            dropout=config.layer_config.dropout,
-            batch_first=True
-        )
-
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor | None = None):
-        # 簡易的なグラフ注意処理
-        attn_output, _ = self.attention(x, x, x)
-        return attn_output
-
-
-class AdaptiveNormalization(nn.Module):
-    """適応正規化 (簡易実装)"""
-    def __init__(self, hidden_size: int, config: DictConfig):
-        super().__init__()
-        self.config = config
-
-        # Layer Normalization
-        self.layer_norm = nn.LayerNorm(hidden_size)
-
-        # 適応パラメータ（学習可能）
-        if config.fan.enabled:
-            self.fan_weights = nn.Parameter(torch.ones(len(config.fan.window_sizes)))
-        if config.san.enabled:
-            self.san_weights = nn.Parameter(torch.ones(config.san.num_slices))
-
-    def forward(self, x: torch.Tensor):
-        # 基本的なLayer Normalization
-        return self.layer_norm(x)
-
-
 class PredictionHead(nn.Module):
     """改善版予測ヘッド（single-horizon用、backward compatibility）"""
     def __init__(self, hidden_size: int, config: DictConfig, output_std: float = 0.01, layer_scale_gamma: float = 0.1):
@@ -700,16 +934,44 @@ class PredictionHead(nn.Module):
 
 class MultiHorizonPredictionHeads(nn.Module):
     """Multi-horizon prediction heads - 各予測期間専用の出力層"""
-    def __init__(self, hidden_size: int, config: DictConfig, output_std: float = 0.01, layer_scale_gamma: float = 0.1):
+    def __init__(
+        self,
+        hidden_size: int,
+        config: DictConfig,
+        training_cfg: DictConfig | None = None,
+        output_std: float = 0.01,
+        layer_scale_gamma: float = 0.1,
+    ):
         super().__init__()
         self.config = config
 
         # 予測対象期間の設定 (新しいconfig構造をサポート)
-        if hasattr(config.training, 'prediction') and hasattr(config.training.prediction, 'horizons'):
-            self.prediction_horizons = config.training.prediction.horizons
-        else:
-            # フォールバック: 従来の設定を試す
-            self.prediction_horizons = getattr(config.training, 'prediction_horizons', [1, 5, 10, 20])
+        self._training_cfg = training_cfg or getattr(config, 'training', None)
+
+        def _extract_horizons(cfg: DictConfig | None) -> list[int] | None:
+            if cfg is None:
+                return None
+            try:
+                if hasattr(cfg, 'prediction') and hasattr(cfg.prediction, 'horizons'):
+                    return list(int(h) for h in cfg.prediction.horizons)
+                if hasattr(cfg, 'prediction_horizons'):
+                    return list(int(h) for h in cfg.prediction_horizons)
+            except Exception:
+                return None
+            return None
+
+        horizons = _extract_horizons(self._training_cfg)
+        if horizons is None:
+            horizons = _extract_horizons(getattr(config, 'training', None))
+        if horizons is None and hasattr(config, 'prediction_horizons'):
+            try:
+                horizons = list(int(h) for h in config.prediction_horizons)
+            except Exception:
+                horizons = None
+        if horizons is None:
+            horizons = [1, 5, 10, 20]
+
+        self.prediction_horizons = horizons
 
         # 共有特徴抽出層（各horizonで共有される中間表現）
         self.shared_encoder = nn.Sequential(

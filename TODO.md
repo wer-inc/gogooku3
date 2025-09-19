@@ -2320,3 +2320,47 @@ and --daily-margin-parquet.
 
 Want me to run a narrower test selection or adjust any other
 data sources to standardize Code as well?
+
+----
+
+WANDB_MODE=disabled CUDA_VISIBLE_DEVICES="" python scripts/integrated_ml_training_pipeline.py
+        --data-path output/ml_dataset_latest_full.parquet --batch-size 512 --max-epochs 1 --sample-size 50000
+        --adv-graph-train +train.trainer.accelerator=cpu +train.trainer.devices=1 train.trainer.precision=32
+
+> Key Updates
+
+  - Added the missing architecture package hook so Hydra can import the Lightning module (src/atft_gat_fan/
+  models/architectures/__init__.py:1).
+  - Normalized ATFT internals: swapped the curriculum import to the canonical package, taught the model
+  to adapt to runtime feature widths, and rebuilt feature-dependent layers when shapes change; updated the
+  forward pass to accept either dict or tensor batches and to keep TFT/GAT dimensionality in sync (src/
+  atft_gat_fan/models/architectures/atft_gat_fan.py:20, :100-210, :330-610, :920-1040).
+  - Ensured streaming samples hand back plain Python scalars so DataLoader collates cleanly (src/gogooku3/
+  training/atft/data_module.py:107-160).
+  - Hardened the integrated pipeline and training loop so CPU runs pass the right Hydra overrides, emit
+  predictions in the format the loss expects, and log when a loss tensor arrives detached (scripts/
+  integrated_ml_training_pipeline.py:510-575, scripts/train_atft.py:1455-1568).
+
+  Current Run State
+
+  - The smoke run now gets through model construction and the first mini epochs, but still aborts during the
+  warm-up checks:
+      1. PermissionError: [Errno 13] when the DayBatchSampler tries to spin up multiprocessing
+  queues—sandboxed environments can't create the shared-memory lock (scripts/train_atft.py during
+  _maybe_run_nan_scan).
+      2. Even when workers are forced to 0, the first backward pass stops with “element 0 … does not require
+  grad”; the new log hook will print when that happens so we can trace whether MultiHorizonLoss is returning
+  a detached scalar.
+  - No artifacts were produced yet; training still fails inside train_epoch.
+
+  Suggested Next Steps
+
+  1. Force single-process data loading: set USE_DAY_BATCH=0 (and/or data.use_day_batch_sampler=false) and
+  rerun to bypass the semaphore creation.
+  2. Inspect the logged “Loss tensor detached…” message and adjust MultiHorizonLoss / GradScaler usage so it
+  always returns a differentiable tensor on CPU—e.g., disable the scaler path when accelerator=cpu, or keep
+  the criterion in pure FP32 without .item() conversions.
+  3. Once those two blockers clear, rerun the pipeline to verify the smoke epoch completes; then expand the
+  run parameters as needed.
+
+  Let me know if you’d like me to implement those follow-ups or dig into the loss module next.

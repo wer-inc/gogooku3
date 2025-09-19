@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- 🐛 **DataLoader Hanging Issue**: Fixed missing import causing training script to hang indefinitely
+  - Added explicit import of `ProductionDataModuleV2` to prevent silent failures
+  - Added regression test with timeout detection to prevent future occurrences
+  - Documented fix in `docs/fixes/dataloader_hanging_fix.md`
+
 ### Added
 - 🔒 **Security Hardening**: Environment variable-based credential management
 - 🏥 **Health Checks**: Comprehensive health check endpoints (`/healthz`, `/readyz`, `/metrics`)

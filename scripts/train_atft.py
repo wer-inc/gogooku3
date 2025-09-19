@@ -37,6 +37,9 @@ import traceback
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
+# Import required data module class explicitly
+from src.gogooku3.training.atft.data_module import ProductionDataModuleV2
+
 # Helper functions for stabilizing training
 def _finite_or_nan_fix_tensor(tensor):
     """Fix non-finite values in tensor using clamp and nan_to_num."""
@@ -51,7 +54,7 @@ def _finite_or_nan_fix_tensor(tensor):
     
     return tensor
 
-def _normalize_target_key(raw_key, horizons=[1, 2, 3, 5, 10]):
+def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
     """Normalize various target key formats to horizon_{h} format."""
     # Direct horizon format
     if raw_key.startswith('horizon_'):
@@ -81,7 +84,7 @@ def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
     
     for key, tensor in tensor_dict.items():
         if not torch.is_tensor(tensor):
-            reshaped[key] = tensor
+            # Skip metadata entries (e.g., codes/date) that are not tensors
             continue
             
         # Fix non-finite values first (use newer guard signature)
@@ -443,9 +446,12 @@ except Exception:
     AdvFinancialGraphBuilder = None  # type: ignore
 
 try:
-    from src.models.architectures.atft_gat_fan import ATFT_GAT_FAN  # noqa: E402
+    from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN  # noqa: E402
 except ImportError:
-    ATFT_GAT_FAN = None
+    try:
+        from src.models.architectures.atft_gat_fan import ATFT_GAT_FAN  # type: ignore # noqa: E402
+    except ImportError:
+        ATFT_GAT_FAN = None
 from src.data.validation.normalization_check import NormalizationValidator  # noqa: E402
 from src.utils.config_validator import ConfigValidator  # noqa: E402
 
@@ -597,7 +603,7 @@ def build_final_config():
     cfg.data.source.data_dir = os.getenv("DATA_DIR", "data/test")
     cfg.data.time_series = NS()
     cfg.data.time_series.sequence_length = int(os.getenv("SEQ_LEN", "20"))
-    cfg.data.time_series.prediction_horizons = [1, 2, 3, 5, 10]
+    cfg.data.time_series.prediction_horizons = [1, 5, 10, 20]
     cfg.data.features = NS()
     cfg.data.features.input_dim = int(os.getenv("INPUT_DIM", "13"))
 
@@ -762,7 +768,7 @@ class MultiHorizonLoss(nn.Module):
 
     def __init__(
         self,
-        horizons=[1, 2, 3, 5, 10],
+        horizons=[1, 5, 10, 20],
         use_rankic: bool = False,
         rankic_weight: float = 0.0,
         # 追加: CS相関(IC)補助ロス
@@ -840,6 +846,7 @@ class MultiHorizonLoss(nn.Module):
         # 予測分散ペナルティ
         self.pred_var_min = float(pred_var_min)
         self.pred_var_weight = float(pred_var_weight)
+        self._warned_empty = False
 
     @staticmethod
     def _masked_mean(
@@ -916,36 +923,64 @@ class MultiHorizonLoss(nn.Module):
         valid_masks: Dict[str, Tensor] - 各ホライゾンの有効マスク（オプション）
         """
         # Initialize as zero (will accumulate loss tensors)
-        device = next(iter(predictions.values())).device if predictions else torch.device('cpu')
-        total_loss = torch.zeros(1, device=device)
+        device = (
+            next(iter(predictions.values())).device
+            if predictions
+            else torch.device("cpu")
+        )
+        dtype = (
+            next(iter(predictions.values())).dtype
+            if predictions
+            else torch.float32
+        )
+        total_loss = torch.zeros(1, device=device, dtype=dtype).requires_grad_()
         losses = {}
         weights = []
+        contribution_count = 0
         # 現在のホライズン重み
         cur_weights = self._get_current_weights()
 
         for horizon in self.horizons:
-            pred_key = (
-                f"point_horizon_{horizon}"
-                if any(k.startswith("point_horizon_") for k in predictions.keys())
-                else f"horizon_{horizon}"
-            )
-            targ_key = f"horizon_{horizon}"
-            if pred_key in predictions and targ_key in targets:
-                yhat = predictions[pred_key].squeeze(-1)
-                y = targets[targ_key]
+            pred_candidates = [
+                f"point_horizon_{horizon}",
+                f"horizon_{horizon}",
+                f"horizon_{horizon}d",
+                f"h{horizon}",
+            ]
+            targ_candidates = [
+                f"horizon_{horizon}",
+                f"horizon_{horizon}d",
+                f"point_horizon_{horizon}",
+                f"h{horizon}",
+            ]
 
-                # Get valid mask for this horizon
-                mask = None
-                if valid_masks is not None:
-                    mask_key = f"horizon_{horizon}"
+            pred_key = next((k for k in pred_candidates if k in predictions), None)
+            targ_key = next((k for k in targ_candidates if k in targets), None)
+            if pred_key is None or targ_key is None:
+                continue
+
+            yhat = predictions[pred_key].squeeze(-1)
+            y = targets[targ_key]
+
+            # Get valid mask for this horizon
+            mask = None
+            if valid_masks is not None:
+                mask_candidates = [
+                    f"horizon_{horizon}",
+                    f"horizon_{horizon}d",
+                    f"point_horizon_{horizon}",
+                    f"h{horizon}",
+                ]
+                for mask_key in mask_candidates:
                     if mask_key in valid_masks:
                         mask = valid_masks[mask_key]
-                    # Auto-create mask from finite values if not provided
-                    elif torch.is_tensor(y):
-                        mask = torch.isfinite(y)
-                else:
-                    # Create mask from finite values
-                    mask = torch.isfinite(y) if torch.is_tensor(y) else None
+                        break
+                # Auto-create mask from finite values if not provided
+                if mask is None and torch.is_tensor(y):
+                    mask = torch.isfinite(y)
+            else:
+                # Create mask from finite values
+                mask = torch.isfinite(y) if torch.is_tensor(y) else None
 
                 # Use masked MSE
                 if mask is not None:
@@ -1039,6 +1074,7 @@ class MultiHorizonLoss(nn.Module):
                         weight = weight * self.h1_loss_mult
                 total_loss = total_loss + weight * loss
                 weights.append(weight)
+                contribution_count += 1
 
                 # 動的RMSE更新
                 if self.use_dynamic_weighting:
@@ -1101,9 +1137,16 @@ class MultiHorizonLoss(nn.Module):
                                 1 - alpha
                             ) * prev + alpha * rmse
 
-        if len(weights) > 0:
+        if contribution_count > 0:
             total_loss = total_loss / float(np.sum(weights))
-        
+            self._warned_empty = False
+        else:
+            if not self._warned_empty:
+                logger.error(
+                    "[loss] No matching horizons found in predictions/targets; returning zero loss."
+                )
+                self._warned_empty = True
+
         # Ensure scalar output
         total_loss = total_loss.squeeze()
         # ステップ更新（動的重み用）
@@ -1281,7 +1324,7 @@ class SimpleLSTM(nn.Module):
             self.lstm_in_dim, hidden_size, num_layers, batch_first=True, dropout=0.1
         )
         self.fc_dict = nn.ModuleDict(
-            {f"horizon_{h}": nn.Linear(hidden_size, 1) for h in [1, 2, 3, 5, 10]}
+            {f"horizon_{h}": nn.Linear(hidden_size, 1) for h in [1, 5, 10, 20]}
         )
 
     def forward(self, x):
@@ -1290,7 +1333,7 @@ class SimpleLSTM(nn.Module):
         lstm_out, _ = self.lstm(x)
         last_hidden = lstm_out[:, -1, :]
         outputs = {}
-        for horizon in [1, 2, 3, 5, 10]:
+        for horizon in [1, 5, 10, 20]:
             outputs[f"horizon_{horizon}"] = self.fc_dict[f"horizon_{horizon}"](
                 last_hidden
             ).squeeze(-1)
@@ -1322,7 +1365,7 @@ def train_epoch(
     mixup_alpha = float(os.getenv("TS_MIXUP_ALPHA", "0.2"))
 
     # AMP local config (env-driven) - BF16 as default for A100
-    use_amp = os.getenv("USE_AMP", "1") == "1"
+    use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
     amp_dtype = (
         torch.bfloat16
         if os.getenv("AMP_DTYPE", "bf16").lower() in ("bf16", "bfloat16", "bf16-mixed")
@@ -1459,11 +1502,15 @@ def train_epoch(
                 targets_fp32 = _reshape_to_batch_only({
                     k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
                 })
-                
+                if isinstance(outputs_fp32, dict) and isinstance(outputs_fp32.get('predictions'), dict):
+                    predictions_fp32 = outputs_fp32['predictions']
+                else:
+                    predictions_fp32 = outputs_fp32
+
 
                 # マスク付きマルチホライゾン損失
                 loss_result = criterion(
-                    outputs_fp32, targets_fp32, valid_masks=valid_masks
+                    predictions_fp32, targets_fp32, valid_masks=valid_masks
                 )
                 
                 # Handle both single value and tuple return
@@ -1472,6 +1519,19 @@ def train_epoch(
                 else:
                     loss = loss_result
                     losses = {}
+
+                if not isinstance(loss, torch.Tensor) or not loss.requires_grad:
+                    logger.error(
+                        "Loss tensor detached: type=%s requires_grad=%s pred_keys=%s target_keys=%s",
+                        type(loss),
+                        getattr(loss, "requires_grad", None),
+                        sorted(list(predictions_fp32.keys()))
+                        if isinstance(predictions_fp32, dict)
+                        else type(predictions_fp32).__name__,
+                        sorted(list(targets_fp32.keys()))
+                        if isinstance(targets_fp32, dict)
+                        else type(targets_fp32).__name__,
+                    )
 
                 # 追加: 各ホライゾンのvalid比率を低頻度でログ
                 if (batch_idx % 200 == 0) and isinstance(valid_masks, dict):
@@ -1489,12 +1549,12 @@ def train_epoch(
 
                 # Variance penalty to prevent collapse
                 variance_penalty = 0.0
-                for h in [1, 2, 3, 5, 10]:
+                for h in [1, 5, 10, 20]:
                     key = f"point_horizon_{h}"
-                    if key in outputs_fp32:
-                        pred_std = outputs_fp32[key].std()
+                    if key in predictions_fp32:
+                        pred_std = predictions_fp32[key].std()
                         # Penalize if std is too small (collapse)
-                        if pred_std < 0.1:
+                        if pred_std.item() < 0.1:
                             variance_penalty += (0.1 - pred_std) * 0.1
 
                 # Add penalty to loss
@@ -1505,8 +1565,9 @@ def train_epoch(
                 if batch_idx == 0 and epoch <= 2:
                     for h in criterion.horizons:
                         key = f"point_horizon_{h}"
-                        if key in outputs:
-                            pred = outputs[key].detach()
+                        pred_dict = outputs.get('predictions', outputs)
+                        if isinstance(pred_dict, dict) and key in pred_dict:
+                            pred = pred_dict[key].detach()
                             pred_mean = pred.mean().item()
                             pred_std = pred.std().item()
                             logger.debug(
@@ -1519,7 +1580,7 @@ def train_epoch(
                     logger.info(f"criterion reduction: {criterion.mse.reduction}")
                     
                     # Use FP32 shaped outputs/targets for debugging
-                    stable_outputs = _reshape_to_batch_only(outputs_fp32)
+                    stable_outputs = _reshape_to_batch_only(predictions_fp32)
                     stable_targets = _reshape_to_batch_only(targets_fp32)
                     
                     for h in criterion.horizons:
@@ -1593,7 +1654,7 @@ def first_batch_probe(model, dataloader, device, n=3):
     logger.info("Running first-batch probe...")
 
     # AMP local config
-    use_amp = os.getenv("USE_AMP", "1") == "1"
+    use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
     amp_dtype = (
         torch.bfloat16
         if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
@@ -1715,7 +1776,7 @@ def first_batch_probe(model, dataloader, device, n=3):
                     hook.remove()
 
                 logger.info("\n=== DEBUG: Prediction values ===")
-                for h in [1, 2, 3, 5, 10]:
+                for h in [1, 5, 10, 20]:
                     key = f"point_horizon_{h}"
                     if key in outputs:
                         pred = outputs[key].cpu().numpy()
@@ -1758,7 +1819,7 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
     }
 
     # AMP local config（validate と揃える）
-    use_amp = os.getenv("USE_AMP", "1") == "1"
+    use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
     amp_dtype = (
         torch.bfloat16
         if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
@@ -2081,7 +2142,7 @@ def validate(model, dataloader, criterion, device):
     linear_calibration = {h: {"a": 0.0, "b": 1.0} for h in criterion.horizons}
 
     # AMP local config
-    use_amp = os.getenv("USE_AMP", "1") == "1"
+    use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
     amp_dtype = (
         torch.bfloat16
         if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
@@ -3065,9 +3126,9 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
 
     # Criterion (point loss by default; env toggles for extras)
     try:
-        horizons = list(getattr(final_config.data.time_series, "prediction_horizons", [1, 2, 3, 5, 10]))
+        horizons = list(getattr(final_config.data.time_series, "prediction_horizons", [1, 5, 10, 20]))
     except Exception:
-        horizons = [1, 2, 3, 5, 10]
+        horizons = [1, 5, 10, 20]
     use_pinball = os.getenv("USE_PINBALL", os.getenv("ENABLE_QUANTILES", "0")).lower() in ("1", "true", "yes")
     pinball_weight = float(os.getenv("PINBALL_WEIGHT", "0.1")) if use_pinball else 0.0
     use_t_nll = os.getenv("USE_T_NLL", os.getenv("ENABLE_STUDENT_T", "0")).lower() in ("1", "true", "yes")
@@ -3349,6 +3410,22 @@ def train(config: DictConfig) -> None:
         except Exception as _e:
             logger.warning(f"MLflow setup failed or disabled: {_e}")
 
+    # Enforce single-process data loading when GPUs are unavailable or explicitly forced
+    force_single_process = (
+        os.getenv("FORCE_SINGLE_PROCESS", "0").lower() in ("1", "true", "yes")
+        or not torch.cuda.is_available()
+        or os.getenv("ACCELERATOR", "").lower() == "cpu"
+    )
+    if force_single_process:
+        if os.environ.get("USE_DAY_BATCH", "1") not in ("0", "false", "False"):
+            logger.info(
+                "Disabling day-batch sampler and multi-worker loaders for single-process run."
+            )
+        os.environ["USE_DAY_BATCH"] = "false"
+        os.environ.setdefault("NUM_WORKERS", "0")
+        os.environ.setdefault("PERSISTENT_WORKERS", "0")
+        os.environ.setdefault("PREFETCH_FACTOR", "null")
+
     # Apply environment variable overrides
     config = _apply_env_overrides(config)
 
@@ -3383,7 +3460,7 @@ def train(config: DictConfig) -> None:
         torch.cuda.empty_cache()
 
     # AMP 設定（環境変数で制御）
-    use_amp = os.getenv("USE_AMP", "1") == "1"
+    use_amp_env = os.getenv("USE_AMP", "1") == "1"
     amp_dtype = (
         torch.bfloat16
         if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
@@ -3399,6 +3476,8 @@ def train(config: DictConfig) -> None:
     # デバイス設定
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
+
+    use_amp = use_amp_env and device.type == "cuda"
 
     if device.type == "cuda":
         logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
@@ -3421,7 +3500,7 @@ def train(config: DictConfig) -> None:
                         config.data.time_series, "sequence_length", 20
                     ),
                     "prediction_horizons": getattr(
-                        config.data.time_series, "prediction_horizons", [1, 2, 3, 5, 10]
+                        config.data.time_series, "prediction_horizons", [1, 5, 10, 20]
                     ),
                 },
                 "features": {
@@ -3522,6 +3601,70 @@ def train(config: DictConfig) -> None:
             },
         }
     )
+
+    if force_single_process:
+        try:
+            OmegaConf.update(final_config, "data.use_day_batch_sampler", False, merge=True)
+        except Exception:
+            pass
+        for path, value in (
+            ("train.batch.num_workers", 0),
+            ("train.batch.prefetch_factor", None),
+            ("train.batch.persistent_workers", False),
+        ):
+            try:
+                OmegaConf.update(final_config, path, value, merge=True)
+            except Exception:
+                continue
+    try:
+        final_config = OmegaConf.merge(config, final_config)
+    except Exception as _merge_err:
+        logger.warning(f"[Hydra-Struct] merge with original config failed: {_merge_err}")
+
+    # Ensure auxiliary data sections (schema, normalization, etc.) are retained
+    try:
+        cfg_data_container = OmegaConf.to_container(config.data, resolve=False)  # type: ignore[arg-type]
+        if isinstance(cfg_data_container, dict):
+            for key, value in cfg_data_container.items():
+                if key in {"source", "time_series", "features", "graph"}:
+                    continue  # already set explicitly above
+                OmegaConf.update(final_config, f"data.{key}", value, merge=True)
+    except Exception as _data_merge_err:
+        logger.warning(f"[Hydra-Struct] data config merge failed: {_data_merge_err}")
+
+    try:
+        cfg_batch_container = OmegaConf.to_container(config.train.batch, resolve=False)  # type: ignore[arg-type]
+        if isinstance(cfg_batch_container, dict):
+            for key, value in cfg_batch_container.items():
+                if OmegaConf.select(final_config, f"train.batch.{key}") is None:
+                    OmegaConf.update(final_config, f"train.batch.{key}", value, merge=True)
+    except Exception as _batch_merge_err:
+        logger.warning(f"[Hydra-Struct] train.batch merge failed: {_batch_merge_err}")
+
+    try:
+        if hasattr(config, "normalization") and config.normalization is not None:
+            OmegaConf.update(final_config, "normalization", config.normalization, merge=True)
+    except Exception as _norm_merge_err:
+        logger.warning(f"[Hydra-Struct] normalization merge failed: {_norm_merge_err}")
+
+    try:
+        if OmegaConf.select(final_config, "normalization") is None:
+            data_norm = OmegaConf.select(final_config, "data.normalization")
+            if data_norm is not None:
+                OmegaConf.update(final_config, "normalization", data_norm, merge=True)
+            else:
+                OmegaConf.update(
+                    final_config,
+                    "normalization",
+                    {
+                        "online_normalization": {"enabled": True, "per_batch": True},
+                        "cross_sectional": {"enabled": False},
+                        "batch_norm": {"enabled": False},
+                    },
+                    merge=True,
+                )
+    except Exception as _norm_fallback_err:
+        logger.warning(f"[Hydra-Struct] normalization fallback failed: {_norm_fallback_err}")
     # ---- Optional W&B setup (env-flagged) ----
     wb_logger = None
     try:
@@ -3708,7 +3851,7 @@ def train(config: DictConfig) -> None:
 
     # ホライズンを仕様に統一
     try:
-        final_config.data.time_series.prediction_horizons = [1, 2, 3, 5, 10]
+        final_config.data.time_series.prediction_horizons = [1, 5, 10, 20]
     except Exception:
         pass
 
@@ -3728,11 +3871,72 @@ def train(config: DictConfig) -> None:
         _bs_cfg = 64
     _batch_size = _bs_env if _bs_env > 0 else _bs_cfg
     # In sandboxed environments, multiprocessing may be restricted; allow env override to 0
-    data_module = ProductionDataModuleV2(
-        final_config,
-        batch_size=_batch_size,
-        num_workers=int(_nw_env),
-    )
+    try:
+        dm_signature = inspect.signature(ProductionDataModuleV2)
+        dm_params = dm_signature.parameters
+    except (TypeError, ValueError):
+        dm_params = {}
+
+    # Never rely on implicit defaults; update config so downstream loaders stay in sync
+    try:
+        final_config.train.batch.train_batch_size = _batch_size
+    except Exception:
+        pass
+    try:
+        final_config.train.batch.num_workers = int(_nw_env)
+    except Exception:
+        pass
+
+    if "batch_size" in dm_params:
+        try:
+            schema_cfg = OmegaConf.select(final_config, "data.schema")
+            if schema_cfg is None:
+                logger.warning("[Hydra-Struct] data.schema missing prior to DataModule setup")
+            else:
+                try:
+                    logger.info(
+                        "[Hydra-Struct] data.schema detected with keys: %s",
+                        list(schema_cfg.keys()),
+                    )
+                except Exception:
+                    logger.info("[Hydra-Struct] data.schema detected (non-mapping)")
+        except Exception as _schema_log_err:
+            logger.warning(f"[Hydra-Struct] schema inspection failed: {_schema_log_err}")
+
+        try:
+            data_keys = list(final_config.data.keys())  # type: ignore[call-arg]
+            logger.info(f"[Hydra-Struct] data group keys: {data_keys}")
+        except Exception as _data_keys_err:
+            logger.info(f"[Hydra-Struct] data group type: {type(final_config.data)} ({_data_keys_err})")
+
+        data_module = ProductionDataModuleV2(
+            final_config,
+            batch_size=_batch_size,
+            num_workers=int(_nw_env),
+        )
+    else:
+        try:
+            schema_cfg = OmegaConf.select(final_config, "data.schema")
+            if schema_cfg is None:
+                logger.warning("[Hydra-Struct] data.schema missing prior to DataModule setup")
+            else:
+                try:
+                    logger.info(
+                        "[Hydra-Struct] data.schema detected with keys: %s",
+                        list(schema_cfg.keys()),
+                    )
+                except Exception:
+                    logger.info("[Hydra-Struct] data.schema detected (non-mapping)")
+        except Exception as _schema_log_err:
+            logger.warning(f"[Hydra-Struct] schema inspection failed: {_schema_log_err}")
+
+        try:
+            data_keys = list(final_config.data.keys())  # type: ignore[call-arg]
+            logger.info(f"[Hydra-Struct] data group keys: {data_keys}")
+        except Exception as _data_keys_err:
+            logger.info(f"[Hydra-Struct] data group type: {type(final_config.data)} ({_data_keys_err})")
+
+        data_module = ProductionDataModuleV2(final_config)
     data_module.setup()
     # Smoke-mode: optionally limit data files to speed up CI/smoke runs
     try:
@@ -4011,64 +4215,8 @@ def train(config: DictConfig) -> None:
                 )
     else:
         train_loader = data_module.train_dataloader()
-        # trainで確定した列をvalへ反映させるため、一度val_datasetを再構築
-        try:
-            if hasattr(train_loader, "dataset") and train_loader.dataset is not None:
-                feat_cols_fixed = getattr(train_loader.dataset, "feature_cols", None)
-                if hasattr(data_module, "val_files") and data_module.val_files:
-                    data_module.val_dataset = ProductionDatasetV2(
-                        data_module.val_files,
-                        final_config,
-                        mode="val",
-                        target_scalers=getattr(data_module, "target_scalers", None),
-                        start_date=(
-                            getattr(data_module, "val_range", (None, None))[0]
-                            if hasattr(data_module, "val_range")
-                            and data_module.val_range
-                            else None
-                        ),
-                        end_date=(
-                            getattr(data_module, "val_range", (None, None))[1]
-                            if hasattr(data_module, "val_range")
-                            and data_module.val_range
-                            else None
-                        ),
-                        required_feature_cols=feat_cols_fixed,
-                    )
-
-                    dlp2 = _resolve_dl_params(final_config)
-                    # Reproducible val DataLoader
-                    _g = torch.Generator()
-                    _g.manual_seed(int(os.getenv("DL_SEED", "42")))
-
-                    def _winit_v(worker_id: int):
-                        s = int(os.getenv("DL_SEED", "42")) + worker_id
-                        import random
-                        import numpy as _np
-
-                        random.seed(s)
-                        _np.random.seed(s % (2**32 - 1))
-                        torch.manual_seed(s)
-
-                    val_loader = DataLoader(
-                        data_module.val_dataset,
-                        batch_size=final_config.train.batch.val_batch_size,
-                        shuffle=False,
-                        num_workers=max(0, dlp2["num_workers"] // 2),
-                        pin_memory=dlp2["pin_memory"],
-                        persistent_workers=(
-                            dlp2["persistent_workers"] and dlp2["num_workers"] > 0
-                        ),
-                        collate_fn=collate_day,
-                        worker_init_fn=_winit_v,
-                        generator=_g,
-                    )
-                else:
-                    val_loader = data_module.val_dataloader()
-            else:
-                val_loader = data_module.val_dataloader()
-        except Exception as _e:
-            logger.warning(f"val_dataset rebuild with fixed feature_cols skipped: {_e}")
+        # DataModule handles feature alignment internally
+        val_loader = data_module.val_dataloader()
 
     # Optional: Day-batch sampler (1 day = 1 batch)
     try:
@@ -4572,7 +4720,7 @@ def train(config: DictConfig) -> None:
             # MultiHorizonLossが期待する形式で返す
             # out: (batch, horizons=10, 1)を各horizonに分割
             outputs = {}
-            for i, h in enumerate([1, 2, 3, 5, 10]):
+            for i, h in enumerate([1, 5, 10, 20]):
                 if i < out.size(1):
                     outputs[f"horizon_{h}"] = out[:, i, :]  # (batch, 1)
 
@@ -6925,7 +7073,7 @@ def train(config: DictConfig) -> None:
             except Exception:
                 n_splits = 5
             try:
-                horizons = list(getattr(_cfg.data.time_series, "prediction_horizons", [1, 2, 3, 5, 10]))
+                horizons = list(getattr(_cfg.data.time_series, "prediction_horizons", [1, 5, 10, 20]))
                 embargo_days = int(max(horizons)) if horizons else 20
             except Exception:
                 embargo_days = 20

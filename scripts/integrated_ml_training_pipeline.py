@@ -59,7 +59,7 @@ class CompleteATFTTrainingPipeline:
             "model_params": 5611803,
             "input_dim": 8,
             "sequence_length": 20,
-            "prediction_horizons": [1, 2, 3, 5, 10],
+            "prediction_horizons": [1, 5, 10, 20],
             "batch_size": 2048,
             "learning_rate": 5e-5,
             "max_epochs": 75,
@@ -509,7 +509,7 @@ class CompleteATFTTrainingPipeline:
                 "python",
                 "scripts/train_atft.py",
                 # データディレクトリを明示的に指定
-                f"data.source.data_dir={training_data_info['data_dir']}/train",
+                f"data.source.data_dir={training_data_info['data_dir']}",
                 # data/model/train は configs/config.yaml の defaults で固定
                 # 学習ハイパラのみ調整（既存キーなので + は不要）
                 f"train.batch.train_batch_size={self.atft_settings['batch_size']}",
@@ -546,14 +546,26 @@ class CompleteATFTTrainingPipeline:
                     ]
                 )
 
-            logger.info(f"Running command: {' '.join(cmd)}")
-
             # 学習実行（リポジトリ直下で実行）
             # Ensure train script sees data directory via config override
             env = os.environ.copy()
             # 恒久運用ではValidatorを有効化
             env.pop("VALIDATE_CONFIG", None)
             env["HYDRA_FULL_ERROR"] = "1"  # 詳細なエラー情報を取得
+            if "train.batch.prefetch_factor=null" not in cmd:
+                cmd.append("train.batch.prefetch_factor=null")
+            if "train.batch.persistent_workers=false" not in cmd:
+                cmd.append("train.batch.persistent_workers=false")
+            if "train.batch.pin_memory=false" not in cmd:
+                cmd.append("train.batch.pin_memory=false")
+            logger.info(f"Running command: {' '.join(cmd)}")
+            if not torch.cuda.is_available() or os.getenv("ACCELERATOR", "").lower() == "cpu":
+                if env.get("USE_DAY_BATCH", "1") not in ("0", "false", "False"):
+                    logger.info("[pipeline] Forcing USE_DAY_BATCH=0 for CPU execution")
+                env["USE_DAY_BATCH"] = "0"
+                env.setdefault("NUM_WORKERS", "0")
+                env.setdefault("PERSISTENT_WORKERS", "0")
+                env.setdefault("PREFETCH_FACTOR", "0")
             if debug_small_data:
                 # 分割とgapの保守設定（検証期間を十分確保）
                 env.setdefault("TRAIN_RATIO", "0.6")

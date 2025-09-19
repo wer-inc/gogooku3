@@ -112,6 +112,22 @@ def save_with_symlinks(
             pass
         link.symlink_to(target)
 
+    # Back-compat: also refresh symlinks at the parent (output/) level so
+    # legacy tooling that expects output/ml_dataset_latest_full.parquet keeps working.
+    root_dir = output_dir.parent
+    if root_dir != output_dir:
+        root_links = [
+            (root_dir / f"ml_dataset_latest_{tag}.parquet", parquet_path.relative_to(root_dir)),
+            (root_dir / f"ml_dataset_latest_{tag}_metadata.json", meta_path.relative_to(root_dir)),
+        ]
+        for link, target in root_links:
+            try:
+                if link.exists() or link.is_symlink():
+                    link.unlink()
+            except Exception:
+                pass
+            link.symlink_to(target)
+
     return parquet_path, meta_path
 
 
@@ -1176,8 +1192,13 @@ async def enrich_and_save(
 
         # Canonical, ordered schema from docs/DATASET.md
         DOC_COLUMNS: list[str] = [
-            # 0) Identifiers/Meta (6)
-            "Code", "Date", "Section", "section_norm", "row_idx", "shares_outstanding",
+            # 0) Identifiers/Meta (expanded per docs/ml/dataset_new.md)
+            "Code", "Date", "Section", "MarketCode", "section_norm", "row_idx",
+            # Sector metadata (ids + names)
+            "sector17_code", "sector17_name", "sector17_id",
+            "sector33_code", "sector33_name", "sector33_id",
+            # Shares outstanding (for turnover/mcap uses)
+            "shares_outstanding",
             # 1.1 OHLCV (6)
             "Open", "High", "Low", "Close", "Volume", "TurnoverValue",
             # 1.2 Returns (6) + log returns (4)
@@ -1235,6 +1256,57 @@ async def enrich_and_save(
             "feat_ret_1d","feat_ret_5d","feat_ret_10d","feat_ret_20d",
         ]
 
+        # Ensure mandatory identifier/meta columns exist even when upstream
+        # enrichment did not attach them (e.g., offline runs without listed_info).
+        meta_specs: list[tuple[str, pl.DataType, object | None]] = [
+            ("MarketCode", pl.Utf8, None),
+            ("sector17_code", pl.Utf8, None),
+            ("sector17_name", pl.Utf8, None),
+            ("sector17_id", pl.Int32, -1),
+            ("sector33_code", pl.Utf8, None),
+            ("sector33_name", pl.Utf8, None),
+            ("sector33_id", pl.Int32, -1),
+            ("shares_outstanding", pl.Float64, None),
+        ]
+
+        null_dtype_overrides: dict[str, pl.DataType] = {
+            "MarketCode": pl.Utf8,
+            "sector17_code": pl.Utf8,
+            "sector17_name": pl.Utf8,
+            "sector17_id": pl.Int32,
+            "sector33_code": pl.Utf8,
+            "sector33_name": pl.Utf8,
+            "sector33_id": pl.Int32,
+            "shares_outstanding": pl.Float64,
+            "turnover_rate": pl.Float64,
+            "stmt_yoy_sales": pl.Float64,
+            "stmt_yoy_op": pl.Float64,
+            "stmt_yoy_np": pl.Float64,
+            "stmt_opm": pl.Float64,
+            "stmt_npm": pl.Float64,
+            "stmt_progress_op": pl.Float64,
+            "stmt_progress_np": pl.Float64,
+            "stmt_rev_fore_op": pl.Float64,
+            "stmt_rev_fore_np": pl.Float64,
+            "stmt_rev_fore_eps": pl.Float64,
+            "stmt_rev_div_fore": pl.Float64,
+            "stmt_roe": pl.Float64,
+            "stmt_roa": pl.Float64,
+            "stmt_change_in_est": pl.Float64,
+            "stmt_nc_flag": pl.Int8,
+            "stmt_imp_statement": pl.Int8,
+            "stmt_days_since_statement": pl.Int32,
+            "is_stmt_valid": pl.Int8,
+        }
+
+        meta_exprs: list[pl.Expr] = []
+        for col_name, dtype, default in meta_specs:
+            if col_name not in df.columns:
+                lit_expr = pl.lit(default) if default is not None else pl.lit(None)
+                meta_exprs.append(lit_expr.cast(dtype).alias(col_name))
+        if meta_exprs:
+            df = df.with_columns(meta_exprs)
+
         # Rename any alternate technical names to docs naming
         rename_map = {
             # Bollinger naming
@@ -1255,9 +1327,19 @@ async def enrich_and_save(
             "is_ema_200_valid": "is_ema200_valid",
             "is_rsi_2_valid": "is_rsi2_valid",
         }
-        to_rename = {k: v for k, v in rename_map.items() if k in df.columns}
+        # If both source and target exist, drop the source to avoid duplicate target names
+        for _src, _tgt in list(rename_map.items()):
+            if _src in df.columns and _tgt in df.columns:
+                try:
+                    df = df.drop(_src)
+                    logger.info(f"Dropped duplicate alias column '{_src}' (target '{_tgt}' already present)")
+                except Exception:
+                    pass
+        # Apply renames only where target is not already present
+        to_rename = {k: v for k, v in rename_map.items() if (k in df.columns) and (v not in df.columns)}
         if to_rename:
             df = df.rename(to_rename)
+            logger.info(f"Renamed columns to docs naming: {to_rename}")
 
         # Compute absolutely-required missing features (so they are not null-only)
         # Returns (1d/5d) often dropped accidentally by earlier selection
@@ -1347,6 +1429,78 @@ async def enrich_and_save(
         if "volume_ratio_20" not in df.columns and "volume_ma_20" in df.columns:
             df = df.with_columns((pl.col("Volume") / (pl.col("volume_ma_20") + eps)).alias("volume_ratio_20"))
 
+        # Turnover rate requires shares outstanding; ensure column exists
+        if "turnover_rate" not in df.columns:
+            if {"Volume", "shares_outstanding"}.issubset(df.columns):
+                df = df.with_columns(
+                    pl.when(pl.col("shares_outstanding") > 0)
+                    .then(pl.col("Volume") / (pl.col("shares_outstanding") + eps))
+                    .otherwise(None)
+                    .alias("turnover_rate")
+                )
+            else:
+                df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("turnover_rate"))
+
+        # Validity flags for technical indicators (align with dataset_new spec)
+        flag_sources: dict[str, str] = {
+            "is_ema5_valid": "ema_5",
+            "is_ema10_valid": "ema_10",
+            "is_ema20_valid": "ema_20",
+            "is_ema60_valid": "ema_60",
+            "is_ema200_valid": "ema_200",
+            "is_rsi2_valid": "rsi_2",
+        }
+        flag_exprs: list[pl.Expr] = []
+        for flag_name, source_col in flag_sources.items():
+            if flag_name not in df.columns:
+                if source_col in df.columns:
+                    flag_exprs.append(pl.col(source_col).is_not_null().cast(pl.Int8).alias(flag_name))
+                else:
+                    flag_exprs.append(pl.lit(None).cast(pl.Int8).alias(flag_name))
+        if flag_exprs:
+            df = df.with_columns(flag_exprs)
+
+        if "is_valid_ma" not in df.columns:
+            if all(col in df.columns for col in ("sma_5", "sma_20", "sma_60")):
+                df = df.with_columns(
+                    (
+                        pl.col("sma_5").is_not_null().cast(pl.Int8)
+                        * pl.col("sma_20").is_not_null().cast(pl.Int8)
+                        * pl.col("sma_60").is_not_null().cast(pl.Int8)
+                    )
+                    .cast(pl.Int8)
+                    .alias("is_valid_ma")
+                )
+            else:
+                df = df.with_columns(pl.lit(None).cast(pl.Int8).alias("is_valid_ma"))
+
+        # Ensure statement block columns exist (fill with nulls when upstream data absent)
+        stmt_columns = [
+            "stmt_yoy_sales",
+            "stmt_yoy_op",
+            "stmt_yoy_np",
+            "stmt_opm",
+            "stmt_npm",
+            "stmt_progress_op",
+            "stmt_progress_np",
+            "stmt_rev_fore_op",
+            "stmt_rev_fore_np",
+            "stmt_rev_fore_eps",
+            "stmt_rev_div_fore",
+            "stmt_roe",
+            "stmt_roa",
+            "stmt_change_in_est",
+            "stmt_nc_flag",
+            "stmt_imp_statement",
+            "stmt_days_since_statement",
+        ]
+        stmt_exprs: list[pl.Expr] = []
+        for col_name in stmt_columns:
+            if col_name not in df.columns:
+                stmt_exprs.append(pl.lit(None).cast(pl.Float64).alias(col_name))
+        if stmt_exprs:
+            df = df.with_columns(stmt_exprs)
+
         # Dollar volume
         if "dollar_volume" not in df.columns:
             df = df.with_columns((pl.col("Close") * pl.col("Volume")).alias("dollar_volume"))
@@ -1428,7 +1582,11 @@ async def enrich_and_save(
             c for c in DOC_COLUMNS if c not in existing and not c.startswith("margin_")
         ]
         if to_add_nulls:
-            df = df.with_columns([pl.lit(None).alias(c) for c in to_add_nulls])
+            logger.info("Adding null fillers for missing spec columns: %s", to_add_nulls[:10])
+            df = df.with_columns([
+                pl.lit(None).cast(null_dtype_overrides.get(c, pl.Float64)).alias(c)
+                for c in to_add_nulls
+            ])
 
         # Fill conservative defaults for statement flags when statements are absent
         fill_zero_flags = []
@@ -1443,26 +1601,23 @@ async def enrich_and_save(
             c for c in df.columns if c.startswith("is_") or c.endswith("_impulse")
         ]
         if flag_like:
-            # Handle mixed bool/int types by first converting booleans to integers
-            cast_exprs = []
-            for c in flag_like:
-                if c in df.columns:
-                    # Convert boolean True/False to 1/0, then cast to Int8
-                    cast_exprs.append(
-                        pl.when(pl.col(c).is_null()).then(None)
-                        .when(pl.col(c).is_boolean()).then(pl.col(c).cast(pl.Int32))
-                        .otherwise(pl.col(c))
-                        .cast(pl.Int8).alias(c)
-                    )
+            cast_exprs = [pl.col(c).cast(pl.Int8, strict=False).alias(c) for c in flag_like if c in df.columns]
             if cast_exprs:
                 df = df.with_columns(cast_exprs)
 
         # Finally, project to the exact schema (drops all non-spec columns)
         keep_cols = [c for c in DOC_COLUMNS if c in df.columns]
+        logger.info(
+            "Post-alignment column check: MarketCode=%s, sector33_code=%s, shares_outstanding=%s, stmt_yoy_sales=%s",
+            "MarketCode" in df.columns,
+            "sector33_code" in df.columns,
+            "shares_outstanding" in df.columns,
+            "stmt_yoy_sales" in df.columns,
+        )
         df = df.select(keep_cols)
         logger.info(f"Aligned dataset to DATASET.md exact schema (n={len(keep_cols)})")
     except Exception as _e:
-        logger.warning(f"DATASET.md strict alignment skipped: {_e}")
+        logger.exception("DATASET.md strict alignment skipped: %s", _e)
 
     # Ensure (Code, Date) uniqueness (keep last occurrence)
     try:

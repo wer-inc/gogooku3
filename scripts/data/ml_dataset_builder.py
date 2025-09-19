@@ -310,7 +310,9 @@ class MLDatasetBuilder:
             df = df.with_columns([upper, lower, mid])
             df = df.with_columns(
                 [
-                    ((pl.col("Close") - pl.col("_bb_lower")) / ((pl.col("_bb_upper") - pl.col("_bb_lower")) + eps)).alias("bb_pct_b"),
+                    ((pl.col("Close") - pl.col("_bb_lower")) / ((pl.col("_bb_upper") - pl.col("_bb_lower")) + eps))
+                    .clip(0.0, 1.0)
+                    .alias("bb_pct_b"),
                     ((pl.col("_bb_upper") - pl.col("_bb_lower")) / (pl.col("_bb_mid") + eps)).alias("bb_bw"),
                 ]
             )
@@ -505,9 +507,33 @@ class MLDatasetBuilder:
             return df
 
     def add_topix_features(self, df: pl.DataFrame, topix_df: Optional[pl.DataFrame] = None, *, beta_lag: int | None = 1) -> pl.DataFrame:
+        # If TOPIX series is missing, build a robust market proxy from equities to avoid all-null mkt_*.
         if topix_df is None or topix_df.is_empty():
-            logger.info("[builder] TOPIX enrichment skipped (no data)")
-            return df
+            try:
+                if {"Date", "Code", "Close"}.issubset(df.columns):
+                    # Use median 1d return across stocks per day as market return, then cumprod into synthetic Close
+                    if "returns_1d" not in df.columns:
+                        eq = df.select([
+                            pl.col("Date"),
+                            ((pl.col("Close") / pl.col("Close").shift(1).over("Code")) - 1.0).alias("returns_1d"),
+                        ])
+                    else:
+                        eq = df.select(["Date", "returns_1d"])  # type: ignore[list-item]
+                    mkt = (
+                        eq.group_by("Date")
+                        .agg(pl.col("returns_1d").median().alias("mkt_ret_1d"))
+                        .sort("Date")
+                        .with_columns(((1.0 + pl.col("mkt_ret_1d")).cum_prod() * 100.0).alias("Close"))
+                        .select(["Date", "Close"])  # Provide Close-only; ATR branch will fall back
+                    )
+                    topix_df = mkt
+                    logger.info("[builder] Built synthetic TOPIX proxy from equities (median returns)")
+                else:
+                    logger.info("[builder] TOPIX enrichment skipped (no data and cannot build proxy)")
+                    return df
+            except Exception as e:
+                logger.warning(f"[builder] TOPIX proxy build failed: {e}")
+                return df
         try:
             from src.features.market_features import (
                 MarketFeaturesGenerator,
@@ -1516,6 +1542,42 @@ class MLDatasetBuilder:
                         alias_exprs.append(pl.col(col).alias(alias_name))
             if alias_exprs:
                 df = df.with_columns(alias_exprs)
+
+            # Generate supervised learning targets if missing (copy from forward returns or derive from Close)
+            tgt_defs = {
+                "target_1d": (1,),
+                "target_5d": (5,),
+                "target_10d": (10,),
+                "target_20d": (20,),
+            }
+            make_tgts: list[pl.Expr] = []
+            for name, (h,) in tgt_defs.items():
+                if name not in df.columns:
+                    if f"feat_ret_{h}d" in df.columns:
+                        make_tgts.append(pl.col(f"feat_ret_{h}d").alias(name))
+                    elif {"Close", "Code"}.issubset(df.columns):
+                        make_tgts.append(((pl.col("Close").shift(-h).over("Code") / (pl.col("Close") + 1e-12)) - 1.0).alias(name))
+            if make_tgts:
+                df = df.with_columns(make_tgts)
+
+            # Binary targets (sign)
+            bin_exprs = []
+            for h in (1, 5, 10, 20):
+                t = f"target_{h}d"
+                tb = f"target_{h}d_binary"
+                if t in df.columns and tb not in df.columns:
+                    bin_exprs.append((pl.col(t) > 0).cast(pl.Int8).alias(tb))
+            if bin_exprs:
+                df = df.with_columns(bin_exprs)
+
+            # Clip bb_position to [0,1] when present
+            if "bb_position" in df.columns:
+                df = df.with_columns(pl.col("bb_position").clip(0.0, 1.0).alias("bb_position"))
+
+            # Drop join artefacts like *_right/_left to prevent schema pollution
+            drop_join = [c for c in df.columns if c.endswith("_right") or c.endswith("_left")]
+            if drop_join:
+                df = df.drop(drop_join)
 
             # Clip extreme statement ratios and derived interaction terms to guard against
             # division-by-near-zero explosions that destabilize downstream scalers.

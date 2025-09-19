@@ -25,8 +25,12 @@ class CodeNormalizer:
     SPECIAL_MAPPINGS = {
         "86970": "8697",  # 日本取引所グループ（5桁→4桁）
         "13010": "1301",  # 極洋（末尾0削除）
+        "94346": "9434",  # NTTデータG等: 5桁LocalCode→4桁Code
         # 追加のマッピングをここに
     }
+
+    # LocalCodeは4桁銘柄コード + 市場区分(1桁)で構成される
+    LOCAL_CODE_PATTERN = re.compile(r"^\d{5}$")
 
     @staticmethod
     def normalize_code(code: str | int | None) -> str | None:
@@ -64,6 +68,13 @@ class CodeNormalizer:
         # 特殊マッピングをチェック
         if code_str in CodeNormalizer.SPECIAL_MAPPINGS:
             code_str = CodeNormalizer.SPECIAL_MAPPINGS[code_str]
+
+        # 5桁LocalCodeは末尾1桁が市場区分なので切り落とす
+        if CodeNormalizer.LOCAL_CODE_PATTERN.match(code_str):
+            base_code = code_str[:-1]
+            # base_codeが空文字になるケース（00000等）は後続処理でNoneに落とす
+            if base_code:
+                code_str = base_code
 
         # 5桁で末尾が0の場合は4桁に変換
         if len(code_str) == 5 and code_str.endswith("0"):

@@ -1,18 +1,68 @@
 # JPX Parquet Data Configuration
-# This configuration defines how to load and process JPX market data from parquet files
-# Package under `data` so that references like `config.data.*` work.
+# Defines how ATFT training reads the enriched parquet dataset.
 # @package data
 
 data_source:
   type: "jpx_parquet"
   format: "parquet"
-  
-raw_data_dir: "${paths.data}/raw"
 
-time_series:
-  lookback_days: 60
-  target_horizons: [1, 2, 3, 5, 10]
-  prediction_horizons: [1, 2, 3, 5, 10]
-  
+# Root data directory (overridden by pipeline)
 source:
   data_dir: "${paths.data}"
+  data_format: "parquet"
+  use_cache: false
+  cache_dir: "${paths.cache}/atft_data"
+
+# Logical schema describing column roles
+schema:
+  date_column: "date"
+  code_column: "code"
+  target_column: "target"
+  feature_columns: null  # autodetect features (excluding id/target columns)
+
+# Time-series slicing behaviour
+time_series:
+  sequence_length: 20
+  prediction_horizons: [1, 2, 3, 5, 10]
+  drop_historical_columns: false
+  use_tensor_sequences: true
+
+# Dataset split defaults (overridden in pipeline)
+split:
+  method: chronological
+  train_ratio: 0.7
+  val_ratio: 0.2
+  test_ratio: 0.1
+  embargo_days: 5
+
+# Data validation toggles
+validation:
+  check_missing: true
+  missing_threshold: 0.5
+  check_outliers: false
+  check_target_distribution: false
+
+# Loader/runtime knobs leveraged by ProductionDataModuleV2
+loader:
+  shuffle: true
+  drop_last: false
+
+# Normalization flags consumed by the data module / model heads
+normalization:
+  online_normalization:
+    enabled: true
+    per_batch: true
+  cross_sectional:
+    enabled: false
+  batch_norm:
+    enabled: false
+
+# Optional graph builder defaults (safe fallback)
+graph_builder:
+  enabled: true
+  method: "pearson"
+  k: 20
+  threshold: 0.2
+
+# Day batch sampler toggle (disabled for sandbox runs)
+use_day_batch_sampler: false

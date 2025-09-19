@@ -172,17 +172,24 @@ class MultiHorizonLoss(nn.Module):
         loss_components = {}
 
         for horizon in self.horizons:
-            # 実際のキー名に合わせる
-            pred_key = f'point_horizon_{horizon}'
-            target_key = f'horizon_{horizon}'
+            # 予測/正解のキー候補を列挙し、存在するものを利用
+            pred_candidates = [
+                f'point_horizon_{horizon}',
+                f'horizon_{horizon}',
+                f'horizon_{horizon}d',
+                f'h{horizon}',
+            ]
+            target_candidates = [
+                f'horizon_{horizon}',
+                f'horizon_{horizon}d',
+                f'point_horizon_{horizon}',
+                f'h{horizon}',
+            ]
 
-            # 古いキー名もサポート（後方互換性）
-            if pred_key not in predictions and f'h{horizon}' in predictions:
-                pred_key = f'h{horizon}'
-            if target_key not in targets and f'h{horizon}' in targets:
-                target_key = f'h{horizon}'
+            pred_key = next((k for k in pred_candidates if k in predictions), None)
+            target_key = next((k for k in target_candidates if k in targets), None)
 
-            if pred_key not in predictions or target_key not in targets:
+            if pred_key is None or target_key is None:
                 continue
 
             pred = predictions[pred_key]
