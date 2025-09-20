@@ -2580,3 +2580,42 @@ wandb: WARNING Changes to your `wandb` environment variables will be ignored bec
 ✅ Training completed successfully
 
 ---
+
+バックグラウンド化と進捗管理を恒久対応
+
+  - Makefile の GPU トレーニングターゲットは scripts/launch_train_gpu_latest.sh を呼び出すよう置き換え済み。
+  nohup + PID/ログ管理でターミナルを閉じても学習継続。
+  - 進捗用の新ターゲットを追加済み：
+      - make train-gpu-monitor → 最新ログを tail -f
+      - make train-gpu-progress → scripts/monitor_training_progress.py で心拍/最新指標を表示
+      - make train-gpu-stop → PID ファイル経由で最新ジョブを停止
+  - 新規 scripts/launch_train_gpu_latest.sh は _logs/train_gpu_latest/ に時刻付きログと PID ファイルを保存
+  し、latest.* へのシンボリックリンクも作成。
+  - scripts/train_gpu_latest.sh 冒頭で PYTHONUNBUFFERED=1 を設定し、ログに tqdm 進捗が即時反映されるようにし
+  てあります。
+  - scripts/monitor_training_progress.py を追加（Makefile から利用済み）。runs/last/heartbeat.json と
+  latest_metrics.json を読み取り、エポック・損失・Sharpe・最終更新時刻を CLI 表示。
+
+  利用手順
+
+  1. 学習開始（自動でバックグラウンド）
+     make train-gpu-latest もしくは make train-gpu-latest-safe
+  2. ログ追尾
+     make train-gpu-monitor
+  3. サマリ確認
+     make train-gpu-progress
+  4. 停止
+     make train-gpu-stop
+
+  W&B を使いたい場合は実行前に
+  unset WANDB_DISABLED WANDB_MODE → .env を source → make train-gpu-latest の手順で。
+
+-----
+
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0 nohup python                    │
+│   scripts/train_atft.py data.source.data_dir=output/atft_data train.trainer.accelerator=gpu               │
+│   train.trainer.devices=1 train.batch.train_batch_size=2048 train.batch.val_batch_size=4096               │
+│   train.batch.num_workers=4 train.batch.prefetch_factor=2 train.batch.persistent_workers=false            │
+│   train.batch.pin_memory=true train.optimizer.lr=2e-4 train.trainer.max_epochs=75                         │
+│   train.trainer.precision=16-mixed train.trainer.enable_progress_bar=true > train_gpu.log 2>&1 &          │
+│   Start GPU training with correct syntax 

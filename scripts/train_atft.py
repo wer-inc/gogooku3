@@ -32,6 +32,15 @@ import time
 import atexit
 import faulthandler
 import traceback
+import torch.multiprocessing as mp
+
+# Ensure a safe multiprocessing start method to avoid DataLoader deadlocks
+try:
+    _mp_method = os.getenv("MP_START_METHOD", "spawn").lower()
+    if _mp_method in ("spawn", "forkserver"):
+        mp.set_start_method(_mp_method, force=True)
+except Exception:
+    pass
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent

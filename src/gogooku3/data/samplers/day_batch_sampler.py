@@ -39,6 +39,8 @@ class DayBatchSampler(Sampler):
         code_column: str = "code",
         min_samples_per_day: int = 10,
         seed: int = 42,
+        # 互換性: 呼び出し元が `shuffle=` を渡す場合に受け付ける
+        shuffle: Optional[bool] = None,
     ):
         """
         Initialize DayBatchSampler.
@@ -56,7 +58,10 @@ class DayBatchSampler(Sampler):
         """
         self.dataset = dataset
         self.batch_size = batch_size
-        self.shuffle_within_day = shuffle_within_day
+        # 互換性対応: shuffle 引数が与えられたら優先
+        self.shuffle_within_day = (
+            shuffle if isinstance(shuffle, bool) else shuffle_within_day
+        )
         self.shuffle_days = shuffle_days
         self.drop_last = drop_last
         self.date_column = date_column
@@ -82,7 +87,42 @@ class DayBatchSampler(Sampler):
         """
         date_indices = defaultdict(list)
 
-        # Handle different dataset types
+        # Fast-path: StreamingParquetDataset 等が sequence_dates を提供する場合
+        try:
+            seq_dates = getattr(self.dataset, "sequence_dates", None)
+            if seq_dates is not None:
+                dates_np = np.asarray(seq_dates)
+                # 可能なら日次に正規化
+                if dates_np.dtype.kind in ("U", "O"):
+                    dates_np = np.array(dates_np, dtype="datetime64[D]")
+                elif str(dates_np.dtype).startswith("datetime64[") is False:
+                    # 予期しない dtype は日次にキャストを試みる
+                    try:
+                        dates_np = np.array(dates_np, dtype="datetime64[D]")
+                    except Exception:
+                        pass
+
+                # 逆インデックスで高速グルーピング
+                # unique はソート順（= 時系列昇順）を保つ
+                unique, inv = np.unique(dates_np, return_inverse=True)
+                order = np.argsort(inv, kind="stable")
+                inv_sorted = inv[order]
+                boundaries = np.flatnonzero(
+                    np.r_[True, inv_sorted[1:] != inv_sorted[:-1]]
+                )
+
+                grouped: dict = {}
+                for g_idx, start in enumerate(boundaries):
+                    end = boundaries[g_idx + 1] if g_idx + 1 < len(boundaries) else len(order)
+                    inds = order[start:end]
+                    if inds.size >= self.min_samples_per_day:
+                        grouped[str(unique[g_idx])] = inds.tolist()
+                if grouped:
+                    return grouped
+        except Exception as e:
+            logger.debug(f"sequence_dates fast-path failed: {e}")
+
+        # Handle different dataset types（フォールバック）
         if hasattr(self.dataset, "data"):
             # Custom dataset with data attribute
             data = self.dataset.data

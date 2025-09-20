@@ -117,6 +117,9 @@ class StreamingParquetDataset(Dataset):
         self.cache_size = cache_size
         self.code_column = code_column
         self.date_column = date_column
+        # 末尾時点（日次）の日付メタデータ（各ウィンドウに1つ）
+        # numpy datetime64[D] に統一して軽量に保持する
+        self.sequence_dates: Optional[np.ndarray] = None
 
         # Initialize cache (int -> sample dict)
         self._cache: dict[int, Dict[str, Any]] = {}
@@ -142,6 +145,8 @@ class StreamingParquetDataset(Dataset):
 
         self._file_window_counts.clear()
         self._cumulative_windows.clear()
+        # 各ファイルに対するウィンドウ末尾日付を溜める（最終的に連結）
+        sequence_dates_list: list[np.datetime64] = []
 
         for file_path in self.file_paths:
             num_rows = self._get_file_num_rows(file_path)
@@ -154,7 +159,61 @@ class StreamingParquetDataset(Dataset):
             total_length += windows
             self._cumulative_windows.append(total_length)
 
+            # ウィンドウ数がある場合のみ日付メタデータを抽出
+            if windows > 0:
+                try:
+                    # 日付列のみをストリーミングで取得
+                    df_dates = (
+                        pl.scan_parquet(file_path)
+                        .select(pl.col(self.date_column))
+                        .collect(streaming=True)
+                    )
+                    if self.date_column not in df_dates.columns:
+                        # 想定外: 日付列がない場合はスキップ（サンプラーは後で順序推定にフォールバック）
+                        continue
+
+                    # 末尾時点（sequence_length-1 オフセット）の日付を使用
+                    # Polars -> Python/NumPy へ変換し、numpy.datetime64[D] へ正規化
+                    series = df_dates[self.date_column]
+                    # to_list() は dtype に依存せず安全
+                    all_dates_list = series.to_list()
+                    if len(all_dates_list) >= self.sequence_length:
+                        end_dates = all_dates_list[self.sequence_length - 1 :]
+                        # numpy.datetime64[D] に変換（文字列/日付/日時のいずれでも受け付ける）
+                        end_dates_np = np.array(end_dates, dtype="datetime64[D]")
+                        # windows と長さを安全側で一致させる
+                        if end_dates_np.shape[0] > windows:
+                            end_dates_np = end_dates_np[:windows]
+                        sequence_dates_list.extend(end_dates_np.tolist())
+                except Exception as exc:
+                    # ここでの失敗は致命的ではないのでログのみ
+                    logger.debug(
+                        "Failed to build sequence_dates for %s due to: %s",
+                        file_path,
+                        exc,
+                    )
+
         self._length = total_length
+
+        # 収集した sequence_dates を numpy 配列へ確定（長さが一致する場合のみ設定）
+        try:
+            if sequence_dates_list and len(sequence_dates_list) == self._length:
+                self.sequence_dates = np.array(sequence_dates_list, dtype="datetime64[D]")
+                logger.info(
+                    "Built sequence_dates metadata: %d windows across %d files",
+                    len(self.sequence_dates),
+                    len(self.file_paths),
+                )
+            else:
+                # 一致しない場合は未設定のまま（サンプラー側でフォールバック）
+                if sequence_dates_list:
+                    logger.debug(
+                        "sequence_dates length mismatch (got %d, expected %d); skipping",
+                        len(sequence_dates_list),
+                        self._length,
+                    )
+        except Exception as exc:
+            logger.debug("sequence_dates finalization failed: %s", exc)
 
         if skipped_files:
             logger.warning(

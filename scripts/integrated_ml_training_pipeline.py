@@ -526,9 +526,17 @@ class CompleteATFTTrainingPipeline:
                 cmd.extend(self.extra_overrides)
 
             # まずGPU/CPU計画を判定（この結果を以降の設定に利用）
-            force_gpu = os.getenv("FORCE_GPU", "0") == "1"
+            # GPU必須モード（REQUIRE_GPU=1 or ACCELERATOR=gpu 等）の場合、
+            # CUDAが利用不可なら即エラーで停止（CPUフォールバック禁止）。
             acc_env = os.getenv("ACCELERATOR", "").lower()
-            use_gpu_plan = (torch.cuda.is_available() or force_gpu) and acc_env != "cpu"
+            require_gpu = os.getenv("REQUIRE_GPU", "0").lower() in ("1", "true", "yes") or acc_env == "gpu"
+            has_gpu = torch.cuda.is_available()
+            if require_gpu and not has_gpu:
+                logger.error("GPU required but not available (torch.cuda.is_available=False). Aborting.")
+                return False, {"error": "GPU required but not available"}
+
+            # DataLoader最適化は実GPU可否に依存
+            use_gpu_plan = has_gpu and acc_env != "cpu"
 
             # 小規模サンプルでの実行時は、minibatch崩壊と検証0件を避けるための保護を入れる
             debug_small_data = (
@@ -561,8 +569,7 @@ class CompleteATFTTrainingPipeline:
             # GPU/CPU の実行方針に応じて DataLoader 関連を調整（上の判定を再利用）
 
             if use_gpu_plan:
-                # GPU 実行: データローダ最適化を有効化（上書き）
-                # 既存のCPU向けオーバーライドが混入していれば取り除く
+                # GPU 実行: データローダ最適化（安全デフォルト）。persistent_workersはデッドロック回避のためデフォルト無効。
                 for bad in [
                     "train.batch.prefetch_factor=null",
                     "train.batch.persistent_workers=false",
@@ -570,17 +577,15 @@ class CompleteATFTTrainingPipeline:
                 ]:
                     if bad in cmd:
                         cmd.remove(bad)
-                # 推奨GPU設定を付与（未指定の場合）
-                if not any(s.startswith("train.batch.persistent_workers=") for s in cmd):
-                    cmd.append("train.batch.persistent_workers=true")
+                # 未指定なら pin_memory を有効化、prefetch は控えめに 4（環境により2でも可）
                 if not any(s.startswith("train.batch.pin_memory=") for s in cmd):
                     cmd.append("train.batch.pin_memory=true")
                 if not any(s.startswith("train.batch.prefetch_factor=") for s in cmd):
-                    cmd.append("train.batch.prefetch_factor=8")
+                    cmd.append("train.batch.prefetch_factor=4")
+                # persistent_workers は明示指定がある場合のみ尊重（デフォルトは付与しない）
                 env.setdefault("ACCELERATOR", "gpu")
                 env.setdefault("CUDA_VISIBLE_DEVICES", os.getenv("CUDA_VISIBLE_DEVICES", "0"))
-                # GPUログを明示
-                logger.info("[pipeline] Using GPU execution plan (persistent_workers, pin_memory, prefetch_factor=8)")
+                logger.info("[pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)")
             else:
                 # CPU 実行: DataLoader を単純化
                 if "train.batch.prefetch_factor=null" not in cmd:
@@ -621,14 +626,113 @@ class CompleteATFTTrainingPipeline:
                     "USE_DAY_BATCH=0 MIN_NODES_PER_DAY=4 DATASET_STRIDE=2 "
                     "NUM_WORKERS=0 SHARPE_EPS=1e-8"
                 )
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
+            # OOM 自動リトライ: CUDA OOM を検知したらバッチ半減 + 勾配蓄積倍増で最大2回まで再試行
+            def _last_override_int(args: list[str], key: str, default: int) -> int:
+                pref = f"{key}="
+                val = None
+                for s in args:
+                    if isinstance(s, str) and s.startswith(pref):
+                        try:
+                            val = int(float(s.split("=", 1)[1]))
+                        except Exception:
+                            pass
+                return val if val is not None else int(default)
 
-            if result.returncode != 0:
+            max_retries = 2
+            attempt = 0
+            while True:
+                attempt += 1
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                
+                if result.returncode == 0:
+                    break
+
+                combined_err = (result.stderr or "") + "\n" + (result.stdout or "")
+                if ("CUDA out of memory" in combined_err) or ("torch.OutOfMemoryError" in combined_err):
+                    if attempt > max_retries:
+                        logger.error(
+                            f"Training failed after {max_retries} OOM retries. Last error: {result.stderr}"
+                        )
+                        return False, {"error": result.stderr}
+
+                    # 現在値を取得（存在しなければ既定値から）
+                    cur_bs = _last_override_int(
+                        cmd, "train.batch.train_batch_size", self.atft_settings.get("batch_size", 1024)
+                    )
+                    cur_vbs = _last_override_int(
+                        cmd, "train.batch.val_batch_size", max(1024, int(cur_bs * 1.5))
+                    )
+                    cur_ga = _last_override_int(cmd, "train.batch.gradient_accumulation_steps", 1)
+                    cur_workers = _last_override_int(cmd, "train.batch.num_workers", 8)
+                    cur_prefetch = _last_override_int(cmd, "train.batch.prefetch_factor", 4)
+
+                    # 新しい値を決定
+                    new_bs = max(64, cur_bs // 2)
+                    new_vbs = max(128, cur_vbs // 2)
+                    new_ga = min(32, max(1, cur_ga * 2))
+                    new_workers = min(cur_workers, 8)
+                    new_prefetch = min(cur_prefetch, 2)
+
+                    logger.warning(
+                        "[OOM-retry] CUDA OOM detected. Retrying with: "
+                        f"train_batch_size={new_bs}, val_batch_size={new_vbs}, "
+                        f"grad_accum={new_ga}, num_workers={new_workers}, prefetch_factor={new_prefetch}"
+                    )
+
+                    # 勾配蓄積は、未指定なら + で追加、既に存在するなら通常上書き
+                    has_ga = any(
+                        s.startswith("train.batch.gradient_accumulation_steps=") or s.startswith(
+                            "+train.batch.gradient_accumulation_steps="
+                        )
+                        for s in cmd
+                    )
+                    ga_arg = (
+                        f"train.batch.gradient_accumulation_steps={new_ga}"
+                        if has_ga
+                        else f"+train.batch.gradient_accumulation_steps={new_ga}"
+                    )
+
+                    # 後勝ちにするため末尾にオーバーライドを追加
+                    cmd.extend(
+                        [
+                            f"train.batch.train_batch_size={new_bs}",
+                            f"train.batch.val_batch_size={new_vbs}",
+                            f"train.batch.test_batch_size={new_vbs}",
+                            ga_arg,
+                            f"train.batch.num_workers={new_workers}",
+                            f"train.batch.prefetch_factor={new_prefetch}",
+                        ]
+                    )
+                    # ループ継続（再実行）
+                    continue
+
+                # OOM以外の失敗は一度だけCPUローダー安全設定で再試行（環境権限/ソケット制限対策）
+                if attempt == 1:
+                    logger.warning("[retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings")
+                    # remove GPU-oriented flags if any slipped in
+                    for bad in [
+                        "train.batch.persistent_workers=true",
+                        "train.batch.pin_memory=true",
+                        "train.batch.prefetch_factor=8",
+                    ]:
+                        try:
+                            while bad in cmd:
+                                cmd.remove(bad)
+                        except Exception:
+                            pass
+                    cmd.extend([
+                        "train.batch.num_workers=0",
+                        "train.batch.prefetch_factor=null",
+                        "train.batch.persistent_workers=false",
+                        "train.batch.pin_memory=false",
+                    ])
+                    continue
+
                 logger.error(f"Training failed: {result.stderr}")
                 return False, {"error": result.stderr}
 
@@ -1055,4 +1159,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    ok, _ = asyncio.run(main())
+    # 非0終了で呼び出し側スクリプトが成功/失敗を正しく検知できるようにする
+    import sys
+    sys.exit(0 if ok else 1)
