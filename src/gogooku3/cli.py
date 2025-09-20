@@ -513,3 +513,143 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # Build extended dataset (non-breaking)
+    p_bext = subparsers.add_parser("build-dataset-ext", help="拡張特徴量の付与（列は削除しない）")
+    p_bext.add_argument("--input", type=Path, required=True)
+    p_bext.add_argument("--output", type=Path, required=True)
+    p_bext.add_argument("--adv-col", type=str, default="dollar_volume_ma20")
+    p_bext.add_argument("--config", type=Path, default=None)
+    def _cmd_bext(args: argparse.Namespace) -> int:
+        import polars as pl
+        from gogooku3.features_ext.sector_loo import add_sector_loo
+        from gogooku3.features_ext.scale_unify import add_ratio_adv_z
+        from gogooku3.features_ext.outliers import winsorize
+        from gogooku3.features_ext.interactions import add_interactions
+        import yaml
+
+        df = pl.read_parquet(str(args.input))
+        # LOO
+        if "returns_1d" in df.columns and "sector33_id" in df.columns:
+            df = add_sector_loo(df, ret_col="returns_1d", sec_col="sector33_id")
+        # Configurable Ratio/ADV/Z + Winsor
+        cfg = {}
+        if args.config and args.config.exists():
+            with open(args.config, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+        for it in cfg.get("ratio_adv_z", []):
+            val, adv, pre = it.get("value"), it.get("adv"), it.get("prefix")
+            if val in df.columns and adv in df.columns:
+                df = add_ratio_adv_z(df, value_col=val, adv_col=adv, prefix=pre)
+        wins = [c for c in (cfg.get("winsor", {}).get("cols", [])) if c in df.columns]
+        if wins:
+            df = winsorize(df, wins, k=5.0)
+        # Interactions (best-effort)
+        try:
+            df = add_interactions(df)
+        except Exception:
+            pass
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(str(args.output))
+        print(f"✅ Extended dataset saved: {args.output}")
+        return 0
+    p_bext.set_defaults(func=_cmd_bext)
+
+    # Train multi-head (purged CV)
+    p_mht = subparsers.add_parser("train-multihead", help="Multi-Head学習（Purged CV + CS-Z）")
+    p_mht.add_argument("--data", type=Path, required=True)
+    p_mht.add_argument("--target", type=str, default="target_1d")
+    p_mht.add_argument("--features", nargs="+", default=None)
+    p_mht.add_argument("--epochs", type=int, default=1)
+    p_mht.add_argument("--batch-size", type=int, default=1024)
+    p_mht.add_argument("--feature-groups", type=Path, default=Path("configs/feature_groups.yaml"))
+    p_mht.add_argument("--vol-col", type=str, default="volatility_20d")
+    p_mht.add_argument("--outlier-cols", type=str, default="returns_1d,returns_5d")
+    def _cmd_mht(args: argparse.Namespace) -> int:
+        import polars as pl
+        import torch
+        from torch.utils.data import DataLoader
+        from gogooku3.training.cv_purged import purged_kfold_indices
+        from gogooku3.training.datamodule import PanelDataModule
+        from gogooku3.training.losses import HuberMultiHorizon
+        from gogooku3.training.model_multihead import MultiHeadRegressor
+        from gogooku3.training.feature_groups import resolve_groups_from_prefixes
+
+        df = pl.read_parquet(str(args.data))
+        def _default_features(df: pl.DataFrame) -> list[str]:
+            cs = [c for c in df.columns if c.endswith("_cs_z")]
+            if cs:
+                # Strip _cs_z to base names expected by datamodule
+                return [c[:-5] for c in cs]
+            return [c for c, dt in zip(df.columns, df.dtypes) if pl.datatypes.is_numeric_dtype(dt)]
+        base_feats = args.features or _default_features(df)
+        # Folds
+        dates = df["Date"].to_numpy()
+        folds = purged_kfold_indices(dates, n_splits=3, embargo_days=20)
+        outlier_cols = [c.strip() for c in (args.outlier_cols or "").split(",") if c.strip() and c.strip() in df.columns]
+        dm = PanelDataModule(
+            df,
+            feature_cols=base_feats,
+            target_col=args.target,
+            date_col="Date",
+            by_cols=["sector33_id"] if "sector33_id" in df.columns else None,
+            outlier_cols=outlier_cols,
+            vol_col=args.vol_col if args.vol_col in df.columns else None,
+        )
+        in_dim = len(base_feats)
+        groups = resolve_groups_from_prefixes([f"{c}_cs_z" for c in base_feats], args.feature_groups)
+        model = MultiHeadRegressor(in_dim=in_dim, hidden=256, groups=groups or None, out_heads=(1, 1, 1, 1, 1))
+        crit = HuberMultiHorizon()
+        opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+        for fi, f in enumerate(folds):
+            train_ds, _ = dm.setup_fold(f)
+            loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+            loss = 0.0
+            for _ in range(max(1, args.epochs)):
+                model.train()
+                total = 0.0
+                for X, y, vol in loader:
+                    opt.zero_grad()
+                    outs = model(X)
+                    loss_t = crit([o.squeeze(-1) for o in outs], [y for _ in outs], vol20=vol)
+                    loss_t.backward()
+                    opt.step()
+                    total += float(loss_t.item())
+                loss = total / max(1, len(loader))
+            print(f"fold={fi} train_loss={loss:.6f}")
+        return 0
+    p_mht.set_defaults(func=_cmd_mht)
+
+    # Ablation report
+    p_ab = subparsers.add_parser("ablation", help="Ablationレポート生成（簡易RankIC）")
+    p_ab.add_argument("--data", type=Path, required=True)
+    p_ab.add_argument("--target", type=str, default="target_1d")
+    p_ab.add_argument("--epochs", type=int, default=1)
+    p_ab.add_argument("--batch-size", type=int, default=1024)
+    p_ab.add_argument("--out", type=Path, default=Path("output/ablation_report.md"))
+    p_ab.add_argument("--group-col", type=str, default=None)
+    p_ab.add_argument("--group-topk", type=int, default=8)
+    p_ab.add_argument("--time-slices", type=str, default="auto")
+    p_ab.add_argument("--slice-variant", choices=["final", "all"], default="final")
+    def _cmd_ab(args: argparse.Namespace) -> int:
+        from scripts.ablation_report import main as _ab_main
+        # Bridge by simulating argv for the ablation script
+        import sys
+        old = sys.argv[:]
+        sys.argv = [
+            "ablation_report.py",
+            "--data", str(args.data),
+            "--target", args.target,
+            "--epochs", str(args.epochs),
+            "--batch-size", str(args.batch_size),
+            "--out", str(args.out),
+        ]
+        if args.group_col:
+            sys.argv += ["--group-col", args.group_col, "--group-topk", str(args.group_topk)]
+        if args.time_slices:
+            sys.argv += ["--time-slices", args.time_slices, "--slice-variant", args.slice_variant]
+        try:
+            _ab_main()
+        finally:
+            sys.argv = old
+        return 0
+    p_ab.set_defaults(func=_cmd_ab)

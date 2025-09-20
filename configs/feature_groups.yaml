@@ -1,0 +1,26 @@
+version: 1
+# Flexible mapping: you can specify "indices" (0-based) or "prefixes" to expand at runtime.
+groups:
+  MA:
+    prefixes: ["ma_"]
+  EMA:
+    prefixes: ["ema_"]
+  BB:
+    prefixes: ["bb_"]
+  VOL:
+    prefixes: ["vol", "volatility"]
+  FLOW:
+    prefixes: ["flow_"]
+  MARGIN:
+    prefixes: ["margin_"]
+  DMI:
+    prefixes: ["dmi_"]
+  STMT:
+    prefixes: ["stmt_"]
+  MKT:
+    prefixes: ["mkt_"]
+  SEC:
+    prefixes: ["sec_"]
+  INTERACTIONS:
+    prefixes: ["x_"]
+
