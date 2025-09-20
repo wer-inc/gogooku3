@@ -42,6 +42,9 @@ help:
 	@echo "GPU Training with Latest Dataset:"
 	@echo "make train-gpu-latest                 - GPU training with auto-detected latest dataset"
 	@echo "make train-gpu-latest-safe            - GPU training with SafeTrainingPipeline validation"
+	@echo "make train-gpu-monitor                - Tail latest GPU training log"
+	@echo "make train-gpu-progress               - Show summarized training heartbeat"
+	@echo "make train-gpu-stop                   - Stop latest GPU training run"
 
 # Python environment setup
 setup:
@@ -249,7 +252,7 @@ hpo-test:
 	python scripts/hpo/test_hpo_basic.py
 
 # GPU Training with Latest Dataset
-.PHONY: train-gpu-latest train-gpu-latest-safe
+.PHONY: train-gpu-latest train-gpu-latest-safe train-gpu-monitor train-gpu-progress train-gpu-stop
 
 train-gpu-latest:
 	@echo "🚀 Launching GPU training (background)"
@@ -258,6 +261,43 @@ train-gpu-latest:
 train-gpu-latest-safe:
 	@echo "🚀 Launching GPU training with SafeTrainingPipeline validation (background)"
 	@./scripts/launch_train_gpu_latest.sh --safe
+
+train-gpu-monitor:
+	@# Find active training process and monitor its log
+	@PID=$$(pgrep -af 'python.*train_atft\.py' | head -1 | awk '{print $$1}'); \
+	if [ -z "$$PID" ]; then \
+		echo "❌ No active training process found. Start with 'make train-gpu-latest'"; \
+		exit 1; \
+	fi; \
+	LOG=$$(grep -l "^$$PID$$" _logs/train_gpu_latest/*.pid 2>/dev/null | sed 's/\.pid$$/.log/' | head -1); \
+	if [ -z "$$LOG" ]; then \
+		echo "⚠️  Active process $$PID found but no log file. Falling back to latest.log"; \
+		LOG="./_logs/train_gpu_latest/latest.log"; \
+	fi; \
+	echo "📡 Monitoring active training (PID: $$PID)"; \
+	echo "📄 Log file: $$LOG"; \
+	echo "🔄 Press Ctrl+C to stop monitoring (training continues)"; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	tail -f "$$LOG"
+
+train-gpu-progress:
+	@if [ ! -f ./runs/last/heartbeat.json ]; then \
+		echo "No heartbeat found. Start a run with 'make train-gpu-latest' first."; \
+		exit 1; \
+	fi
+	@./scripts/monitor_training_progress.py
+
+train-gpu-stop:
+	@if [ ! -f ./_logs/train_gpu_latest/latest.pid ]; then \
+		echo "No PID file found. Nothing to stop."; \
+		exit 1; \
+	fi
+	PID=$$(cat ./_logs/train_gpu_latest/latest.pid); \
+	if kill $$PID 2>/dev/null; then \
+		echo "🛑 Stopped GPU training (PID $$PID)"; \
+	else \
+		echo "PID $$PID not running (already stopped?)"; \
+	fi
 
 # Integrated ML Training targets
 .PHONY: train-integrated train-integrated-safe train-integrated-hpo train-atft train-safe smoke

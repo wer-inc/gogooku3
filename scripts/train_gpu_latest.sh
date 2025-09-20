@@ -7,6 +7,10 @@ set -e
 # GPU環境設定（永続化）
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 export FORCE_GPU=1
+# Require a real GPU by default; fail fast if not available
+export REQUIRE_GPU=${REQUIRE_GPU:-1}
+# Hint accelerator to downstream code
+export ACCELERATOR=${ACCELERATOR:-gpu}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:512}
 export TORCH_CUDNN_V8_API_ALLOWED=1
 export TORCH_CUDNN_V8_API_ENABLED=1
@@ -18,6 +22,9 @@ export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-32}
 export PYTHONUNBUFFERED=1
 export WANDB_DISABLED=${WANDB_DISABLED:-1}
 export WANDB_MODE=${WANDB_MODE:-offline}
+export WANDB_ENABLED=${WANDB_ENABLED:-0}
+# Enable memory savers by default for stability on large feature sets
+export GRAD_CHECKPOINT_VSN=${GRAD_CHECKPOINT_VSN:-1}
 
 # カラー出力
 GREEN='\033[0;32m'
@@ -43,17 +50,20 @@ fi
 
 echo -e "${GREEN}✓ Found latest dataset: $LATEST_DATASET${NC}"
 
-# デフォルト引数
+# デフォルト引数（安全側の初期値に調整: OOM回避重視）
+# 環境変数で上書き可能: TRAIN_BATCH_SIZE, TRAIN_VAL_BATCH_SIZE など
 RUN_SAFE_PIPELINE=${1:-""}
 ADV_GRAPH=${2:-"--adv-graph-train"}
 LEARNING_RATE=${3:-"2e-4"}
 MAX_EPOCHS=${4:-"75"}
-BATCH_SIZE=${TRAIN_BATCH_SIZE:-4096}
-VAL_BATCH_SIZE=${TRAIN_VAL_BATCH_SIZE:-6144}
-NUM_WORKERS=${TRAIN_NUM_WORKERS:-16}
-PREFETCH=${TRAIN_PREFETCH:-8}
+# 大規模VSNでのピークVRAMと環境制約を考慮した安全デフォルト
+BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
+VAL_BATCH_SIZE=${TRAIN_VAL_BATCH_SIZE:-1536}
+NUM_WORKERS=${TRAIN_NUM_WORKERS:-0}
+PREFETCH=${TRAIN_PREFETCH:-4}
 # Optional overrides
-GRAD_ACC=${TRAIN_ACCUMULATION:-1}
+# 勾配蓄積は train_atft.py の想定キー（train.batch.gradient_accumulation_steps）に合わせて渡す
+GRAD_ACC=${TRAIN_ACCUMULATION:-4}
 PRECISION=${TRAIN_PRECISION:-16-mixed}
 VAL_INTERVAL=${TRAIN_VAL_INTERVAL:-1.0}
 
@@ -69,6 +79,7 @@ if [ "$RUN_SAFE_PIPELINE" == "--safe" ]; then
         train.batch.test_batch_size=$VAL_BATCH_SIZE \
         train.batch.num_workers=$NUM_WORKERS \
         train.batch.prefetch_factor=$PREFETCH \
+        +train.batch.gradient_accumulation_steps=$GRAD_ACC \
         train.trainer.accumulate_grad_batches=$GRAD_ACC \
         train.trainer.precision=$PRECISION \
         train.trainer.val_check_interval=$VAL_INTERVAL \
@@ -84,6 +95,7 @@ else
         train.batch.test_batch_size=$VAL_BATCH_SIZE \
         train.batch.num_workers=$NUM_WORKERS \
         train.batch.prefetch_factor=$PREFETCH \
+        +train.batch.gradient_accumulation_steps=$GRAD_ACC \
         train.trainer.accumulate_grad_batches=$GRAD_ACC \
         train.trainer.precision=$PRECISION \
         train.trainer.val_check_interval=$VAL_INTERVAL \
@@ -91,4 +103,10 @@ else
         train.trainer.max_epochs=$MAX_EPOCHS
 fi
 
-echo -e "${GREEN}✅ Training completed successfully${NC}"
+# Show success only if the previous command exited with 0
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✅ Training completed successfully${NC}"
+else
+    echo -e "${YELLOW}⚠️ Training finished with errors (see logs)${NC}"
+    exit 1
+fi

@@ -1,10 +1,12 @@
 """Temporal Fusion Transformer components."""
 
 import math
+import os
 from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.utils.checkpoint as cp
 
 from .grn import GatedResidualNetwork
 
@@ -130,7 +132,20 @@ class VariableSelectionNetwork(nn.Module):
 
         # Get feature weights (compute in fp32 for numerical stability)
         orig_dtype = flattened.dtype
-        feature_weights = self.flattened_grn(flattened.to(torch.float32)).to(orig_dtype)
+        # Optional gradient checkpointing to reduce VRAM peak
+        use_ckpt = os.getenv("GRAD_CHECKPOINT_VSN", "0").lower() in ("1", "true", "yes")
+        flat_fp32 = flattened.to(torch.float32)
+        if use_ckpt and torch.is_grad_enabled():
+            try:
+                # Non-reentrant path avoids the requires_grad constraint on inputs (PyTorch 2.x)
+                feature_weights = cp.checkpoint(self.flattened_grn, flat_fp32, use_reentrant=False)
+            except TypeError:  # PyTorch < 2.0 fallback
+                feature_weights = cp.checkpoint(self.flattened_grn, flat_fp32)
+            except Exception:
+                feature_weights = self.flattened_grn(flat_fp32)
+        else:
+            feature_weights = self.flattened_grn(flat_fp32)
+        feature_weights = feature_weights.to(orig_dtype)
         if self.use_sigmoid:
             feature_weights = torch.sigmoid(feature_weights)
         else:
@@ -144,7 +159,15 @@ class VariableSelectionNetwork(nn.Module):
         selected_features = features.new_zeros((batch_size, seq_len, self.hidden_size))
         for i in range(num_features):
             feat = features[:, :, i, :]
-            transformed = self.feature_grns[i](feat)
+            if use_ckpt and torch.is_grad_enabled():
+                try:
+                    transformed = cp.checkpoint(self.feature_grns[i], feat, use_reentrant=False)
+                except TypeError:
+                    transformed = cp.checkpoint(self.feature_grns[i], feat)
+                except Exception:
+                    transformed = self.feature_grns[i](feat)
+            else:
+                transformed = self.feature_grns[i](feat)
             weight_i = feature_weights_expanded[:, :, i, :]  # (B, L, 1)
             selected_features = selected_features + transformed * weight_i
 
