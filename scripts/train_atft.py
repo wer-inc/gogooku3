@@ -4172,19 +4172,9 @@ def train(config: DictConfig) -> None:
                     logger.info(
                         "Applied target z-score normalization to train_ds (CV mode)"
                     )
-                # trainで確定した特徴列をvalへ強制適用
-                feat_cols_fixed = getattr(train_ds, "feature_cols", None)
-                val_ds = ProductionDatasetV2(
-                    data_module.val_files
-                    if hasattr(data_module, "val_files") and data_module.val_files
-                    else data_module.train_files,
-                    final_config,
-                    mode="val",
-                    target_scalers=scalers,
-                    start_date=val_start,
-                    end_date=val_end,
-                    required_feature_cols=feat_cols_fixed,
-                )
+
+                # データモジュール側で検証ローダーを提供するため、
+                # ここでの検証データセット再構築は行わない
                 dlp = _resolve_dl_params(final_config)
 
                 # Default loaders
@@ -4238,17 +4228,9 @@ def train(config: DictConfig) -> None:
                         persistent_workers=dlp["persistent_workers"],
                         collate_fn=collate_day,
                     )
-                val_loader = _safe_loader(
-                    val_ds,
-                    batch_size=final_config.train.batch.val_batch_size,
-                    shuffle=False,
-                    num_workers=max(0, dlp["num_workers"] // 2),
-                    pin_memory=dlp["pin_memory"],
-                    persistent_workers=(
-                        dlp["persistent_workers"] and dlp["num_workers"] > 0
-                    ),
-                    collate_fn=collate_day,
-                )
+
+                # 検証データローダーはDataModuleから取得（特徴量整合はDataModuleで保証）
+                val_loader = data_module.val_dataloader()
     else:
         train_loader = data_module.train_dataloader()
         # DataModule handles feature alignment internally
