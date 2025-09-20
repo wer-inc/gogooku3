@@ -1,0 +1,10 @@
+ratio_adv_z:
+  - value: margin_long_tot
+    adv: dollar_volume_ma20
+    prefix: margin_long
+  - value: dmi_long
+    adv: dollar_volume_ma20
+    prefix: dmi_long
+winsor:
+  cols: [returns_1d, returns_5d, rel_to_sec_5d, dmi_long_to_adv20, stmt_rev_fore_op]
+

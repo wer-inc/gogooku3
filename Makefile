@@ -45,6 +45,13 @@ help:
 	@echo "make train-gpu-monitor                - Tail latest GPU training log"
 	@echo "make train-gpu-progress               - Show summarized training heartbeat"
 	@echo "make train-gpu-stop                   - Stop latest GPU training run"
+	@echo ""
+	@echo "Feature Preservation ML Pipeline (全特徴量保持):"
+	@echo "make dataset-ext INPUT=output/ml_dataset_latest_full.parquet - Build extended dataset with all improvements"
+	@echo "make train-multihead DATA=output/dataset_ext.parquet        - Train multi-head model with feature groups"
+	@echo "make eval-multihead DATA=output/predictions.parquet          - Generate evaluation report with ablation"
+	@echo "make pipeline-full-ext START=YYYY-MM-DD END=YYYY-MM-DD      - Complete feature preservation pipeline"
+	@echo "make test-ext                                                - Run CI tests for data quality checks"
 
 # Python environment setup
 setup:
@@ -367,3 +374,61 @@ hpo-atft:
 		--output-base $(OUTPUT_BASE) \
 		--n-trials 20 \
 		--timeout 3600
+
+# ============================================================================
+# Feature Preservation ML Pipeline (全特徴量保持)
+# ============================================================================
+
+.PHONY: dataset-ext
+dataset-ext: ## Build extended dataset with all feature improvements
+	@echo "📊 Building extended dataset with all improvements..."
+	@INPUT=$${INPUT:-output/ml_dataset_latest_full.parquet}; \
+	OUTPUT=$${OUTPUT:-output/dataset_ext.parquet}; \
+	python scripts/build_dataset_ext.py \
+		--input $$INPUT \
+		--output $$OUTPUT \
+		--adv-col dollar_volume_ma20
+	@echo "✅ Extended dataset saved to: $$OUTPUT"
+
+.PHONY: train-multihead
+train-multihead: ## Train multi-head model with feature groups
+	@echo "🧠 Training multi-head model with feature groups..."
+	@DATA=$${DATA:-output/dataset_ext.parquet}; \
+	python scripts/train_multihead.py \
+		--data $$DATA \
+		--epochs 10 \
+		--batch-size 1024 \
+		--feature-groups configs/feature_groups.yaml \
+		--pred-out output/predictions.parquet
+	@echo "✅ Training complete. Predictions saved to output/predictions.parquet"
+
+.PHONY: eval-multihead
+eval-multihead: ## Generate comprehensive evaluation report with ablation
+	@echo "📈 Generating evaluation report with ablation analysis..."
+	@DATA=$${DATA:-output/predictions.parquet}; \
+	mkdir -p reports; \
+	python scripts/eval_report.py \
+		--data $$DATA \
+		--ablation \
+		--horizons "1,5,10,20" \
+		--output reports/evaluation_report.html
+	@echo "✅ Report saved to reports/evaluation_report.html"
+
+.PHONY: pipeline-full-ext
+pipeline-full-ext: ## Complete feature preservation pipeline
+	@echo "🚀 Running complete feature preservation pipeline..."
+	@START=$${START:?START date required}; \
+	END=$${END:?END date required}; \
+	echo "📅 Period: $$START to $$END"; \
+	$(MAKE) dataset-full START=$$START END=$$END && \
+	$(MAKE) dataset-ext INPUT=output/ml_dataset_latest_full.parquet OUTPUT=output/dataset_ext.parquet && \
+	$(MAKE) train-multihead DATA=output/dataset_ext.parquet && \
+	$(MAKE) eval-multihead DATA=output/predictions.parquet
+	@echo "✅ Complete pipeline finished successfully"
+
+.PHONY: test-ext
+test-ext: ## Run CI tests for data quality and pipeline integrity
+	@echo "🧪 Running CI tests for feature preservation ML..."
+	python -m pytest tests/test_data_checks.py -v
+	python -m pytest tests/test_cv_pipeline.py -v -m "not slow"
+	@echo "✅ All CI tests passed"

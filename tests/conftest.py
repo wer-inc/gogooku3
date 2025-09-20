@@ -9,7 +9,11 @@ from datetime import datetime
 import sys
 
 # Add scripts to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+root = Path(__file__).parent.parent
+# Make `scripts/` importable
+sys.path.insert(0, str(root / "scripts"))
+# Make `src/` importable for local package modules (editable install not required in CI)
+sys.path.insert(0, str(root / "src"))
 
 
 @pytest.fixture

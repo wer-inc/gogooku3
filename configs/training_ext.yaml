@@ -1,0 +1,17 @@
+model:
+  hidden: 512
+  dropout: 0.2
+  out_heads: [1, 1, 1, 1, 1]
+
+cv:
+  n_splits: 5
+  embargo_days: 20
+
+loss:
+  deltas: [0.01, 0.015, 0.02, 0.025, 0.03]
+  horizon_w: [1.0, 0.9, 0.8, 0.7, 0.6]
+
+optim:
+  lr: 0.001
+  weight_decay: 0.0001
+
