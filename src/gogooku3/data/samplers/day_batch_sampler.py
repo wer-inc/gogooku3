@@ -7,11 +7,10 @@ Critical for financial ML to prevent data leakage and maintain temporal structur
 
 import logging
 from collections import defaultdict
-from typing import Iterator, List, Optional, Union
+from collections.abc import Iterator
 
 import numpy as np
 import pandas as pd
-import torch
 from torch.utils.data import Sampler
 
 logger = logging.getLogger(__name__)
@@ -30,7 +29,7 @@ class DayBatchSampler(Sampler):
 
     def __init__(
         self,
-        dataset,
+        dataset=None,
         batch_size: int = 256,
         shuffle_within_day: bool = True,
         shuffle_days: bool = False,
@@ -40,7 +39,14 @@ class DayBatchSampler(Sampler):
         min_samples_per_day: int = 10,
         seed: int = 42,
         # 互換性: 呼び出し元が `shuffle=` を渡す場合に受け付ける
-        shuffle: Optional[bool] = None,
+        shuffle: bool | None = None,
+        max_batch_size: int | None = None,
+        min_nodes_per_day: int | None = None,
+        min_nodes: int | None = None,
+        drop_undersized: bool | None = None,
+        indices: list[int] | None = None,
+        dates: list | np.ndarray | None = None,
+        **_: object,
     ):
         """
         Initialize DayBatchSampler.
@@ -57,7 +63,7 @@ class DayBatchSampler(Sampler):
             seed: Random seed for shuffling
         """
         self.dataset = dataset
-        self.batch_size = batch_size
+        self.batch_size = int(batch_size)
         # 互換性対応: shuffle 引数が与えられたら優先
         self.shuffle_within_day = (
             shuffle if isinstance(shuffle, bool) else shuffle_within_day
@@ -66,8 +72,35 @@ class DayBatchSampler(Sampler):
         self.drop_last = drop_last
         self.date_column = date_column
         self.code_column = code_column
-        self.min_samples_per_day = min_samples_per_day
+        if min_nodes_per_day is not None:
+            self.min_samples_per_day = int(min_nodes_per_day)
+        elif min_nodes is not None:
+            self.min_samples_per_day = int(min_nodes)
+        else:
+            self.min_samples_per_day = int(min_samples_per_day)
         self.seed = seed
+
+        self._drop_underfilled_days = (
+            bool(drop_undersized) if drop_undersized is not None else True
+        )
+
+        self.max_batch_size = int(max_batch_size) if max_batch_size else None
+        self._chunk_size = (
+            min(self.batch_size, self.max_batch_size)
+            if self.max_batch_size
+            else self.batch_size
+        )
+
+        self._manual_date_indices: dict[str, list[int]] | None = None
+        if indices is not None and dates is not None:
+            if len(indices) != len(dates):
+                raise ValueError(
+                    "indices and dates must have the same length when provided"
+                )
+            manual_map: dict[str, list[int]] = {}
+            for idx, date in zip(indices, dates, strict=False):
+                manual_map.setdefault(str(date), []).append(int(idx))
+            self._manual_date_indices = manual_map
 
         # Build date-based indices
         self.date_indices = self._build_date_indices()
@@ -85,6 +118,13 @@ class DayBatchSampler(Sampler):
         Returns:
             Dictionary mapping date -> list of indices
         """
+        if self._manual_date_indices is not None:
+            return {
+                date: indices
+                for date, indices in self._manual_date_indices.items()
+                if self._should_keep_day(indices)
+            }
+
         date_indices = defaultdict(list)
 
         # Fast-path: StreamingParquetDataset 等が sequence_dates を提供する場合
@@ -99,8 +139,10 @@ class DayBatchSampler(Sampler):
                     # 予期しない dtype は日次にキャストを試みる
                     try:
                         dates_np = np.array(dates_np, dtype="datetime64[D]")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug(
+                            "sequence_dates cast to datetime64[D] failed: %s", exc
+                        )
 
                 # 逆インデックスで高速グルーピング
                 # unique はソート順（= 時系列昇順）を保つ
@@ -177,7 +219,7 @@ class DayBatchSampler(Sampler):
         # Filter days with too few samples
         filtered_indices = {}
         for date, indices in date_indices.items():
-            if len(indices) >= self.min_samples_per_day:
+            if self._should_keep_day(indices):
                 filtered_indices[date] = indices
             else:
                 logger.debug(f"Dropping date {date} with only {len(indices)} samples")
@@ -206,7 +248,15 @@ class DayBatchSampler(Sampler):
 
         return date_indices
 
-    def _create_batches(self) -> List[List[int]]:
+    def _should_keep_day(self, indices: list[int]) -> bool:
+        """Return True if a day's indices satisfy sampling thresholds."""
+        if not indices:
+            return False
+        if self._drop_underfilled_days:
+            return len(indices) >= self.min_samples_per_day
+        return True
+
+    def _create_batches(self) -> list[list[int]]:
         """
         Create batches from date-based indices.
 
@@ -233,18 +283,19 @@ class DayBatchSampler(Sampler):
                 rng.shuffle(day_indices)
 
             # Create batches for this day
-            for i in range(0, len(day_indices), self.batch_size):
-                batch = day_indices[i:i + self.batch_size]
+            step = max(self._chunk_size, 1)
+            for i in range(0, len(day_indices), step):
+                batch = day_indices[i : i + step]
 
                 # Handle drop_last
-                if self.drop_last and len(batch) < self.batch_size:
+                if self.drop_last and len(batch) < step:
                     continue
 
                 batches.append(batch)
 
         return batches
 
-    def __iter__(self) -> Iterator[List[int]]:
+    def __iter__(self) -> Iterator[list[int]]:
         """
         Iterate over batches.
 
@@ -255,8 +306,7 @@ class DayBatchSampler(Sampler):
         if self.shuffle_days or self.shuffle_within_day:
             self.batches = self._create_batches()
 
-        for batch in self.batches:
-            yield batch
+        yield from self.batches
 
     def __len__(self) -> int:
         """
@@ -267,7 +317,7 @@ class DayBatchSampler(Sampler):
         """
         return len(self.batches)
 
-    def get_date_for_batch(self, batch_idx: int) -> Optional[str]:
+    def get_date_for_batch(self, batch_idx: int) -> str | None:
         """
         Get the date associated with a batch.
 
@@ -367,7 +417,7 @@ class StratifiedDayBatchSampler(DayBatchSampler):
         logger.info(f"Building {self.n_strata} strata based on {self.stratify_column}")
         return {}
 
-    def _create_batches(self) -> List[List[int]]:
+    def _create_batches(self) -> list[list[int]]:
         """
         Create stratified batches.
 

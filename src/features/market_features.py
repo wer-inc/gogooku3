@@ -57,8 +57,12 @@ class MarketFeaturesGenerator:
             return pl.DataFrame()
 
         df = topix_df.sort("Date")
-        # Normalize Date dtype
+        # Normalize Date dtype and cast price columns to numeric to avoid string math
         df = ensure_date(df, "Date")
+        numeric_cols = ["Open", "High", "Low", "Close", "Volume"]
+        cast_exprs = [pl.col(col).cast(pl.Float64, strict=False).alias(col) for col in numeric_cols if col in df.columns]
+        if cast_exprs:
+            df = df.with_columns(cast_exprs)
 
         # ========== リターン・トレンド ==========
         df = df.with_columns([

@@ -1,6 +1,12 @@
 name: jpx_safe
 description: "安全性重視設定（データリーク防止・L=60テンソル系列）"
 
+# データスキーマ設定
+schema:
+  date_column: date
+  code_column: code
+  target_column: target
+
 # データソース設定
 source:
   type: parquet

@@ -123,6 +123,18 @@ dataset-full-gpu:
 	@export REQUIRE_GPU=1 USE_GPU_ETL=1 RMM_POOL_SIZE=70GB CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src && \
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --gpu-etl
 
+.PHONY: dataset-full-gpu-bg
+dataset-full-gpu-bg:
+	@if [ -z "$$START" ] || [ -z "$$END" ]; then \
+	  echo "Usage: make dataset-full-gpu-bg START=YYYY-MM-DD END=YYYY-MM-DD"; \
+	  exit 1; \
+	fi
+	@mkdir -p _logs/background
+	@ts=$$(date +%Y%m%d_%H%M%S); \
+	log=_logs/background/dataset_full_gpu_$$ts.log; \
+	echo "🚀 Launching dataset-full-gpu in background (log: $$log)"; \
+	nohup bash -lc "START=$$START END=$$END $(MAKE) dataset-full-gpu" > $$log 2>&1 &
+
 .PHONY: dataset-full-prod
 dataset-full-prod:
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --config configs/pipeline/full_dataset.yaml
@@ -270,22 +282,35 @@ train-gpu-latest-safe:
 	@./scripts/launch_train_gpu_latest.sh --safe
 
 train-gpu-monitor:
-	@# Find active training process and monitor its log
+	@# Find active training process and monitor both wrapper and ML logs in real time
 	@PID=$$(pgrep -af 'python.*train_atft\.py' | head -1 | awk '{print $$1}'); \
 	if [ -z "$$PID" ]; then \
 		echo "❌ No active training process found. Start with 'make train-gpu-latest'"; \
 		exit 1; \
 	fi; \
-	LOG=$$(grep -l "^$$PID$$" _logs/train_gpu_latest/*.pid 2>/dev/null | sed 's/\.pid$$/.log/' | head -1); \
-	if [ -z "$$LOG" ]; then \
-		echo "⚠️  Active process $$PID found but no log file. Falling back to latest.log"; \
-		LOG="./_logs/train_gpu_latest/latest.log"; \
+	WRAP_LOG=$$(grep -l "^$$PID$$" _logs/train_gpu_latest/*.pid 2>/dev/null | sed 's/\.pid$$/.log/' | head -1); \
+	if [ -z "$$WRAP_LOG" ]; then \
+		WRAP_LOG="./_logs/train_gpu_latest/latest.log"; \
 	fi; \
+	ML_LOG="logs/ml_training.log"; \
 	echo "📡 Monitoring active training (PID: $$PID)"; \
-	echo "📄 Log file: $$LOG"; \
+	[ -f "$$WRAP_LOG" ] && echo "📄 Wrapper log : $$WRAP_LOG" || echo "⚠️  Wrapper log not found"; \
+	[ -f "$$ML_LOG" ] && echo "📄 ML log      : $$ML_LOG" || echo "⚠️  ML log not found yet (will appear after trainer starts)"; \
 	echo "🔄 Press Ctrl+C to stop monitoring (training continues)"; \
 	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
-	tail -f "$$LOG"
+	if [ -f "$$WRAP_LOG" ] && [ -f "$$ML_LOG" ]; then \
+		(stdbuf -oL -eL tail -F "$$WRAP_LOG" | sed -u 's/^/[wrapper] /') & P1=$$!; \
+		(stdbuf -oL -eL tail -F "$$ML_LOG"   | sed -u 's/^/[ml]      /') & P2=$$!; \
+		trap 'kill $$P1 $$P2 2>/dev/null' INT TERM; \
+		wait; \
+	elif [ -f "$$WRAP_LOG" ]; then \
+		stdbuf -oL -eL tail -F "$$WRAP_LOG"; \
+	elif [ -f "$$ML_LOG" ]; then \
+		stdbuf -oL -eL tail -F "$$ML_LOG"; \
+	else \
+		echo "❌ No logs to follow. Check _logs/train_gpu_latest/ and logs/"; \
+		exit 1; \
+	fi
 
 train-gpu-progress:
 	@if [ ! -f ./runs/last/heartbeat.json ]; then \

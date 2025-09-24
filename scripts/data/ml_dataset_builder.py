@@ -507,6 +507,22 @@ class MLDatasetBuilder:
             return df
 
     def add_topix_features(self, df: pl.DataFrame, topix_df: Optional[pl.DataFrame] = None, *, beta_lag: int | None = 1) -> pl.DataFrame:
+        """Attach TOPIX market features and cross features safely.
+
+        This implementation prevents duplicate mkt_* columns when upstream stages
+        already attached market features. If mkt_* columns are detected, we skip
+        re-attaching to avoid suffix collisions (e.g., mkt_ret_1d_right) that can
+        trigger hstack errors inside Polars joins.
+        """
+        # Early exit if market features already present (assume cross features too)
+        try:
+            if any(c.startswith("mkt_") for c in df.columns):
+                logger.info("[builder] TOPIX features already present; skipping re-attach")
+                return df
+        except Exception:
+            # fall through to normal flow if inspection fails
+            pass
+
         # If TOPIX series is missing, build a robust market proxy from equities to avoid all-null mkt_*.
         if topix_df is None or topix_df.is_empty():
             try:
@@ -539,9 +555,23 @@ class MLDatasetBuilder:
                 MarketFeaturesGenerator,
                 CrossMarketFeaturesGenerator,
             )
+
             mfg = MarketFeaturesGenerator()
             market_feats = mfg.build_topix_features(topix_df)
+
+            # Drop any columns from right that already exist on the left to prevent
+            # suffix duplication (and downstream hstack errors).
+            try:
+                dup_cols = [c for c in market_feats.columns if c in df.columns and c != "Date"]
+                if dup_cols:
+                    market_feats = market_feats.drop(dup_cols)
+                    logger.info(f"[builder] Dropped duplicate market cols prior to join: {dup_cols[:4]}{'...' if len(dup_cols)>4 else ''}")
+            except Exception:
+                pass
+
             out = df.join(market_feats, on="Date", how="left")
+
+            # Compute cross features (beta/alpha/relative) using the market frame
             xfg = CrossMarketFeaturesGenerator(beta_lag=beta_lag or 1)
             out = xfg.attach_market_and_cross(out, market_feats)
             return out
@@ -649,9 +679,11 @@ class MLDatasetBuilder:
             alias_candidates = [
                 ("MarketCode", "MarketCode", pl.Utf8),
                 ("MarketName", "MarketName", pl.Utf8),
+                ("Sector33CodeName", "sector33_name", pl.Utf8),
                 ("Sector33Code", "sector33_code", pl.Utf8),
                 ("Sector33Name", "sector33_name", pl.Utf8),
                 ("Sector33NameEnglish", "sector33_name", pl.Utf8),
+                ("Sector17CodeName", "sector17_name", pl.Utf8),
                 ("Sector17Code", "sector17_code", pl.Utf8),
                 ("Sector17Name", "sector17_name", pl.Utf8),
                 ("Sector17NameEnglish", "sector17_name", pl.Utf8),
@@ -681,6 +713,24 @@ class MLDatasetBuilder:
             info = listed_info_df.select(exprs).drop_nulls(subset=["Code", "valid_from"])
             if info.is_empty():
                 return result
+
+            try:
+                unique_valid_from = info.select(pl.col("valid_from").n_unique()).item()
+            except Exception:
+                unique_valid_from = None
+            if unique_valid_from == 1 and "Date" in df.columns:
+                try:
+                    dataset_start = df.select(pl.col("Date").cast(pl.Date).min()).item()
+                except Exception:
+                    dataset_start = None
+                if dataset_start is not None:
+                    info = info.with_columns(
+                        pl.lit(dataset_start).cast(pl.Date).alias("valid_from")
+                    )
+                    logger.info(
+                        "[builder] Single listed_info snapshot detected; backfilled valid_from to dataset start %s",
+                        dataset_start,
+                    )
 
             info = info.sort(["Code", "valid_from"]).with_columns(
                 pl.col("valid_from").shift(-1).over("Code").alias("next_change")
@@ -2098,6 +2148,30 @@ class MLDatasetBuilder:
             from src.features.safe_joiner_v2 import SafeJoinerV2
             sj = SafeJoinerV2()
             out = sj.join_statements_with_dedup(df, stm_df, use_time_cutoff=True, calendar_df=None)
+            if "shares_outstanding" in out.columns:
+                base_shares = pl.col("shares_outstanding")
+            else:
+                base_shares = None
+            if "stmt_shares_outstanding" in out.columns:
+                if "shares_outstanding" in out.columns:
+                    out = out.with_columns(
+                        pl.coalesce([
+                            pl.col("shares_outstanding"),
+                            pl.col("stmt_shares_outstanding")
+                        ]).alias("shares_outstanding")
+                    )
+                else:
+                    out = out.with_columns(
+                        pl.col("stmt_shares_outstanding").alias("shares_outstanding")
+                    )
+                drop_stmt_share_cols = [c for c in (
+                    "stmt_shares_outstanding",
+                    "stmt_issued_shares",
+                    "stmt_treasury_shares",
+                    "stmt_average_shares",
+                ) if c in out.columns]
+                if drop_stmt_share_cols:
+                    out = out.drop(drop_stmt_share_cols)
             return out
         except Exception as e:
             logger.warning(f"[builder] statements integration failed: {e}")

@@ -516,14 +516,57 @@ class CompleteATFTTrainingPipeline:
                 f"train.optimizer.lr={self.atft_settings['learning_rate']}",
                 f"train.trainer.max_epochs={self.atft_settings['max_epochs']}",
                 f"train.trainer.precision={self.atft_settings['precision']}",
-                # 進捗と検証頻度は明示
-                "train.trainer.check_val_every_n_epoch=1",
+                # 進捗と検証頻度は明示（環境変数 TRAIN_VAL_EVERY で上書き可）
+                f"train.trainer.check_val_every_n_epoch={os.getenv('TRAIN_VAL_EVERY', '1')}",
                 "train.trainer.enable_progress_bar=true",
             ]
 
             # 追加のHydraオーバーライド（HPOや詳細設定をパススルー）
             if self.extra_overrides:
-                cmd.extend(self.extra_overrides)
+                allowed_passthrough = {
+                    "--config-path",
+                    "--config-name",
+                    "--config-dir",
+                    "--cfg",
+                    "--resolve",
+                    "--package",
+                    "--multirun",
+                    "--info",
+                    "--hydra-help",
+                    # HPO options are handled by the wrapper itself; block them here
+                }
+                flags_expect_value = {
+                    "--config-path",
+                    "--config-name",
+                    "--config-dir",
+                    "--cfg",
+                    "--resolve",
+                    "--package",
+                    "--info",
+                }
+                filtered_overrides: list[str] = []
+                skip_next = False
+                for idx, token in enumerate(self.extra_overrides):
+                    if skip_next:
+                        filtered_overrides.append(token)
+                        skip_next = False
+                        continue
+
+                    if token.startswith("--"):
+                        if token in allowed_passthrough:
+                            filtered_overrides.append(token)
+                            if token in flags_expect_value and idx + 1 < len(self.extra_overrides):
+                                skip_next = True
+                        else:
+                            logger.debug(
+                                "Skipping unsupported CLI passthrough argument for train_atft.py: %s",
+                                token,
+                            )
+                    else:
+                        filtered_overrides.append(token)
+
+                if filtered_overrides:
+                    cmd.extend(filtered_overrides)
 
             # まずGPU/CPU計画を判定（この結果を以降の設定に利用）
             # GPU必須モード（REQUIRE_GPU=1 or ACCELERATOR=gpu 等）の場合、
@@ -582,6 +625,11 @@ class CompleteATFTTrainingPipeline:
                     cmd.append("train.batch.pin_memory=true")
                 if not any(s.startswith("train.batch.prefetch_factor=") for s in cmd):
                     cmd.append("train.batch.prefetch_factor=4")
+                # 未指定なら DataLoader 並列と persistent_workers を有効化
+                if not any(s.startswith("train.batch.num_workers=") for s in cmd):
+                    cmd.append("train.batch.num_workers=8")
+                if not any(s.startswith("train.batch.persistent_workers=") for s in cmd):
+                    cmd.append("train.batch.persistent_workers=true")
                 # persistent_workers は明示指定がある場合のみ尊重（デフォルトは付与しない）
                 env.setdefault("ACCELERATOR", "gpu")
                 env.setdefault("CUDA_VISIBLE_DEVICES", os.getenv("CUDA_VISIBLE_DEVICES", "0"))
@@ -640,25 +688,72 @@ class CompleteATFTTrainingPipeline:
 
             max_retries = 2
             attempt = 0
+            last_combined_output = ""
+            last_return_code: int | None = None
             while True:
                 attempt += 1
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                )
-                
-                if result.returncode == 0:
+                # Stream child output live to console and to logs for real-time monitoring
+                combined_lines: list[str] = []
+                try:
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        env=env,
+                        universal_newlines=True,
+                    )
+                except Exception as _spawn_err:
+                    logger.error(f"Failed to start training process: {_spawn_err}")
+                    return False, {"error": str(_spawn_err)}
+
+                log_path = Path("logs/ml_training.log")
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                _lf = None
+                try:
+                    _lf = log_path.open("a", encoding="utf-8")
+                except Exception:
+                    _lf = None
+
+                try:
+                    assert proc.stdout is not None
+                    for line in proc.stdout:
+                        # Echo to console (captured by wrapper log) and append to file
+                        try:
+                            print(line, end="", flush=True)
+                        except Exception:
+                            pass
+                        try:
+                            if _lf is not None:
+                                _lf.write(line)
+                                _lf.flush()
+                        except Exception:
+                            pass
+                        combined_lines.append(line)
+                finally:
+                    try:
+                        if _lf is not None:
+                            _lf.flush()
+                            _lf.close()
+                    except Exception:
+                        pass
+
+                proc.wait()
+                last_combined_output = "".join(combined_lines)
+                last_return_code = int(proc.returncode)
+
+                if proc.returncode == 0:
+                    # Success
                     break
 
-                combined_err = (result.stderr or "") + "\n" + (result.stdout or "")
+                combined_err = last_combined_output
                 if ("CUDA out of memory" in combined_err) or ("torch.OutOfMemoryError" in combined_err):
                     if attempt > max_retries:
                         logger.error(
-                            f"Training failed after {max_retries} OOM retries. Last error: {result.stderr}"
+                            f"Training failed after {max_retries} OOM retries. Last error excerpt: {combined_err[-400:]}"
                         )
-                        return False, {"error": result.stderr}
+                        return False, {"error": combined_err[-2000:]}
 
                     # 現在値を取得（存在しなければ既定値から）
                     cur_bs = _last_override_int(
@@ -733,17 +828,14 @@ class CompleteATFTTrainingPipeline:
                     ])
                     continue
 
-                logger.error(f"Training failed: {result.stderr}")
-                return False, {"error": result.stderr}
+                logger.error("Training failed (non-OOM). See logs/ml_training.log for details.")
+                return False, {"error": combined_err[-2000:]}
 
-            # 学習結果の解析（stdout + stderr を合わせて解析）
-            combined_output = "\n".join([
-                result.stdout or "",
-                result.stderr or "",
-            ])
+            # 学習結果の解析（ストリーミングで収集した出力を解析）
+            combined_output = last_combined_output
             training_info = self._parse_training_output(combined_output)
             training_info["command"] = cmd
-            training_info["return_code"] = result.returncode
+            training_info["return_code"] = int(last_return_code or 0)
 
             # HPO互換: hpo.output_metrics_json=... が指定されていれば、既存のメトリクスを集約して出力
             try:

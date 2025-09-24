@@ -16,6 +16,7 @@ Notes:
 """
 
 import asyncio
+import datetime as _dt
 import logging
 import math
 import os
@@ -137,6 +138,26 @@ class JQuantsAsyncFetcher:
         self._throttle_recoveries = 0
         self._throttle_history: list[dict[str, Any]] = []
         self._logger = logging.getLogger(__name__)
+
+    @staticmethod
+    def _format_date_param(date_str: str | None) -> str | None:
+        """Normalize date tokens to the YYYYMMDD format required by J-Quants."""
+
+        if date_str is None:
+            return None
+
+        value = date_str.strip()
+        if not value:
+            return value
+
+        if len(value) == 8 and value.isdigit():
+            return value
+
+        if len(value) == 10 and value.count("-") == 2:
+            parsed = _dt.datetime.strptime(value, "%Y-%m-%d")
+            return parsed.strftime("%Y%m%d")
+
+        raise ValueError(f"Unsupported date format for J-Quants request: '{date_str}'")
 
     async def _ensure_session_health(self, session: aiohttp.ClientSession) -> bool:
         """
@@ -312,23 +333,88 @@ class JQuantsAsyncFetcher:
     async def get_listed_info(
         self, session: aiohttp.ClientSession, date: str | None = None
     ) -> pl.DataFrame:
-        """Fetch listed company info; optionally filter by market codes if helper is available."""
+        """Fetch listed company info with pagination support and type normalization."""
         if not self.id_token:
             raise RuntimeError("authenticate() must be called first")
+
         url = f"{self.base_url}/listed/info"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        params = {"date": date} if date else None
-        status, data = await self._request_json(
-            session,
-            "GET",
-            url,
-            label="listed_info",
-            params=params,
-            headers=headers,
-        )
-        if status != 200 or not isinstance(data, dict):
+
+        rows: list[dict] = []
+        pagination_key: str | None = None
+        while True:
+            params: dict[str, str] = {}
+            if date:
+                params["date"] = date
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+
+            status, data = await self._request_json(
+                session,
+                "GET",
+                url,
+                label="listed_info",
+                params=params or None,
+                headers=headers,
+            )
+
+            if status == 404:
+                return pl.DataFrame()
+            if status != 200 or not isinstance(data, dict):
+                self._logger.error(
+                    "J-Quants trades_spec failed", extra={"status": status, "body": data}
+                )
+                raise RuntimeError(f"J-Quants trades_spec request failed with status {status}")
+
+            items = data.get("info") or []
+            if items:
+                rows.extend(items)
+
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+
+        if not rows:
             return pl.DataFrame()
-        df = pl.DataFrame(data.get("info", []))
+
+        df = pl.DataFrame(rows)
+
+        # Normalize core dtypes
+        sentinel = {"", "-", "*", "null", "NULL", "None"}
+        if "Date" in df.columns:
+            df = df.with_columns(
+                pl.col("Date").cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias("Date")
+            )
+        if "Code" in df.columns:
+            df = df.with_columns(pl.col("Code").cast(pl.Utf8))
+
+        str_columns = [
+            c
+            for c in df.columns
+            if c not in {"Date"} and ("Code" in c or c.endswith("Name") or c.endswith("Division") or c.endswith("Category"))
+        ]
+        if str_columns:
+            df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in str_columns])
+
+        numeric_columns = [
+            c
+            for c in df.columns
+            if c not in {"Date", "Code", "MarketCode"}
+            and c not in str_columns
+        ]
+        if numeric_columns:
+            df = df.with_columns(
+                [
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    .then(None)
+                    .otherwise(pl.col(c))
+                    .alias(c)
+                    for c in numeric_columns
+                ]
+            ).with_columns([
+                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_columns
+            ])
+
         # Optional filter using scripts/components if available
         try:  # pragma: no cover - optional path
             from scripts.components.market_code_filter import (
@@ -339,6 +425,7 @@ class JQuantsAsyncFetcher:
                 df = MarketCodeFilter.filter_stocks(df)
         except Exception:
             pass
+
         return enforce_code_column_types(df)
 
     async def get_trades_spec(
@@ -349,19 +436,78 @@ class JQuantsAsyncFetcher:
             raise RuntimeError("authenticate() must be called first")
         url = f"{self.base_url}/markets/trades_spec"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        params = {"from": from_date, "to": to_date}
-        status, data = await self._request_json(
-            session,
-            "GET",
-            url,
-            label="trades_spec",
-            params=params,
-            headers=headers,
-        )
-        if status != 200 or not isinstance(data, dict):
+        sentinel = {"", "-", "*", "null", "NULL", "None"}
+
+        rows: list[dict] = []
+        pagination_key: str | None = None
+        formatted_from = self._format_date_param(from_date)
+        formatted_to = self._format_date_param(to_date)
+        while True:
+            params = {"from": formatted_from, "to": formatted_to}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+
+            status, data = await self._request_json(
+                session,
+                "GET",
+                url,
+                label="trades_spec",
+                params=params,
+                headers=headers,
+            )
+
+            if status == 404:
+                return pl.DataFrame()
+            if status != 200 or not isinstance(data, dict):
+                body_preview = str(data)[:256]
+                self._logger.error(
+                    "J-Quants trades_spec failed (status=%s, body=%s)", status, body_preview
+                )
+                raise RuntimeError(f"J-Quants trades_spec request failed with status {status}")
+
+            items = data.get("trades_spec") or []
+            if items:
+                rows.extend(items)
+
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+
+        if not rows:
             return pl.DataFrame()
-        items = data.get("trades_spec", [])
-        return pl.DataFrame(items) if items else pl.DataFrame()
+
+        df = pl.DataFrame(rows)
+
+        date_cols = [c for c in ("PublishedDate", "StartDate", "EndDate") if c in df.columns]
+        if date_cols:
+            df = df.with_columns([
+                pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c) for c in date_cols
+            ])
+
+        if "Section" in df.columns:
+            df = df.with_columns(pl.col("Section").cast(pl.Utf8))
+
+        numeric_cols = [
+            c
+            for c in df.columns
+            if c not in date_cols and c != "Section"
+        ]
+        if numeric_cols:
+            df = df.with_columns(
+                [
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    .then(None)
+                    .otherwise(pl.col(c))
+                    .alias(c)
+                    for c in numeric_cols
+                ]
+            ).with_columns([
+                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_cols
+            ])
+
+        if date_cols:
+            df = df.sort(date_cols)
+        return df
 
     async def fetch_topix_data(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -1338,41 +1484,89 @@ class JQuantsAsyncFetcher:
         Returns:
             pl.DataFrame with short selling ratio data
         """
-        all_data = []
-
         url = f"{self.base_url}/markets/short_selling"
-        params = {"from": from_date, "to": to_date}
         headers = {"Authorization": f"Bearer {self.id_token}"}
+        sentinel = {"", "-", "*", "null", "NULL", "None"}
 
-        try:
-            status, data = await self._request_json(
-                session,
-                "GET",
-                url,
-                label="short_selling",
-                params=params,
-                headers=headers,
-            )
+        rows: list[dict] = []
+        pagination_key: str | None = None
+        formatted_from = self._format_date_param(from_date)
+        formatted_to = self._format_date_param(to_date)
+        while True:
+            params = {"from": formatted_from, "to": formatted_to}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+
+            try:
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    url,
+                    label="short_selling",
+                    params=params,
+                    headers=headers,
+                )
+            except Exception as exc:  # pragma: no cover - network failure path
+                self._logger.exception("Error fetching short selling data")
+                raise RuntimeError("Failed to fetch short selling data") from exc
+
             if status == 404:
-                print("No short selling data found")
+                self._logger.warning("Short selling endpoint returned 404; treating as empty.")
                 return pl.DataFrame()
             if status != 200 or not isinstance(data, dict):
-                print(f"API error for short selling: {status}")
-                return pl.DataFrame()
+                body_preview = str(data)[:256]
+                self._logger.error(
+                    "J-Quants short_selling failed (status=%s, body=%s)",
+                    status,
+                    body_preview,
+                )
+                raise RuntimeError(f"J-Quants short_selling request failed with status {status}")
 
-            batch = data.get("short_selling")
+            batch = data.get("short_selling") or []
             if batch:
-                all_data.extend(batch)
-        except Exception as e:
-            print(f"Error fetching short selling data: {e}")
+                rows.extend(batch)
+
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+
+        if not rows:
             return pl.DataFrame()
 
-        if not all_data:
-            return pl.DataFrame()
+        df = pl.DataFrame(rows)
 
-        df = pl.DataFrame(all_data)
-        df = self._normalize_short_selling_data(df)
+        date_cols = [c for c in df.columns if c.endswith("Date") or c == "Date"]
+        if date_cols:
+            df = df.with_columns([
+                pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c)
+                for c in date_cols
+            ])
 
+        # Identify categorical columns by name heuristics
+        string_markers = ("Code", "Category", "Division", "Class", "Name", "Type", "Section")
+        str_cols = [
+            c
+            for c in df.columns
+            if any(marker in c for marker in string_markers)
+        ]
+        if str_cols:
+            df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in str_cols])
+
+        numeric_cols = [c for c in df.columns if c not in date_cols and c not in str_cols]
+        if numeric_cols:
+            df = df.with_columns(
+                [
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    .then(None)
+                    .otherwise(pl.col(c))
+                    .alias(c)
+                    for c in numeric_cols
+                ]
+            ).with_columns([
+                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_cols
+            ])
+
+        df = df.sort(date_cols) if date_cols else df
         print(f"Retrieved {len(df)} short selling records")
         return df
 
@@ -1390,41 +1584,92 @@ class JQuantsAsyncFetcher:
         Returns:
             pl.DataFrame with short selling positions data
         """
-        all_data = []
-
         url = f"{self.base_url}/markets/short_selling_positions"
-        params = {"from": from_date, "to": to_date}
         headers = {"Authorization": f"Bearer {self.id_token}"}
+        sentinel = {"", "-", "*", "null", "NULL", "None"}
 
-        try:
-            status, data = await self._request_json(
-                session,
-                "GET",
-                url,
-                label="short_selling_positions",
-                params=params,
-                headers=headers,
-            )
+        rows: list[dict] = []
+        pagination_key: str | None = None
+        formatted_from = self._format_date_param(from_date)
+        formatted_to = self._format_date_param(to_date)
+        while True:
+            params = {"from": formatted_from, "to": formatted_to}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+
+            try:
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    url,
+                    label="short_selling_positions",
+                    params=params,
+                    headers=headers,
+                )
+            except Exception as exc:  # pragma: no cover - network failure path
+                self._logger.exception("Error fetching short selling positions data")
+                raise RuntimeError("Failed to fetch short selling positions data") from exc
+
             if status == 404:
-                print("No short selling positions data found")
+                self._logger.warning(
+                    "Short selling positions endpoint returned 404; treating as empty."
+                )
                 return pl.DataFrame()
             if status != 200 or not isinstance(data, dict):
-                print(f"API error for short selling positions: {status}")
-                return pl.DataFrame()
+                body_preview = str(data)[:256]
+                self._logger.error(
+                    "J-Quants short_selling_positions failed (status=%s, body=%s)",
+                    status,
+                    body_preview,
+                )
+                raise RuntimeError(
+                    f"J-Quants short_selling_positions request failed with status {status}"
+                )
 
-            batch = data.get("short_selling_positions")
+            batch = data.get("short_selling_positions") or []
             if batch:
-                all_data.extend(batch)
-        except Exception as e:
-            print(f"Error fetching short selling positions data: {e}")
+                rows.extend(batch)
+
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+
+        if not rows:
             return pl.DataFrame()
 
-        if not all_data:
-            return pl.DataFrame()
+        df = pl.DataFrame(rows)
 
-        df = pl.DataFrame(all_data)
-        df = self._normalize_short_selling_positions_data(df)
+        date_cols = [c for c in df.columns if c.endswith("Date") or c == "Date"]
+        if date_cols:
+            df = df.with_columns([
+                pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c)
+                for c in date_cols
+            ])
 
+        string_markers = ("Code", "Category", "Division", "Class", "Name", "Type", "Section")
+        str_cols = [
+            c
+            for c in df.columns
+            if any(marker in c for marker in string_markers)
+        ]
+        if str_cols:
+            df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in str_cols])
+
+        numeric_cols = [c for c in df.columns if c not in date_cols and c not in str_cols]
+        if numeric_cols:
+            df = df.with_columns(
+                [
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    .then(None)
+                    .otherwise(pl.col(c))
+                    .alias(c)
+                    for c in numeric_cols
+                ]
+            ).with_columns([
+                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_cols
+            ])
+
+        df = df.sort(date_cols + ["Code"]) if date_cols and "Code" in df.columns else df
         print(f"Retrieved {len(df)} short selling positions records")
         return df
 
@@ -1554,7 +1799,10 @@ class JQuantsAsyncFetcher:
         all_data = []
 
         url = f"{self.base_url}/markets/short_selling"
-        params = {"from": from_date, "to": to_date}
+        params = {
+            "from": self._format_date_param(from_date),
+            "to": self._format_date_param(to_date),
+        }
         headers = {"Authorization": f"Bearer {self.id_token}"}
 
         try:
@@ -1566,23 +1814,34 @@ class JQuantsAsyncFetcher:
                 params=params,
                 headers=headers,
             )
-            if status == 404:
-                print(f"Sector short selling endpoint not found: {url}")
-                return pl.DataFrame()
-            if status != 200 or data is None:
-                print(f"Error fetching sector short selling: {status}")
-                return pl.DataFrame()
+        except asyncio.TimeoutError as exc:  # pragma: no cover - network failure path
+            self._logger.exception(
+                "Timeout fetching sector short selling",
+                extra={"from_date": params["from"], "to_date": params["to"]},
+            )
+            raise RuntimeError("Timeout fetching sector short selling data") from exc
+        except Exception as exc:  # pragma: no cover
+            self._logger.exception("Error fetching sector short selling")
+            raise RuntimeError("Failed to fetch sector short selling data") from exc
 
-            if isinstance(data, dict) and "short_selling" in data:
-                all_data.extend(data["short_selling"])
-            elif isinstance(data, list):
-                all_data.extend(data)
-        except asyncio.TimeoutError:
-            print(f"Timeout fetching sector short selling for {from_date} to {to_date}")
+        if status == 404:
+            self._logger.warning("Sector short selling endpoint not found (404); returning empty.")
             return pl.DataFrame()
-        except Exception as e:
-            print(f"Error fetching sector short selling: {e}")
-            return pl.DataFrame()
+        if status != 200 or data is None:
+            body_preview = str(data)[:256]
+            self._logger.error(
+                "J-Quants sector short selling failed (status=%s, body=%s)",
+                status,
+                body_preview,
+            )
+            raise RuntimeError(
+                f"J-Quants sector short selling request failed with status {status}"
+            )
+
+        if isinstance(data, dict) and "short_selling" in data:
+            all_data.extend(data["short_selling"])
+        elif isinstance(data, list):
+            all_data.extend(data)
 
         if not all_data:
             return pl.DataFrame()
