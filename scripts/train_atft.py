@@ -33,6 +33,8 @@ import atexit
 import faulthandler
 import traceback
 import torch.multiprocessing as mp
+from functools import partial
+import random
 
 # Ensure a safe multiprocessing start method to avoid DataLoader deadlocks
 try:
@@ -63,28 +65,57 @@ def _finite_or_nan_fix_tensor(tensor):
     
     return tensor
 
+# ---- DataLoader seeding helpers -------------------------------------------
+def _seed_worker(worker_id: int, base_seed: int) -> None:
+    """Seed PyTorch/Numpy/Python RNGs for DataLoader workers."""
+    seed = base_seed + worker_id
+    random.seed(seed)
+    np.random.seed(seed % (2**32 - 1))
+    torch.manual_seed(seed)
+
 def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
-    """Normalize various target key formats to horizon_{h} format."""
-    # Direct horizon format
-    if raw_key.startswith('horizon_'):
-        return raw_key
-    
+    """Normalize various target key formats to 'horizon_{h}'.
+
+    Accepts keys like:
+      - horizon_1, horizon_5d, horizon1, h1
+      - target_1d, return_5d, label_ret_10_bps
+      - point_horizon_1 (model output alias)
+      - numeric strings like '1', 5
+    """
+    try:
+        skey = str(raw_key).strip().lower()
+    except Exception:
+        skey = str(raw_key)
+
+    # Common direct aliases
+    if skey.startswith("horizon_"):
+        # horizon_1 or horizon_1d
+        m = re.match(r"horizon_(\d+)(?:d)?$", skey)
+        if m and int(m.group(1)) in horizons:
+            return f"horizon_{int(m.group(1))}"
+        return skey
+    if skey.startswith("point_horizon_"):
+        m = re.match(r"point_horizon_(\d+)$", skey)
+        if m and int(m.group(1)) in horizons:
+            return f"horizon_{int(m.group(1))}"
+
     # Extract number from various formats
     patterns = [
-        r'return_(\d+)d?',
-        r'target_(\d+)d?', 
-        r'label_ret_(\d+)_bps',
-        r'(\d+)d?',
-        r'^(\d+)$'
+        r"return_(\d+)d?",
+        r"target_(\d+)d?",
+        r"label_ret_(\d+)_bps",
+        r"h(\d+)$",               # h1, h5
+        r"horizon(\d+)$",         # horizon1
+        r"(\d+)d?",
+        r"^(\d+)$",
     ]
-    
     for pattern in patterns:
-        match = re.search(pattern, str(raw_key))
+        match = re.search(pattern, skey)
         if match:
             h = int(match.group(1))
             if h in horizons:
-                return f'horizon_{h}'
-    
+                return f"horizon_{h}"
+
     return None
 
 def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
@@ -565,8 +596,13 @@ except Exception:
 
 # ---- Target key canonicalization -----------------------------------------
 _TARGET_KEY_PATTERNS = [
-    re.compile(r"^(?:return|returns|ret|target|targets|tgt|y)_(\d+)d$", re.I),
-    re.compile(r"^horizon_(\d+)$", re.I),
+    re.compile(r"^(?:return|returns|ret|target|targets|tgt|y)_(\d+)(?:d)?$", re.I),
+    re.compile(r"^label_ret_(\d+)_bps$", re.I),
+    re.compile(r"^horizon_(\d+)(?:d)?$", re.I),
+    re.compile(r"^point_horizon_(\d+)$", re.I),
+    re.compile(r"^horizon(\d+)$", re.I),
+    re.compile(r"^h(\d+)$", re.I),
+    re.compile(r"^(\d+)(?:d)?$", re.I),
 ]
 
 
@@ -756,6 +792,105 @@ def _resolve_dl_params(final_config: DictConfig) -> dict:
     return params
 
 
+def _enforce_safe_dataloader_config(cfg: DictConfig) -> None:
+    """Force single-process DataLoader unless explicitly opted out.
+
+    Many upstream data transformations (pyarrow + large parquet merges) are unstable
+    under multi-process loading on our infra. Unless the user sets
+    `ALLOW_UNSAFE_DATALOADER=1`, we downshift to `num_workers=0` and disable
+    prefetch/persistent workers to avoid the recurrent "worker ... killed by signal"
+    aborts observed in production runs.
+    """
+
+    allow_multi = os.getenv("ALLOW_UNSAFE_DATALOADER", "0").lower() in ("1", "true", "yes")
+    if allow_multi:
+        return
+
+    try:
+        batch_cfg = cfg.train.batch
+    except Exception:
+        batch_cfg = None
+
+    if batch_cfg is None:
+        return
+
+    def _get_int(value, default=None):
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except Exception:
+            return default
+
+    requested_workers = _get_int(getattr(batch_cfg, "num_workers", None))
+    env_workers = _get_int(os.getenv("NUM_WORKERS"), 0)
+
+    effective = max(requested_workers or 0, env_workers or 0)
+    if effective > 0 or getattr(batch_cfg, "persistent_workers", False):
+        logger.warning(
+            "[loader-guard] Forcing DataLoader into single-process mode (num_workers=0) "
+            "to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass."
+        )
+
+    batch_cfg.num_workers = 0
+    if hasattr(batch_cfg, "prefetch_factor"):
+        batch_cfg.prefetch_factor = None
+    if hasattr(batch_cfg, "persistent_workers"):
+        batch_cfg.persistent_workers = False
+    if hasattr(batch_cfg, "pin_memory"):
+        batch_cfg.pin_memory = False
+
+    os.environ["NUM_WORKERS"] = "0"
+    os.environ["PERSISTENT_WORKERS"] = "0"
+    os.environ["PREFETCH_FACTOR"] = "0"
+    os.environ.setdefault("PIN_MEMORY", "0")
+
+
+def _apply_thread_caps(num_workers: int) -> None:
+    if num_workers <= 0:
+        return
+
+    single_thread = {
+        "POLARS_MAX_THREADS": 1,
+        "ARROW_NUM_THREADS": 1,
+        "PYARROW_NUM_THREADS": 1,
+        "RAYON_NUM_THREADS": 1,
+    }
+    for key, limit in single_thread.items():
+        current = os.getenv(key)
+        try:
+            needs_update = current is None or int(current) <= 0 or int(current) > limit
+        except (TypeError, ValueError):
+            needs_update = True
+        if needs_update:
+            os.environ[key] = str(limit)
+
+    cpu_count = os.cpu_count() or 1
+    safe_threads = max(1, min(8, cpu_count // max(1, num_workers)))
+    blas_targets = {
+        "OMP_NUM_THREADS": safe_threads,
+        "MKL_NUM_THREADS": safe_threads,
+        "OPENBLAS_NUM_THREADS": safe_threads,
+        "NUMEXPR_NUM_THREADS": safe_threads,
+    }
+    for key, limit in blas_targets.items():
+        current = os.getenv(key)
+        try:
+            needs_update = current is None or int(current) <= 0
+            if not needs_update:
+                needs_update = int(current) > limit
+        except (TypeError, ValueError):
+            needs_update = True
+        if needs_update:
+            os.environ[key] = str(limit)
+
+    logger.debug(
+        "[loader-guard] Applied thread caps for %d worker(s): polars/arrow->1, BLAS family->%d",
+        num_workers,
+        safe_threads,
+    )
+
+
 # ===== NaN/Inf guard utilities =====
 def _finite_or_nan_fix_tensor(
     t: torch.Tensor, name: str, clamp: float | None = None
@@ -879,12 +1014,32 @@ class MultiHorizonLoss(nn.Module):
             losses.append(torch.maximum(q * e, (q - 1) * e))
         return self._masked_mean(torch.stack(losses, dim=0), mask)
 
-    def _rankic_penalty(self, yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        # 勾配を流すためPearson相関の負を近似として使用（yはdetach）
+    def _rankic_penalty(
+        self,
+        yhat: torch.Tensor,
+        y: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Masked rank-IC penalty (1 - corr) with optional valid mask.
+
+        Accepts an optional mask to ignore invalid targets (e.g., NaN regions).
+        """
+        # Flatten
         yhat_f = yhat.view(-1).float()
         y_f = y.view(-1).float().detach()
+        # Apply mask if provided
+        if mask is not None and torch.is_tensor(mask):
+            m = mask.view(-1)
+            # Accept float/bool masks
+            if m.dtype != torch.bool:
+                m = m.to(dtype=torch.bool)
+            if m.numel() == yhat_f.numel():
+                yhat_f = yhat_f[m]
+                y_f = y_f[m]
+        # Guard small samples
         if yhat_f.numel() <= 1:
             return yhat_f.new_zeros(())
+        # Pearson correlation (detach target) -> 1 - corr
         yhat_f = yhat_f - yhat_f.mean()
         y_f = y_f - y_f.mean()
         denom = yhat_f.std(unbiased=False) * y_f.std(unbiased=False) + 1e-8
@@ -932,16 +1087,25 @@ class MultiHorizonLoss(nn.Module):
         valid_masks: Dict[str, Tensor] - 各ホライゾンの有効マスク（オプション）
         """
         # Initialize as zero (will accumulate loss tensors)
-        device = (
-            next(iter(predictions.values())).device
-            if predictions
-            else torch.device("cpu")
-        )
-        dtype = (
-            next(iter(predictions.values())).dtype
-            if predictions
-            else torch.float32
-        )
+        # Robustly infer device/dtype from the first tensor value in nested dicts
+        def _first_tensor(o):
+            if isinstance(o, torch.Tensor):
+                return o
+            if isinstance(o, dict):
+                for v in o.values():
+                    t = _first_tensor(v)
+                    if t is not None:
+                        return t
+            if isinstance(o, (list, tuple)):
+                for v in o:
+                    t = _first_tensor(v)
+                    if t is not None:
+                        return t
+            return None
+
+        _t = _first_tensor(predictions) if predictions else None
+        device = _t.device if _t is not None else torch.device("cpu")
+        dtype = _t.dtype if _t is not None else torch.float32
         total_loss = torch.zeros(1, device=device, dtype=dtype).requires_grad_()
         losses = {}
         weights = []
@@ -2488,37 +2652,51 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     # Phase定義
     phase_epochs_override = int(os.getenv("PHASE_MAX_EPOCHS", "0"))
     max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "100"))
+    def _phase_epochs(default: int, env_key: str) -> int:
+        if phase_epochs_override:
+            return phase_epochs_override
+        try:
+            return int(os.getenv(env_key, str(default)))
+        except Exception:
+            return default
+
+    def _phase_lr(default: float, env_key: str) -> float:
+        try:
+            return float(os.getenv(env_key, str(default)))
+        except Exception:
+            return default
+
     phases = [
         {
             "name": "Phase 0: Baseline",
-            "epochs": phase_epochs_override or 5,
+            "epochs": _phase_epochs(5, "PHASE0_EPOCHS"),
             "toggles": {"use_fan": False, "use_san": False, "use_gat": False},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.0, "corr": 0.0},
-            "lr": 5e-4,
+            "lr": _phase_lr(5e-4, "PHASE0_LR"),
             "grad_clip": 1.0
         },
         {
             "name": "Phase 1: Adaptive Norm",
-            "epochs": phase_epochs_override or 10,
+            "epochs": _phase_epochs(10, "PHASE1_EPOCHS"),
             "toggles": {"use_fan": True, "use_san": True, "use_gat": False},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.1, "corr": 0.0},
-            "lr": 5e-4,
+            "lr": _phase_lr(5e-4, "PHASE1_LR"),
             "grad_clip": 1.0
         },
         {
             "name": "Phase 2: GAT",
-            "epochs": phase_epochs_override or 20,
+            "epochs": _phase_epochs(8, "PHASE2_EPOCHS"),
             "toggles": {"use_fan": True, "use_san": True, "use_gat": True},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.1, "corr": 0.05},
-            "lr": 2e-4,
+            "lr": _phase_lr(1e-4, "PHASE2_LR"),
             "grad_clip": 1.0
         },
         {
             "name": "Phase 3: Fine-tuning",
-            "epochs": phase_epochs_override or 10,
+            "epochs": _phase_epochs(6, "PHASE3_EPOCHS"),
             "toggles": {"use_fan": True, "use_san": True, "use_gat": True},
             "loss_weights": {"quantile": 1.0, "sharpe": 0.15, "corr": 0.05},
-            "lr": 1e-4,
+            "lr": _phase_lr(5e-5, "PHASE3_LR"),
             "grad_clip": 0.5
         }
     ]
@@ -2669,19 +2847,29 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 optimizer.zero_grad()
                 
                 # Forward pass
-                features_b = batch["features"].to(device, non_blocking=True)
-                # Call model with a robust fallback across different forward signatures
+                model_inputs = {"features": batch["features"].to(device, non_blocking=True)}
+                for opt_key in ("static_features", "edge_index", "edge_attr", "regime_features"):
+                    opt_value = batch.get(opt_key)
+                    if opt_value is None:
+                        continue
+                    if torch.is_tensor(opt_value):
+                        model_inputs[opt_key] = opt_value.to(device, non_blocking=True)
+                    elif isinstance(opt_value, dict):
+                        model_inputs[opt_key] = {
+                            k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v
+                            for k, v in opt_value.items()
+                        }
+                    else:
+                        model_inputs[opt_key] = opt_value
                 try:
-                    predictions = model(features_b)
+                    model_outputs = model(model_inputs)
                 except TypeError:
-                    try:
-                        predictions = model(
-                            features_b,
-                            batch.get("edge_index", None),
-                            batch.get("edge_attr", None),
-                        )
-                    except Exception:
-                        predictions = model(features_b)
+                    model_outputs = model(model_inputs["features"])
+
+                # Unwrap Lightning-style dict outputs to obtain raw horizon predictions
+                predictions = model_outputs
+                if isinstance(model_outputs, dict) and "predictions" in model_outputs:
+                    predictions = model_outputs["predictions"]
                 
                 # Loss計算（targetsは辞書型）: 各種キーを正規化して 'horizon_{h}' に統一
                 targets_dict = {}
@@ -2760,11 +2948,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 # Compute metrics for main horizon (1d)
                 # Try multiple key patterns
                 pred_1d, targ_1d = None, None
-                for pred_key in ["point_horizon_1", "horizon_1"]:
+                for pred_key in ["point_horizon_1", "horizon_1", "horizon_1d"]:
                     if pred_key in predictions:
                         pred_1d = predictions[pred_key].detach()
                         break
-                for targ_key in ["horizon_1", "point_horizon_1"]:
+                for targ_key in ["horizon_1", "horizon_1d", "point_horizon_1"]:
                     if targ_key in targets_dict:
                         targ_1d = targets_dict[targ_key].detach()
                         break
@@ -2806,12 +2994,28 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     if batch_idx >= 50:  # 最初の50バッチで評価
                         break
                         
-                    predictions = model(
-                        batch["features"].to(device),
-                        batch.get("static_features", None),
-                        batch.get("edge_index", None),
-                        batch.get("edge_attr", None)
-                    )
+                    model_inputs = {"features": batch["features"].to(device, non_blocking=True)}
+                    for opt_key in ("static_features", "edge_index", "edge_attr", "regime_features"):
+                        opt_value = batch.get(opt_key)
+                        if opt_value is None:
+                            continue
+                        if torch.is_tensor(opt_value):
+                            model_inputs[opt_key] = opt_value.to(device, non_blocking=True)
+                        elif isinstance(opt_value, dict):
+                            model_inputs[opt_key] = {
+                                k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v
+                                for k, v in opt_value.items()
+                            }
+                        else:
+                            model_inputs[opt_key] = opt_value
+                    try:
+                        model_outputs = model(model_inputs)
+                    except TypeError:
+                        model_outputs = model(model_inputs["features"])
+
+                    predictions = model_outputs
+                    if isinstance(model_outputs, dict) and "predictions" in model_outputs:
+                        predictions = model_outputs["predictions"]
                     # Sanitize & reshape predictions
                     try:
                         if isinstance(predictions, dict):
@@ -2866,11 +3070,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     # Compute validation metrics for main horizon (1d)
                     # Try multiple key patterns
                     pred_1d, targ_1d = None, None
-                    for pred_key in ["point_horizon_1", "horizon_1"]:
+                    for pred_key in ["point_horizon_1", "horizon_1", "horizon_1d"]:
                         if pred_key in predictions:
                             pred_1d = predictions[pred_key].detach()
                             break
-                    for targ_key in ["horizon_1", "point_horizon_1"]:
+                    for targ_key in ["horizon_1", "horizon_1d", "point_horizon_1"]:
                         if targ_key in tdict:
                             targ_1d = tdict[targ_key].detach()
                             break
@@ -3891,6 +4095,52 @@ def train(config: DictConfig) -> None:
     except Exception:
         pass
 
+    # Apply graph builder overrides / defaults
+    try:
+        gb_path = "data.graph_builder"
+        if OmegaConf.select(final_config, gb_path) is None:
+            OmegaConf.update(final_config, gb_path, {}, merge=True)
+
+        gb_default_k = int(os.getenv("GRAPH_K_DEFAULT", "12"))
+        gb_env_k = os.getenv("GRAPH_K") or os.getenv("GRAPH_K_OVERRIDE")
+
+        if OmegaConf.select(final_config, f"{gb_path}.k") is None:
+            OmegaConf.update(final_config, f"{gb_path}.k", gb_default_k, merge=True)
+        if gb_env_k:
+            try:
+                OmegaConf.update(final_config, f"{gb_path}.k", int(gb_env_k), merge=True)
+            except Exception as _ge:
+                logger.warning(f"[Graph] invalid GRAPH_K value '{gb_env_k}': {_ge}")
+
+        try:
+            gb_k_val = int(OmegaConf.select(final_config, f"{gb_path}.k"))
+        except Exception:
+            gb_k_val = None
+
+        if gb_k_val is not None:
+            try:
+                gat_knn = OmegaConf.select(final_config, "model.gat.knn_k")
+                if gat_knn is None or int(gat_knn) != gb_k_val:
+                    OmegaConf.update(final_config, "model.gat.knn_k", gb_k_val, merge=True)
+            except Exception as _knn_err:
+                logger.warning(f"[Graph] unable to sync model.gat.knn_k with k={gb_k_val}: {_knn_err}")
+    except Exception as _gb_err:
+        logger.warning(f"[Graph] Unable to apply graph_builder overrides: {_gb_err}")
+
+    _enforce_safe_dataloader_config(final_config)
+    try:
+        _effective_workers = int(
+            OmegaConf.select(final_config, "train.batch.num_workers") or 0
+        )
+    except Exception:
+        _effective_workers = 0
+    _apply_thread_caps(_effective_workers)
+    os.environ.setdefault("NUM_WORKERS", str(_effective_workers))
+    if _effective_workers <= 0:
+        os.environ.setdefault("PERSISTENT_WORKERS", "0")
+        os.environ.setdefault("PREFETCH_FACTOR", "0")
+        os.environ.setdefault("PIN_MEMORY", "0")
+
     # データモジュール
     logger.info("Setting up data module...")
     try:
@@ -4163,6 +4413,13 @@ def train(config: DictConfig) -> None:
                 scalers = {}
                 for h in train_ds.prediction_horizons:
                     arr = np.array(train_ds.targets[h], dtype=np.float64)
+                    if not np.isfinite(arr).all():
+                        bad = np.size(arr) - np.isfinite(arr).sum()
+                        logger.warning(
+                            f"[target-normalize] horizon={h}: replacing {bad} non-finite values"
+                        )
+                    arr = np.nan_to_num(arr, nan=0.0, posinf=1e6, neginf=-1e6)
+                    arr = np.clip(arr, -1e6, 1e6)
                     if arr.size > 0:
                         m = float(np.mean(arr))
                         s = float(np.std(arr) + 1e-8)
@@ -4193,18 +4450,9 @@ def train(config: DictConfig) -> None:
                         base_seed = int(os.getenv("DL_SEED", "42"))
                         g = torch.Generator()
                         g.manual_seed(base_seed)
-
-                        def _winit(worker_id: int):
-                            s = base_seed + worker_id
-                            import random
-                            import numpy as _np
-
-                            random.seed(s)
-                            _np.random.seed(s % (2**32 - 1))
-                            torch.manual_seed(s)
-
+                        worker_init = partial(_seed_worker, base_seed=base_seed)
                         return DataLoader(
-                            ds, worker_init_fn=_winit, generator=g, **kwargs
+                            ds, worker_init_fn=worker_init, generator=g, **kwargs
                         )
                     except Exception:
                         return DataLoader(ds, **kwargs)
@@ -4268,7 +4516,7 @@ def train(config: DictConfig) -> None:
                     min_nodes=min_nodes,
                     drop_undersized=drop_undersized,
                 )
-            nw = int(os.getenv("NUM_WORKERS", "8"))
+            nw = int(os.getenv("NUM_WORKERS", "0"))
             return DataLoader(
                 ds,
                 batch_sampler=sampler,
@@ -4294,18 +4542,11 @@ def train(config: DictConfig) -> None:
             and hasattr(val_loader, "dataset")
             and getattr(val_loader, "collate_fn", None) is not collate_day
         ):
-            nw = int(os.getenv("NUM_WORKERS", "8"))
+            nw = int(os.getenv("NUM_WORKERS", "0"))
+            base_seed = int(os.getenv("DL_SEED", "42"))
             _g2 = torch.Generator()
-            _g2.manual_seed(int(os.getenv("DL_SEED", "42")))
-
-            def _winit2(worker_id: int):
-                s = int(os.getenv("DL_SEED", "42")) + worker_id
-                import random
-                import numpy as _np
-
-                random.seed(s)
-                _np.random.seed(s % (2**32 - 1))
-                torch.manual_seed(s)
+            _g2.manual_seed(base_seed)
+            worker_init_val = partial(_seed_worker, base_seed=base_seed)
 
             # Respect sandbox: allow single-process val loader
             v_nw = max(0, nw // 2)
@@ -4316,7 +4557,7 @@ def train(config: DictConfig) -> None:
                 "num_workers": v_nw,
                 "pin_memory": bool(os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")),
                 "collate_fn": collate_day,
-                "worker_init_fn": _winit2,
+                "worker_init_fn": worker_init_val,
                 "generator": _g2,
             }
             if v_nw > 0:
@@ -4333,18 +4574,11 @@ def train(config: DictConfig) -> None:
             and hasattr(train_loader, "dataset")
             and getattr(train_loader, "collate_fn", None) is not collate_day
         ):
-            nw = int(os.getenv("NUM_WORKERS", "8"))
+            nw = int(os.getenv("NUM_WORKERS", "0"))
+            base_seed = int(os.getenv("DL_SEED", "42"))
             _g3 = torch.Generator()
-            _g3.manual_seed(int(os.getenv("DL_SEED", "42")))
-
-            def _winit3(worker_id: int):
-                s = int(os.getenv("DL_SEED", "42")) + worker_id
-                import random
-                import numpy as _np
-
-                random.seed(s)
-                _np.random.seed(s % (2**32 - 1))
-                torch.manual_seed(s)
+            _g3.manual_seed(base_seed)
+            worker_init_train = partial(_seed_worker, base_seed=base_seed)
 
             # Respect sandbox: use single-process when NUM_WORKERS<=0
             t_nw = max(0, nw)
@@ -4356,7 +4590,7 @@ def train(config: DictConfig) -> None:
                 "pin_memory": bool(os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")),
                 "drop_last": True,
                 "collate_fn": collate_day,
-                "worker_init_fn": _winit3,
+                "worker_init_fn": worker_init_train,
                 "generator": _g3,
             }
             if t_nw > 0:
@@ -4668,6 +4902,43 @@ def train(config: DictConfig) -> None:
             except Exception:
                 items.append({"path": str(p)})
         return items
+
+    def _resolve_checkpoint_refs(cfg: DictConfig) -> None:
+        try:
+            train_cfg = cfg.train
+        except Exception:
+            return
+        ckpt = getattr(train_cfg, "checkpoint", None)
+        if ckpt is None:
+            return
+
+        def _resolve(value: str) -> str:
+            if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+                interp_key = value[2:-1]
+                resolved = OmegaConf.select(cfg, interp_key)
+                if resolved is not None:
+                    return str(resolved)
+            return value
+
+        try:
+            ckpt.monitor = _resolve(getattr(ckpt, "monitor", "val_loss"))
+        except Exception:
+            ckpt.monitor = "val_loss"
+        try:
+            ckpt.mode = _resolve(getattr(ckpt, "mode", "min"))
+        except Exception:
+            ckpt.mode = "min"
+
+        # Ensure early_stopping exists when referenced elsewhere
+        if not hasattr(train_cfg, "early_stopping"):
+            train_cfg.early_stopping = {
+                "monitor": ckpt.monitor,
+                "mode": ckpt.mode,
+                "patience": 5,
+                "min_delta": 0.0,
+            }
+
+    _resolve_checkpoint_refs(final_config)
 
     run_manifest = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -6972,8 +7243,11 @@ def train(config: DictConfig) -> None:
     except Exception as _me:
         logger.warning(f"Mini training failed or skipped: {_me}")
 
+    best_val_main = float("inf")
+
     # Force mini training path for stabilization (default ON). Set FORCE_MINI_TRAIN=0 to disable.
-    if os.getenv("FORCE_MINI_TRAIN", "1") == "1":
+    # Default OFF to avoid unintended early exit; set FORCE_MINI_TRAIN=1 to enable
+    if os.getenv("FORCE_MINI_TRAIN", "0") == "1":
         logger.info("[Control] Forcing mini training path (FORCE_MINI_TRAIN=1)")
         _ = run_mini_training(
             model,
@@ -6993,13 +7267,15 @@ def train(config: DictConfig) -> None:
             if _pt_env in ("0", "false", "off"):
                 _pt_cfg = None
             elif _pt_env in ("1", "true", "on"):
-                class _PT: pass
+                class _PT:  # lightweight shim
+                    pass
+
                 _pt_cfg = _PT()
                 setattr(_pt_cfg, "enabled", True)
 
             if _pt_cfg is not None and bool(getattr(_pt_cfg, "enabled", False)):
                 logger.info("[PhaseTraining] enabled; running phase-wise training")
-                _ = run_phase_training(model, train_loader, val_loader, config, device)
+                best_val_main = run_phase_training(model, train_loader, val_loader, config, device)
             else:
                 ckpt_tag = os.getenv("CKPT_TAG", "main").strip() or "main"
                 best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
@@ -7032,6 +7308,13 @@ def train(config: DictConfig) -> None:
             scalers = {}
             for h in cv_train_ds.prediction_horizons:
                 arr = np.array(cv_train_ds.targets[h], dtype=np.float64)
+                if not np.isfinite(arr).all():
+                    bad = np.size(arr) - np.isfinite(arr).sum()
+                    logger.warning(
+                        f"[target-normalize][cv] horizon={h}: replacing {bad} non-finite values"
+                    )
+                arr = np.nan_to_num(arr, nan=0.0, posinf=1e6, neginf=-1e6)
+                arr = np.clip(arr, -1e6, 1e6)
                 if arr.size > 0:
                     m = float(np.mean(arr))
                     s = float(np.std(arr) + 1e-8)
@@ -7046,24 +7329,24 @@ def train(config: DictConfig) -> None:
                 start_date=val_start,
                 end_date=val_end,
             )
-            cv_train_loader = DataLoader(
-                cv_train_ds,
+            _cv_train_kwargs = dict(
                 batch_size=final_config.train.batch.train_batch_size,
                 shuffle=True,
-                num_workers=8,
-                pin_memory=True,
+                num_workers=0,
+                pin_memory=False,
                 drop_last=True,
-                prefetch_factor=4,
+                prefetch_factor=None,
                 persistent_workers=False,
             )
-            cv_val_loader = DataLoader(
-                cv_val_ds,
+            cv_train_loader = DataLoader(cv_train_ds, **_cv_train_kwargs)
+            _cv_val_kwargs = dict(
                 batch_size=final_config.train.batch.val_batch_size,
                 shuffle=False,
-                num_workers=4,
-                pin_memory=True,
+                num_workers=0,
+                pin_memory=False,
                 persistent_workers=False,
             )
+            cv_val_loader = DataLoader(cv_val_ds, **_cv_val_kwargs)
             if eval_only:
                 val_loss_i, _, _ = validate(model, cv_val_loader, criterion, device)
             else:

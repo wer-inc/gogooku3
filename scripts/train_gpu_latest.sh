@@ -7,6 +7,8 @@ set -e
 # GPU環境設定（永続化）
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 export FORCE_GPU=1
+# Ensure mini training path is disabled by default (can enable with FORCE_MINI_TRAIN=1)
+export FORCE_MINI_TRAIN=${FORCE_MINI_TRAIN:-0}
 # Require a real GPU by default; fail fast if not available
 export REQUIRE_GPU=${REQUIRE_GPU:-1}
 # Hint accelerator to downstream code
@@ -59,7 +61,8 @@ MAX_EPOCHS=${4:-"75"}
 # 大規模VSNでのピークVRAMと環境制約を考慮した安全デフォルト
 BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 VAL_BATCH_SIZE=${TRAIN_VAL_BATCH_SIZE:-1536}
-NUM_WORKERS=${TRAIN_NUM_WORKERS:-0}
+# デフォルトの DataLoader 並列数を 8 に引き上げ（従来は 0 = 単一プロセスで極端に遅い）
+NUM_WORKERS=${TRAIN_NUM_WORKERS:-8}
 PREFETCH=${TRAIN_PREFETCH:-4}
 # Optional overrides
 # 勾配蓄積は train_atft.py の想定キー（train.batch.gradient_accumulation_steps）に合わせて渡す
@@ -95,6 +98,7 @@ else
         train.batch.test_batch_size=$VAL_BATCH_SIZE \
         train.batch.num_workers=$NUM_WORKERS \
         train.batch.prefetch_factor=$PREFETCH \
+        $( [ "$NUM_WORKERS" -gt 0 ] && echo train.batch.persistent_workers=true ) \
         +train.batch.gradient_accumulation_steps=$GRAD_ACC \
         train.trainer.accumulate_grad_batches=$GRAD_ACC \
         train.trainer.precision=$PRECISION \

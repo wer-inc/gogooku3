@@ -116,6 +116,7 @@ def build_sector_short_features(
             (pl.col("ss_sec33_short_share").diff().over("sec33") -
              pl.col("ss_sec33_short_share").diff().over("sec33").shift(1).over("sec33")).alias("ss_sec33_short_accel"),
         ])
+    )
 
     # Z-score features (optional, can be disabled for performance)
     if enable_z_scores:
@@ -126,7 +127,6 @@ def build_sector_short_features(
             ((pl.col("short_turnover") - pl.col("short_turnover").rolling_mean(252).over("sec33")) /
              (pl.col("short_turnover").rolling_std(252).over("sec33") + EPS)).alias("ss_sec33_short_turnover_z252"),
         ])
-    )
 
     # 3) 市場集計特徴量（全銘柄に同じ値を配布）
     mkt = (s.group_by("Date").agg([

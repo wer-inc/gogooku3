@@ -4,6 +4,7 @@ Minimal implementation for training compatibility
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import torch
@@ -18,9 +19,31 @@ class GBConfig:
     edge_threshold: float = 0.3
     use_dynamic_graph: bool = False
     update_frequency: int = 10
+    cache_dir: str | None = "graph_cache"
+    ewm_halflife: int = 20
+    k: int = 10
+    log_mktcap_col: str | None = None
+    lookback: int = 60
+    method: str = "ewm_demean"
+    min_obs: int = 40
+    use_in_training: bool = False
+    return_cols: Sequence[str] | None = None
+    sector_col: str | None = None
+    shrinkage_gamma: float = 0.05
+    size_tau: float = 1.0
+    source_glob: str | None = None
+    symmetric: bool = True
 
     def __post_init__(self):
-        pass
+        # Ensure numeric fields remain positive where required
+        self.max_nodes = max(1, int(self.max_nodes))
+        self.k = max(1, int(self.k))
+        self.ewm_halflife = max(1, int(self.ewm_halflife))
+        self.lookback = max(1, int(self.lookback))
+        self.min_obs = max(1, int(self.min_obs))
+        self.update_frequency = max(1, int(self.update_frequency))
+        if self.return_cols is not None:
+            self.return_cols = tuple(self.return_cols)
 
 
 class GraphBuilder:
@@ -37,12 +60,12 @@ class GraphBuilder:
 
     def build_graph(self, features: torch.Tensor, codes: list | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Build graph from features
-        
+        Build graph from features.
+
         Args:
             features: Node features tensor (N, F) or (N, T, F) for time series
             codes: Optional list of stock codes
-            
+
         Returns:
             edge_index: Edge indices (2, E)
             edge_attr: Edge attributes (E, A)
@@ -90,13 +113,13 @@ class GraphBuilder:
 
     def build_correlation_edges(self, features: torch.Tensor, window: int = 20, k: int = 10) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Build edges based on returns correlation (A+ approach)
-        
+        Build edges based on returns correlation (A+ approach).
+
         Args:
             features: Time series features (N, T, F) where first feature is returns
             window: Correlation window size
             k: Number of nearest neighbors
-            
+
         Returns:
             edge_index: Edge indices
             edge_attr: Edge attributes (correlation values)

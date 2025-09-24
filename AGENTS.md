@@ -1,7 +1,5 @@
 # Repository Guidelines
 
->This document is a concise contributor guide for gogooku3.
-
 ## Project Structure & Module Organization
 - Code: `src/gogooku3/` (CLI, utils, features, models, training, graph, compat)
 - Pipelines: `scripts/` (e.g., `run_safe_training.py`, `train_atft.py`, `pipelines/`)
@@ -42,3 +40,6 @@
 - Core: ATFT‑GAT‑FAN multi‑horizon forecasting.
 - Pipeline: 7‑step `SafeTrainingPipeline` with strict leakage prevention.
 
+## Agent Notes
+- This file applies repo‑wide; nested `AGENTS.md` may override locally.
+- Keep changes minimal and focused; follow style/tests; update docs as needed.

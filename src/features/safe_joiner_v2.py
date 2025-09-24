@@ -5,6 +5,56 @@ Safe Joiner V2 - 改善版の安全な結合処理
 
 import logging
 from datetime import datetime, time
+import re
+
+
+DEFAULT_DISCLOSED_TIME = "15:30:00"
+
+
+def _normalize_disclosed_time(value: str | None) -> str:
+    """正規化した HH:MM:SS 形式の開示時刻を返す。"""
+
+    if value is None:
+        return DEFAULT_DISCLOSED_TIME
+
+    v = value.strip()
+    if not v or v == "null":
+        return DEFAULT_DISCLOSED_TIME
+
+    v = v.replace("：", ":")
+
+    # コロン区切りの場合は優先的に解釈
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            parsed = datetime.strptime(v, fmt)
+            return parsed.strftime("%H:%M:%S")
+        except ValueError:
+            continue
+
+    digits = ''.join(re.findall(r"\d", v))
+    if digits:
+        if len(digits) >= 6:
+            seq = digits[:6]
+            try:
+                parsed = datetime.strptime(seq, "%H%M%S")
+                return parsed.strftime("%H:%M:%S")
+            except ValueError:
+                pass
+        if len(digits) >= 3:
+            seq = digits[-4:].zfill(4)
+            try:
+                parsed = datetime.strptime(seq, "%H%M")
+                return parsed.strftime("%H:%M:%S")
+            except ValueError:
+                pass
+        seq = digits[-2:].zfill(2)
+        try:
+            parsed = datetime.strptime(seq, "%H")
+            return parsed.strftime("%H:%M:%S")
+        except ValueError:
+            pass
+
+    return DEFAULT_DISCLOSED_TIME
 
 import polars as pl
 
@@ -107,6 +157,13 @@ class SafeJoinerV2:
             .map_elements(CodeNormalizer.normalize_code, return_dtype=pl.Utf8)
             .alias("_join_code")
         )
+
+        if "DisclosedTime" in stm.columns:
+            stm = stm.with_columns(
+                pl.col("DisclosedTime")
+                .map_elements(_normalize_disclosed_time, return_dtype=pl.Utf8)
+                .alias("DisclosedTime")
+            )
 
         # 開示時刻の処理（同日複数開示の解決）
         if "DisclosedTime" in stm.columns:
@@ -534,6 +591,50 @@ class SafeJoinerV2:
             pl.col("DisclosedDate").cast(pl.Date, strict=False).alias("DisclosedDate"),
         ])
 
+        numeric_cols = [
+            "NetSales",
+            "OperatingProfit",
+            "Profit",
+            "ForecastOperatingProfit",
+            "ForecastProfit",
+            "ForecastEarningsPerShare",
+            "ForecastDividendPerShareAnnual",
+            "Equity",
+            "TotalAssets",
+        ]
+        cast_exprs = [
+            pl.col(col).cast(pl.Float64, strict=False).alias(col)
+            for col in numeric_cols
+            if col in s.columns
+        ]
+        if cast_exprs:
+            s = s.with_columns(cast_exprs)
+
+        issued_col = "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock"
+        treasury_col = "NumberOfTreasuryStockAtTheEndOfFiscalYear"
+        avg_shares_col = "AverageNumberOfShares"
+        share_casts: list[pl.Expr] = []
+        if issued_col in s.columns:
+            share_casts.append(
+                pl.col(issued_col).cast(pl.Float64, strict=False).alias("stmt_issued_shares")
+            )
+        if treasury_col in s.columns:
+            share_casts.append(
+                pl.col(treasury_col).cast(pl.Float64, strict=False).alias("stmt_treasury_shares")
+            )
+        if avg_shares_col in s.columns:
+            share_casts.append(
+                pl.col(avg_shares_col).cast(pl.Float64, strict=False).alias("stmt_average_shares")
+            )
+        if share_casts:
+            s = s.with_columns(share_casts)
+            if "stmt_issued_shares" in s.columns:
+                outstanding_expr = (
+                    pl.col("stmt_issued_shares")
+                    - pl.col("stmt_treasury_shares").fill_null(0.0)
+                ).alias("stmt_shares_outstanding")
+                s = s.with_columns(outstanding_expr)
+
         # 会計年度の導出（FiscalYear が無ければ CurrentFiscalYearStartDate の年を使用）
         fiscal_year_expr = None
         if "FiscalYear" in s.columns:
@@ -694,6 +795,11 @@ class SafeJoinerV2:
             "yoy_op_base",
             "yoy_np_base",
             "prev_fy",
+            issued_col if issued_col in s.columns else None,
+            treasury_col if treasury_col in s.columns else None,
+            avg_shares_col if avg_shares_col in s.columns else None,
+            "stmt_issued_shares" if "stmt_issued_shares" in s.columns else None,
+            "stmt_treasury_shares" if "stmt_treasury_shares" in s.columns else None,
         ]
         s = s.drop([col for col in drop_cols if col in s.columns])
 

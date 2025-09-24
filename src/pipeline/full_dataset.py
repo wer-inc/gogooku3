@@ -1292,7 +1292,7 @@ async def enrich_and_save(
             "stmt_rev_div_fore": pl.Float64,
             "stmt_roe": pl.Float64,
             "stmt_roa": pl.Float64,
-            "stmt_change_in_est": pl.Float64,
+            "stmt_change_in_est": pl.Int8,
             "stmt_nc_flag": pl.Int8,
             "stmt_imp_statement": pl.Int8,
             "stmt_days_since_statement": pl.Int32,
@@ -1589,10 +1589,16 @@ async def enrich_and_save(
             ])
 
         # Fill conservative defaults for statement flags when statements are absent
+        zero_literal = pl.lit(0, dtype=pl.Int8)
         fill_zero_flags = []
         for c in ["stmt_change_in_est", "stmt_nc_flag", "is_stmt_valid"]:
             if c in df.columns:
-                fill_zero_flags.append(pl.col(c).fill_null(0).cast(pl.Int8).alias(c))
+                fill_zero_flags.append(
+                    pl.coalesce([
+                        pl.col(c).cast(pl.Int8, strict=False),
+                        zero_literal,
+                    ]).alias(c)
+                )
         if fill_zero_flags:
             df = df.with_columns(fill_zero_flags)
 

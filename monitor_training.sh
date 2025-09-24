@@ -1,39 +1,63 @@
 #!/bin/bash
-# トレーニング進行状況をリアルタイムでモニタリング
+set -euo pipefail
 
-echo "=========================================="
-echo "トレーニング進行状況モニタリング"
-echo "=========================================="
+clear
+echo "=== GPU Training Monitor ==="
 
-# プロセス情報
-echo "📊 プロセス情報:"
-ps aux | grep train_atft | grep -v grep | head -1
+LOG_WRAP="_logs/train_gpu_latest/latest.log"
+PID_FILE="_logs/train_gpu_latest/latest.pid"
+ML_LOG="logs/ml_training.log"
 
-# GPU使用率
-echo -e "\n🎮 GPU使用状況:"
-nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader
-
-# 最新のログ
-echo -e "\n📈 最新のトレーニング状況:"
-tail -20 logs/ml_training.log | grep -E "Epoch|Val Loss|Sharpe|Creating sequences" | tail -10
-
-# ディスク使用量
-echo -e "\n💾 ディスク使用量:"
-df -h output/ | tail -1
-
-# 推定完了時間
-echo -e "\n⏰ 推定完了時間:"
-PROGRESS=$(tail -1 logs/ml_training.log | grep -oP '\d+%' | tr -d '%' || echo "0")
-if [ ! -z "$PROGRESS" ] && [ "$PROGRESS" -gt 0 ]; then
-    ELAPSED=$(ps aux | grep train_atft | grep -v grep | awk '{print $10}' | head -1)
-    echo "進捗: $PROGRESS%"
-    echo "経過時間: $ELAPSED"
-    # 簡単な推定
-    if [ "$PROGRESS" -gt 0 ]; then
-        TOTAL_MIN=$((100 * ${ELAPSED%%:*} / $PROGRESS))
-        REMAIN_MIN=$(($TOTAL_MIN - ${ELAPSED%%:*}))
-        echo "推定残り時間: 約${REMAIN_MIN}分"
-    fi
+if [ -f "$PID_FILE" ]; then
+  PID=$(cat "$PID_FILE" 2>/dev/null || true)
+fi
+if [ -z "${PID:-}" ]; then
+  PID=$(pgrep -af 'python.*train_atft\.py' | head -1 | awk '{print $1}' || true)
 fi
 
-echo "=========================================="
+while true; do
+  clear
+  echo "=== GPU Training Monitor ==="
+  date '+Time: %Y-%m-%d %H:%M:%S'
+  echo "================================"
+
+  echo -e "\n📊 GPU Status:"
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu \
+      --format=csv,noheader,nounits | \
+      awk -F', ' '{printf "  GPU %s: %s\n    Util: %s%% | Mem: %s/%s MB | Temp: %s°C\n", $1, $2, $3, $4, $5, $6}'
+    if [ -n "${PID:-}" ]; then
+      echo -e "\n  Compute Apps (PID match):"
+      nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader | \
+        awk -v pid="$PID" -F', ' '$1==pid {printf "    PID %s | %s | %s\n", $1, $2, $3}' || true
+    fi
+  else
+    echo "  nvidia-smi not available"
+  fi
+
+  echo -e "\n📦 Training Process:"
+  if [ -n "${PID:-}" ] && ps -p "$PID" >/dev/null 2>&1; then
+    ps -p "$PID" -o pid,pcpu,pmem,etime,comm --no-headers | \
+      awk '{printf "  PID: %s | CPU: %s%% | MEM: %s%% | Time: %s | CMD: %s\n", $1, $2, $3, $4, $5}'
+  else
+    echo "  ⚠️ No active training process found"
+  fi
+
+  echo -e "\n📈 Latest Progress:"
+  if [ -f "$ML_LOG" ]; then
+    rg -n "Epoch|it/s|loss|Using device|GPU:" "$ML_LOG" | tail -n 3 | sed 's/^/  /' || true
+  else
+    echo "  (ml log not yet created)"
+  fi
+
+  echo -e "\n🧾 Wrapper Log (last 2 lines):"
+  if [ -f "$LOG_WRAP" ]; then
+    tail -n 2 "$LOG_WRAP" | sed 's/^/  /'
+  else
+    echo "  (wrapper log not found)"
+  fi
+
+  echo -e "\n================================"
+  echo "Press Ctrl+C to exit"
+  sleep 5
+done

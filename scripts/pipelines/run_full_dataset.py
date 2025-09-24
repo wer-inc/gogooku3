@@ -64,6 +64,7 @@ logger = logging.getLogger("run_full_dataset")
 
 # Defaults
 DEFAULT_LOOKBACK_DAYS = 1826  # ~5 years
+FLOW_SUPPORT_LOOKBACK_DAYS = 420  # ensure >52w history for flow z-scores
 
 
 def _find_latest(glob: str) -> Path | None:
@@ -512,6 +513,35 @@ async def main() -> int:
     start_date = start_dt.strftime("%Y-%m-%d")
     end_date = end_dt.strftime("%Y-%m-%d")
 
+    # Respect subscription lower bound so we don't trigger 400 errors when
+    # enforcing the 420-day support lookback. 既定では ML_PIPELINE_START_DATE
+    # を最小開始日に用い、指定が無ければ start_date を下限とする。
+    min_available_str = (
+        os.getenv("JQUANTS_MIN_AVAILABLE_DATE")
+        or os.getenv("ML_PIPELINE_START_DATE")
+        or start_date
+    )
+    try:
+        min_available_dt = datetime.strptime(min_available_str, "%Y-%m-%d")
+    except ValueError:
+        logger.warning(
+            "Invalid JQUANTS_MIN_AVAILABLE_DATE=%s; falling back to %s",
+            min_available_str,
+            start_date,
+        )
+        min_available_dt = datetime.strptime(start_date, "%Y-%m-%d")
+
+    flow_start_dt = start_dt - timedelta(days=FLOW_SUPPORT_LOOKBACK_DAYS)
+    if flow_start_dt < min_available_dt:
+        logger.info(
+            "Flow support start %s is before subscription lower bound %s; capping",
+            flow_start_dt.strftime("%Y-%m-%d"),
+            min_available_dt.strftime("%Y-%m-%d"),
+        )
+        flow_start_dt = min_available_dt
+
+    flow_start_date = flow_start_dt.strftime("%Y-%m-%d")
+
     logger.info("=== STEP 0: Prepare trade-spec for flow features ===")
     trades_spec_path: Path | None = None
     listed_info_path: Path | None = args.listed_info_parquet
@@ -553,12 +583,17 @@ async def main() -> int:
 
             fetch_coroutines: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
 
-            logger.info(f"Fetching trade-spec from {start_date} to {end_date}")
+            logger.info(
+                "Fetching trade-spec from %s to %s (lookback %s days)",
+                flow_start_date,
+                end_date,
+                FLOW_SUPPORT_LOOKBACK_DAYS,
+            )
             fetch_coroutines.append(
                 (
                     "trades",
                     "trade-spec",
-                    fetcher.get_trades_spec(session, start_date, end_date),
+                    fetcher.get_trades_spec(session, flow_start_date, end_date),
                 )
             )
 
@@ -637,7 +672,7 @@ async def main() -> int:
             logger.warning("No trade-spec data fetched; will try local fallback for flow features")
         else:
             output_dir = Path("output/raw/flow"); output_dir.mkdir(parents=True, exist_ok=True)
-            trades_spec_path = output_dir / f"trades_spec_history_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+            trades_spec_path = output_dir / f"trades_spec_history_{flow_start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
             trades_df.write_parquet(trades_spec_path)
             logger.info(f"Saved trade-spec: {trades_spec_path}")
         # Save listed_info if fetched (even if trade-spec failed)

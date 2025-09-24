@@ -1,0 +1,11 @@
+- data.source.data_dir=output/atft_data
+- train.batch.train_batch_size=4096
+- train.optimizer.lr=0.0002
+- train.trainer.max_epochs=75
+- train.trainer.precision=16-mixed
+- train.trainer.check_val_every_n_epoch=1
+- train.trainer.enable_progress_bar=true
+- train.batch.pin_memory=true
+- train.batch.prefetch_factor=4
+- train.batch.num_workers=8
+- train.batch.persistent_workers=true

@@ -45,6 +45,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+SUPPORT_LOOKBACK_DAYS = 420  # approx 20 months to cover YoY/Z-score lookbacks
+# Minimum collection span enforced regardless of requested start date
+MIN_COLLECTION_DAYS = int(os.getenv("MIN_COLLECTION_DAYS", "3650"))  # ~10 years by default
+
+
 @dataclass
 class PerformanceMetrics:
     """パフォーマンスメトリクス"""
@@ -565,23 +570,82 @@ class JQuantsPipelineV4Optimized:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
         if not start_date:
-            start_date = "2021-01-01"
+            start_date = os.getenv("ML_PIPELINE_START_DATE", "2019-01-01")
+
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+
+        min_available_dt: datetime | None = None
+        min_available_str = os.getenv("JQUANTS_MIN_AVAILABLE_DATE") or os.getenv("ML_PIPELINE_START_DATE")
+        if min_available_str:
+            try:
+                min_available_dt = datetime.strptime(min_available_str, "%Y-%m-%d")
+            except ValueError:
+                logger.warning(
+                    "Invalid subscription lower bound %s; ignoring",
+                    min_available_str,
+                )
+
+        span_days = (end_dt - start_dt).days
+        min_span = max(MIN_COLLECTION_DAYS, SUPPORT_LOOKBACK_DAYS)
+        if span_days < min_span:
+            adjusted_start_dt = end_dt - timedelta(days=min_span)
+            if min_available_dt and adjusted_start_dt < min_available_dt:
+                adjusted_start_dt = min_available_dt
+            if adjusted_start_dt < start_dt:
+                logger.info(
+                    "Extending start date from %s to %s to satisfy minimum collection span of %d days",
+                    start_dt.strftime("%Y-%m-%d"),
+                    adjusted_start_dt.strftime("%Y-%m-%d"),
+                    min_span,
+                )
+            start_dt = adjusted_start_dt
+            start_date = start_dt.strftime("%Y-%m-%d")
+
+        if min_available_dt and start_dt < min_available_dt:
+            logger.info(
+                "Capping start date at subscription lower bound %s",
+                min_available_dt.strftime("%Y-%m-%d"),
+            )
+            start_dt = min_available_dt
+            start_date = start_dt.strftime("%Y-%m-%d")
+
+        support_start_dt = start_dt - timedelta(days=SUPPORT_LOOKBACK_DAYS)
+        if min_available_dt and support_start_dt < min_available_dt:
+            logger.info(
+                "Capping support lookback start %s at %s",
+                support_start_dt.strftime("%Y-%m-%d"),
+                min_available_dt.strftime("%Y-%m-%d"),
+            )
+            support_start_dt = min_available_dt
+        support_start_date = support_start_dt.strftime("%Y-%m-%d")
 
         async with aiohttp.ClientSession() as session:
             # Authenticate
             await self.fetcher.authenticate(session)
             
             # Step 1: 営業日カレンダー取得
-            logger.info(f"Step 1: Fetching trading calendar ({start_date} - {end_date})...")
+            logger.info(
+                "Step 1: Fetching trading calendar (%s - %s) [support lookback=%s days]...",
+                support_start_date,
+                end_date,
+                SUPPORT_LOOKBACK_DAYS,
+            )
             cal_metric = self.tracker.start_component("trading_calendar")
             
             calendar_data = await self.fetcher.calendar_fetcher.get_trading_calendar(
-                start_date, end_date, session
+                support_start_date, end_date, session
             )
-            business_days = calendar_data.get("business_days", [])
-            
-            self.tracker.end_component(cal_metric, api_calls=1, records=len(business_days))
-            logger.info(f"✅ Business days: {len(business_days)}")
+            business_days_full = calendar_data.get("business_days", [])
+            # Trim to requested window for price-based resources
+            business_days = [d for d in business_days_full if d >= start_date]
+
+            self.tracker.end_component(cal_metric, api_calls=1, records=len(business_days_full))
+            logger.info(
+                "✅ Business days: %s (support window), %s within target range",
+                len(business_days_full),
+                len(business_days),
+            )
             
             if not business_days:
                 logger.error("No business days found")
@@ -590,7 +654,7 @@ class JQuantsPipelineV4Optimized:
             # Step 2: Listed info（月初＋差分）で市場銘柄を特定
             logger.info("Step 2: Fetching listed info (monthly + diff)...")
             snapshots, events = await self.fetcher.fetch_listed_info_optimized(
-                session, business_days
+                session, business_days_full
             )
             
             # ターゲット銘柄を特定（市場フィルタリング）
@@ -616,14 +680,14 @@ class JQuantsPipelineV4Optimized:
             # Step 4: 財務諸表（date軸）
             logger.info("Step 4: Fetching statements (date axis)...")
             statements_df = await self.fetcher.fetch_statements_by_date(
-                session, business_days
+                session, business_days_full
             )
             
             logger.info(f"✅ Statements: {len(statements_df)} records")
 
             # Step 5: TOPIX（市場インデックス）
             logger.info("Step 5: Fetching TOPIX index data...")
-            topix_df = await self.fetcher.fetch_topix_data(session, start_date, end_date)
+            topix_df = await self.fetcher.fetch_topix_data(session, support_start_date, end_date)
             if not topix_df.is_empty():
                 logger.info(f"✅ TOPIX: {len(topix_df)} records from {start_date} to {end_date}")
             else:
@@ -631,7 +695,7 @@ class JQuantsPipelineV4Optimized:
 
             # Step 6: Fetch trades_spec (flow)
             logger.info("Step 6: Fetching trades_spec (flow data)...")
-            trades_spec_df = await self.fetcher.fetch_trades_spec(session, start_date, end_date)
+            trades_spec_df = await self.fetcher.fetch_trades_spec(session, support_start_date, end_date)
             if not trades_spec_df.is_empty():
                 logger.info(f"✅ trades_spec: {len(trades_spec_df)} records")
             else:
@@ -732,8 +796,14 @@ class JQuantsPipelineV4Optimized:
                 for d, snap in snapshots.items():
                     if not snap.is_empty():
                         if "Date" not in snap.columns:
-                            snap = snap.with_columns(pl.lit(d).cast(pl.Utf8).str.strptime(pl.Date, format="%Y-%m-%d", strict=False).alias("Date"))
-                        listed_frames.append(snap.select([c for c in snap.columns if c in ("Code","MarketCode","Date")] + (["Code","MarketCode","Date"])) )
+                            snap = snap.with_columns(
+                                pl.lit(d)
+                                .cast(pl.Utf8)
+                                .str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
+                                .alias("Date")
+                            )
+                        select_cols = [c for c in ("Code", "MarketCode", "Date") if c in snap.columns]
+                        listed_frames.append(snap.select(select_cols))
                 if listed_frames:
                     from features.section_mapper import SectionMapper
                     listed_info_df = pl.concat(listed_frames, how="diagonal_relaxed")
@@ -1027,8 +1097,8 @@ async def main():
     parser.add_argument(
         "--start-date",
         type=str,
-        default="2025-01-01",
-        help="Start date (YYYY-MM-DD)",
+        default=None,
+        help="Start date (YYYY-MM-DD). If omitted, uses ML_PIPELINE_START_DATE or auto-extends to satisfy minimum span.",
     )
     parser.add_argument(
         "--end-date",

@@ -4,10 +4,11 @@ ATFT Data Module
 """
 
 import logging
+import multiprocessing as mp
 import os
 from bisect import bisect_right
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -76,12 +77,133 @@ def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
         prefetch_factor = None
         pin_memory = False if isinstance(pin_memory, bool) else False
 
-    return {
+    params: dict[str, Any] = {
         "num_workers": num_workers,
         "prefetch_factor": prefetch_factor,
         "pin_memory": bool(pin_memory),
         "persistent_workers": bool(persistent_workers),
     }
+
+    # Global loader-guard (mirrors scripts/train_atft.py):
+    # Unless ALLOW_UNSAFE_DATALOADER=1, force single-process mode to avoid
+    # sporadic worker aborts seen with multi-process parquet loading.
+    allow_multi = os.getenv("ALLOW_UNSAFE_DATALOADER", "0").lower() in ("1", "true", "yes")
+    try:
+        requested = int(OmegaConf.select(config, "train.batch.num_workers") or 0)
+    except Exception:
+        requested = 0
+    effective = max(int(params.get("num_workers", 0) or 0), requested)
+    if not allow_multi and (effective > 0 or bool(params.get("persistent_workers", False))):
+        logger.warning(
+            "[loader-guard] Enforcing single-process DataLoader (num_workers=0). "
+            "Set ALLOW_UNSAFE_DATALOADER=1 to opt in to multi-process."
+        )
+        params["num_workers"] = 0
+        params["persistent_workers"] = False
+        params["prefetch_factor"] = None
+        params["pin_memory"] = False
+        os.environ["NUM_WORKERS"] = "0"
+        os.environ["PERSISTENT_WORKERS"] = "0"
+        os.environ.setdefault("PIN_MEMORY", "0")
+        # Explicitly neutralize prefetch
+        os.environ["PREFETCH_FACTOR"] = "0"
+
+    _apply_thread_cap_env(params["num_workers"])
+    params["multiprocessing_context"] = _resolve_mp_context(params["num_workers"])
+
+    return params
+
+
+def _apply_thread_cap_env(num_workers: int) -> None:
+    """Clamp thread-heavy libraries so multi-worker loaders stay stable."""
+
+    if num_workers <= 0:
+        return
+
+    # Single-thread the parquet readers inside each worker.
+    single_thread_targets = {
+        "POLARS_MAX_THREADS": 1,
+        "RAYON_NUM_THREADS": 1,
+        "ARROW_NUM_THREADS": 1,
+        "PYARROW_NUM_THREADS": 1,
+    }
+
+    for env_key, limit in single_thread_targets.items():
+        current = os.getenv(env_key)
+        try:
+            needs_update = current is None or int(current) <= 0 or int(current) > limit
+        except (TypeError, ValueError):
+            needs_update = True
+        if needs_update:
+            os.environ[env_key] = str(limit)
+
+    # Keep BLAS/NumExpr thread counts reasonable to avoid oversubscription.
+    cpu_count = os.cpu_count() or 1
+    safe_threads = max(1, min(8, cpu_count // max(1, num_workers)))
+    blas_targets = {
+        "OMP_NUM_THREADS": safe_threads,
+        "MKL_NUM_THREADS": safe_threads,
+        "OPENBLAS_NUM_THREADS": safe_threads,
+        "NUMEXPR_NUM_THREADS": safe_threads,
+    }
+
+    for env_key, limit in blas_targets.items():
+        current = os.getenv(env_key)
+        try:
+            needs_update = current is None or int(current) <= 0
+            if not needs_update:
+                needs_update = int(current) > limit
+        except (TypeError, ValueError):
+            needs_update = True
+        if needs_update:
+            os.environ[env_key] = str(limit)
+
+    logger.debug(
+        "[loader-guard] Applied thread caps for %d worker(s): polars/arrow->1, BLAS family->%d",
+        num_workers,
+        safe_threads,
+    )
+
+
+def _resolve_mp_context(num_workers: int) -> mp.context.BaseContext | None:
+    """Pick a safe multiprocessing context for DataLoader workers."""
+
+    if num_workers <= 0:
+        return None
+
+    preferred = (os.getenv("MP_START_METHOD") or "").strip().lower()
+    for candidate in (preferred, "spawn", "forkserver"):
+        if not candidate:
+            continue
+        try:
+            return mp.get_context(candidate)
+        except (ValueError, RuntimeError):
+            continue
+    return None
+
+
+def _build_loader_kwargs(params: dict[str, Any]) -> dict[str, Any]:
+    """Compose DataLoader keyword arguments from resolved parameters."""
+
+    kwargs: dict[str, Any] = {
+        "num_workers": params.get("num_workers", 0),
+        "pin_memory": params.get("pin_memory", False),
+    }
+
+    num_workers = kwargs["num_workers"]
+    prefetch = params.get("prefetch_factor")
+    if num_workers > 0 and prefetch is not None:
+        kwargs["prefetch_factor"] = prefetch
+
+    persistent = params.get("persistent_workers", False)
+    if num_workers > 0 and persistent:
+        kwargs["persistent_workers"] = persistent
+
+    mp_ctx = params.get("multiprocessing_context")
+    if mp_ctx is not None:
+        kwargs["multiprocessing_context"] = mp_ctx
+
+    return kwargs
 
 
 class StreamingParquetDataset(Dataset):
@@ -89,9 +211,9 @@ class StreamingParquetDataset(Dataset):
 
     def __init__(
         self,
-        file_paths: List[Path],
-        feature_columns: List[str],
-        target_columns: List[str],
+        file_paths: list[Path],
+        feature_columns: list[str],
+        target_columns: list[str],
         code_column: str,
         date_column: str,
         sequence_length: int = 60,
@@ -109,20 +231,59 @@ class StreamingParquetDataset(Dataset):
             normalize_online: Apply online normalization
             cache_size: Number of samples to cache in memory
         """
-        self.file_paths = file_paths
+        cleaned_paths: list[Path] = []
+        missing_paths: list[str] = []
+        for raw_path in file_paths:
+            path_obj = Path(raw_path)
+            if path_obj.exists():
+                cleaned_paths.append(path_obj)
+            else:
+                missing_paths.append(str(path_obj))
+
+        if missing_paths:
+            sample_path = missing_paths[0]
+            if len(missing_paths) > 1:
+                sample_path = f"{sample_path} (+{len(missing_paths) - 1} more)"
+            logger.warning(
+                "Skipped %d missing parquet files during dataset init (e.g. %s)",
+                len(missing_paths),
+                sample_path,
+            )
+
+        if not cleaned_paths:
+            raise FileNotFoundError("No existing parquet files found for dataset")
+
+        self.file_paths = cleaned_paths
         self.feature_columns = feature_columns
         self.target_columns = target_columns
         self.sequence_length = sequence_length
         self.normalize_online = normalize_online
         self.cache_size = cache_size
-        self.code_column = code_column
-        self.date_column = date_column
+        try:
+            self.feature_clip_value = float(os.getenv("FEATURE_CLIP_VALUE", "0"))
+        except Exception:
+            self.feature_clip_value = 0.0
+        self._clip_logged = False
+        if self.feature_clip_value <= 0:
+            logger.warning(
+                "FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow"
+            )
+
+        sample_columns = self._detect_columns(cleaned_paths[0])
+        self.code_column = self._resolve_column_name(code_column, sample_columns)
+        self.date_column = self._resolve_column_name(date_column, sample_columns)
+        logger.debug(
+            "Resolved schema columns: code=%s, date=%s (available=%s)",
+            self.code_column,
+            self.date_column,
+            sample_columns[:10],
+        )
         # 末尾時点（日次）の日付メタデータ（各ウィンドウに1つ）
         # numpy datetime64[D] に統一して軽量に保持する
-        self.sequence_dates: Optional[np.ndarray] = None
+        self.sequence_dates: np.ndarray | None = None
 
         # Initialize cache (int -> sample dict)
-        self._cache: dict[int, Dict[str, Any]] = {}
+        self._cache: dict[int, dict[str, Any]] = {}
         self._cache_indices: list[int] = []
 
         # Pre-compute per-file window offsets for fast index resolution
@@ -137,6 +298,29 @@ class StreamingParquetDataset(Dataset):
         self._cumulative_windows: list[int] = []
         self._length = 0
         self._build_index()
+
+    @staticmethod
+    def _detect_columns(sample_path: Path) -> list[str]:
+        try:
+            return pl.scan_parquet(sample_path).columns
+        except Exception as exc:
+            logger.warning("Failed to detect columns from %s: %s", sample_path, exc)
+            return []
+
+    @staticmethod
+    def _resolve_column_name(original: str, available: list[str]) -> str:
+        if original in available:
+            return original
+        lower_map = {col.lower(): col for col in available}
+        resolved = lower_map.get(original.lower())
+        if resolved is None:
+            logger.warning(
+                "Column '%s' not found in parquet (available=%s); downstream access may fail",
+                original,
+                available[:10],
+            )
+            return original
+        return resolved
 
     def _build_index(self) -> None:
         """Pre-compute cumulative window counts for each parquet file."""
@@ -244,7 +428,7 @@ class StreamingParquetDataset(Dataset):
     def __len__(self) -> int:
         return self._length
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def __getitem__(self, idx: int) -> dict[str, Any]:
         """Get a single sample."""
         # Check cache
         if idx in self._cache:
@@ -269,7 +453,10 @@ class StreamingParquetDataset(Dataset):
         if column.startswith("target_") and column.endswith("d"):
             horizon = column[len("target_") : -1]
             if horizon.isdigit():
-                return f"horizon_{int(horizon)}"
+                return f"horizon_{int(horizon)}d"
+        if column.startswith("target_") and column[len("target_") :].isdigit():
+            horizon = column[len("target_") :]
+            return f"horizon_{int(horizon)}d"
         return column
 
     @staticmethod
@@ -281,11 +468,11 @@ class StreamingParquetDataset(Dataset):
                 return values[0] if values else None
             if hasattr(value, "item"):
                 return value.item()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to convert value %r to scalar: %s", value, exc)
         return value
 
-    def _load_sample(self, idx: int) -> Dict[str, Any]:
+    def _load_sample(self, idx: int) -> dict[str, Any]:
         """Load a single sample from disk."""
         file_idx, relative_idx = self._resolve_sample_location(idx)
         file_path = self.file_paths[file_idx]
@@ -306,6 +493,15 @@ class StreamingParquetDataset(Dataset):
         features = features.astype(np.float32, copy=False)
         features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
 
+        if self.feature_clip_value > 0:
+            np.clip(features, -self.feature_clip_value, self.feature_clip_value, out=features)
+            if not self._clip_logged:
+                logger.info(
+                    "[feature-clip] Applied feature clipping at ±%.2f (set FEATURE_CLIP_VALUE to adjust)",
+                    self.feature_clip_value,
+                )
+                self._clip_logged = True
+
         # Apply online normalization if needed
         if self.normalize_online:
             features = self._normalize(features)
@@ -317,12 +513,12 @@ class StreamingParquetDataset(Dataset):
         code_series = window[self.code_column] if self.code_column in window.columns else None
         date_series = window[self.date_column] if self.date_column in window.columns else None
 
-        code_value: Optional[Any] = code_series[-1] if code_series is not None else None
-        date_value: Optional[Any] = date_series[-1] if date_series is not None else None
+        code_value: Any | None = code_series[-1] if code_series is not None else None
+        date_value: Any | None = date_series[-1] if date_series is not None else None
 
         feature_tensor = torch.tensor(features, dtype=torch.float32)
 
-        target_dict: Dict[str, torch.Tensor] = {}
+        target_dict: dict[str, torch.Tensor] = {}
         for col_name, value in zip(self.target_columns, targets_row, strict=False):
             canon = self._canonical_target_key(col_name)
             scalar = float(np.asarray(value).reshape(-1)[0])
@@ -342,7 +538,7 @@ class StreamingParquetDataset(Dataset):
 
         return sample
 
-    def _resolve_sample_location(self, idx: int) -> Tuple[int, int]:
+    def _resolve_sample_location(self, idx: int) -> tuple[int, int]:
         """Map a global sample index to (file_index, offset within file)."""
         if self._length == 0:
             raise IndexError("Dataset is empty")
@@ -370,9 +566,13 @@ class StreamingParquetDataset(Dataset):
 
     def _normalize(self, features: np.ndarray) -> np.ndarray:
         """Apply online normalization."""
-        mean = features.mean(axis=0, keepdims=True)
-        std = features.std(axis=0, keepdims=True) + 1e-8
-        return (features - mean) / std
+        # Work in float64 to avoid overflow on large magnitudes, then return float32 for torch
+        work_array = features.astype(np.float64, copy=False)
+        mean = work_array.mean(axis=0, keepdims=True)
+        std = work_array.std(axis=0, keepdims=True)
+        std = np.clip(std, 1e-8, None)
+        normalized = (work_array - mean) / std
+        return normalized.astype(np.float32, copy=False)
 
 
 class _InternalDayBatchSampler(Sampler):
@@ -382,7 +582,7 @@ class _InternalDayBatchSampler(Sampler):
         self,
         dataset: Dataset,
         batch_size: int,
-        date_indices: Optional[Dict[str, List[int]]] = None,
+        date_indices: dict[str, list[int]] | None = None,
         shuffle: bool = True,
     ):
         """
@@ -399,7 +599,7 @@ class _InternalDayBatchSampler(Sampler):
         self.date_indices = date_indices or self._build_date_indices()
         self.shuffle = shuffle
 
-    def _build_date_indices(self) -> Dict[str, List[int]]:
+    def _build_date_indices(self) -> dict[str, list[int]]:
         """Build mapping from dates to indices (placeholder)."""
         # This would need actual implementation based on dataset structure
         logger.warning("Using placeholder date indices - implement actual date grouping")
@@ -507,7 +707,7 @@ class ProductionDataModuleV2:
 
         logger.info(f"✅ Datasets created: train={len(self.train_dataset)} samples")
 
-    def _get_feature_columns(self) -> List[str]:
+    def _get_feature_columns(self) -> list[str]:
         """Get feature column names."""
         if self.config.data.schema.feature_columns:
             return self.config.data.schema.feature_columns
@@ -548,7 +748,7 @@ class ProductionDataModuleV2:
 
         return feature_cols
 
-    def _get_target_columns(self) -> List[str]:
+    def _get_target_columns(self) -> list[str]:
         """Get target column names."""
         horizons = self.config.data.time_series.prediction_horizons
         base_target = self.config.data.schema.target_column
@@ -577,21 +777,17 @@ class ProductionDataModuleV2:
             return DataLoader(
                 self.train_dataset,
                 batch_sampler=sampler,
-                num_workers=dl_params["num_workers"],
-                pin_memory=dl_params["pin_memory"],
-                prefetch_factor=dl_params["prefetch_factor"],
+                **_build_loader_kwargs(dl_params),
             )
         else:
             return DataLoader(
                 self.train_dataset,
                 batch_size=self.config.train.batch.train_batch_size,
                 shuffle=True,
-                num_workers=dl_params["num_workers"],
-                pin_memory=dl_params["pin_memory"],
-                prefetch_factor=dl_params["prefetch_factor"],
+                **_build_loader_kwargs(dl_params),
             )
 
-    def val_dataloader(self) -> Optional[DataLoader]:
+    def val_dataloader(self) -> DataLoader | None:
         """Get validation dataloader."""
         if self.val_dataset is None:
             return None
@@ -602,12 +798,10 @@ class ProductionDataModuleV2:
             self.val_dataset,
             batch_size=self.config.train.batch.val_batch_size,
             shuffle=False,
-            num_workers=dl_params["num_workers"],
-            pin_memory=dl_params["pin_memory"],
-            prefetch_factor=dl_params["prefetch_factor"],
+            **_build_loader_kwargs(dl_params),
         )
 
-    def test_dataloader(self) -> Optional[DataLoader]:
+    def test_dataloader(self) -> DataLoader | None:
         """Get test dataloader."""
         if self.test_dataset is None:
             return None
@@ -618,12 +812,10 @@ class ProductionDataModuleV2:
             self.test_dataset,
             batch_size=self.config.train.batch.val_batch_size,
             shuffle=False,
-            num_workers=dl_params["num_workers"],
-            pin_memory=dl_params["pin_memory"],
-            prefetch_factor=dl_params["prefetch_factor"],
+            **_build_loader_kwargs(dl_params),
         )
 
-    def get_data_info(self) -> Dict[str, Any]:
+    def get_data_info(self) -> dict[str, Any]:
         """Get information about the data."""
         info = {
             "train_size": len(self.train_dataset) if self.train_dataset else 0,
@@ -637,9 +829,9 @@ class ProductionDataModuleV2:
         return info
 
 
-def collate_fn(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
+def collate_fn(batch: list[tuple[torch.Tensor, torch.Tensor]]) -> tuple[torch.Tensor, torch.Tensor]:
     """Custom collate function for batching."""
-    features, targets = zip(*batch)
+    features, targets = zip(*batch, strict=False)
     features = torch.stack(features)
     targets = torch.stack(targets)
     return features, targets

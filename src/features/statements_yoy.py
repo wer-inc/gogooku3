@@ -18,11 +18,14 @@ def add_strict_yoy(stm: pl.DataFrame) -> pl.DataFrame:
     if not all(c in stm.columns for c in req):
         return stm
 
+    numeric_cols = ["NetSales", "OperatingProfit", "Profit"]
+    cast_exprs = [pl.col(col).cast(pl.Float64, strict=False).alias(col) for col in numeric_cols if col in stm.columns]
+
     df = stm.with_columns([
         pl.col("Code").cast(pl.Utf8).str.zfill(4),
         pl.col("CurrentFiscalYearStartDate").cast(pl.Utf8).str.slice(0, 4).cast(pl.Int32).alias("FY"),
         pl.col("TypeOfCurrentPeriod").cast(pl.Utf8).alias("Q"),
-    ])
+    ] + cast_exprs)
 
     prev = df.select([
         pl.col("Code"),
@@ -42,5 +45,4 @@ def add_strict_yoy(stm: pl.DataFrame) -> pl.DataFrame:
     ])
 
     return out
-
 

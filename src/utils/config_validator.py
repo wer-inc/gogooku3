@@ -30,7 +30,7 @@ class ConfigValidator:
         self.errors = []
         self.warnings = []
 
-        # Enable strict mode to forbid unknown keys
+        # Enable strict mode to forbid unknown keys during validation only
         try:
             OmegaConf.set_struct(config, True)
         except Exception as e:
@@ -59,6 +59,7 @@ class ConfigValidator:
             logger.error("Configuration validation failed:")
             for error in self.errors:
                 logger.error(f"  - {error}")
+            self._reset_struct_mode(config)
             return False
 
         if self.warnings:
@@ -67,7 +68,16 @@ class ConfigValidator:
                 logger.warning(f"  - {warning}")
 
         logger.info("Configuration validation passed")
+        self._reset_struct_mode(config)
         return True
+
+    @staticmethod
+    def _reset_struct_mode(config: DictConfig) -> None:
+        """Re-enable dynamic updates after validation completes."""
+        try:
+            OmegaConf.set_struct(config, False)
+        except Exception as exc:  # pragma: no cover - best effort cleanup
+            logger.debug(f"Could not disable struct mode post-validation: {exc}")
 
     def _check_common_errors(self, config: DictConfig):
         """Check for common configuration errors"""

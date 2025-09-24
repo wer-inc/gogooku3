@@ -2619,3 +2619,1061 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0 nohup py
 │   train.batch.pin_memory=true train.optimizer.lr=2e-4 train.trainer.max_epochs=75                         │
 │   train.trainer.precision=16-mixed train.trainer.enable_progress_bar=true > train_gpu.log 2>&1 &          │
 │   Start GPU training with correct syntax 
+
+-----
+
+2025-09-21 10:41:59,554 - run_full_dataset - INFO - Full enriched dataset saved
+2025-09-21 10:41:59,555 - run_full_dataset - INFO -   Dataset : output/datasets/ml_dataset_20240921_20250921_20250921_104156_full.parquet
+2025-09-21 10:41:59,555 - run_full_dataset - INFO -   Metadata: output/datasets/ml_dataset_20240921_20250921_20250921_104156_full_metadata.json
+2025-09-21 10:41:59,555 - run_full_dataset - INFO -   Symlink : output/ml_dataset_latest_full.parquet
+2025-09-21 10:41:59,673 - run_full_dataset - INFO - Saved TOPIX market features: output/datasets/topix_market_features_20240921_20250921.parquet
+2025-09-21 10:42:00,762 - run_full_dataset - INFO - Fetching index options 2024-09-21 → 2025-09-21
+2025-09-21 10:59:41,552 - run_full_dataset - INFO - Saved Nikkei225 option features: output/datasets/nk225_index_option_features_20240921_20250921.parquet
+
+train_20250921_021552.log
+
+tail -f _logs/train_gpu_latest/train_20250921_021552.log
+
+-----
+
+Log Review Findings
+
+  - _logs/train_gpu_latest/train_20250921_021552.log shows the GPU run booted fine but hit several structural issues
+  before the first epoch finished:
+      - Dynamic feature dimension inferred as 0; falling back to config input_dim=274 (lines around 02:17:08). The model
+  falls back to treating all 274 columns as a single block because the feature-groups defined in configs/atft/data/
+  jpx_safe.yaml don’t line up with the columns in the parquet. Result: the architecture runs, but the intended “basic/
+  technical/flow” splits never activate.
+      - Skipped 3836 parquet files shorter than sequence_length=60 (02:16:22–02:16:37). Every validation/test file has
+  only ~27 rows (see e.g. output/atft_data/val/13010.parquet), so the sliding window loader can’t build any 60-step
+  sequences. That’s why the log immediately warns Validation loader has 0 batches!.
+      - During the very first training step, the criterion reports [loss] No matching horizons found in predictions/
+  targets; returning zero loss. (02:17:21). Because no horizon keys matched, loss stays at 0 and all metrics remain 0.00
+  — the “Epoch 1/5” summary at 02:34:23 just mirrors that nothing was optimized.
+      - With loss stuck at zero, the script still wrote a “best model” checkpoint, but it’s meaningless. I’ve terminated
+  the process (kill 66719) to avoid wasting GPU time.
+
+  Dataset sanity check
+
+  - output/atft_data/train/*.parquet still contains the duplicated TOPIX columns (mkt_*_right) and Section_right, because
+  this dataset was generated before the duplicate-dropping fix. Regenerating the ATFT cache after the builder fix is
+  needed; otherwise the training data keeps the stale schema.
+
+  Why this matters
+
+  - No validation/test windows means you can’t monitor generalization or early-stop.
+  - The horizon mismatch means gradient steps are effectively no-ops; training never improves.
+  - The feature-group warnings indicate the config and exported dataset are out of sync, so even once horizons match, the
+  model would still be ignoring the intended feature families.
+
+  Recommended next steps
+
+  1. Regenerate the ATFT dataset with the updated converter so we drop the *_right duplicates and actually store 60-step
+  windows inside each parquet (e.g. rerun the converter with FORCE_CONVERT=1 after applying the fixes).
+  2. In configs/atft/data/jpx_safe.yaml, add a schema block so the loader knows which column prefix to use, e.g.:
+
+     schema:
+       date_column: date
+       code_column: code
+       target_column: target
+     (adjust names if you prefer feat_ret etc.). This prevents the dynamic-feature warning and aligns the horizon keys.
+  3. After the dataset is rebuilt, rerun make train-gpu-latest and confirm in the log that:
+      - Skipped … files no longer appears (val/test sizes ≥ sequence_length).
+      - Validation loader has 0 batches and the horizon error are gone.
+      - Epoch summaries report non-zero losses/metrics.
+  4. Once training is stable, re‑enable monitoring (make train-gpu-monitor) and keep an eye on GPU utilization / ETA.
+
+  Let me know when you’re ready to rebuild the dataset, and I can help wire in the schema fix before you rerun the
+
+  ----
+
+  2025-09-21 17:40:04,522 - run_full_dataset - INFO - Full enriched dataset saved
+2025-09-21 17:40:04,522 - run_full_dataset - INFO -   Dataset : output/datasets/ml_dataset_20240321_20250921_20250921_173958_full.parquet
+2025-09-21 17:40:04,522 - run_full_dataset - INFO -   Metadata: output/datasets/ml_dataset_20240321_20250921_20250921_173958_full_metadata.json
+2025-09-21 17:40:04,522 - run_full_dataset - INFO -   Symlink : output/ml_dataset_latest_full.parquet
+2025-09-21 17:40:04,777 - run_full_dataset - INFO - Saved TOPIX market features: output/datasets/topix_market_features_20240321_20250921.parquet
+2025-09-21 17:40:05,840 - run_full_dataset - INFO - Fetching index options 2024-03-21 → 2025-09-21
+2025-09-21 18:07:16,620 - run_full_dataset - INFO - Saved Nikkei225 option features: output/datasets/nk225_index_option_features_20240321_20250921.parquet
+
+FORCE_CONVERT=1 make train-gpu-latest もしくは事前に rm -rf output/atft_data
+
+^^^^
+
+rnal, numba.experimental.jitclass._box, google._upb._message, greenlet._greenlet (total: 201)
+Exception ignored in: <function _MultiProcessingDataLoaderIter.__del__ at 0x75e4cddd09d0>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/dataloader.py", line 1663, in __del__
+    self._shutdown_workers()
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/dataloader.py", line 1627, in _shutdown_workers
+    w.join(timeout=_utils.MP_STATUS_CHECK_INTERVAL)
+  File "/usr/lib/python3.10/multiprocessing/process.py", line 149, in join
+    res = self._popen.wait(timeout)
+  File "/usr/lib/python3.10/multiprocessing/popen_fork.py", line 40, in wait
+    if not wait([self.sentinel], timeout):
+  File "/usr/lib/python3.10/multiprocessing/connection.py", line 931, in wait
+    ready = selector.select(timeout)
+  File "/usr/lib/python3.10/selectors.py", line 416, in select
+    fd_event_list = self._selector.poll(timeout)
+  File "/usr/local/lib/python3.10/dist-packages/torch/utils/data/_utils/signal_handling.py", line 73, in handler
+    _error_if_any_worker_fails()
+RuntimeError: DataLoader worker (pid 337117) is killed by signal: Aborted. 
+
+Epoch 1:   0%|          | 0/3096 [00:52<?, ?it/s]
+Error executing job with overrides: ['data.source.data_dir=output/atft_data', 'train.batch.train_batch_size=4096', 'train.optimizer.lr=0.0002', 'train.trainer.max_epochs=75', 'train.trainer.precision=16-mixed', 'train.trainer.check_val_every_n_epoch=1', 'train.trainer.enable_progress_bar=true', 'train.batch.train_batch_size=1024', 'train.batch.val_batch_size=1536', 'train.batch.test_batch_size=1536', 'train.batch.num_workers=8', 'train.batch.prefetch_factor=4', '+train.batch.gradient_accumulation_steps=4', 'train.trainer.accumulate_grad_batches=4', 'train.trainer.precision=16-mixed', 'train.trainer.val_check_interval=1.0', 'train.optimizer.lr=2e-4', 'train.trainer.max_epochs=75', 'train.batch.num_workers=0', 'train.batch.prefetch_factor=null', 'train.batch.persistent_workers=false', 'train.batch.pin_memory=false']
+Traceback (most recent call last):
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 7048, in train
+    _ = run_phase_training(model, train_loader, val_loader, config, device)
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 2840, in run_phase_training
+    predictions = model(
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+TypeError: ATFT_GAT_FAN.forward() takes 2 positional arguments but 5 were given
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 7364, in <module>
+    train()
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/main.py", line 94, in decorated_main
+    _run_hydra(
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/_internal/utils.py", line 394, in _run_hydra
+    _run_app(
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/_internal/utils.py", line 457, in _run_app
+    run_and_report(
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/_internal/utils.py", line 223, in run_and_report
+    raise ex
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/_internal/utils.py", line 220, in run_and_report
+    return func()
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/_internal/utils.py", line 458, in <lambda>
+    lambda: hydra.run(
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/_internal/hydra.py", line 132, in run
+    _ = ret.return_value
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/core/utils.py", line 260, in return_value
+    raise self._return_value
+  File "/home/ubuntu/.local/lib/python3.10/site-packages/hydra/core/utils.py", line 186, in run_job
+    ret.return_value = task_function(task_cfg)
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 7055, in train
+    best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 5766, in run_training
+    loss, losses = criterion(outputs, targets, valid_masks)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 967, in forward
+    next(iter(predictions.values())).device
+AttributeError: 'dict' object has no attribute 'device'
+2025-09-21 13:07:37,216 - __main__ - ERROR - Training failed (non-OOM). See logs/ml_training.log for details.
+❌ Complete training pipeline failed: ATFT training failed
+
+
+-----
+
+ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 FORCE_CONVERT=1 make train-gpu-latest
+
+ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 FORCE_CONVERT=1 make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 92620).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_004836.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_004836.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_004836.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 92620
+
+------
+
+ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 FORCE_CONVERT=1
+  make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 107513).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_010520.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_010520.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_010520.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 107513
+
+---
+
+ 結論: これは「別の原因」ではなく、同系統のマルチプロセスDataLoader由来の終了時エラーです。先頭の「Thread 0x… / Extension
+  modules …」はfaulthandlerのダンプで、根本は DataLoader worker が Aborted で死んだことに起因します。
+
+  一気に解決する手順はこれでOKです（安全側をさらに強化）:
+
+  - 実行コマンド
+      - POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8
+  NUMEXPR_NUM_THREADS=8 ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0
+  FORCE_CONVERT=1 make train-gpu-latest
+  - 期待ログ
+      - [loader-guard] … single-process DataLoader が出る（これが出ればワーカーAbortは抑止されます）
+  - ログ確認
+      - tail -n 200 -f $(ls -t _logs/train_gpu_latest/*.log | head -n1)
+
+  補足:
+
+  - numpyのoverflow警告は無害（学習継続可）。ターゲット正規化側で NaN/Inf→数値化＋クリップ済みです。
+  - もし上記でもAbortedが出たら、直前200行＋[loader-guard]行の有無を共有ください。ガードが効いていない経路を特定して潰しま
+  す（必要ならspawn方式の強制や追加ログを入れます）。
+
+
+POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8
+NUMEXPR_NUM_THREADS=8 ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 FORCE_CONVERT=1 make train-gpu-latest
+
+-----
+
+OLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8
+NUMEXPR_NUM_THREADS=8 ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 FORCE_CONVERT=1 make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 233359).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_221841.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_221841.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_221841.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 233359
+
+-----
+
+NUMEXPR_NUM_THREADS=8 ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 FORCE_CONVERT=1 make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 238947).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_223024.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_223024.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250922_223024.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 238947
+
+-----
+
+改善ロードマップ（優先度順）
+
+  1. データ診断とラベル整合性の再確認
+      - scripts/models/unified_feature_converter.py 実行前後に、銘柄ごとのサンプル数とターゲット統計を CSV で
+  出力するユーティリティを追加し、_logs/data_quality/ に保存。
+      - 具体的には、変換後の output/atft_data/train/*.parquet と val/*.parquet を走査し、銘柄×日付の件数ピ
+  ボット、ターゲット平均/標準偏差/最大最小を算出。
+      - ウォークフォワード順序が崩れていないか、ターゲットが 0 近辺に潰れていないかをプロットまたは統計で
+  チェック。
+      - 目的：RankIC が固定化する根本原因（ターゲット・シフト、巨大外れ値、銘柄偏り）を把握。
+  2. 前処理の強化（外れ値抑制＋ロバスト正規化）
+      - src/gogooku3/training/atft/data_module.py の _load_sample で、環境変数 FEATURE_CLIP_VALUE を必須化
+  し、例：FEATURE_CLIP_VALUE=50 を走行時に設定。ログで [feature-clip] が出るか確認。
+      - さらに、変換パイプライン側（例：scripts/models/unified_feature_converter.py）に Winsorize 処理
+  （5%/95%）か、Median/IQR ベースのスケーリングを追加。計算は銘柄ごとのウォークフォワード統計で実装し、データ
+  リークを避ける。
+      - 必要であれば configs/data/*.yaml にクリッピング閾値や正規化設定を追加して管理。
+  3. データ分割ロジックの修正
+      - 51 行しかない銘柄がテスト→検証に吸収されている。scripts/models/unified_feature_converter.py 内で
+          1. 最低サンプル数に満たない銘柄を前処理で除外する
+          2. もしくはテスト期間を延長してサンプルを確保する
+      - 併合が起きた銘柄リストをログにまとめ、次回変換時に早期警告を出す。
+      - これにより検証・テストの分布が安定し、IC/Sharpe の評価が正しくなる。
+  4. 特徴量の冗長性削減とグラフ入力の見直し
+      - 特徴量相関を分析 (notebooks/ か scripts/analysis/ に簡易 EDA スクリプトを作成) し、非常に相関の高い
+  列・情報量の低い列をドロップ。
+      - GAT の近傍構築に使う距離指標がノイズを拾っていないか確認し、configs/model/gat.yaml （仮）で knn_k や
+  使用特徴量セットを調整。必要ならセクター・スタイルベースのエッジも追加。
+  5. 学習フェーズ設計とハイパーパラメータ調整
+      - Phase 0 を主力・Phase 1/2 を微調整に位置づけ、PHASE1_EPOCHS=3・PHASE2_EPOCHS=3・PHASE2_LR=1e-4 など短
+  縮＋低 LR に変更。scripts/train_atft.py の該当セクションで環境変数・ Hydra 設定を参照。
+      - Phase 間でバリデーションが悪化したら即座にロールバックするため、各 Phase 終了時にベストチェックポイン
+  トを output/checkpoints/phaseX_best.pt として保存。
+      - 追加で train.losses に RankIC/IC を直接最適化するロス（例：ICLoss）を組み込み、メトリクス連動の学習を
+  試す。
+  6. 実行フローの整備
+      - 改善のたびに再現性を確保するため、make data-quality-report（新規ターゲット）などの Make ターゲットを
+  定義し、前処理→診断→学習の手順を固定。
+      - 実行時コマンド例：
+
+        FEATURE_CLIP_VALUE=50 \
+        POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 \
+        OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8 \
+        ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 \
+        FORCE_CONVERT=1 PHASE1_EPOCHS=3 PHASE2_EPOCHS=3 PHASE2_LR=1e-4 \
+        make train-gpu-latest
+      - 実行後は logs/ml_training.log と _logs/train_gpu_latest/*.log を確認し、[feature-clip] の出力・テスト
+  分割警告の件数・Val Loss/RankIC の推移を記録。
+  7. 評価・レビュー
+      - 改善適用後、Phase 0 で RankIC/IC が 0.02 前後まで上昇するかを第一チェックポイントとする。
+      - 成果が出たら tests/ 配下にデータ品質チェック用ユニットテストを追加し、CI で変換結果の基本統計が閾値内
+  に収まるかを自動確認。
+
+  以上の順で実装・検証すれば、「データ品質 → モデル学習」という根本からの改善が進み、Sharpe/IC の停滞から抜け
+  出す可能性が高まります。
+
+  -----
+
+   FEATURE_CLIP_VALUE=50 \
+        POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 \
+        OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8 \
+        ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 \
+        FORCE_CONVERT=1 PHASE1_EPOCHS=3 PHASE2_EPOCHS=3 PHASE2_LR=1e-4 \
+        make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 265447).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_001800.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_001800.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_001800.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 265447
+
+-----
+
+ENABLE_WINSORIZE=1 \
+    FEATURE_WINSOR_LOWER_PCT=0.01 \
+    FEATURE_WINSOR_UPPER_PCT=0.99 \
+    FEATURE_CLIP_VALUE=50 \
+    POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 \
+    OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8 \
+    ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 \
+    FORCE_CONVERT=1 PHASE1_EPOCHS=3 PHASE2_EPOCHS=3 PHASE2_LR=1e-4 \
+    make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 270131).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_002736.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_002736.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_002736.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 270131
+
+----
+
+FEATURE_CLIP_VALUE=50         POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1         OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8         ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0         FORCE_CONVERT=1 PHASE1_EPOCHS=3 PHASE2_EPOCHS=3 PHASE2_LR=1e-4         make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 271375).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_002915.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_002915.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_002915.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 271375
+
+-----
+
+ENABLE_WINSORIZE=1 \
+  FEATURE_WINSOR_LOWER_PCT=0.01 \
+  FEATURE_WINSOR_UPPER_PCT=0.99 \
+  DROP_SHORT_SPLITS=1 \
+  FEATURE_CLIP_VALUE=50 \
+  POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 \
+  OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8 \
+  ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 \
+  FORCE_CONVERT=1 PHASE1_EPOCHS=3 PHASE2_EPOCHS=3 PHASE2_LR=1e-4 \
+  make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 274100).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_003428.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_003428.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250923_003428.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 274100
+
+
+-----
+
+変更概要
+
+  - scripts/pipelines/run_pipeline_v4_optimized.py で最小収集期間を環境変数 MIN_COLLECTION_DAYS（既定 3650 日
+  ≒ 10 年）に引き上げました。--start-date を省略したり短期間を指定しても、自動的に過去 10 年分まで遡ってデー
+  タを取得するようにしました。延長が発生するとログに開始日の補正が出力されます。
+  - Makefile に dataset-full-gpu-bg ターゲットを追加し、nohup でデータセット生成をバックグラウンド実行できる
+  ようにしました。ログは _logs/background/dataset_full_gpu_*.log に保存されます。
+
+  使い方
+
+  - 10 年分以上のデータをバックグラウンドで取得したい場合は、開始日・終了日を指定して次を実行してください。
+
+    MIN_COLLECTION_DAYS=3650 ML_PIPELINE_START_DATE=2015-01-01 \
+    make dataset-full-gpu-bg START=2015-01-01 END=2025-09-19
+    → 実際には開始日が自動でさらに過去に補正される場合があります。進捗はログ _logs/background/
+  dataset_full_gpu_<timestamp>.log を tail -f で確認できます。
+    → 実際には開始日が自動でさらに過去に補正される場合があります。進捗はログ _logs/background/
+  dataset_full_gpu_<timestamp>.log を tail -f で確認できます。
+  - 学習は既存の make train-gpu-latest が scripts/launch_train_gpu_latest.sh を経由して nohup 実行されるた
+  め、同様にバックグラウンドで動作します。ログは _logs/train_gpu_latest/ 以下に出力されます（latest.log シン
+  ボリックリンクあり）。
+
+  次のステップ
+
+  1. 上記コマンドでデータ再生成。完了後 _logs/data_quality/ のレポートで dropped_short_split の減少を確認。
+  2. 生成された最新データで make train-gpu-latest（または --safe）を起動し、logs/ml_training.log と _logs/
+  train_gpu_latest/latest.log をモニター。
+
+▌ 実行コマンドをください
+
+> 以下の 2 本でデータ再生成と学習をバックグラウンド実行できます。必要に応じて日付・パラメータを調整してくだ
+  さい。
+
+  # 1) データセット生成（最低10年ぶんを自動確保）
+  MIN_COLLECTION_DAYS=3650 ML_PIPELINE_START_DATE=2015-01-01 \
+  make dataset-full-gpu-bg START=2015-10-01 END=2025-09-19
+
+  # 2) 新データで学習（winsorize/クリップ込み、既定で nohup 実行）
+  ENABLE_WINSORIZE=1 \
+  FEATURE_WINSOR_LOWER_PCT=0.01 \
+  FEATURE_WINSOR_UPPER_PCT=0.99 \
+  DROP_SHORT_SPLITS=1 \
+  FEATURE_CLIP_VALUE=50 \
+  POLARS_MAX_THREADS=1 ARROW_NUM_THREADS=1 \
+  OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8 \
+  ALLOW_UNSAFE_DATALOADER=0 TRAIN_NUM_WORKERS=0 TRAIN_PREFETCH=0 PERSISTENT_WORKERS=0 PIN_MEMORY=0 \
+  FORCE_CONVERT=1 PHASE1_EPOCHS=3 PHASE2_EPOCHS=3 PHASE2_LR=1e-4 \
+  make train-gpu-latest
+
+  - 生成ログ: _logs/background/dataset_full_gpu_<timestamp>.log
+  - 学習ログ: _logs/train_gpu_latest/latest.log と logs/ml_training.log
+
+  tail -f などで進捗を確認しつつ、完了後は _logs/data_quality/ のレポートで dropped_short_split が大幅に減っ
+  ているかチェックしてください。
+
+
+tail -f _logs/background/dataset_full_gpu_20250923_004514.log
+
+MIN_COLLECTION_DAYS=3650 ML_PIPELINE_START_DATE=2015-01-01 \
+  make dataset-full-gpu-bg START=2015-01-01 END=2025-09-19
+🚀 Launching dataset-full-gpu in background (log: _logs/background/dataset_full_gpu_20250923_051052.log)
+
+---
+
+ML_PIPELINE_START_DATE=2015-09-23 \
+    make dataset-full-gpu START=2015-09-23 END=2025-09-19
+🚀 Running dataset generation with GPU-ETL enabled
+2025-09-23 10:49:20,037 - run_full_dataset - INFO - GPU-ETL: enabled (will use RAPIDS/cuDF if available)
+<frozen importlib._bootstrap_external>:1184: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+<frozen importlib._bootstrap_external>:1184: FutureWarning: The cuda.cuda module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.driver module instead.
+2025-09-23 10:49:20,874 - run_full_dataset - INFO - RMM initialized with pool=70GB
+2025-09-23 19:49:20,875 - run_full_dataset - INFO - === STEP 0: Prepare trade-spec for flow features ===
+2025-09-23 19:49:21,989 - run_full_dataset - INFO - Fetching trade-spec from 2014-07-30 to 2025-09-19 (lookback 420 days)
+2025-09-23 19:49:21,989 - run_full_dataset - INFO - Fetching weekly margin interest for margin features
+2025-09-23 19:49:21,989 - run_full_dataset - INFO - Fetching daily margin interest for daily credit features
+2025-09-23 19:49:21,989 - run_full_dataset - INFO - Fetching listed_info for sector/market enrichment
+2025-09-23 19:49:23,739 - scripts.components.market_code_filter - INFO - Market Codeフィルタリング: 4408 → 3796 銘柄
+2025-09-23 19:49:23,741 - scripts.components.market_code_filter - INFO - 市場別銘柄数:
+2025-09-23 19:49:23,741 - scripts.components.market_code_filter - INFO -   0111: プライム - 1618銘柄
+2025-09-23 19:49:23,741 - scripts.components.market_code_filter - INFO -   0112: スタンダード - 1574銘柄
+2025-09-23 19:49:23,741 - scripts.components.market_code_filter - INFO -   0113: グロース - 604銘柄
+
+-----
+
+2025-09-23 20:37:12,840 - run_full_dataset - INFO - Full enriched dataset saved
+2025-09-23 20:37:12,840 - run_full_dataset - INFO -   Dataset : output/datasets/ml_dataset_20150923_20250919_20250923_203638_full.parquet
+2025-09-23 20:37:12,840 - run_full_dataset - INFO -   Metadata: output/datasets/ml_dataset_20150923_20250919_20250923_203638_full_metadata.json
+2025-09-23 20:37:12,840 - run_full_dataset - INFO -   Symlink : output/ml_dataset_latest_full.parquet
+2025-09-23 20:37:14,194 - run_full_dataset - INFO - Saved TOPIX market features: output/datasets/topix_market_features_20150923_20250919.parquet
+2025-09-23 20:37:15,318 - run_full_dataset - INFO - Fetching index options 2015-09-23 → 2025-09-19
+
+---
+
+make dataset-full-gpu-bg START=2015-10-01 END=2025-09-19
+🚀 Launching dataset-full-gpu in background (log: _logs/background/dataset_full_gpu_20250923_223816.log)
+
+ tail -f _logs/background/dataset_full_gpu_20250923_223816.log
+2025-09-24 08:27:25,534 - src.pipeline.full_dataset - INFO - Post-alignment column check: MarketCode=True, sector33_code=True, shares_outstanding=True, stmt_yoy_sales=True
+2025-09-24 08:27:25,637 - src.pipeline.full_dataset - INFO - Aligned dataset to DATASET.md exact schema (n=198)
+2025-09-24 08:27:28,547 - src.pipeline.full_dataset - INFO - De-duplicated (Code, Date) pairs with keep=last
+2025-09-24 08:27:30,979 - src.pipeline.full_dataset - INFO - Sorted dataset by (Code, Date) prior to save
+2025-09-24 08:28:05,340 - run_full_dataset - INFO - Full enriched dataset saved
+2025-09-24 08:28:05,340 - run_full_dataset - INFO -   Dataset : output/datasets/ml_dataset_20151001_20250919_20250924_082730_full.parquet
+2025-09-24 08:28:05,341 - run_full_dataset - INFO -   Metadata: output/datasets/ml_dataset_20151001_20250919_20250924_082730_full_metadata.json
+2025-09-24 08:28:05,341 - run_full_dataset - INFO -   Symlink : output/ml_dataset_latest_full.parquet
+2025-09-24 08:28:06,644 - run_full_dataset - INFO - Saved TOPIX market features: output/datasets/topix_market_features_20151001_20250919.parquet
+2025-09-24 08:28:07,786 - run_full_dataset - INFO - Fetching index options 2015-10-01 → 2025-09-19
+
+---
+
+SEQUENCE_LENGTH=60 MIN_VAL_TEST_ROWS=60 DROP_SHORT_SPLITS=0 SEQ_LEN=60 LABEL_CLIP_BPS_MAP='1:3000,5:4500,10:7000,20:10000'
+  PHASE_LOSS_WEIGHTS='0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.1;2:quantile=1.0,sharpe=0.2,rankic=0.1,t_nll=0.7' make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 45363).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_012232.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_012232.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_012232.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 45363
+
+
+export SEQUENCE_LENGTH=60 MIN_VAL_TEST_ROWS=60 DROP_SHORT_SPLITS=0 SEQ_LEN=60
+export EARLY_STOP_METRIC=val_loss OUTPUT_NOISE_STD=0.01 HEAD_NOISE_STD=0.03 USE_DAY_BATCH=1
+export GRAPH_CORR_METHOD=ewm_demean EWM_HALFLIFE=20 SHRINKAGE_GAMMA=0.2 GRAPH_K=20 GRAPH_EDGE_THR=0.20 GRAPH_SYMMETRIC=1
+export LABEL_CLIP_BPS_MAP='1:2500,5:4000,10:6500,20:9000'
+export PHASE_LOSS_WEIGHTS='0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.15;2:quantile=1.0,sharpe=0.25,rankic=0.12,t_nll=0.7'
+FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999'
+'prediction.horizon_weights=[1.0,1.25,1.0,0.75]' 'train.batch.num_workers=12' 'train.batch.prefetch_factor=6' '+train.batch.gradient_accumulation_steps=2'
+'train.trainer.accumulate_grad_batches=2'
+sleep 8 && make train-gpu-monitor
+
+-----
+
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ export SEQUENCE_LENGTH=60 MIN_VAL_TEST_ROWS=60 DROP_SHORT_SPLITS=0 SEQ_LEN=60; export EARLY_STOP_METRIC=val_loss OUTPUT_NOISE_STD=0.01 HEAD_NOISE_STD=0.03 USE_DAY_BATCH=1;
+  export GRAPH_CORR_METHOD=ewm_demean EWM_HALFLIFE=20 SHRINKAGE_GAMMA=0.2 GRAPH_K=20 GRAPH_EDGE_THR=0.20 GRAPH_SYMMETRIC=1; export LABEL_CLIP_BPS_MAP='1:2500,5:4000,10:6500,20:9000';
+  export PHASE_LOSS_WEIGHTS='0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.15;2:quantile=1.0,sharpe=0.25,rankic=0.12,t_nll=0.7'; FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu
+  make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999' 'prediction.horizon_weights=[1.0,1.25,1.0,0.75]' 'train.batch.num_workers=12'
+  'train.batch.prefetch_factor=6' '+train.batch.gradient_accumulation_steps=2' 'train.trainer.accumulate_grad_batches=2'
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 130037).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043101.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043101.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043101.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 130037
+train.batch.prefetch_factor=6: command not found
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ export SEQUENCE_LENGTH=60 MIN_VAL_TEST_ROWS=60 DROP_SHORT_SPLITS=0 SEQ_LEN=60; export EARLY_STOP_METRIC=val_loss OUTPUT_NOISE_STD=0.01 HEAD_NOISE_STD=0.03 USE_DAY_BATCH=1;
+  export GRAPH_CORR_METHOD=ewm_demean EWM_HALFLIFE=20 SHRINKAGE_GAMMA=0.2 GRAPH_K=20 GRAPH_EDGE_THR=0.20 GRAPH_SYMMETRIC=1; export LABEL_CLIP_BPS_MAP='1:2500,5:4000,10:6500,20:9000';
+  export PHASE_LOSS_WEIGHTS='0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.15;2:quantile=1.0,sharpe=0.25,rankic=0.12,t_nll=0.7'
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_deca
+y=0.999' 'prediction.horizon_weights=[1.0,1.25,1.0,0.75]' 'train.batch.num_workers=12' 'train.batch.prefetch_factor=6' '+train.batch.gradient_accumulation_steps=2'
+  'train.trainer.accumulate_grad_batches=2'
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 131914).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043334.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043334.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043334.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 131914
+train.trainer.accumulate_grad_batches=2: command not found
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999' 'prediction.horizon_weights=[1.0,1.25,1.0,0.75]' 'train.batch.num_workers=12' 'train.batch.prefetch_factor=6' '+train.batch.gradient_accumulation_steps=2'
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 132043).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043337.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043337.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_043337.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 132043
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ 
+-----
+
+export TRAIN_NUM_WORKERS=12 TRAIN_PREFETCH=6 TRAIN_ACCUMULATION=2; export SEQUENCE_LENGTH=60 MIN_VAL_TEST_ROWS=60 DROP_SHORT_SPLITS=0
+SEQ_LEN=60; export EARLY_STOP_METRIC=val_loss OUTPUT_NOISE_STD=0.01 HEAD_NOISE_STD=0.03 USE_DAY_BATCH=1; export GRAPH_CORR_METHOD=ewm_demean
+EWM_HALFLIFE=15 SHRINKAGE_GAMMA=0.15 GRAPH_K=25 GRAPH_EDGE_THR=0.22 GRAPH_SYMMETRIC=1; export LABEL_CLIP_BPS_MAP='1:2500,5:4000,10:6500,20:9000'; export
+PHASE_LOSS_WEIGHTS='0:huber=0.3,quantile=1.0;1:quantile=1.0,sharpe=0.18;2:quantile=1.0,sharpe=0.30,rankic=0.15,t_nll=0.7'
+
+FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999' 'prediction.horizon_weights=[1.0,1.3,1.0,0.7]' 'train.trainer.precision=bf16-mixed'
+
+
+-----
+
+FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999' 'prediction.horizon_weights=[1.0,1.3,1.0,0.7]' 'train.trainer.precision=bf16-mixed'
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 170971).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_060206.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_060206.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_060206.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 170971
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_060206.log
+2025-09-24 06:02:08,833 - __main__ - INFO - ✅ ML dataset loaded: (9014598, 198)
+2025-09-24 06:02:08,833 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-09-24 06:02:08,838 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-09-24 06:02:08,876 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-09-24 06:02:08,876 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-09-24 06:02:08,876 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 4445 train files
+2025-09-24 06:02:08,876 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-09-24 06:02:08,892 - __main__ - INFO - [pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)
+2025-09-24 06:02:08,892 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=4096 train.optimizer.lr=0.0002 train.trainer.max_epochs=75 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true train.batch.train_batch_size=1024 train.batch.val_batch_size=1536 train.batch.test_batch_size=1536 train.batch.num_workers=12 train.batch.prefetch_factor=6 train.batch.persistent_workers=true +train.batch.gradient_accumulation_steps=2 train.trainer.accumulate_grad_batches=2 train.trainer.precision=16-mixed train.trainer.val_check_interval=1.0 train.optimizer.lr=2e-4 train.trainer.max_epochs=75 train.batch.pin_memory=true
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+[2025-09-24 06:02:15,552][__main__][INFO] - Starting production training...
+[2025-09-24 06:02:15,566][__main__][INFO] - [EnvOverride] train.trainer.precision = bf16-mixed
+[2025-09-24 06:02:15,567][__main__][INFO] - [EnvOverride] DEGENERACY_GUARD = True (via environment)
+[2025-09-24 06:02:15,567][__main__][INFO] - [EnvOverride] OUTPUT_NOISE_STD = 0.02 (via environment)
+[2025-09-24 06:02:15,568][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-24 06:02:15,570][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-24 06:02:15,573][__main__][INFO] - Using device: cuda
+[2025-09-24 06:02:15,573][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-24 06:02:15,573][__main__][INFO] - GPU Memory: 85.1GB
+[2025-09-24 06:02:15,615][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-24 06:02:15,617][__main__][INFO] - Found hidden_size=64 at path: model.hidden_size
+[2025-09-24 06:02:15,617][__main__][INFO] - [PE] Set model.tft.temporal.max_sequence_length=60
+[2025-09-24 06:02:15,618][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass.
+[2025-09-24 06:02:15,618][__main__][INFO] - Setting up data module...
+[2025-09-24 06:02:15,619][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-24 06:02:15,619][__main__][INFO] - [Hydra-Struct] data group keys: ['data_source', 'source', 'schema', 'time_series', 'split', 'validation', 'loader', 'normalization', 'graph_builder', 'use_day_batch_sampler', 'features', 'graph']
+[2025-09-24 06:02:15,694][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 
+
+---
+
+> はい、まだ上を目指せます。今の良い流れ（Val Loss 0.0539）を起点に、効果が出やすい順で打ち手とコピペ実行コマンドを用意しました。
+
+  【即効セット（Sharpe直叩き＋終盤ブースト）】
+
+  - ねらい: 決定レイヤを段階的にON、Sharpe/RankIC/T-NLLを終盤で強めて最終成績を押し上げ
+  - 実行（GPU、既存データそのまま）
+      - make train-gpu-stop
+      - FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-integrated CONFIG_PATH=configs/atft CONFIG_NAME=train/decision_layer_scheduled.yaml 'train.stability.use_ema_teacher=true'
+  'train.stability.ema_decay=0.999'
+      - 監視: sleep 8 && make train-gpu-monitor
+
+  【5〜10%の追加上振れを狙うセット（シード×アンサンブル）】
+
+  - ねらい: 分散低減と一貫性向上（Val/Liveのブレを抑えてSharpeを底上げ）
+  - 実行（3シード例）
+      - python scripts/production_rollout.py --seeds 42,43,44
+      - python scripts/postprocess/ensemble_predictions.py --inputs runs/seed_*/predictions_val.parquet --output runs/ensemble/predictions_val.parquet
+      - python scripts/postprocess/neutralize_and_clip.py --input runs/ensemble/predictions_val.parquet --output runs/ensemble/predictions_val_neutral.parquet --by market,sector
+  --clip-quantile 0.995 --cap 0.01 --gross 1.0
+
+  【グラフ×ホライズンの局所HPO（短時間）】
+
+  - ねらい: 相関グラフとHorizon Weightsの最適域を素早く探索
+  - 実行（40試行/1h目安）
+      - HPO_TRIALS=40 HPO_TIMEOUT=3600 OPTUNA_STORAGE_URL=sqlite:///output/hpo/optuna.db make hpo-run
+  - おすすめ探索レンジ（HPO側で提案済み）
+      - EWM_HALFLIFE ∈ {10,15,20,30}, SHRINKAGE_GAMMA ∈ [0.05,0.3],
+      - GRAPH_K ∈ {15,20,25}, GRAPH_EDGE_THR ∈ [0.18,0.28],
+      - Horizon Weights 5d強め（例: [1.0,1.25〜1.4,1.0,0.6〜0.8]）
+
+  【現行ラインの微調整（軽量）】
+
+  - Horizon重みをやや強め（5d寄り）＋EMA強化
+      - make train-gpu-stop
+      - FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'prediction.horizon_weights=[1.0,1.3,1.0,0.7]' 'train.stability.use_ema_teacher=true'
+  'train.stability.ema_decay=0.9995'
+  - グラフ微調整（短期相関を強めつつノイズ抑制）
+      - GRAPH_CORR_METHOD=ewm_demean EWM_HALFLIFE=15 SHRINKAGE_GAMMA=0.15 GRAPH_K=25 GRAPH_EDGE_THR=0.22 GRAPH_SYMMETRIC=1 FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-
+  latest
+
+  【攻めのオプション（メモリに余裕があれば）】
+
+  - シーケンス長を80に延伸（長期依存を追加学習）
+      - 変換から再実行:
+          - make train-gpu-stop
+          - FORCE_CONVERT=1 DROP_SHORT_SPLITS=0 MIN_VAL_TEST_ROWS=80 python scripts/models/unified_feature_converter.py --input output/datasets/ml_dataset_latest_full.parquet --output
+  output/atft_data
+          - SEQUENCE_LENGTH=80 SEQ_LEN=80 FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest
+      - うまくいけばさらにVal Lossの下押しが見込めます（ただしVRAM要件は増えます）
+
+  おすすめ順は「決定レイヤ段階ON」→「シード×アンサンブル」→「短時間HPO」です。まずは決定レイヤ版を1本通し、その後にシード×アンサンブルで実運用のブレを抑えましょう。必要なら、どのセッ
+  トから走らせるか指示ください。こちらでコマンド投入と進行監視まで行います。
+
+FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.9995' 'prediction.horizon_weights=[1.0,1.3,1.0,0.7]' 'train.batch.num_workers=12' 'train.batch.prefetch_factor=6' '+train.batch.gradient_accumulation_steps=2' 'train.trainer.accumulate_grad_batches=2'
+
+-----
+
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu make train-gpu-latest 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.9995' 'prediction.horizon_weights=[1.0,1.3,1.0,0.7]' 'train.batch.num_workers=12' 'train.batch.prefetch_factor=6' '+train.batch.gradient_accumulation_steps=2' 'train.trainer.accumulate_grad_batches=2'
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 221165).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_080005.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_080005.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_080005.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 221165
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ 
+
+----
+
+FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu python scripts/integrated_ml_training_pipeline.py --data-path output/datasets/ml_dataset_latest_full.parquet --adv-
+graph-train --config-path configs/atft --config-name train/decision_layer_scheduled.yaml 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999'
+'prediction.save_val_predictions=true' 'prediction.val_output_path=runs/last/predictions_val.parquet' 'train.batch.train_batch_size=1024' 'train.batch.val_batch_size=1536'
+'train.batch.num_workers=12' 'train.batch.prefetch_factor=6' '+train.batch.gradient_accumulation_steps=2' 'train.trainer.accumulate_grad_batches=2' 'train.trainer.precision=bf16-mixed'
+============================================================
+Complete ATFT-GAT-FAN Training Pipeline
+Target Sharpe Ratio: 0.849
+============================================================
+2025-09-24 12:04:55,712 - __main__ - INFO - 🚀 Complete ATFT-GAT-FAN Training Pipeline started
+2025-09-24 12:04:55,712 - __main__ - INFO - 🎯 Target Sharpe Ratio: 0.849
+2025-09-24 12:04:55,713 - __main__ - INFO - 🔧 Setting up ATFT-GAT-FAN environment...
+2025-09-24 12:04:55,713 - __main__ - INFO - ✅ ATFT-GAT-FAN environment setup completed
+2025-09-24 12:04:55,713 - __main__ - INFO - 📊 Loading and validating ML dataset...
+2025-09-24 12:04:55,714 - __main__ - INFO - 📂 Loading ML dataset from: output/datasets/ml_dataset_latest_full.parquet
+2025-09-24 12:04:56,719 - __main__ - INFO - ✅ ML dataset loaded: (9014598, 198)
+2025-09-24 12:04:56,720 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-09-24 12:04:56,725 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-09-24 12:04:56,762 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-09-24 12:04:56,763 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-09-24 12:04:56,763 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 4445 train files
+2025-09-24 12:04:56,763 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-09-24 12:04:56,899 - __main__ - INFO - [pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)
+2025-09-24 12:04:56,900 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=4096 train.optimizer.lr=0.0002 train.trainer.max_epochs=75 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true train.batch.pin_memory=true train.batch.prefetch_factor=4 train.batch.num_workers=8 train.batch.persistent_workers=true
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+[2025-09-24 12:05:02,957][__main__][INFO] - Starting production training...
+[2025-09-24 12:05:02,971][__main__][INFO] - [EnvOverride] train.trainer.precision = bf16-mixed
+[2025-09-24 12:05:02,971][__main__][INFO] - [EnvOverride] DEGENERACY_GUARD = True (via environment)
+[2025-09-24 12:05:02,971][__main__][INFO] - [EnvOverride] OUTPUT_NOISE_STD = 0.02 (via environment)
+[2025-09-24 12:05:02,972][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-24 12:05:02,974][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-24 12:05:02,977][__main__][INFO] - Using device: cuda
+[2025-09-24 12:05:02,977][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-24 12:05:02,977][__main__][INFO] - GPU Memory: 85.1GB
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+[2025-09-24 12:05:04,832][src.utils.monitoring][WARNING] - W&B initialization failed: first argument must be callable or None
+[2025-09-24 12:05:04,838][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-24 12:05:04,839][__main__][INFO] - Found hidden_size=64 at path: model.hidden_size
+[2025-09-24 12:05:04,840][__main__][INFO] - [PE] Set model.tft.temporal.max_sequence_length=60
+[2025-09-24 12:05:04,841][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass.
+[2025-09-24 12:05:04,841][__main__][INFO] - Setting up data module...
+[2025-09-24 12:05:04,841][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-24 12:05:04,841][__main__][INFO] - [Hydra-Struct] data group keys: ['data_source', 'source', 'schema', 'time_series', 'split', 'validation', 'loader', 'normalization', 'graph_builder', 'use_day_batch_sampler', 'features', 'graph']
+[2025-09-24 12:05:05,107][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
+[2025-09-24 12:05:05,131][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
+[2025-09-24 12:05:05,165][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+
+-----
+
+短く結論: 今のログで実害のあるエラーは出ていませんが、気になる点がいくつかあります。性能・安定のため次回から下記の微修正を入れるのがおすすめです。
+
+  - DataLoaderが単一プロセス化
+      - ログ: “[loader-guard] Forcing DataLoader into single-process mode (num_workers=0)”
+      - 影響: 学習が遅くなり、GPUの食い付きが落ちます
+      - 対処（次回起動前に実行）:
+          - export ALLOW_UNSAFE_DATALOADER=1 TRAIN_NUM_WORKERS=12 TRAIN_PREFETCH=6
+  - FEATURE_CLIP_VALUE が 0（無効）
+      - ログ: “FEATURE_CLIP_VALUE is 0; set a positive bound…”
+      - 影響: 外れ値による数値不安定化のリスク
+      - 対処（次回起動前に実行）:
+          - export FEATURE_CLIP_VALUE=10
+  - 動的特徴次元の推定が 0
+      - ログ: “Dynamic feature dimension inferred as 0; falling back to config input_dim=189 / Expected ~59, got 0”
+      - 実害: モデルは input_dim=189 にフォールバックしているので致命的ではありませんが、スキーマ由来の自動推定が効いていません
+      - 対処: 今のままでも学習は問題なし。厳密に直すなら features のグルーピング定義（ML_DATASET_COLUMNS.md 準拠）を明示設定します
+  - Weights & Biases 初期化の警告
+      - ログ: “W&B initialization failed: first argument must be callable or None”
+      - 実害: 記録がW&Bに載らないだけ。不要なら無効化で静かに
+      - 対処（任意）:
+          - export WANDB_DISABLED=1 WANDB_MODE=offline
+  - 予測ファイル保存の明示
+      - 以前のランで “Predictions file not found” がありました。今回の構成では自動エクスポートが効くはずですが、確実に残すならオプションを明示してください
+      - 起動時オーバーライド例:
+          - 'prediction.save_val_predictions=true' 'prediction.val_output_path=runs/last/predictions_val.parquet'
+
+  上の改善を含めた、次回の起動コマンド（コピペ可）
+
+  - 停止
+      - make train-gpu-stop || true
+  - 環境調整
+      - export ALLOW_UNSAFE_DATALOADER=1 TRAIN_NUM_WORKERS=12 TRAIN_PREFETCH=6 FEATURE_CLIP_VALUE=10
+  - 再開（決定レイヤ段階ON＋予測保存）
+      - FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu python scripts/integrated_ml_training_pipeline.py --data-path output/datasets/ml_dataset_latest_full.parquet --adv-
+  graph-train --config-path configs/atft --config-name train/decision_layer_scheduled.yaml 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999'
+  'prediction.save_val_predictions=true' 'prediction.val_output_path=runs/last/predictions_val.parquet'
+
+  補足
+
+  - 既存ランは正常に走り始めています（GPU検出/バッチ数OK）。上記は“次回からの改善”です。今のランは続行で問題ありません。
+
+  -----
+
+   FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu python scripts/integrated_ml_training_pipeline.py --data-path output/datasets/ml_dataset_latest_full.parquet --adv-
+  graph-train --config-path configs/atft --config-name train/decision_layer_scheduled.yaml 'train.stability.use_ema_teacher=true' 'train.stability.ema_decay=0.999'
+  'prediction.save_val_predictions=true' 'prediction.val_output_path=runs/last/predictions_val.parquet'
+============================================================
+Complete ATFT-GAT-FAN Training Pipeline
+Target Sharpe Ratio: 0.849
+============================================================
+2025-09-24 12:10:52,694 - __main__ - INFO - 🚀 Complete ATFT-GAT-FAN Training Pipeline started
+2025-09-24 12:10:52,694 - __main__ - INFO - 🎯 Target Sharpe Ratio: 0.849
+2025-09-24 12:10:52,694 - __main__ - INFO - 🔧 Setting up ATFT-GAT-FAN environment...
+2025-09-24 12:10:52,694 - __main__ - INFO - ✅ ATFT-GAT-FAN environment setup completed
+2025-09-24 12:10:52,694 - __main__ - INFO - 📊 Loading and validating ML dataset...
+2025-09-24 12:10:52,695 - __main__ - INFO - 📂 Loading ML dataset from: output/datasets/ml_dataset_latest_full.parquet
+2025-09-24 12:10:53,699 - __main__ - INFO - ✅ ML dataset loaded: (9014598, 198)
+2025-09-24 12:10:53,699 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-09-24 12:10:53,704 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-09-24 12:10:53,742 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-09-24 12:10:53,742 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-09-24 12:10:53,742 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 4445 train files
+2025-09-24 12:10:53,742 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-09-24 12:10:53,871 - __main__ - INFO - [pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)
+2025-09-24 12:10:53,871 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=4096 train.optimizer.lr=0.0002 train.trainer.max_epochs=75 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true train.batch.pin_memory=true train.batch.prefetch_factor=4 train.batch.num_workers=8 train.batch.persistent_workers=true
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+[2025-09-24 12:10:59,925][__main__][INFO] - Starting production training...
+[2025-09-24 12:10:59,938][__main__][INFO] - [EnvOverride] train.trainer.precision = bf16-mixed
+[2025-09-24 12:10:59,938][__main__][INFO] - [EnvOverride] DEGENERACY_GUARD = True (via environment)
+[2025-09-24 12:10:59,938][__main__][INFO] - [EnvOverride] OUTPUT_NOISE_STD = 0.02 (via environment)
+[2025-09-24 12:10:59,939][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-24 12:10:59,941][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-24 12:10:59,943][__main__][INFO] - Using device: cuda
+[2025-09-24 12:10:59,943][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-24 12:10:59,943][__main__][INFO] - GPU Memory: 85.1GB
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+[2025-09-24 12:11:00,468][src.utils.monitoring][WARNING] - W&B initialization failed: first argument must be callable or None
+[2025-09-24 12:11:00,474][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-24 12:11:00,475][__main__][INFO] - Found hidden_size=64 at path: model.hidden_size
+[2025-09-24 12:11:00,476][__main__][INFO] - [PE] Set model.tft.temporal.max_sequence_length=60
+[2025-09-24 12:11:00,477][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass.
+[2025-09-24 12:11:00,477][__main__][INFO] - Setting up data module...
+[2025-09-24 12:11:00,477][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-24 12:11:00,478][__main__][INFO] - [Hydra-Struct] data group keys: ['data_source', 'source', 'schema', 'time_series', 'split', 'validation', 'loader', 'normalization', 'graph_builder', 'use_day_batch_sampler', 'features', 'graph']
+[2025-09-24 12:11:00,544][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
+[2025-09-24 12:11:00,568][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
+[2025-09-24 12:11:00,804][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-24 12:11:33,294][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 6045396 windows across 4445 files
+[2025-09-24 12:11:33,357][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-24 12:11:47,454][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1096328 windows across 4387 files
+[2025-09-24 12:11:47,492][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-24 12:12:01,305][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1092896 windows across 4246 files
+[2025-09-24 12:12:01,315][src.gogooku3.training.atft.data_module][INFO] - ✅ Datasets created: train=6045396 samples
+[2025-09-24 12:12:01,318][__main__][INFO] - Creating data loaders...
+[2025-09-24 12:12:02,495][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 2330 days, 24440 batches
+[2025-09-24 12:12:02,625][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 1658 days, 5383 batches
+[2025-09-24 12:12:02,625][__main__][INFO] - DayBatchSampler enabled (min_nodes_per_day=20)
+[2025-09-24 12:12:02,968][__main__][INFO] - [input_dim] detected from data: F=189 (was: 13)
+[2025-09-24 12:12:02,968][__main__][INFO] - ✅ Train batches: 24440
+[2025-09-24 12:12:02,968][__main__][INFO] - ✅ Val batches: 5383
+[2025-09-24 12:12:02,968][__main__][INFO] - Validating label normalization...
+[2025-09-24 12:12:04,617][__main__][INFO] - Target horizon_10d: mean=-0.022358, std=0.064720
+[2025-09-24 12:12:04,617][__main__][INFO] - Target horizon_1d: mean=-0.005047, std=0.020259
+[2025-09-24 12:12:04,617][__main__][INFO] - Target horizon_20d: mean=-0.094974, std=0.074869
+[2025-09-24 12:12:04,617][__main__][INFO] - Target horizon_5d: mean=0.001209, std=0.041151
+[2025-09-24 12:12:05,260][__main__][INFO] - [debug-first-batch-keys] ['features', 'targets', 'codes', 'date']
+[2025-09-24 12:12:05,260][__main__][INFO] - [debug-first-batch-type] features: <class 'torch.Tensor'>
+[2025-09-24 12:12:05,261][__main__][INFO] - [debug-first-batch-type] targets: <class 'dict'>
+[2025-09-24 12:12:05,261][__main__][INFO] - [debug-first-batch-type] codes: <class 'list'>
+[2025-09-24 12:12:05,261][__main__][INFO] - [debug-first-batch-type] date: <class 'str'>
+[2025-09-24 12:12:05,307][__main__][INFO] - Initializing model...
+[2025-09-24 12:12:05,308][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension inferred as 0; falling back to config input_dim=189
+[2025-09-24 12:12:05,308][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Feature dimensions - Basic: 0, Technical: 0, MA-derived: 0, Interaction: 0, Flow: 0, Returns: 0
+[2025-09-24 12:12:05,308][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Total current features: 0, Historical: 0, Total: 189
+[2025-09-24 12:12:05,308][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Feature count mismatch! Expected ~59, got 0
+[2025-09-24 12:12:05,308][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Please verify data configuration matches ML_DATASET_COLUMNS.md
+[2025-09-24 12:12:05,477][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - ATFT-GAT-FAN initialized with 189 dynamic features
+[2025-09-24 12:12:05,764][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Adjusting backbone projection input dim from 128 to 64
+[2025-09-24 12:12:05,805][__main__][INFO] - ATFT-GAT-FAN model parameters: 2,739,362
+[2025-09-24 12:12:05,806][__main__][WARNING] - runtime_guards module not found, skipping guards
+[2025-09-24 12:12:05,809][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads
+[2025-09-24 12:12:05,809][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d
+[2025-09-24 12:12:05,809][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.0
+[2025-09-24 12:12:05,809][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.1
+[2025-09-24 12:12:05,809][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.2
+[2025-09-24 12:12:05,810][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.3
+[2025-09-24 12:12:05,810][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d
+[2025-09-24 12:12:05,810][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.0
+[2025-09-24 12:12:05,810][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.1
+[2025-09-24 12:12:05,810][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.2
+[2025-09-24 12:12:05,810][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.3
+[2025-09-24 12:12:05,811][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d
+[2025-09-24 12:12:05,811][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.0
+[2025-09-24 12:12:05,811][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.1
+[2025-09-24 12:12:05,811][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.2
+[2025-09-24 12:12:05,811][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.3
+[2025-09-24 12:12:05,811][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.4
+[2025-09-24 12:12:05,811][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.5
+[2025-09-24 12:12:05,812][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d
+[2025-09-24 12:12:05,812][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.0
+[2025-09-24 12:12:05,812][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.1
+[2025-09-24 12:12:05,812][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.2
+[2025-09-24 12:12:05,812][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.3
+[2025-09-24 12:12:05,812][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.4
+[2025-09-24 12:12:05,812][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.5
+[2025-09-24 12:12:05,822][__main__][INFO] - [OPT-AUDIT] ✓ Optimizer covers 2739362/2739362 trainable params
+[2025-09-24 12:12:05,823][__main__][INFO] - Batch size: 4096
+[2025-09-24 12:12:05,823][__main__][INFO] - Gradient accumulation steps: 1
+[2025-09-24 12:12:05,823][__main__][INFO] - Effective batch size: 4096
+[2025-09-24 12:12:05,823][__main__][INFO] - [PhaseTraining] enabled; running phase-wise training
+[2025-09-24 12:12:05,823][__main__][INFO] - ================================================================================
+[2025-09-24 12:12:05,823][__main__][INFO] - Starting Phase Training (A+ Approach)
+[2025-09-24 12:12:05,823][__main__][INFO] - ================================================================================
+[2025-09-24 12:12:05,829][__main__][INFO] - [Scheduler] Using Warmup+Cosine (warmup_epochs=2)
+[2025-09-24 12:12:05,829][__main__][INFO] - 
+============================================================
+[2025-09-24 12:12:05,829][__main__][INFO] - Phase 0: Baseline
+[2025-09-24 12:12:05,829][__main__][INFO] - ============================================================
+[2025-09-24 12:15:52,537][__main__][INFO] - Epoch 1/5: Train Loss=0.0563, Val Loss=0.0539, LR=5.00e-04
+[2025-09-24 12:15:52,537][__main__][INFO] -   Train Metrics - Sharpe: -0.0623, IC: 0.0082, RankIC: 0.0025
+[2025-09-24 12:15:52,537][__main__][INFO] -   Val Metrics   - Sharpe: -0.0103, IC: -0.0000, RankIC: 0.0719, HitRate(h1): 0.5374
+[2025-09-24 12:15:53,174][__main__][INFO] - ✅ Saved best model (val_loss=0.0539, val_loss=0.0539)
+[2025-09-24 12:19:32,510][__main__][INFO] - Epoch 2/5: Train Loss=0.0563, Val Loss=0.0540, LR=5.00e-04
+[2025-09-24 12:19:32,510][__main__][INFO] -   Train Metrics - Sharpe: -0.0092, IC: 0.0074, RankIC: 0.0055
+[2025-09-24 12:19:32,510][__main__][INFO] -   Val Metrics   - Sharpe: 0.0103, IC: 0.0000, RankIC: 0.0719, HitRate(h1): 0.4626
+[2025-09-24 12:23:12,464][__main__][INFO] - Epoch 3/5: Train Loss=0.0539, Val Loss=0.0539, LR=4.27e-04
+[2025-09-24 12:23:12,465][__main__][INFO] -   Train Metrics - Sharpe: 0.0488, IC: 0.0073, RankIC: 0.0094
+[2025-09-24 12:23:12,465][__main__][INFO] -   Val Metrics   - Sharpe: -0.0103, IC: -0.0000, RankIC: 0.0719, HitRate(h1): 0.5374
+[2025-09-24 12:26:52,286][__main__][INFO] - Epoch 4/5: Train Loss=0.0538, Val Loss=0.0539, LR=2.50e-04
+[2025-09-24 12:26:52,286][__main__][INFO] -   Train Metrics - Sharpe: 0.0026, IC: 0.0066, RankIC: 0.0020
+[2025-09-24 12:26:52,286][__main__][INFO] -   Val Metrics   - Sharpe: -0.0103, IC: -0.0000, RankIC: 0.0719, HitRate(h1): 0.5374
+
+---
+
+REQUIRE_GPU=1 ACCELERATOR=gpu CUDA_VISIBLE_DEVICES=0 \ 
+python scripts/integrated_ml_training_pipeline.py \
+--data-path output/datasets/ml_dataset_latest_full.parquet \
+--adv-graph-train \
+--config-path configs/atft \
+--config-name train/decision_layer_scheduled.yaml \
+'train.stability.use_ema_teacher=true' \
+'train.stability.ema_decay=0.999' \
+'train.trainer.accelerator=gpu' \
+'train.trainer.devices=1' \
+'train.batch.num_workers=16' \
+'train.batch.prefetch_factor=8' \
+'train.batch.persistent_workers=true' \
+train.batch.prefetch_factor=8 \
+train.batch.persistent_workers=true \
+train.batch.pin_memory=true
+============================================================
+Complete ATFT-GAT-FAN Training Pipeline
+Target Sharpe Ratio: 0.849
+============================================================
+2025-09-24 13:28:20,345 - __main__ - INFO - 🚀 Complete ATFT-GAT-FAN Training Pipeline started
+2025-09-24 13:28:20,345 - __main__ - INFO - 🎯 Target Sharpe Ratio: 0.849
+2025-09-24 13:28:20,346 - __main__ - INFO - 🔧 Setting up ATFT-GAT-FAN environment...
+2025-09-24 13:28:20,346 - __main__ - INFO - ✅ ATFT-GAT-FAN environment setup completed
+2025-09-24 13:28:20,346 - __main__ - INFO - 📊 Loading and validating ML dataset...
+2025-09-24 13:28:20,347 - __main__ - INFO - 📂 Loading ML dataset from: output/datasets/ml_dataset_latest_full.parquet
+2025-09-24 13:28:21,349 - __main__ - INFO - ✅ ML dataset loaded: (9014598, 198)
+2025-09-24 13:28:21,350 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-09-24 13:28:21,355 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-09-24 13:28:21,392 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-09-24 13:28:21,392 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-09-24 13:28:21,392 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 4445 train files
+2025-09-24 13:28:21,392 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-09-24 13:28:21,514 - __main__ - INFO - [pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)
+2025-09-24 13:28:21,514 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=4096 train.optimizer.lr=0.0002 train.trainer.max_epochs=75 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true --config-path configs/atft --config-name train/decision_layer_scheduled.yaml train.stability.use_ema_teacher=true train.stability.ema_decay=0.999 train.trainer.accelerator=gpu train.trainer.devices=1 train.batch.num_workers=16 train.batch.prefetch_factor=8 train.batch.persistent_workers=true train.batch.prefetch_factor=8 train.batch.persistent_workers=true train.batch.pin_memory=true
+
+----
+
+ `REQUIRE_GPU=1 ACCELERATOR=gpu CUDA_VISIBLE_DEVICES=0 \
+    NUM_WORKERS=16 PREFETCH_FACTOR=8 PERSISTENT_WORKERS=1 PIN_MEMORY=1 HYDRA_FULL_ERROR=1 \
+    python scripts/integrated_ml_training_pipeline.py \
+    --data-path output/datasets/ml_dataset_latest_full.parquet \
+    --adv-graph-train \
+    --config-path configs/atft \
+    --config-name unified_config.yaml \
+    'train=decision_layer_scheduled' \
+    'train.batch.train_batch_size=4096' \
+    '+train.batch.gradient_accumulation_steps=2'
+
+
+CUDA_VISIBLE_DEVICES=0 REQUIRE_GPU=1 ACCELERATOR=gpu TRAIN_BATCH_SIZE=4096 TRAIN_VAL_BATCH_SIZE=6144 TRAIN_NUM_WORKERS=16 TRAIN_PREFETCH=8 TRAIN_ACCUMULATION=2 TRAIN_PRECISION=bf16-mixed WANDB_DISABLED=1 make train-gpu-latest
+
+----
+
+CUDA_VISIBLE_DEVICES=0 REQUIRE_GPU=1 ACCELERATOR=gpu TRAIN_BATCH_SIZE=4096 TRAIN_VAL_BATCH_SIZE=6144 TRAIN_NUM_WORKERS=16 TRAIN_PREFETCH=8 TRAIN_ACCUMULATION=2 TRAIN_PRECISION=bf16-mixed WANDB_DISABLED=1 make train-gpu-latest
+🚀 Launching GPU training (background)
+Launched train_gpu_latest.sh (PID 385854).
+Logs      : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_134334.log
+PID file  : /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_134334.pid
+Tail logs : tail -f /home/ubuntu/gogooku3-standalone/_logs/train_gpu_latest/train_20250924_134334.log
+Progress  : ./scripts/monitor_training_progress.py
+To stop   : kill 385854
+
+---
+了解です。「全部のせ」で一気に性能ブーストを狙う実行コマンドを2通り用意しました（Makefile利用前提）。上から
+  順に試してください。
+
+  【A】最短・高スループット（GPU最新ランチャ経由）
+
+  - ねらい: BF16＋大バッチ＋高並列DL＋勾配蓄積で学習の安定性と収束スピードを底上げ
+    CUDA_VISIBLE_DEVICES=0 REQUIRE_GPU=1 ACCELERATOR=gpu \
+    TRAIN_BATCH_SIZE=4096 TRAIN_VAL_BATCH_SIZE=6144 \
+    TRAIN_NUM_WORKERS=16 TRAIN_PREFETCH=8 \
+    TRAIN_ACCUMULATION=2 TRAIN_PRECISION=bf16-mixed \
+    WANDB_DISABLED=1 \
+    make train-gpu-latest
+
+  補足
+
+  - BF16非対応GPUなら TRAIN_PRECISION=16-mixed に変更。
+  - さらに伸ばすなら TRAIN_BATCH_SIZE=6144, TRAIN_ACCUMULATION=3〜4 も検討。
+
+  【B】“全部のせ”寄り（統合コンフィグ＋EMA＋強化Graph＋高速化）
+
+  - ねらい: unified_config.yaml（EMA等を既定オン）＋EWM/shrinkageグラフ＋高並列DL
+    CUDA_VISIBLE_DEVICES=0 FORCE_GPU=1 REQUIRE_GPU=1 ACCELERATOR=gpu \
+    USE_ADV_GRAPH_TRAIN=1 \
+    LR=2e-4 MAX_EPOCHS=50 \
+    NUM_WORKERS=16 PREFETCH_FACTOR=8 PERSISTENT_WORKERS=1 PIN_MEMORY=1 \
+    AMP_DTYPE=bf16 USE_AMP=1 GRAD_CHECKPOINT_VSN=1 HYDRA_FULL_ERROR=1 \
+    make train-integrated CONFIG_PATH=configs/atft CONFIG_NAME=unified_config.yaml
+
+  補足
+
+  - この経路は unified_config.yaml の安定化設定（EMA等）を活かしつつ、環境変数でDL/AMP/メモリ最適化を上乗せし
+  ます。
+  - BF16が難しければ AMP_DTYPE=fp16 に変更。
+
+  オプション（自動チューニングも一気に回す）
+
+  - 20トライアルでHPOを同時に回して底上げ
+    CUDA_VISIBLE_DEVICES=0 REQUIRE_GPU=1 ACCELERATOR=gpu \
+    NUM_WORKERS=12 PREFETCH_FACTOR=6 PERSISTENT_WORKERS=1 PIN_MEMORY=1 \
+    AMP_DTYPE=bf16 USE_AMP=1 \
+    make train-integrated-hpo CONFIG_PATH=configs/atft CONFIG_NAME=unified_config.yaml
+
+  モニタ・停止
+
+  - 進行監視: make train-gpu-monitor
+  - 進捗要約: make train-gpu-progress
+  - 停止: make train-gpu-stop
+
+  まずはAを実行し、Sharpe/Val Lossが頭打ちならB（＋必要ならHPO）に切り替えてください。ログはご指定の _logs/
+  train_gpu_latest/train_20250924_134334.log と logs/ml_training.log を併用して確認できます。
+
+
+
+CUDA_VISIBLE_DEVICES=0 REQUIRE_GPU=1 ACCELERATOR=gpu TRAIN_BATCH_SIZE=4096 TRAIN_VAL_BATCH_SIZE=6144 TRAIN_NUM_WORKERS=16 TRAIN_PREFETCH=8 TRAIN_ACCUMULATION=2 TRAIN_PRECISION=bf16-mixed WANDB_DISABLED=1 make train-gpu-latest
+
+
+CUDA_VISIBLE_DEVICES=0 REQUIRE_GPU=1 ACCELERATOR=gpu AMP_DTYPE=bf16 USE_AMP=1 HYDRA_FULL_ERROR=1 WANDB_DISABLED=1 make train-integrated-hpo CONFIG_PATH=configs/atft CONFIG_NAME=config_production.yaml
+
+----
+
+cuda_visible_devices=0 REQUIRE_GPU=1 ACCELERATOR=gpu AMP_DTYPE=bf16 USE_AMP=1 HYDRA_FULL_ERROR=1
+  WANDB_DISABLED=1 \
+  make train-integrated-hpo CONFIG_PATH=configs/atft CONFIG_NAME=config_production.yaml
+🎯 Running integrated pipeline with hyperparameter optimization
+   Output: /home/ubuntu/gogooku3-standalone/output/batch
+   HPO trials: 20
+python scripts/integrated_ml_training_pipeline.py \
+        --output-base /home/ubuntu/gogooku3-standalone/output/batch \
+        --run-hpo \
+        --hpo-n-trials 20 \
+        --config-path configs/atft \
+        --config-name config_production.yaml
+============================================================
+Complete ATFT-GAT-FAN Training Pipeline
+Target Sharpe Ratio: 0.849
+============================================================
+2025-09-24 14:25:01,523 - __main__ - INFO - 🚀 Complete ATFT-GAT-FAN Training Pipeline started
+2025-09-24 14:25:01,524 - __main__ - INFO - 🎯 Target Sharpe Ratio: 0.849
+2025-09-24 14:25:01,524 - __main__ - INFO - 🔧 Setting up ATFT-GAT-FAN environment...
+2025-09-24 14:25:01,524 - __main__ - INFO - ✅ ATFT-GAT-FAN environment setup completed
+2025-09-24 14:25:01,524 - __main__ - INFO - 📊 Loading and validating ML dataset...
+2025-09-24 14:25:01,525 - __main__ - INFO - 📂 Loading ML dataset from: output/ml_dataset_latest_full.parquet
+2025-09-24 14:25:02,540 - __main__ - INFO - ✅ ML dataset loaded: (9014598, 198)
+2025-09-24 14:25:02,540 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-09-24 14:25:02,545 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-09-24 14:25:02,583 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-09-24 14:25:02,583 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-09-24 14:25:02,583 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 4445 train files
+2025-09-24 14:25:02,583 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-09-24 14:25:02,708 - __main__ - INFO - [pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)
+2025-09-24 14:25:02,708 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=4096 train.optimizer.lr=0.0002 train.trainer.max_epochs=75 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true /home/ubuntu/gogooku3-standalone/output/batch 20 --config-path configs/atft --config-name config_production.yaml train.batch.pin_memory=true train.batch.prefetch_factor=4 train.batch.num_workers=8 train.batch.persistent_workers=true
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+usage: train_atft.py [--help] [--hydra-help] [--version]
+                     [--cfg {job,hydra,all}] [--resolve] [--package PACKAGE]
+                     [--run] [--multirun] [--shell-completion]
+                     [--config-path CONFIG_PATH] [--config-name CONFIG_NAME]
+                     [--config-dir CONFIG_DIR]
+                     [--experimental-rerun EXPERIMENTAL_RERUN]
+                     [--info [{all,config,defaults,defaults-tree,plugins,searchpath}]]
+                     [overrides ...]
+train_atft.py: error: unrecognized arguments: train.batch.pin_memory=true train.batch.prefetch_factor=4 train.batch.num_workers=8 train.batch.persistent_workers=true
+Using optimized data loader
+2025-09-24 14:25:09,407 - __main__ - WARNING - [retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+usage: train_atft.py [--help] [--hydra-help] [--version]
+                     [--cfg {job,hydra,all}] [--resolve] [--package PACKAGE]
+                     [--run] [--multirun] [--shell-completion]
+                     [--config-path CONFIG_PATH] [--config-name CONFIG_NAME]
+                     [--config-dir CONFIG_DIR]
+                     [--experimental-rerun EXPERIMENTAL_RERUN]
+                     [--info [{all,config,defaults,defaults-tree,plugins,searchpath}]]
+                     [overrides ...]
+train_atft.py: error: unrecognized arguments: train.batch.prefetch_factor=4 train.batch.num_workers=8 train.batch.num_workers=0 train.batch.prefetch_factor=null train.batch.persistent_workers=false train.batch.pin_memory=false
+Using optimized data loader
+2025-09-24 14:25:15,993 - __main__ - ERROR - Training failed (non-OOM). See logs/ml_training.log for details.
+❌ Complete training pipeline failed: ATFT training failed
+make: *** [Makefile:363: train-integrated-hpo] Error 1
+ubuntu@client-instance-au9hc2cl:~/gogooku3-standalone$ 
+
+---
+
+CUDA_VISIBLE_DEVICES=0 REQUIRE_GPU=1 ACCELERATOR=gpu \
+TRAIN_BATCH_SIZE=4096 TRAIN_VAL_BATCH_SIZE=6144 \
+TRAIN_NUM_WORKERS=16 TRAIN_PREFETCH=8 \
+TRAIN_ACCUMULATION=2 TRAIN_PRECISION=bf16-mixed \
+WANDB_DISABLED=1 \
+make train-gpu-latest

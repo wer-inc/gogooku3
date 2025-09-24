@@ -12,4 +12,8 @@ TOPIX指数四本値(/indices/topix)
 空売り残高報告(/markets/short_selling_positions)
 日々公表信用取引残高(/markets/daily_margin_interest)
 
+## 実行時の注意
+- `JQUANTS_MIN_AVAILABLE_DATE`（例: `2015-09-23`）を環境変数に設定しておくと、パイプラインが自動的にサブスクリプションの下限日付を尊重し、API の `from`/`date` パラメータが範囲外になって 400 を返す問題を防げます。
+- 上記が未設定の場合は `ML_PIPELINE_START_DATE` を下限として利用します。
+
 python scripts/pipelines/run_full_dataset.py --jquants --start-date 2020-09-16 --end-date 2025-09-16 2>&1 | tee /tmp/full_dataset_run.log

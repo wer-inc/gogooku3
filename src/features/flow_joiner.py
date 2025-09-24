@@ -126,12 +126,24 @@ def build_flow_intervals(
     # 同section・同PublishedDateに複数があれば最後（遅い方）を採用
     df = df.group_by(["section", "PublishedDate"]).tail(1)
 
+    # group_by.tail() の後は順序が保証されないため、effective_startで再ソートして
+    # 次の区間検出（shift(-1)）が必ず時間順に評価されるようにする。
+    df = df.sort(["section", "effective_start"])
+
     # 次回startの前日をendに設定
     df = df.with_columns([
         pl.col("effective_start").shift(-1).over("section").alias("next_start")
     ]).with_columns([
         (pl.col("next_start").fill_null(pl.date(2999, 12, 31)) - pl.duration(days=1)).alias("effective_end")
     ]).drop("next_start")
+
+    # 稀にeffective_endがeffective_startより過去になるケースを防ぐ（APIの並び順ゆらぎ対策）
+    df = df.with_columns(
+        pl.when(pl.col("effective_end") < pl.col("effective_start"))
+        .then(pl.col("effective_start"))
+        .otherwise(pl.col("effective_end"))
+        .alias("effective_end")
+    )
 
     logger.info(f"Created {len(df)} flow intervals")
     return df
@@ -380,6 +392,27 @@ def attach_flow_to_quotes(
     # カバレッジ統計のログ出力
     coverage = (out["is_flow_valid"] == 1).sum() / len(out) if len(out) > 0 else 0
     logger.info(f"Flow feature coverage: {coverage:.1%}")
+
+    # Best-effort rescue: if coverage is near-zero, fall back to Date-only attach
+    # by aggregating section-level flows to market-average for the day.
+    try:
+        if coverage < 0.01 and not flow_daily.is_empty():
+            logger.warning("Flow coverage near zero; applying Date-only fallback (market-average flows)")
+            # Aggregate per-day means for all flow columns
+            flow_cols = [c for c in flow_daily.columns if c not in ("Date", "section")]
+            agg = flow_daily.group_by("Date").agg([pl.col(c).mean().alias(c) for c in flow_cols])
+            rescue = quotes_sec.join(agg, on="Date", how="left")
+            # Ensure helper flags exist
+            rescue = rescue.with_columns([
+                pl.col("flow_impulse").fill_null(0).alias("flow_impulse"),
+                pl.col("days_since_flow").fill_null(-1).alias("days_since_flow"),
+                (pl.col("activity_z").is_not_null()).cast(pl.Int8).alias("is_flow_valid"),
+            ])
+            out = rescue
+            coverage = (out["is_flow_valid"] == 1).sum() / len(out) if len(out) > 0 else 0
+            logger.info(f"Flow fallback coverage: {coverage:.1%}")
+    except Exception as e:
+        logger.warning(f"Flow fallback attach skipped: {e}")
 
     return out
 
