@@ -461,16 +461,41 @@ train-optimized-stable:
 	@echo "   ✅ Stable memory management"
 	@echo "   ✅ Fixed horizon key mismatch"
 	@echo "   ✅ Zero loss guards added"
-	@FEATURE_CLIP_VALUE=10.0 \
+	@echo "   ✅ Feature normalization enabled"
+	@echo "   ✅ RankIC/Huber/CS-IC losses enabled"
+	@echo "   ✅ Phase-aware loss scheduling"
+	@echo "   ✅ Multi-worker data loading"
+	@echo "Validating data before training..."
+	@python scripts/validate_data.py || true
+	@echo "Starting training with full optimizations..."
+	@ENABLE_FEATURE_NORM=1 \
+	FEATURE_CLIP_VALUE=10.0 \
 	USE_SWA=0 \
 	USE_SAFE_AMP=1 \
 	DEGENERACY_ABORT=0 \
+	USE_RANKIC=1 \
+	RANKIC_WEIGHT=0.2 \
+	USE_HUBER=1 \
+	HUBER_WEIGHT=0.3 \
+	USE_CS_IC=1 \
+	CS_IC_WEIGHT=0.15 \
+	USE_DIR_AUX=1 \
+	DIR_AUX_WEIGHT=0.1 \
+	SHARPE_WEIGHT=0.3 \
+	DYN_WEIGHT=1 \
+	PHASE_LOSS_WEIGHTS="0:huber=0.3,quantile=1.0,sharpe=0.1;1:quantile=0.7,sharpe=0.3,rankic=0.1;2:quantile=0.5,sharpe=0.4,rankic=0.2,t_nll=0.3;3:quantile=0.3,sharpe=0.5,rankic=0.3,cs_ic=0.2" \
+	ALLOW_UNSAFE_DATALOADER=1 \
+	NUM_WORKERS=8 \
+	PERSISTENT_WORKERS=1 \
+	PREFETCH_FACTOR=4 \
+	TORCH_COMPILE_MODE=max-autotune \
 	python scripts/train_atft.py --config-path ../configs/atft --config-name config_production \
 		data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data \
 		model.hidden_size=256 \
 		train.batch.train_batch_size=2048 \
 		train.optimizer.lr=5e-4 \
-		train.trainer.max_epochs=120
+		train.trainer.max_epochs=120 \
+		improvements.compile_model=true
 
 train-fixed:
 	@echo "🔧 Running fixed training configuration"
