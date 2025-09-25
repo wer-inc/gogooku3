@@ -4382,3 +4382,13 @@ wandb: WARNING Changes to your `wandb` environment variables will be ignored bec
 [2025-09-25 12:44:39,654][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
 [2025-09-25 12:44:39,675][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
 [2025-09-25 12:44:39,715][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+
+-----
+
+ 1. まず超安定モードでテスト：
+  make train-ultra-stable
+  1. 5エポックで正常動作を確認
+  2. 問題なければ本番学習：
+  make train-optimized-stable
+  3. それでも問題があれば：
+  make train-mini-safe

@@ -6017,13 +6017,8 @@ def train(config: DictConfig) -> None:
                                 outputs = _forward_with_optional_graph(
                                     model, features, edge_index, edge_attr
                                 )
-                            # Force ALL outputs to FP32 for loss calculation
-                            outputs = {
-                                k: v.float() if torch.is_tensor(v) else v
-                                for k, v in outputs.items()
-                            }
 
-                            # Normalize output keys: point_horizon_X -> horizon_X
+                            # Normalize output keys IMMEDIATELY: point_horizon_X -> horizon_X
                             if isinstance(outputs, dict):
                                 normalized_outputs = {}
                                 for k, v in outputs.items():
@@ -6034,6 +6029,12 @@ def train(config: DictConfig) -> None:
                                     else:
                                         normalized_outputs[k] = v
                                 outputs = normalized_outputs
+
+                            # Force ALL outputs to FP32 for loss calculation
+                            outputs = {
+                                k: v.float() if torch.is_tensor(v) else v
+                                for k, v in outputs.items()
+                            }
 
                             # Force targets to FP32 as well
                             if isinstance(targets, dict):
@@ -6159,15 +6160,9 @@ def train(config: DictConfig) -> None:
                                 outputs = _forward_with_optional_graph(
                                     model, features, edge_index, edge_attr
                                 )
-                                # outputs/targets 双方をサニタイズ
-                                if isinstance(outputs, dict):
-                                    for k, v in outputs.items():
-                                        if torch.is_tensor(v):
-                                            outputs[k] = _finite_or_nan_fix_tensor(
-                                                v, f"outputs[{k}]", clamp=50.0
-                                            )
 
-                                    # Normalize output keys: point_horizon_X -> horizon_X
+                                # Normalize output keys IMMEDIATELY: point_horizon_X -> horizon_X
+                                if isinstance(outputs, dict):
                                     normalized_outputs = {}
                                     for k, v in outputs.items():
                                         if k.startswith("point_horizon_"):
@@ -6177,6 +6172,15 @@ def train(config: DictConfig) -> None:
                                         else:
                                             normalized_outputs[k] = v
                                     outputs = normalized_outputs
+
+                                # outputs/targets 双方をサニタイズ
+                                if isinstance(outputs, dict):
+                                    for k, v in outputs.items():
+                                        if torch.is_tensor(v):
+                                            outputs[k] = _finite_or_nan_fix_tensor(
+                                                v, f"outputs[{k}]", clamp=50.0
+                                            )
+
                                 # Use already computed valid_masks
                                 preds_for_loss = _unwrap_predictions(outputs)
                                 loss, losses = criterion(
@@ -6880,6 +6884,19 @@ def train(config: DictConfig) -> None:
                                 outputs = _forward_with_optional_graph(
                                     eval_model, features, edge_index, edge_attr
                                 )
+
+                                # Normalize output keys: point_horizon_X -> horizon_X
+                                if isinstance(outputs, dict):
+                                    normalized_outputs = {}
+                                    for k, v in outputs.items():
+                                        if k.startswith("point_horizon_"):
+                                            # Convert point_horizon_X to horizon_X
+                                            new_key = k.replace("point_horizon_", "horizon_")
+                                            normalized_outputs[new_key] = v
+                                        else:
+                                            normalized_outputs[k] = v
+                                    outputs = normalized_outputs
+
                                 # Use valid masks if present in validation batch
                                 vmask = (
                                     vb.get("valid_mask")
