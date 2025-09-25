@@ -2145,8 +2145,9 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
                         }
                     else:
                         valid_masks_device = None
+                    preds_for_loss = _unwrap_predictions(outputs)
                     crit_out = criterion(
-                        outputs, targets, valid_masks=valid_masks_device
+                        preds_for_loss, targets, valid_masks=valid_masks_device
                     )
                     loss = crit_out[0] if isinstance(crit_out, tuple) else crit_out
 
@@ -2222,13 +2223,14 @@ def evaluate_model_metrics(
 
             outputs = model(features)
             
-            # Reshape outputs to [B] format and fix non-finite values
-            outputs = _reshape_to_batch_only(outputs)
+            # Unwrap nested predictions and reshape to [B]
+            preds = _unwrap_predictions(outputs)
             
             # Ensure FP32 and proper shaping for loss computation
             outputs_fp32 = _reshape_to_batch_only({
-                k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
-            })
+                k: (v.float() if torch.is_tensor(v) else v)
+                for k, v in (preds.items() if isinstance(preds, dict) else {})
+            }) if isinstance(preds, dict) else preds
             targets_fp32 = _reshape_to_batch_only({
                 k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
             })
@@ -6020,6 +6022,19 @@ def train(config: DictConfig) -> None:
                                 k: v.float() if torch.is_tensor(v) else v
                                 for k, v in outputs.items()
                             }
+
+                            # Normalize output keys: point_horizon_X -> horizon_X
+                            if isinstance(outputs, dict):
+                                normalized_outputs = {}
+                                for k, v in outputs.items():
+                                    if k.startswith("point_horizon_"):
+                                        # Convert point_horizon_X to horizon_X
+                                        new_key = k.replace("point_horizon_", "horizon_")
+                                        normalized_outputs[new_key] = v
+                                    else:
+                                        normalized_outputs[k] = v
+                                outputs = normalized_outputs
+
                             # Force targets to FP32 as well
                             if isinstance(targets, dict):
                                 targets = {
@@ -6151,6 +6166,17 @@ def train(config: DictConfig) -> None:
                                             outputs[k] = _finite_or_nan_fix_tensor(
                                                 v, f"outputs[{k}]", clamp=50.0
                                             )
+
+                                    # Normalize output keys: point_horizon_X -> horizon_X
+                                    normalized_outputs = {}
+                                    for k, v in outputs.items():
+                                        if k.startswith("point_horizon_"):
+                                            # Convert point_horizon_X to horizon_X
+                                            new_key = k.replace("point_horizon_", "horizon_")
+                                            normalized_outputs[new_key] = v
+                                        else:
+                                            normalized_outputs[k] = v
+                                    outputs = normalized_outputs
                                 # Use already computed valid_masks
                                 preds_for_loss = _unwrap_predictions(outputs)
                                 loss, losses = criterion(
@@ -6188,6 +6214,24 @@ def train(config: DictConfig) -> None:
                                 optimizer.zero_grad(set_to_none=True)
                                 mb_start = mb_end
                                 continue
+
+                            # Check for zero loss or no gradient
+                            if not loss.requires_grad:
+                                logger.warning(
+                                    "[zero-loss-guard] Loss has no grad; skipping backward. "
+                                    "This may be due to horizon key mismatch."
+                                )
+                                mb_start = mb_end
+                                continue
+
+                            if loss.item() == 0.0:
+                                logger.warning(
+                                    "[zero-loss-guard] Loss is zero; skipping backward. "
+                                    "Check if model outputs and targets have matching horizon keys."
+                                )
+                                mb_start = mb_end
+                                continue
+
                         # Only use scaler if it's enabled
                         if scaler_enabled:
                             scaler.scale(loss).backward()
