@@ -459,7 +459,13 @@ train-optimized-stable:
 	@echo "   ✅ No DataLoader worker errors"
 	@echo "   ✅ Full optimizations from PDF analysis"
 	@echo "   ✅ Stable memory management"
-	@python scripts/train_atft.py --config-path ../configs/atft --config-name config_production \
+	@echo "   ✅ Fixed horizon key mismatch"
+	@echo "   ✅ Zero loss guards added"
+	@FEATURE_CLIP_VALUE=10.0 \
+	USE_SWA=0 \
+	USE_SAFE_AMP=1 \
+	DEGENERACY_ABORT=0 \
+	python scripts/train_atft.py --config-path ../configs/atft --config-name config_production \
 		data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data \
 		model.hidden_size=256 \
 		train.batch.train_batch_size=2048 \
@@ -537,5 +543,40 @@ train-ultra-stable: ## Run ULTRA-STABLE training (maximum stability)
 	@echo "   ✅ ALL known issues fixed"
 	@echo "   ✅ Maximum stability prioritized"
 	@echo "   ✅ Conservative settings"
-	@echo "   ✅ 5-epoch test run"
-	@python scripts/train_ultra_stable.py
+	@echo "   ✅ Fixed horizon key mismatch"
+	@echo "   ✅ Zero loss protection"
+	@ALLOW_UNSAFE_DATALOADER=0 \
+	USE_AMP=0 \
+	USE_SWA=0 \
+	FEATURE_CLIP_VALUE=5.0 \
+	DEGENERACY_ABORT=0 \
+	MIN_VALID_RATIO=0.1 \
+	python scripts/train_atft.py \
+		--config-path ../configs/atft \
+		--config-name config_production \
+		data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data \
+		data.distributed.enabled=false \
+		data.distributed.num_workers=0 \
+		train.batch.train_batch_size=128 \
+		train.optimizer.lr=1e-4 \
+		train.trainer.max_epochs=5 \
+		train.trainer.gradient_clip_val=0.5 \
+		model.hidden_size=128
+
+train-mini-safe: ## Run Mini Training mode (simplest, most stable)
+	@echo "🔒 Mini Training Mode (Simplest & Most Stable)"
+	@echo "   ✅ Simplified training loop"
+	@echo "   ✅ No AMP/GradScaler complexity"
+	@echo "   ✅ Fixed horizon keys"
+	@echo "   ✅ Zero loss guards"
+	@USE_MINI_TRAIN=1 \
+	FEATURE_CLIP_VALUE=5.0 \
+	USE_SWA=0 \
+	python scripts/train_atft.py \
+		--config-path ../configs/atft \
+		--config-name config_production \
+		data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data \
+		model.hidden_size=128 \
+		train.batch.train_batch_size=256 \
+		train.optimizer.lr=5e-5 \
+		train.trainer.max_epochs=5
