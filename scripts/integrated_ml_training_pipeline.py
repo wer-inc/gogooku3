@@ -523,6 +523,8 @@ class CompleteATFTTrainingPipeline:
 
             # 追加のHydraオーバーライド（HPOや詳細設定をパススルー）
             if self.extra_overrides:
+                # Only pass through Hydra-friendly overrides (key=value or +key=value) and a small
+                # allowlist of Hydra flags. Any unknown flags (e.g., --run-hpo) and their values are dropped.
                 allowed_passthrough = {
                     "--config-path",
                     "--config-name",
@@ -533,7 +535,6 @@ class CompleteATFTTrainingPipeline:
                     "--multirun",
                     "--info",
                     "--hydra-help",
-                    # HPO options are handled by the wrapper itself; block them here
                 }
                 flags_expect_value = {
                     "--config-path",
@@ -544,26 +545,43 @@ class CompleteATFTTrainingPipeline:
                     "--package",
                     "--info",
                 }
-                filtered_overrides: list[str] = []
-                skip_next = False
-                for idx, token in enumerate(self.extra_overrides):
-                    if skip_next:
-                        filtered_overrides.append(token)
-                        skip_next = False
-                        continue
 
-                    if token.startswith("--"):
-                        if token in allowed_passthrough:
-                            filtered_overrides.append(token)
-                            if token in flags_expect_value and idx + 1 < len(self.extra_overrides):
-                                skip_next = True
+                def _is_hydra_override(tok: str) -> bool:
+                    # Accept patterns like key=value, +key=value, ~key=value
+                    if "=" in tok and not tok.startswith("--"):
+                        return True
+                    if tok.startswith("+") or tok.startswith("~"):
+                        return "=" in tok
+                    return False
+
+                filtered_overrides: list[str] = []
+                i = 0
+                n = len(self.extra_overrides)
+                while i < n:
+                    tok = self.extra_overrides[i]
+                    if tok.startswith("--"):
+                        if tok in allowed_passthrough:
+                            filtered_overrides.append(tok)
+                            if tok in flags_expect_value and i + 1 < n:
+                                filtered_overrides.append(self.extra_overrides[i + 1])
+                                i += 2
+                                continue
+                            i += 1
+                            continue
+                        # Skip unsupported flag and consume its value if it looks like one
+                        if i + 1 < n and not self.extra_overrides[i + 1].startswith("--"):
+                            logger.debug("Dropping unsupported flag+value: %s %s", tok, self.extra_overrides[i + 1])
+                            i += 2
                         else:
-                            logger.debug(
-                                "Skipping unsupported CLI passthrough argument for train_atft.py: %s",
-                                token,
-                            )
+                            logger.debug("Dropping unsupported flag: %s", tok)
+                            i += 1
+                        continue
+                    # Accept only Hydra-style overrides; drop stray positional tokens (e.g., output paths)
+                    if _is_hydra_override(tok):
+                        filtered_overrides.append(tok)
                     else:
-                        filtered_overrides.append(token)
+                        logger.debug("Dropping stray positional token: %s", tok)
+                    i += 1
 
                 if filtered_overrides:
                     cmd.extend(filtered_overrides)
