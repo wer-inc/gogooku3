@@ -1,0 +1,35 @@
+# @package train
+# Stable training configuration (single-process DataLoader, conservative settings)
+
+defaults:
+  - production  # inherit base production settings
+
+batch:
+  train_batch_size: 2048
+  val_batch_size: 2048
+  test_batch_size: 2048
+  num_workers: 0
+  prefetch_factor: null
+  persistent_workers: false
+  pin_memory: false
+  gradient_accumulation_steps: 1
+
+optimizer:
+  lr: 5e-4
+
+trainer:
+  max_epochs: 120
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  precision: 16-mixed
+  accumulate_grad_batches: 1
+
+performance:
+  compile:
+    enabled: true
+    mode: default
+    fullgraph: false
+    dynamic: false
+
+debug:
+  profiler: false

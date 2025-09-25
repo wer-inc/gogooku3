@@ -1,0 +1,339 @@
+# Production-optimized configuration based on PDF analysis
+# PDFの提案と現状分析に基づく最適化設定
+
+defaults:
+  - _self_
+  - data: jpx_large_scale
+  - model: atft_gat_fan  # 256 hidden_size version
+  - train: production_improved
+  - hardware: default
+  - override hydra/hydra_logging: default
+  - override hydra/job_logging: default
+
+# Hydra configuration
+hydra:
+  job:
+    chdir: false
+    name: ATFT-GAT-FAN-Optimized
+  run:
+    dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+# ============================================================================
+# Improvements based on PDF recommendations
+# ============================================================================
+
+improvements:
+  # torch.compile有効化 (PDFの提案通り)
+  compile_model: true  # Changed from false
+  compile_mode: "max-autotune"  # Options: "default", "reduce-overhead", "max-autotune"
+  compile_fullgraph: false
+  compile_dynamic: false
+
+  # データローダー並列化 (PDF要件)
+  force_multiworker: true  # Override safety guard
+  num_workers: 8
+  persistent_workers: true
+  prefetch_factor: 4
+
+  # 目的関数の重み最適化 (PDF指摘: 現在Sharpe/ICが横ばい)
+  loss_weights:
+    use_rankic: true
+    rankic_weight: 0.2  # Increased from default
+    cs_ic_weight: 0.15  # Increased from 0.05
+    sharpe_weight: 0.3  # Focus on Sharpe
+
+  # フェーズ別ロス重み (段階的に金融メトリクス重視へ)
+  phase_loss_weights:
+    phase_0: "huber=0.3,quantile=1.0,sharpe=0.1"
+    phase_1: "quantile=0.7,sharpe=0.3,rankic=0.1"
+    phase_2: "quantile=0.5,sharpe=0.4,rankic=0.2,t_nll=0.3"
+    phase_3: "quantile=0.3,sharpe=0.5,rankic=0.3,cs_ic=0.2"
+
+# ============================================================================
+# Feature grouping alignment (PDF指摘: 59想定 vs 189実列の齟齬解消)
+# ============================================================================
+
+feature_mapping:
+  # 基本特徴量 (46 features expected)
+  basic:
+    - "open"
+    - "high"
+    - "low"
+    - "close"
+    - "volume"
+    - "market_cap"
+    - "shares_outstanding"
+    - "pbr"
+    - "per"
+    - "psr"
+    - "pcfr"
+    - "dividend_yield"
+    - "roe"
+    - "roa"
+    - "equity_ratio"
+    - "beta"
+    - "volatility_1m"
+    - "volatility_3m"
+    # ... add remaining basic features
+
+  # テクニカル指標 (50+ features)
+  technical:
+    - "rsi_14"
+    - "macd"
+    - "macd_signal"
+    - "macd_hist"
+    - "bb_upper"
+    - "bb_middle"
+    - "bb_lower"
+    - "bb_width"
+    - "bb_percent"
+    - "atr_14"
+    - "adx_14"
+    - "cci_20"
+    - "stoch_k"
+    - "stoch_d"
+    - "williams_r"
+    - "mfi_14"
+    - "obv"
+    - "vwap"
+    # ... add remaining technical features
+
+  # 移動平均派生 (MA-derived features)
+  ma_derived:
+    - "sma_5"
+    - "sma_20"
+    - "sma_60"
+    - "ema_5"
+    - "ema_20"
+    - "ema_60"
+    - "price_sma5_ratio"
+    - "price_sma20_ratio"
+    - "price_sma60_ratio"
+    - "sma5_sma20_ratio"
+    - "sma20_sma60_ratio"
+    # ... add remaining MA features
+
+  # リターン系特徴量
+  returns:
+    - "returns_1d"
+    - "returns_5d"
+    - "returns_10d"
+    - "returns_20d"
+    - "returns_60d"
+    - "log_returns_1d"
+    - "log_returns_5d"
+    # ... add remaining return features
+
+  # 市場関連特徴量 (26 mkt_* features)
+  market:
+    - "mkt_beta"
+    - "mkt_correlation"
+    - "mkt_relative_volume"
+    - "mkt_spread"
+    # ... add remaining market features
+
+  # 機関投資家フロー (17 flow_* features)
+  flows:
+    - "flow_institutional"
+    - "flow_foreign"
+    - "flow_individual"
+    # ... add remaining flow features
+
+# ============================================================================
+# Model configuration (aligned with feature groups)
+# ============================================================================
+
+model:
+  name: ATFT_GAT_FAN
+  hidden_size: 256  # Increased from 64
+
+  # Input dimensions aligned with feature groups
+  input_dims:
+    basic_features: 46
+    technical_features: 50
+    ma_derived_features: 20
+    returns_features: 15
+    market_features: 26
+    flows_features: 17
+    total_features: 174  # Adjusted to actual feature count
+
+  # Variable Selection Networks (VSN) per feature group
+  variable_selection:
+    enabled: true
+    per_feature_group: true
+    groups:
+      - name: basic
+        hidden_size: 64
+      - name: technical
+        hidden_size: 128
+      - name: ma_derived
+        hidden_size: 32
+      - name: returns
+        hidden_size: 32
+      - name: market
+        hidden_size: 64
+      - name: flows
+        hidden_size: 32
+
+  # Frequency Adaptive Normalization (FAN) settings
+  fan:
+    enabled: true
+    per_group_normalization: true
+    window_sizes: [5, 10, 20, 60]
+
+  # Slice Adaptive Normalization (SAN) settings
+  san:
+    enabled: true
+    num_slices: 4
+    overlap: 0.25
+
+# ============================================================================
+# Training configuration
+# ============================================================================
+
+train:
+  trainer:
+    max_epochs: 120  # Extended for better convergence
+    precision: bf16-mixed
+    gradient_clip_val: 1.0
+
+  optimizer:
+    lr: 5e-4  # Slightly higher for larger model
+    weight_decay: 1e-5
+
+  scheduler:
+    name: plateau  # Better than cosine for this problem
+    monitor: val/rank_ic_5d
+    patience: 7
+    factor: 0.5
+    min_lr: 1e-6
+
+  batch:
+    batch_size: 2048
+    accumulate_grad_batches: 2  # Effective batch = 4096
+
+  early_stopping:
+    monitor: val/rank_ic_5d  # Focus on RankIC
+    mode: max
+    patience: 20
+    min_delta: 1e-4
+
+# ============================================================================
+# Data configuration
+# ============================================================================
+
+data:
+  path: ${oc.env:OUTPUT_BASE}/ml_dataset_full.parquet
+
+  # Schema configuration (required)
+  schema:
+    date_column: date
+    code_column: code
+    target_column: target
+    feature_columns: null  # Auto-detect if null
+
+  # Graph builder configuration (required)
+  graph_builder:
+    cache_dir: graph_cache
+    ewm_halflife: 30
+    k: 15
+    edge_threshold: 0.25
+    log_mktcap_col: log_mktcap
+    lookback: 60
+    method: ewm_demean
+    min_obs: 40
+    use_in_training: true
+    return_cols:
+    - return_1d
+    - feat_ret_1d
+    sector_col: sector33
+    shrinkage_gamma: 0.1
+    size_tau: 1.0
+    source_glob: ${data.source.data_dir}/*.parquet
+    symmetric: true
+
+  # Walk-forward validation
+  split:
+    method: walk_forward
+    n_splits: 5
+    embargo_days: 20
+    min_train_days: 252
+
+  # Feature selection
+  selected_features_json: null  # Will use auto-detection with category mapping
+
+  # Time series settings
+  time_series:
+    sequence_length: 60
+    prediction_horizons: [1, 5, 10, 20]
+
+# ============================================================================
+# Environment overrides (will be set automatically)
+# ============================================================================
+
+environment:
+  # These will be set by the execution script
+  allow_unsafe_dataloader: ${oc.env:ALLOW_UNSAFE_DATALOADER,1}
+  use_rankic: ${oc.env:USE_RANKIC,1}
+  cs_ic_weight: ${oc.env:CS_IC_WEIGHT,0.15}
+  sharpe_weight: ${oc.env:SHARPE_WEIGHT,0.3}
+  phase_loss_weights: ${oc.env:PHASE_LOSS_WEIGHTS,}
+
+# ============================================================================
+# Monitoring and logging
+# ============================================================================
+
+logging:
+  level: INFO
+  wandb:
+    enabled: false  # Enable if using W&B
+    project: atft-gat-fan-optimized
+  tensorboard:
+    enabled: true
+    log_dir: logs/optimized
+
+# ============================================================================
+# Experimental features (future work)
+# ============================================================================
+
+experimental:
+  ddp:
+    enabled: false  # Future: Enable for multi-GPU
+    backend: nccl
+    find_unused_parameters: false
+
+  advanced_augmentation:
+    enabled: false  # Future: Add data augmentation
+
+  curriculum_learning:
+    enabled: false  # Future: Start with easier samples
+
+# ============================================================================
+# Additional required configurations
+# ============================================================================
+
+# Debug settings
+debug:
+  detect_anomaly: false
+  enabled: false
+  fast_dev_run: 10
+  profiler: false
+
+# Project settings
+project:
+  deterministic: true
+  name: ATFT-GAT-FAN-Optimized
+  seed: 42
+
+# Paths configuration
+paths:
+  data: data
+  logs: logs
+  models: models
+  root: .
+
+# Mode
+mode: train

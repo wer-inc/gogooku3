@@ -1,0 +1,363 @@
+# Feature category mapping for ATFT-GAT-FAN model
+# Based on PDF analysis: Aligning 189 actual features to expected categories
+
+# This file maps actual dataset columns to model's expected feature categories
+# to resolve the "59 expected vs 189 actual" mismatch mentioned in PDF
+
+feature_categories:
+  # ============================================================================
+  # Basic features (基本特徴量) - 46 features
+  # ============================================================================
+  basic:
+    # Price and volume
+    - open
+    - high
+    - low
+    - close
+    - volume
+    - turnover
+    - vwap
+
+    # Market cap and shares
+    - market_cap
+    - shares_outstanding
+    - free_float_shares
+
+    # Fundamental ratios
+    - pbr
+    - per
+    - psr
+    - pcfr
+    - dividend_yield
+
+    # Financial metrics
+    - roe
+    - roa
+    - roi
+    - equity_ratio
+    - debt_ratio
+    - current_ratio
+    - quick_ratio
+
+    # Risk metrics
+    - beta
+    - alpha
+    - volatility_1m
+    - volatility_3m
+    - volatility_6m
+    - sharpe_ratio
+    - sortino_ratio
+    - max_drawdown
+
+    # Sector/industry
+    - sector_code
+    - industry_code
+    - market_segment
+
+    # Additional basic
+    - listed_days
+    - trading_days
+    - average_volume_10d
+    - average_volume_30d
+    - bid_ask_spread
+    - tick_size
+    - lot_size
+
+  # ============================================================================
+  # Technical indicators (テクニカル指標) - 50+ features
+  # ============================================================================
+  technical:
+    # Momentum indicators
+    - rsi_14
+    - rsi_9
+    - rsi_25
+    - stoch_k
+    - stoch_d
+    - williams_r
+    - roc_10
+    - momentum_10
+
+    # Trend indicators
+    - macd
+    - macd_signal
+    - macd_hist
+    - adx_14
+    - plus_di
+    - minus_di
+    - aroon_up
+    - aroon_down
+
+    # Volatility indicators
+    - bb_upper
+    - bb_middle
+    - bb_lower
+    - bb_width
+    - bb_percent
+    - atr_14
+    - atr_20
+    - keltner_upper
+    - keltner_lower
+
+    # Volume indicators
+    - obv
+    - obv_ma
+    - mfi_14
+    - ad_line
+    - cmf_20
+    - force_index
+    - ease_of_movement
+
+    # Other technical
+    - cci_20
+    - dpo_20
+    - ppo
+    - ppo_signal
+    - trix_14
+    - ultosc
+    - vortex_pos
+    - vortex_neg
+
+  # ============================================================================
+  # Moving average derived (移動平均派生) - 20 features
+  # ============================================================================
+  ma_derived:
+    # Simple moving averages
+    - sma_5
+    - sma_10
+    - sma_20
+    - sma_60
+    - sma_120
+
+    # Exponential moving averages
+    - ema_5
+    - ema_10
+    - ema_20
+    - ema_60
+    - ema_120
+
+    # Price ratios to MA
+    - price_sma5_ratio
+    - price_sma20_ratio
+    - price_sma60_ratio
+    - price_ema20_ratio
+
+    # MA crossover signals
+    - sma5_sma20_ratio
+    - sma20_sma60_ratio
+    - ema5_ema20_ratio
+
+    # MA slopes
+    - sma20_slope
+    - ema20_slope
+    - sma60_slope
+
+  # ============================================================================
+  # Returns features (リターン系) - 15 features
+  # ============================================================================
+  returns:
+    # Simple returns
+    - returns_1d
+    - returns_2d
+    - returns_5d
+    - returns_10d
+    - returns_20d
+    - returns_60d
+
+    # Log returns
+    - log_returns_1d
+    - log_returns_5d
+    - log_returns_20d
+
+    # Risk-adjusted returns
+    - returns_volatility_ratio_5d
+    - returns_volatility_ratio_20d
+
+    # Cumulative returns
+    - cum_returns_5d
+    - cum_returns_20d
+    - cum_returns_60d
+
+    # Forward returns (targets)
+    - feat_ret_1d  # Target feature
+
+  # ============================================================================
+  # Market features (市場関連) - 26 mkt_* features
+  # ============================================================================
+  market:
+    # Market correlation
+    - mkt_beta_topix
+    - mkt_beta_sector
+    - mkt_correlation_topix
+    - mkt_correlation_sector
+    - mkt_alpha_topix
+
+    # Relative metrics
+    - mkt_relative_strength
+    - mkt_relative_volume
+    - mkt_relative_volatility
+    - mkt_relative_return_1d
+    - mkt_relative_return_5d
+    - mkt_relative_return_20d
+
+    # Market microstructure
+    - mkt_spread
+    - mkt_depth
+    - mkt_impact
+    - mkt_liquidity
+
+    # Market regime
+    - mkt_trend_strength
+    - mkt_volatility_regime
+    - mkt_volume_regime
+
+    # Cross-sectional
+    - mkt_rank_return_1d
+    - mkt_rank_volume
+    - mkt_rank_volatility
+    - mkt_percentile_return_5d
+    - mkt_percentile_volume
+    - mkt_z_score_return
+    - mkt_z_score_volume
+
+    # Additional
+    - mkt_sector_momentum
+
+  # ============================================================================
+  # Investment flows (機関投資家フロー) - 17 flow_* features
+  # ============================================================================
+  flows:
+    # Institutional flows
+    - flow_institutional_buy
+    - flow_institutional_sell
+    - flow_institutional_net
+    - flow_institutional_ratio
+
+    # Foreign investor flows
+    - flow_foreign_buy
+    - flow_foreign_sell
+    - flow_foreign_net
+    - flow_foreign_ratio
+
+    # Individual investor flows
+    - flow_individual_buy
+    - flow_individual_sell
+    - flow_individual_net
+    - flow_individual_ratio
+
+    # Aggregated flows
+    - flow_total_net
+    - flow_imbalance
+    - flow_concentration
+    - flow_momentum_5d
+    - flow_momentum_20d
+
+  # ============================================================================
+  # Financial statements (財務諸表) - 15 stmt_* features
+  # ============================================================================
+  statements:
+    # Income statement
+    - stmt_revenue
+    - stmt_operating_profit
+    - stmt_net_income
+    - stmt_eps
+
+    # Balance sheet
+    - stmt_total_assets
+    - stmt_total_equity
+    - stmt_total_debt
+    - stmt_working_capital
+
+    # Cash flow
+    - stmt_operating_cf
+    - stmt_investing_cf
+    - stmt_financing_cf
+    - stmt_free_cash_flow
+
+    # Growth rates
+    - stmt_revenue_growth
+    - stmt_profit_growth
+    - stmt_assets_growth
+
+  # ============================================================================
+  # Additional features (その他) - Remaining features
+  # ============================================================================
+  additional:
+    # Seasonality
+    - day_of_week
+    - month_of_year
+    - quarter
+    - is_month_end
+    - is_quarter_end
+
+    # Events
+    - has_earnings
+    - has_dividend
+    - has_split
+
+    # News/sentiment (if available)
+    - news_sentiment
+    - social_sentiment
+
+    # Any other features not categorized above
+    # Will be automatically detected and added here
+
+# ============================================================================
+# Model input dimension validation
+# ============================================================================
+expected_counts:
+  basic: 46
+  technical: 50
+  ma_derived: 20
+  returns: 15
+  market: 26
+  flows: 17
+  statements: 15
+  additional: 0  # Variable, will be calculated
+  total: 189  # Actual feature count from dataset
+
+# ============================================================================
+# Feature selection rules
+# ============================================================================
+selection_rules:
+  # Remove features with low variance
+  min_variance: 1e-6
+
+  # Remove features with high correlation
+  max_correlation: 0.99
+
+  # Remove features with many missing values
+  max_missing_ratio: 0.3
+
+  # Keep top N features per category based on importance
+  top_n_per_category:
+    basic: 40
+    technical: 45
+    ma_derived: 18
+    returns: 12
+    market: 20
+    flows: 15
+    statements: 12
+
+# ============================================================================
+# Feature engineering pipeline
+# ============================================================================
+feature_engineering:
+  # Normalization per category
+  normalization:
+    basic: standard  # Z-score
+    technical: minmax  # 0-1 scaling
+    ma_derived: standard
+    returns: standard
+    market: standard
+    flows: robust  # Robust to outliers
+    statements: log_transform  # Log transformation first
+
+  # Missing value handling per category
+  missing_values:
+    basic: forward_fill
+    technical: interpolate
+    ma_derived: forward_fill
+    returns: zero_fill
+    market: median_fill
+    flows: zero_fill
+    statements: forward_fill

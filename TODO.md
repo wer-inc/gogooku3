@@ -4073,3 +4073,119 @@ PDFの推奨事項と実装状況を突き合わせた最新の検証結果で�
 
 
   make train-gpu-monitor TRAIN_BATCH_SIZE=1024 TRAIN_VAL_BATCH_SIZE=1536 TRAIN_NUM_WORKERS=8 TRAIN_PREFETCH=4
+
+
+  -----
+
+  REQUIRE_GPU=1 make train-optimized
+🚀 Running production-optimized training (PDF analysis based)
+   ✅ All improvements from PDF analysis applied
+   ✅ ALLOW_UNSAFE_DATALOADER=1 (multi-worker enabled)
+   ✅ hidden_size=256, RankIC/Sharpe optimization
+   ✅ torch.compile enabled, feature grouping aligned
+2025-09-25 02:23:37,313 - INFO - ✅ ALLOW_UNSAFE_DATALOADER=1
+2025-09-25 02:23:37,313 - INFO - ✅ USE_RANKIC=1
+2025-09-25 02:23:37,313 - INFO - ✅ MODEL_HIDDEN_SIZE=256
+2025-09-25 02:23:37,313 - INFO - ✅ Dataset found: /home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet
+2025-09-25 02:23:37,313 - INFO - 
+============================================================
+2025-09-25 02:23:37,313 - INFO - 🚀 PRODUCTION OPTIMIZED TRAINING
+2025-09-25 02:23:37,313 - INFO - ============================================================
+2025-09-25 02:23:37,313 - INFO - 
+Command:
+2025-09-25 02:23:37,313 - INFO - /usr/bin/python /home/ubuntu/gogooku3-standalone/scripts/integrated_ml_training_pipeline.py --config-path /home/ubuntu/gogooku3-standalone/configs/atft --config-name config_production_optimized data.path=/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet model.hidden_size=256 train.batch.num_workers=8 train.batch.batch_size=2048 train.optimizer.lr=5e-4 train.trainer.max_epochs=120 improvements.compile_model=true
+2025-09-25 02:23:37,313 - INFO - 
+------------------------------------------------------------
+2025-09-25 02:23:37,313 - INFO - Starting training...
+2025-09-25 02:23:37,313 - INFO - ------------------------------------------------------------
+
+============================================================
+Complete ATFT-GAT-FAN Training Pipeline
+Target Sharpe Ratio: 0.849
+============================================================
+2025-09-25 02:23:38,536 - __main__ - INFO - 🚀 Complete ATFT-GAT-FAN Training Pipeline started
+2025-09-25 02:23:38,536 - __main__ - INFO - 🎯 Target Sharpe Ratio: 0.849
+2025-09-25 02:23:38,536 - __main__ - INFO - 🔧 Setting up ATFT-GAT-FAN environment...
+2025-09-25 02:23:38,536 - __main__ - INFO - ✅ ATFT-GAT-FAN environment setup completed
+2025-09-25 02:23:38,536 - __main__ - INFO - 📊 Loading and validating ML dataset...
+2025-09-25 02:23:38,537 - __main__ - INFO - 📂 Loading ML dataset from: output/ml_dataset_latest_full.parquet
+2025-09-25 02:23:39,523 - __main__ - INFO - ✅ ML dataset loaded: (9014598, 198)
+2025-09-25 02:23:39,523 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-09-25 02:23:39,528 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-09-25 02:23:39,566 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-09-25 02:23:39,566 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-09-25 02:23:39,566 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 4445 train files
+2025-09-25 02:23:39,566 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-09-25 02:23:39,699 - __main__ - INFO - [pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)
+2025-09-25 02:23:39,699 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=4096 train.optimizer.lr=0.0002 train.trainer.max_epochs=75 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true --config-path /home/ubuntu/gogooku3-standalone/configs/atft --config-name config_production_optimized data.path=/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet model.hidden_size=256 train.batch.num_workers=8 train.batch.batch_size=2048 train.optimizer.lr=5e-4 train.trainer.max_epochs=120 improvements.compile_model=true train.batch.pin_memory=true train.batch.prefetch_factor=4 train.batch.persistent_workers=true
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+usage: train_atft.py [--help] [--hydra-help] [--version]
+                     [--cfg {job,hydra,all}] [--resolve] [--package PACKAGE]
+                     [--run] [--multirun] [--shell-completion]
+                     [--config-path CONFIG_PATH] [--config-name CONFIG_NAME]
+                     [--config-dir CONFIG_DIR]
+                     [--experimental-rerun EXPERIMENTAL_RERUN]
+                     [--info [{all,config,defaults,defaults-tree,plugins,searchpath}]]
+                     [overrides ...]
+train_atft.py: error: unrecognized arguments: data.path=/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet model.hidden_size=256 train.batch.num_workers=8 train.batch.batch_size=2048 train.optimizer.lr=5e-4 train.trainer.max_epochs=120 improvements.compile_model=true train.batch.pin_memory=true train.batch.prefetch_factor=4 train.batch.persistent_workers=true
+Using optimized data loader
+2025-09-25 02:23:46,369 - __main__ - WARNING - [retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings
+
+------
+
+ REQUIRE_GPU=1 ALLOW_UNSAFE_DATALOADER=1 make train-optimized
+🚀 Running production-optimized training (PDF analysis based)
+   ✅ All improvements from PDF analysis applied
+   ✅ ALLOW_UNSAFE_DATALOADER=1 (multi-worker enabled)
+   ✅ hidden_size=256, RankIC/Sharpe optimization
+   ✅ torch.compile enabled, feature grouping aligned
+============================================================
+🚀 DIRECT OPTIMIZED TRAINING
+============================================================
+Command: /usr/bin/python /home/ubuntu/gogooku3-standalone/scripts/train_atft.py --config-path /home/ubuntu/gogooku3-standalone/configs/atft --config-name config_production data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data model.hidden_size=256 improvements.compile_model=true train.batch.train_batch_size=2048 train.optimizer.lr=5e-4 train.trainer.max_epochs=120
+------------------------------------------------------------
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+[2025-09-25 03:41:23,934][__main__][INFO] - Starting production training...
+[2025-09-25 03:41:23,949][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-25 03:41:23,951][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-25 03:41:23,954][__main__][INFO] - Using device: cuda
+[2025-09-25 03:41:23,954][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-25 03:41:23,954][__main__][INFO] - GPU Memory: 85.1GB
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+[2025-09-25 03:41:24,567][src.utils.monitoring][WARNING] - W&B initialization failed: first argument must be callable or None
+[2025-09-25 03:41:24,573][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-25 03:41:24,574][__main__][INFO] - Found hidden_size=256 at path: model.hidden_size
+[2025-09-25 03:41:24,575][__main__][INFO] - Setting up data module...
+[2025-09-25 03:41:24,576][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-25 03:41:24,576][__main__][INFO] - [Hydra-Struct] data group keys: ['graph_builder', 'name', 'schema', 'use_buffered_loader', 'source', 'memory', 'distributed', 'sampling', 'time_series', 'features', 'graph']
+[2025-09-25 03:41:24,836][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
+[2025-09-25 03:41:24,856][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
+[2025-09-25 03:41:24,894][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-25 03:41:54,875][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 6223196 windows across 4445 files
+[2025-09-25 03:41:54,947][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-25 03:42:07,289][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1271808 windows across 4387 files
+[2025-09-25 03:42:07,334][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-25 03:42:19,429][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1262736 windows across 4246 files
+[2025-09-25 03:42:19,439][src.gogooku3.training.atft.data_module][INFO] - ✅ Datasets created: train=6223196 samples
+[2025-09-25 03:42:19,442][__main__][INFO] - Creating data loaders...
+[2025-09-25 03:42:20,662][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 2370 days, 25029 batches
+[2025-09-25 03:42:20,816][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 1990 days, 6291 batches
+[2025-09-25 03:42:20,817][__main__][INFO] - DayBatchSampler enabled (min_nodes_per_day=20)
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log

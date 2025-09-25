@@ -1,0 +1,9 @@
+- data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data
+- model.hidden_size=64
+- improvements.compile_model=false
+- train.batch.train_batch_size=256
+- train.optimizer.lr=1e-4
+- train.trainer.max_epochs=1
+- train.trainer.devices=1
+- data.distributed.enabled=false
+- data.distributed.num_workers=0

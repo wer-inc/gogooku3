@@ -503,25 +503,37 @@ class CompleteATFTTrainingPipeline:
                 return True, training_info
 
             # 内製トレーナーを使用（Hydra設定でオーバーライド）
-            # Hydra構成はdefaultsで安定化済み。
-            # ここでは必要な学習ハイパラだけ通常の上書きで渡す（struct安全）。
+            # 最適化プロファイル使用時は、学習ハイパラのHydraオーバーライド注入を避ける
+            _optimized_pre = False
+            try:
+                for tok in (self.extra_overrides or []):
+                    if tok.strip().endswith("config_production_optimized") or "production_improved" in tok:
+                        _optimized_pre = True
+                        break
+            except Exception:
+                _optimized_pre = False
+
             cmd = [
                 "python",
                 "scripts/train_atft.py",
                 # データディレクトリを明示的に指定
                 f"data.source.data_dir={training_data_info['data_dir']}",
-                # data/model/train は configs/config.yaml の defaults で固定
-                # 学習ハイパラのみ調整（既存キーなので + は不要）
-                f"train.batch.train_batch_size={self.atft_settings['batch_size']}",
-                f"train.optimizer.lr={self.atft_settings['learning_rate']}",
-                f"train.trainer.max_epochs={self.atft_settings['max_epochs']}",
-                f"train.trainer.precision={self.atft_settings['precision']}",
-                # 進捗と検証頻度は明示（環境変数 TRAIN_VAL_EVERY で上書き可）
-                f"train.trainer.check_val_every_n_epoch={os.getenv('TRAIN_VAL_EVERY', '1')}",
-                "train.trainer.enable_progress_bar=true",
             ]
+            if not _optimized_pre:
+                # data/model/train は既定のdefaultsで固定。必要な範囲のみ上書き。
+                cmd.extend(
+                    [
+                        f"train.batch.train_batch_size={self.atft_settings['batch_size']}",
+                        f"train.optimizer.lr={self.atft_settings['learning_rate']}",
+                        f"train.trainer.max_epochs={self.atft_settings['max_epochs']}",
+                        f"train.trainer.precision={self.atft_settings['precision']}",
+                        f"train.trainer.check_val_every_n_epoch={os.getenv('TRAIN_VAL_EVERY', '1')}",
+                        "train.trainer.enable_progress_bar=true",
+                    ]
+                )
 
             # 追加のHydraオーバーライド（HPOや詳細設定をパススルー）
+            # ただし、既に上記で設定したものは除外する
             if self.extra_overrides:
                 # Only pass through Hydra-friendly overrides (key=value or +key=value) and a small
                 # allowlist of Hydra flags. Any unknown flags (e.g., --run-hpo) and their values are dropped.
@@ -549,6 +561,20 @@ class CompleteATFTTrainingPipeline:
                 def _is_hydra_override(tok: str) -> bool:
                     # Accept patterns like key=value, +key=value, ~key=value
                     if "=" in tok and not tok.startswith("--"):
+                        # Skip overrides that are already set above to avoid duplication
+                        key = tok.split("=")[0].lstrip("+~")
+                        skip_keys = [
+                            "data.source.data_dir",
+                            "train.batch.train_batch_size",
+                            "train.optimizer.lr",
+                            "train.trainer.max_epochs",
+                            "train.trainer.precision",
+                            "train.trainer.check_val_every_n_epoch",
+                            "train.trainer.enable_progress_bar",
+                        ]
+                        if key in skip_keys:
+                            logger.debug(f"Skipping duplicate override: {tok}")
+                            return False
                         return True
                     if tok.startswith("+") or tok.startswith("~"):
                         return "=" in tok
@@ -629,6 +655,16 @@ class CompleteATFTTrainingPipeline:
             env["HYDRA_FULL_ERROR"] = "1"  # 詳細なエラー情報を取得
             # GPU/CPU の実行方針に応じて DataLoader 関連を調整（上の判定を再利用）
 
+            # Detect optimized config to avoid passing loader overrides that may conflict
+            optimized_mode = False
+            try:
+                for tok in (self.extra_overrides or []):
+                    if tok.strip().endswith("config_production_optimized") or "production_improved" in tok:
+                        optimized_mode = True
+                        break
+            except Exception:
+                optimized_mode = False
+
             if use_gpu_plan:
                 # GPU 実行: データローダ最適化（安全デフォルト）。persistent_workersはデッドロック回避のためデフォルト無効。
                 for bad in [
@@ -638,28 +674,19 @@ class CompleteATFTTrainingPipeline:
                 ]:
                     if bad in cmd:
                         cmd.remove(bad)
-                # 未指定なら pin_memory を有効化、prefetch は控えめに 4（環境により2でも可）
-                if not any(s.startswith("train.batch.pin_memory=") for s in cmd):
-                    cmd.append("train.batch.pin_memory=true")
-                if not any(s.startswith("train.batch.prefetch_factor=") for s in cmd):
-                    cmd.append("train.batch.prefetch_factor=4")
-                # 未指定なら DataLoader 並列と persistent_workers を有効化
-                if not any(s.startswith("train.batch.num_workers=") for s in cmd):
-                    cmd.append("train.batch.num_workers=8")
-                if not any(s.startswith("train.batch.persistent_workers=") for s in cmd):
-                    cmd.append("train.batch.persistent_workers=true")
+                # 既に最適化済みの設定プロファイルでは下流Hydraに直接ローダー設定を渡さない
+                # ローダー設定はHydra構成に委譲（最適化プロファイル使用時の衝突回避）
                 # persistent_workers は明示指定がある場合のみ尊重（デフォルトは付与しない）
                 env.setdefault("ACCELERATOR", "gpu")
                 env.setdefault("CUDA_VISIBLE_DEVICES", os.getenv("CUDA_VISIBLE_DEVICES", "0"))
-                logger.info("[pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)")
+                if not optimized_mode:
+                    logger.info("[pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)")
+                else:
+                    logger.info("[pipeline] Using GPU execution plan (loader settings from optimized config)")
             else:
-                # CPU 実行: DataLoader を単純化
-                if "train.batch.prefetch_factor=null" not in cmd:
-                    cmd.append("train.batch.prefetch_factor=null")
-                if "train.batch.persistent_workers=false" not in cmd:
-                    cmd.append("train.batch.persistent_workers=false")
-                if "train.batch.pin_memory=false" not in cmd:
-                    cmd.append("train.batch.pin_memory=false")
+                # CPU 実行: DataLoader を単純化（ここでは設定を追加しない）
+                # ローダー設定はHydra構成に委譲
+                pass
             logger.info(f"Running command: {' '.join(cmd)}")
             if not use_gpu_plan:
                 if env.get("USE_DAY_BATCH", "1") not in ("0", "false", "False"):
@@ -824,26 +851,14 @@ class CompleteATFTTrainingPipeline:
                     # ループ継続（再実行）
                     continue
 
-                # OOM以外の失敗は一度だけCPUローダー安全設定で再試行（環境権限/ソケット制限対策）
+                # OOM以外の失敗は一度だけCPUローダー安全設定で再試行（Hydraオーバーライドは注入しない）
                 if attempt == 1:
-                    logger.warning("[retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings")
-                    # remove GPU-oriented flags if any slipped in
-                    for bad in [
-                        "train.batch.persistent_workers=true",
-                        "train.batch.pin_memory=true",
-                        "train.batch.prefetch_factor=8",
-                    ]:
-                        try:
-                            while bad in cmd:
-                                cmd.remove(bad)
-                        except Exception:
-                            pass
-                    cmd.extend([
-                        "train.batch.num_workers=0",
-                        "train.batch.prefetch_factor=null",
-                        "train.batch.persistent_workers=false",
-                        "train.batch.pin_memory=false",
-                    ])
+                    logger.warning("[retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings (env-only)")
+                    # Enforce single-process loader via environment only
+                    env["NUM_WORKERS"] = "0"
+                    env["PERSISTENT_WORKERS"] = "0"
+                    env["PREFETCH_FACTOR"] = "0"
+                    env["PIN_MEMORY"] = "0"
                     continue
 
                 logger.error("Training failed (non-OOM). See logs/ml_training.log for details.")

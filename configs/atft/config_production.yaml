@@ -29,7 +29,7 @@ defaults:
 - train: production
 - hardware: default
 - override hydra/hydra_logging: default
-- override hydra/job_logging: jst
+- override hydra/job_logging: default
 hydra:
   job:
     chdir: false
@@ -41,7 +41,7 @@ hydra:
     subdir: ${hydra.job.num}
 improvements:
   auto_recover_oom: true
-  compile_model: false
+  compile_model: true  # Enabled based on PDF recommendations for performance
   edge_dropout_p: 0.0
   ema_decay: 0.999
   emergency_checkpoint: false

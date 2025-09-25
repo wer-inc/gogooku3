@@ -1,0 +1,14 @@
+artifact_uri: file:///home/ubuntu/gogooku3-standalone/scripts/mlruns/0/c8241c262eff4d0ca8d2fb2a4f9fe19d/artifacts
+end_time: 1758773172613
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: c8241c262eff4d0ca8d2fb2a4f9fe19d
+run_name: capable-auk-759
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1758773168052
+status: 3
+tags: []
+user_id: ubuntu
