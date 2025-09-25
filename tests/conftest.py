@@ -10,10 +10,13 @@ import sys
 
 # Add scripts to path
 root = Path(__file__).parent.parent
+# Ensure both styles of imports work:
+# - "from gogooku3..." (needs <repo>/src on sys.path)
+# - "from src.gogooku3..." (needs <repo> itself on sys.path)
+sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "src"))
 # Make `scripts/` importable
 sys.path.insert(0, str(root / "scripts"))
-# Make `src/` importable for local package modules (editable install not required in CI)
-sys.path.insert(0, str(root / "src"))
 
 
 @pytest.fixture

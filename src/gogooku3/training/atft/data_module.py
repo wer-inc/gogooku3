@@ -710,7 +710,20 @@ class ProductionDataModuleV2:
     def _get_feature_columns(self) -> list[str]:
         """Get feature column names."""
         if self.config.data.schema.feature_columns:
-            return self.config.data.schema.feature_columns
+            cols = list(self.config.data.schema.feature_columns)
+            selected_path = os.getenv("SELECTED_FEATURES_JSON", "").strip()
+            if selected_path:
+                try:
+                    import json
+                    from pathlib import Path as _P
+                    data = json.loads(_P(selected_path).read_text())
+                    selected = set(data.get("selected_features", []))
+                    if selected:
+                        cols = [c for c in cols if c in selected]
+                        logger.info("[feature-selection] Applied selected features (%d)", len(cols))
+                except Exception as _e:
+                    logger.warning("[feature-selection] failed to apply %s: %s", selected_path, _e)
+            return cols
 
         # Auto-detect from first file
         data_dir = Path(self.config.data.source.data_dir)
@@ -739,11 +752,19 @@ class ProductionDataModuleV2:
             pl.UInt8,
         }
 
-        feature_cols = [
-            col
-            for col in df.columns
-            if col not in exclude_cols and df.schema[col] in numeric_dtypes
-        ]
+        feature_cols = [col for col in df.columns if col not in exclude_cols and df.schema[col] in numeric_dtypes]
+        # Optional: intersect with externally selected features (JSON list)
+        selected_path = os.getenv("SELECTED_FEATURES_JSON", "").strip()
+        if selected_path:
+            try:
+                import json
+                data = json.loads(Path(selected_path).read_text())
+                selected = set(data.get("selected_features", []))
+                if selected:
+                    feature_cols = [c for c in feature_cols if c in selected]
+                    logger.info("[feature-selection] Applied selected features (%d)", len(feature_cols))
+            except Exception as _e:
+                logger.warning("[feature-selection] failed to apply %s: %s", selected_path, _e)
         logger.info(f"✅ Auto-detected {len(feature_cols)} feature columns")
 
         return feature_cols
