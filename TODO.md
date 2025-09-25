@@ -4392,3 +4392,163 @@ wandb: WARNING Changes to your `wandb` environment variables will be ignored bec
   make train-optimized-stable
   3. それでも問題があれば：
   make train-mini-safe
+
+  ---
+
+   make train-optimized-stable
+⚡ Running stable optimized training (recommended)
+   ✅ No DataLoader worker errors
+   ✅ Full optimizations from PDF analysis
+   ✅ Stable memory management
+   ✅ Fixed horizon key mismatch
+   ✅ Zero loss guards added
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+[2025-09-25 14:10:33,393][__main__][INFO] - Starting production training...
+[2025-09-25 14:10:33,407][__main__][INFO] - [EnvOverride] DEGENERACY_ABORT = False (via environment)
+[2025-09-25 14:10:33,408][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-25 14:10:33,410][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-25 14:10:33,412][__main__][INFO] - Using device: cuda
+[2025-09-25 14:10:33,412][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-25 14:10:33,412][__main__][INFO] - GPU Memory: 85.1GB
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+[2025-09-25 14:10:33,959][src.utils.monitoring][WARNING] - W&B initialization failed: first argument must be callable or None
+[2025-09-25 14:10:33,966][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-25 14:10:33,967][__main__][INFO] - Found hidden_size=256 at path: model.hidden_size
+[2025-09-25 14:10:33,968][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass.
+[2025-09-25 14:10:33,969][__main__][INFO] - Setting up data module...
+[2025-09-25 14:10:33,969][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-25 14:10:33,969][__main__][INFO] - [Hydra-Struct] data group keys: ['graph_builder', 'name', 'schema', 'use_buffered_loader', 'source', 'memory', 'distributed', 'sampling', 'time_series', 'features', 'graph']
+[2025-09-25 14:10:34,041][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
+[2025-09-25 14:10:34,065][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
+[2025-09-25 14:11:06,202][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 6223196 windows across 4445 files
+[2025-09-25 14:11:20,550][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1271808 windows across 4387 files
+[2025-09-25 14:11:34,486][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1262736 windows across 4246 files
+[2025-09-25 14:11:34,496][src.gogooku3.training.atft.data_module][INFO] - ✅ Datasets created: train=6223196 samples
+[2025-09-25 14:11:34,500][__main__][INFO] - Creating data loaders...
+[2025-09-25 14:11:35,678][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 2370 days, 25029 batches
+[2025-09-25 14:11:35,822][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 1990 days, 6291 batches
+[2025-09-25 14:11:35,822][__main__][INFO] - DayBatchSampler enabled (min_nodes_per_day=20)
+[2025-09-25 14:11:35,826][src.gogooku3.training.atft.data_module][INFO] - [feature-clip] Applied feature clipping at ±10.00 (set FEATURE_CLIP_VALUE to adjust)
+[2025-09-25 14:11:36,178][__main__][INFO] - [input_dim] detected from data: F=189 (was: 13)
+[2025-09-25 14:11:36,178][__main__][INFO] - ✅ Train batches: 25029
+[2025-09-25 14:11:36,178][__main__][INFO] - ✅ Val batches: 6291
+[2025-09-25 14:11:36,178][__main__][INFO] - Validating label normalization...
+[2025-09-25 14:11:36,795][src.gogooku3.training.atft.data_module][INFO] - [feature-clip] Applied feature clipping at ±10.00 (set FEATURE_CLIP_VALUE to adjust)
+[2025-09-25 14:11:37,771][__main__][INFO] - Target horizon_10d: mean=0.008477, std=0.062600
+[2025-09-25 14:11:37,772][__main__][INFO] - Target horizon_1d: mean=0.010248, std=0.019758
+[2025-09-25 14:11:37,772][__main__][INFO] - Target horizon_20d: mean=0.029357, std=0.101632
+[2025-09-25 14:11:37,772][__main__][INFO] - Target horizon_5d: mean=0.014308, std=0.053079
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-keys] ['features', 'targets', 'codes', 'date']
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] features: <class 'torch.Tensor'>
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] targets: <class 'dict'>
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] codes: <class 'list'>
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] date: <class 'str'>
+[2025-09-25 14:11:38,413][__main__][INFO] - Initializing model...
+[2025-09-25 14:11:38,414][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Feature dimensions - Basic: 8, Technical: 23, MA-derived: 17, Interaction: 8, Flow: 4, Returns: 4
+[2025-09-25 14:11:38,414][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Total current features: 64, Historical: 0, Total: 64
+[2025-09-25 14:11:38,617][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - ATFT-GAT-FAN initialized with 64 dynamic features
+[2025-09-25 14:11:38,674][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 64, got 189). Rebuilding variable selection network.
+[2025-09-25 14:11:39,260][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Adjusting backbone projection input dim from 512 to 256
+[2025-09-25 14:11:39,300][__main__][INFO] - ATFT-GAT-FAN model parameters: 41,552,162
+[2025-09-25 14:11:39,300][__main__][WARNING] - runtime_guards module not found, skipping guards
+[2025-09-25 14:11:39,300][__main__][INFO] - [AMP] GradScaler initialized: enabled=True, amp_dtype=torch.float16
+[2025-09-25 14:11:39,309][__main__][INFO] - [OPT-AUDIT] ✓ Optimizer covers 41552162/41552162 trainable params
+[2025-09-25 14:11:39,309][__main__][INFO] - Batch size: 2048
+[2025-09-25 14:11:39,309][__main__][INFO] - Gradient accumulation steps: 1
+[2025-09-25 14:11:39,309][__main__][INFO] - Effective batch size: 2048
+[2025-09-25 14:11:39,309][__main__][INFO] - Starting training loop (main)...
+[2025-09-25 14:11:39,310][__main__][INFO] - Time budget: 2.0 hours
+[2025-09-25 14:11:39,310][__main__][INFO] - Eval every: 100 steps
+[2025-09-25 14:11:39,310][__main__][INFO] - Heartbeat interval: 30s
+[2025-09-25 14:11:39,310][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=100
+[2025-09-25 14:11:39,310][__main__][INFO] - [GraphBuilder] initialized from /home/ubuntu/gogooku3-standalone/output/atft_data/*.parquet (lookback=60, k=15)
+[2025-09-25 14:11:39,311][src.data.utils.graph_builder][INFO] - FinancialGraphBuilder: window=20, threshold=0.25, method=ewm_demean, ewm_halflife=30, shrinkage_gamma=0.1, symmetric=True
+[2025-09-25 14:11:39,311][__main__][INFO] - [AdvGraph] Enabled training-time FinancialGraphBuilder (method=ewm_demean, k=15, thr=0.25)
+[2025-09-25 14:11:39,315][__main__][INFO] - Running first-batch probe...
+[2025-09-25 14:11:40,314][__main__][INFO] - Batch 0: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 14:11:40,550][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 14:11:41,510][__main__][INFO] - Batch 1: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 14:11:41,641][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 14:11:42,605][__main__][INFO] - Batch 2: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 14:11:42,736][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 14:11:43,681][__main__][INFO] - ✓ First-batch probe passed
+[2025-09-25 14:11:43,681][__main__][INFO] - First batch probe passed
+[2025-09-25 14:11:44,340][__main__][INFO] - [SamplerCheck] first_batch_size=256 (configured=2048)
+[2025-09-25 14:11:44,340][__main__][INFO] - 
+==================================================
+[2025-09-25 14:11:44,340][__main__][INFO] - [main] Epoch 1/120
+[2025-09-25 14:11:44,340][__main__][INFO] - Learning rate: 0.000250
+[2025-09-25 14:11:44,341][__main__][INFO] - [sched] epoch=1 knn_k=10 edge_dropout=0.20
+Epoch 1:   0%|                                                                                  | 0/25029 [00:00<?, ?it/s][2025-09-25 14:11:44,966][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:45,367][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:45,573][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:45,636][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:45,894][__main__][ERROR] - [loss] No matching horizons found in predictions/targets; returning zero loss.
+[2025-09-25 14:11:45,906][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 1/25029 [00:01<10:50:08,  1.56s/it, loss=0.0000][2025-09-25 14:11:45,914][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:45,918][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:46,104][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:46,169][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:46,454][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 2/25029 [00:02<6:42:05,  1.04it/s, loss=0.0000][2025-09-25 14:11:46,458][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:46,462][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:46,650][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:46,713][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:46,888][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 3/25029 [00:02<5:01:15,  1.38it/s, loss=0.0000][2025-09-25 14:11:46,892][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:46,896][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:47,088][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:47,155][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:47,336][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 4/25029 [00:02<4:15:57,  1.63it/s, loss=0.0000][2025-09-25 14:11:48,302][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:48,306][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:48,502][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:48,564][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:48,747][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 5/25029 [00:04<6:15:52,  1.11it/s, loss=0.0000][2025-09-25 14:11:49,706][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:49,710][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:49,903][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:49,967][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:50,154][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 6/25029 [00:05<7:27:34,  1.07s/it, loss=0.0000][2025-09-25 14:11:51,119][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:51,123][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:51,320][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:51,383][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:51,578][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 7/25029 [00:07<8:15:27,  1.19s/it, loss=0.0000][2025-09-25 14:11:52,534][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:52,539][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:52,735][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:52,798][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:52,985][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 8/25029 [00:08<8:44:28,  1.26s/it, loss=0.0000][2025-09-25 14:11:53,931][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:53,935][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:54,128][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:54,191][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:54,374][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 9/25029 [00:10<9:01:32,  1.30s/it, loss=0.0000][2025-09-25 14:11:55,333][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:55,338][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:55,539][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:55,603][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:55,798][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 10/25029 [00:11<9:17:39,  1.34s/it, loss=0.0000][2025-09-25 14:11:56,753][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:56,757][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:56,950][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:57,012][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:57,201][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 11/25029 [00:12<9:26:01,  1.36s/it, loss=0.0000][2025-09-25 14:11:58,146][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:58,150][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:58,348][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:58,413][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:58,604][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 12/25029 [00:14<9:31:48,  1.37s/it, loss=0.0000][2025-09-25 14:11:59,562][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:59,566][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:59,762][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:59,824][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:12:00,013][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 13/25029 [00:15<9:36:30,  1.38s/it, loss=0.0000][2025-09-25 14:12:00,517][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:12:00,522][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=131
+[2025-09-25 14:12:00,624][src.graph.graph_builder][INFO] - Built correlation graph: 131 nodes, 1310 edges
+[2025-09-25 14:12:00,659][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1310
+[2025-09-25 14:12:00,990][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
