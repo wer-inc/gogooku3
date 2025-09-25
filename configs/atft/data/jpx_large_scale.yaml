@@ -1,5 +1,12 @@
 name: jpx_large_scale
 
+# スキーマ設定 (required)
+schema:
+  date_column: date
+  code_column: code
+  target_column: target
+  feature_columns: null  # Auto-detect if null
+
 # バッファー付きローダーを使用（ファイル境界を跨いだシーケンス生成）
 use_buffered_loader: true  # 20日シーケンスのため必須
 

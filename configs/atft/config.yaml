@@ -29,7 +29,7 @@ defaults:
 - train: production
 - hardware: default
 - override hydra/hydra_logging: default
-- override hydra/job_logging: jst
+- override hydra/job_logging: default
 hydra:
   job:
     chdir: false

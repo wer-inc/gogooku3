@@ -1,0 +1,436 @@
+data:
+  graph_builder:
+    cache_dir: graph_cache
+    ewm_halflife: 30
+    k: 15
+    edge_threshold: 0.25
+    log_mktcap_col: log_mktcap
+    lookback: 60
+    method: ewm_demean
+    min_obs: 40
+    use_in_training: true
+    return_cols:
+    - return_1d
+    - feat_ret_1d
+    sector_col: sector33
+    shrinkage_gamma: 0.1
+    size_tau: 1.0
+    source_glob: ${data.source.data_dir}/*.parquet
+    symmetric: true
+  name: jpx_large_scale
+  schema:
+    date_column: date
+    code_column: code
+    target_column: target
+    feature_columns: null
+  use_buffered_loader: true
+  source:
+    type: parquet
+    data_dir: /home/ubuntu/gogooku3-standalone/output/atft_data
+    file_pattern: '*.parquet'
+  memory:
+    chunk_size: 50000
+    cache_size_gb: 15
+    use_memory_map: true
+  distributed:
+    enabled: false
+    num_workers: 0
+    prefetch_factor: 2
+  sampling:
+    n_files_for_scaler: 10
+    rows_per_file: 10000
+  time_series:
+    sequence_length: 20
+    prediction_horizons:
+    - 1
+    - 2
+    - 3
+    - 5
+    - 10
+    split:
+      method: time_based
+      train_ratio: 0.7
+      val_ratio: 0.15
+      test_ratio: 0.15
+      gap_days: 5
+  features:
+    basic:
+      price_volume:
+      - close
+      - open
+      - high
+      - low
+      - volume
+      flags:
+      - upper_limit
+      - volume_spike
+      - high_break_20d
+    technical:
+      momentum:
+      - rsi_2
+      - rsi_14
+      - rsi_delta
+      volatility:
+      - volatility_20d
+      - volatility_ratio
+      - volatility_change
+      - sharpe_1d
+      - sharpe_5d
+      - sharpe_20d
+      - high_vol_flag
+      - low_vol_flag
+      trend:
+      - adx3
+      - adx7
+      - adx14
+      moving_averages:
+      - ema_5
+      - ema_10
+      - ema_20
+      - ema_60
+      - ema_200
+      macd:
+      - macd_signal
+      - macd_histogram
+      bollinger_bands:
+      - bb_pct_b
+      - bb_bandwidth
+    ma_derived:
+      price_deviations:
+      - price_ema5_dev
+      - price_ema10_dev
+      - price_ema20_dev
+      - price_ema200_dev
+      ma_gaps:
+      - ma_gap_5_20
+      - ma_gap_20_60
+      - ma_gap_60_200
+      ma_slopes:
+      - ema5_slope
+      - ema20_slope
+      - ema60_slope
+      ma_crosses:
+      - ema_cross_5_20
+      - ema_cross_20_60
+      - ema_cross_60_200
+      ma_ribbon:
+      - ma_ribbon_bullish
+      - ma_ribbon_bearish
+      - ma_ribbon_spread
+      - dist_to_200ema
+    returns_ma_interaction:
+      momentum:
+      - momentum_5_20
+      - momentum_1_5
+      - momentum_10_20
+      interactions:
+      - ret1d_x_ema20dev
+      - ret5d_x_ema20dev
+      - ret1d_x_ema200dev
+      - mom5d_x_ema20slope
+      - mom20d_x_ema60slope
+    flow:
+    - smart_money_index
+    - smart_money_change
+    - flow_high_flag
+    - flow_low_flag
+    returns:
+      columns:
+      - returns_1d
+      - returns_5d
+      - returns_10d
+      - returns_20d
+    maturity_flags:
+    - is_rsi2_valid
+    - is_ema5_valid
+    - is_ema10_valid
+    - is_ema20_valid
+    - is_ema200_valid
+    - is_valid_ma
+debug:
+  detect_anomaly: false
+  enabled: false
+  fast_dev_run: 10
+  profiler: false
+improvements:
+  auto_recover_oom: true
+  compile_model: false
+  edge_dropout_p: 0.0
+  ema_decay: 0.995
+  emergency_checkpoint: false
+  enable_tensorboard: true
+  enable_wandb: true
+  freq_dropout_max_width: 0.2
+  freq_dropout_min_width: 0.05
+  freq_dropout_p: 0.2
+  gat_alpha_min: 0.05
+  gat_temperature: 0.8
+  huber_delta: 0.01
+  huber_loss: true
+  log_grad_norm: false
+  memory_map: false
+  multi_horizon_weights:
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  online_normalization: true
+  output_head_small_init: true
+  use_ema: true
+logging:
+  level: INFO
+mode: train
+paths:
+  data: data
+  logs: logs
+  models: models
+  root: .
+project:
+  deterministic: true
+  name: ATFT-GAT-FAN
+  seed: 42
+model:
+  name: ATFT_GAT_FAN
+  architecture: atft_gat_fan
+  hidden_size: 64
+  input_projection:
+    use_layer_norm: true
+    dropout: 0.1
+  input_dims:
+    basic_features: 46
+    historical_features: 260
+    total_features: 306
+  tft:
+    lstm:
+      layers: 1
+      hidden_size: ${model.hidden_size}
+      dropout: 0.1
+      bidirectional: false
+    attention:
+      heads: 4
+      dropout: 0.1
+      use_scale: true
+    variable_selection:
+      hidden_size: ${model.hidden_size}
+      dropout: 0.1
+      use_sigmoid: true
+      sparsity_coefficient: 0.01
+    grn:
+      hidden_size: ${model.hidden_size}
+      dropout: 0.1
+      use_layer_norm: true
+    temporal:
+      use_positional_encoding: true
+      max_sequence_length: 20
+  adaptive_normalization:
+    fan:
+      enabled: true
+      window_sizes:
+      - 5
+      - 10
+      - 20
+      aggregation: weighted_mean
+      learn_weights: true
+    san:
+      enabled: true
+      num_slices: 3
+      overlap: 0.5
+      slice_aggregation: learned
+  gat:
+    enabled: true
+    architecture:
+      num_layers: 2
+      hidden_channels:
+      - ${model.hidden_size}
+      - ${model.hidden_size}
+      heads:
+      - 4
+      - 2
+      concat:
+      - true
+      - false
+    layer_config:
+      dropout: 0.2
+      edge_dropout: 0.1
+      negative_slope: 0.2
+      add_self_loops: false
+      bias: true
+    edge_features:
+      use_edge_attr: true
+      edge_dim: 3
+      edge_projection: linear
+    regularization:
+      edge_weight_penalty: 0.01
+      attention_entropy_penalty: 0.001
+  prediction_head:
+    architecture:
+      hidden_layers:
+      - 32
+      activation: relu
+      dropout: 0.2
+      use_batch_norm: false
+    output:
+      point_prediction: true
+      quantile_prediction:
+        enabled: true
+        quantiles:
+        - 0.1
+        - 0.25
+        - 0.5
+        - 0.75
+        - 0.9
+      distribution_prediction:
+        enabled: false
+        type: normal
+      student_t: true
+  optimization:
+    compression:
+      gradient_checkpointing: false
+      mixed_precision: true
+      channels_last: true
+    compile:
+      enabled: true
+      mode: default
+      fullgraph: false
+      dynamic: false
+    inference:
+      use_torch_script: false
+      use_onnx: false
+      optimize_for_inference: true
+  initialization:
+    method: xavier_uniform
+    gain: 1.0
+  regularization:
+    weight_decay: 0.0001
+    gradient_clip_val: 1.0
+    gradient_clip_algorithm: norm
+train:
+  name: production
+  batch:
+    train_batch_size: 256
+    val_batch_size: 6144
+    test_batch_size: 6144
+    num_workers: 16
+    prefetch_factor: 8
+    persistent_workers: true
+    pin_memory: true
+    gradient_accumulation_steps: 1
+  optimizer:
+    type: adamw
+    lr: 0.0001
+    weight_decay: 0.05
+    betas:
+    - 0.9
+    - 0.999
+    eps: 1.0e-07
+  scheduler:
+    type: ReduceLROnPlateau
+    factor: 0.5
+    patience: 3
+    min_lr: 1.0e-06
+    verbose: true
+    threshold: 0.0001
+    threshold_mode: rel
+    warmup_steps: 2000
+    gamma: 0.95
+  trainer:
+    max_epochs: 1
+    gradient_clip_val: 0.8
+    gradient_clip_algorithm: norm
+    accumulate_grad_batches: 1
+    val_check_interval: 1.0
+    check_val_every_n_epoch: 1
+    log_every_n_steps: 25
+    enable_checkpointing: true
+    enable_model_summary: true
+    enable_progress_bar: true
+    detect_anomaly: false
+    benchmark: true
+    deterministic: false
+    precision: 16-mixed
+    accelerator: gpu
+    devices: 1
+  throughput:
+    min_gpu_utilization: 0.85
+    target_prefetch_size_mb: 2048
+  early_stopping:
+    monitor: val/sharpe_ratio
+    mode: max
+    patience: 9
+    min_delta: 0.001
+    verbose: true
+  prediction:
+    horizons:
+    - 1
+    - 5
+    - 10
+    - 20
+    horizon_specific_architecture: true
+    horizon_weights:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+  loss:
+    type: huber_multi_horizon
+    huber_delta: 0.01
+    multi_horizon_weights:
+    - 1.0
+    - 1.0
+    - 1.0
+    - 1.0
+    use_coverage_penalty: true
+    coverage_alpha: 0.02
+    rankic_weight: 0.1
+    sharpe_weight: 0.05
+    l2_lambda: 0.001
+  checkpoint:
+    monitor: val/sharpe_ratio
+    mode: max
+    save_top_k: 3
+    save_last: false
+    save_on_train_epoch_end: false
+    filename: production-{epoch:03d}-{val_sharpe_ratio:.6f}
+  logging:
+    log_every_n_steps: 10
+    log_grad_norm: true
+    log_learning_rate: true
+  grad_scaler:
+    init_scale: 65536.0
+    growth_factor: 2.0
+    backoff_factor: 0.5
+    growth_interval: 2000
+  ema:
+    enabled: false
+    decay: 0.999
+    update_every_step: true
+  validation:
+    per_date_metrics: true
+    outlier_detection: true
+    outlier_threshold: 3.0
+  data:
+    correlation_eps: 1.0e-08
+    correlation_clamp:
+    - -0.999
+    - 0.999
+    nan_fill_value: 0.0
+hardware:
+  name: default
+  device: ${oc.env:DEVICE, cuda}
+  gpu_id: ${oc.env:GPU_ID, 0}
+  num_workers: ${oc.env:NUM_WORKERS, 8}
+  pin_memory: ${oc.env:PIN_MEMORY, true}
+  mixed_precision: ${oc.env:MIXED_PRECISION, true}
+  channels_last: ${oc.env:CHANNELS_LAST, true}
+  a100_optimizations:
+    tf32: true
+    cudnn_benchmark: true
+    gradient_checkpointing: false
+  memory:
+    max_memory_allocated: ${oc.env:MAX_MEMORY_ALLOCATED, 0.9}
+    memory_fraction: ${oc.env:MEMORY_FRACTION, 0.8}
+    allow_growth: ${oc.env:ALLOW_GROWTH, true}
+  performance:
+    prefetch_factor: ${oc.env:PREFETCH_FACTOR, 4}
+    persistent_workers: ${oc.env:PERSISTENT_WORKERS, true}
+    drop_last: ${oc.env:DROP_LAST, false}

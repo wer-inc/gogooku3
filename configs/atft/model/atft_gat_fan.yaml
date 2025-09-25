@@ -3,7 +3,7 @@ name: ATFT_GAT_FAN
 architecture: atft_gat_fan
 
 # モデル全体設定（グループ直下にフラットに定義）
-hidden_size: 64
+hidden_size: 256  # Increased from 64 for better model capacity (~20M params)
 input_projection:
   use_layer_norm: true
   dropout: 0.1
@@ -93,7 +93,7 @@ optimization:
     mixed_precision: true
     channels_last: true
   compile:
-    enabled: false
+    enabled: true  # Enabled for torch.compile optimization
     mode: default
     fullgraph: false
     dynamic: false

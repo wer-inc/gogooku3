@@ -1,0 +1,6 @@
+# @package model
+defaults:
+  - atft_gat_fan
+
+hidden_size: 256
+

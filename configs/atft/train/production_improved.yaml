@@ -1,0 +1,198 @@
+# @package train
+# Performance-optimized training configuration
+
+trainer:
+  max_epochs: 100  # Increased from 75 for better convergence
+  accelerator: cuda
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 50
+  val_check_interval: 1.0
+  accumulate_grad_batches: 2  # Effective batch size = 4096
+
+optimizer:
+  name: adamw
+  lr: 5e-4  # Slightly higher for larger model
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  weight_decay: 1e-5
+
+  # Per-layer learning rates for better optimization
+  param_groups:
+    - name: gat
+      lr_multiplier: 1.0
+    - name: tft
+      lr_multiplier: 1.0
+    - name: head
+      lr_multiplier: 2.0  # Higher LR for output head
+
+scheduler:
+  # Changed from cosine to plateau for better convergence
+  name: plateau
+  mode: max  # Maximize validation metric
+  monitor: val/rank_ic_5d  # Monitor 5-day RankIC
+  patience: 5
+  factor: 0.5
+  min_lr: 1e-6
+  threshold: 1e-4
+  cooldown: 2
+
+  # Alternative: Extended cosine with restarts
+  # name: cosine_with_restarts
+  # T_0: 20
+  # T_mult: 1.5
+  # eta_min: 1e-6
+
+batch:
+  batch_size: 2048  # Increased for larger model
+  shuffle: true
+  num_workers: 8  # Multi-worker enabled
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+  drop_last: false
+
+# Loss configuration optimized for financial metrics
+loss:
+  # Multi-horizon settings
+  horizons: [1, 5, 10, 20]
+  horizon_weights:
+    1: 1.0
+    5: 0.8
+    10: 0.5
+    20: 0.3
+
+  # Loss component weights (optimized for IC/RankIC)
+  components:
+    quantile:
+      weight: 0.3  # Reduced from 1.0
+      quantiles: [0.5]  # Focus on median
+
+    sharpe:
+      weight: 0.3  # Increased for better risk-adjusted returns
+      target_sharpe: 0.849
+
+    ic:
+      weight: 0.2  # Increased from 0.05
+      use_rank_ic: true
+      rank_ic_weight: 0.5
+
+    mse:
+      weight: 0.1  # Basic regression component
+
+    huber:
+      weight: 0.1  # Robust to outliers
+      delta: 1.0
+
+# Phase training with extended epochs
+phases:
+  - name: warmup
+    epochs: 5
+    lr_multiplier: 0.1
+    use_gat: false
+    use_fan: false
+
+  - name: baseline
+    epochs: 10
+    lr_multiplier: 1.0
+    use_gat: false
+    use_fan: false
+
+  - name: gat_integration
+    epochs: 20
+    lr_multiplier: 1.0
+    use_gat: true
+    use_fan: false
+    freeze_baseline: false
+
+  - name: full_model
+    epochs: 40
+    lr_multiplier: 1.0
+    use_gat: true
+    use_fan: true
+    freeze_baseline: false
+
+  - name: finetune
+    epochs: 25
+    lr_multiplier: 0.1
+    use_gat: true
+    use_fan: true
+    freeze_baseline: false
+    use_swa: true  # Stochastic Weight Averaging
+
+# Early stopping configuration
+early_stopping:
+  monitor: val/rank_ic_5d
+  mode: max
+  patience: 15
+  min_delta: 1e-4
+  verbose: true
+
+# Validation settings
+validation:
+  metrics:
+    - ic
+    - rank_ic
+    - sharpe
+    - max_drawdown
+    - calmar
+
+  # Walk-forward validation
+  walk_forward:
+    enabled: true
+    embargo_days: 20
+    n_splits: 5
+
+# Logging and checkpointing
+callbacks:
+  model_checkpoint:
+    monitor: val/rank_ic_5d
+    mode: max
+    save_top_k: 3
+    save_last: true
+
+  learning_rate_monitor:
+    logging_interval: step
+
+  gpu_stats_monitor:
+    memory_utilization: true
+    gpu_utilization: true
+
+  # Stochastic Weight Averaging
+  swa:
+    enabled: true
+    swa_lrs: 1e-4
+    swa_epoch_start: 0.75  # Start at 75% of training
+    annealing_epochs: 5
+
+  # Snapshot Ensemble
+  snapshot:
+    enabled: true
+    snapshot_epochs: [60, 70, 80, 90, 100]
+
+# Performance optimizations
+performance:
+  # PyTorch 2.x compilation
+  compile:
+    enabled: true
+    mode: max-autotune  # Maximum optimization
+    fullgraph: false
+    dynamic: false
+
+  # Memory optimization
+  gradient_checkpointing: false  # Enable if memory limited
+  mixed_precision: bf16
+
+  # DataLoader optimization
+  dataloader:
+    multiprocessing_context: spawn
+    worker_init_fn: seed_worker
+
+# Monitoring and debugging
+debug:
+  profiler: false  # Enable for profiling
+  detect_anomaly: false
+  track_grad_norm: true
+  log_gpu_memory: true
