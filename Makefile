@@ -459,7 +459,12 @@ train-optimized-stable:
 	@echo "   ✅ No DataLoader worker errors"
 	@echo "   ✅ Full optimizations from PDF analysis"
 	@echo "   ✅ Stable memory management"
-	@python scripts/train_atft.py --config-path $(CONFIG_PATH) --config-name config_production_stable
+	@python scripts/train_atft.py --config-path ../configs/atft --config-name config_production \
+		data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data \
+		model.hidden_size=256 \
+		train.batch.train_batch_size=2048 \
+		train.optimizer.lr=5e-4 \
+		train.trainer.max_epochs=120
 
 train-fixed:
 	@echo "🔧 Running fixed training configuration"

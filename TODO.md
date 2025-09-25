@@ -4189,3 +4189,196 @@ Using optimized data loader
 INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
 Using optimized data loader
 INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+
+-----
+
+ make train-optimized-stable
+⚡ Running stable optimized training (recommended)
+   ✅ No DataLoader worker errors
+   ✅ Full optimizations from PDF analysis
+   ✅ Stable memory management
+============================================================
+⚡ STABLE OPTIMIZED TRAINING
+============================================================
+Key Features:
+  ✅ Single-process DataLoader (no worker errors)
+  ✅ Full batch size (2048)
+  ✅ torch.compile enabled (default mode)
+  ✅ Model hidden_size=256 (PDF recommendation)
+  ✅ RankIC/Sharpe optimization
+  ✅ 120 epochs full training
+  ✅ Memory optimization enabled
+------------------------------------------------------------
+Command: /usr/bin/python /home/ubuntu/gogooku3-standalone/scripts/train_atft.py --config-path /home/ubuntu/gogooku3-standalone/configs/atft --config-name...
+------------------------------------------------------------
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+[2025-09-25 03:52:09,514][__main__][INFO] - Starting production training...
+[2025-09-25 03:52:09,528][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-25 03:52:09,530][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-25 03:52:09,533][__main__][INFO] - Using device: cuda
+[2025-09-25 03:52:09,533][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-25 03:52:09,533][__main__][INFO] - GPU Memory: 85.1GB
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+[2025-09-25 03:52:10,075][src.utils.monitoring][WARNING] - W&B initialization failed: first argument must be callable or None
+[2025-09-25 03:52:10,081][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-25 03:52:10,082][__main__][INFO] - Found hidden_size=256 at path: model.hidden_size
+[2025-09-25 03:52:10,084][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass.
+[2025-09-25 03:52:10,084][__main__][INFO] - Setting up data module...
+[2025-09-25 03:52:10,085][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-25 03:52:10,085][__main__][INFO] - [Hydra-Struct] data group keys: ['graph_builder', 'name', 'schema', 'use_buffered_loader', 'source', 'memory', 'distributed', 'sampling', 'time_series', 'features', 'graph']
+[2025-09-25 03:52:10,351][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
+[2025-09-25 03:52:10,374][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
+[2025-09-25 03:52:10,415][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-25 03:52:43,297][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 6223196 windows across 4445 files
+[2025-09-25 03:52:43,371][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-25 03:52:57,763][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1271808 windows across 4387 files
+[2025-09-25 03:52:57,808][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
+[2025-09-25 03:53:11,959][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1262736 windows across 4246 files
+[2025-09-25 03:53:11,968][src.gogooku3.training.atft.data_module][INFO] - ✅ Datasets created: train=6223196 samples
+[2025-09-25 03:53:11,971][__main__][INFO] - Creating data loaders...
+[2025-09-25 03:53:13,187][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 2370 days, 25029 batches
+[2025-09-25 03:53:13,336][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 1990 days, 6291 batches
+[2025-09-25 03:53:13,336][__main__][INFO] - DayBatchSampler enabled (min_nodes_per_day=20)
+[2025-09-25 03:53:13,704][__main__][INFO] - [input_dim] detected from data: F=189 (was: 13)
+[2025-09-25 03:53:13,705][__main__][INFO] - ✅ Train batches: 25029
+[2025-09-25 03:53:13,705][__main__][INFO] - ✅ Val batches: 6291
+[2025-09-25 03:53:13,705][__main__][INFO] - Validating label normalization...
+[2025-09-25 03:53:15,296][__main__][INFO] - Target horizon_10d: mean=0.007125, std=0.052837
+[2025-09-25 03:53:15,296][__main__][INFO] - Target horizon_1d: mean=0.008484, std=0.016878
+[2025-09-25 03:53:15,296][__main__][INFO] - Target horizon_20d: mean=0.030293, std=0.092054
+[2025-09-25 03:53:15,296][__main__][INFO] - Target horizon_5d: mean=0.013588, std=0.037883
+[2025-09-25 03:53:15,914][__main__][INFO] - [debug-first-batch-keys] ['features', 'targets', 'codes', 'date']
+[2025-09-25 03:53:15,914][__main__][INFO] - [debug-first-batch-type] features: <class 'torch.Tensor'>
+[2025-09-25 03:53:15,914][__main__][INFO] - [debug-first-batch-type] targets: <class 'dict'>
+[2025-09-25 03:53:15,914][__main__][INFO] - [debug-first-batch-type] codes: <class 'list'>
+[2025-09-25 03:53:15,915][__main__][INFO] - [debug-first-batch-type] date: <class 'str'>
+[2025-09-25 03:53:15,964][__main__][INFO] - Initializing model...
+[2025-09-25 03:53:15,965][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Feature dimensions - Basic: 8, Technical: 23, MA-derived: 17, Interaction: 8, Flow: 4, Returns: 4
+[2025-09-25 03:53:15,965][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Total current features: 64, Historical: 0, Total: 64
+[2025-09-25 03:53:16,158][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - ATFT-GAT-FAN initialized with 64 dynamic features
+[2025-09-25 03:53:16,213][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 64, got 189). Rebuilding variable selection network.
+[2025-09-25 03:53:16,786][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Adjusting backbone projection input dim from 512 to 256
+[2025-09-25 03:53:16,826][__main__][INFO] - ATFT-GAT-FAN model parameters: 41,552,162
+[2025-09-25 03:53:16,826][__main__][WARNING] - runtime_guards module not found, skipping guards
+[2025-09-25 03:53:16,836][__main__][INFO] - [OPT-AUDIT] ✓ Optimizer covers 41552162/41552162 trainable params
+[2025-09-25 03:53:16,836][__main__][INFO] - Batch size: 2048
+[2025-09-25 03:53:16,836][__main__][INFO] - Gradient accumulation steps: 1
+[2025-09-25 03:53:16,837][__main__][INFO] - Effective batch size: 2048
+[2025-09-25 03:53:16,837][__main__][INFO] - Starting training loop (main)...
+[2025-09-25 03:53:16,837][__main__][INFO] - Time budget: 2.0 hours
+[2025-09-25 03:53:16,837][__main__][INFO] - Eval every: 100 steps
+[2025-09-25 03:53:16,837][__main__][INFO] - Heartbeat interval: 30s
+[2025-09-25 03:53:16,838][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=100
+[2025-09-25 03:53:16,838][__main__][INFO] - [GraphBuilder] initialized from /home/ubuntu/gogooku3-standalone/output/atft_data/*.parquet (lookback=60, k=15)
+[2025-09-25 03:53:16,838][src.data.utils.graph_builder][INFO] - FinancialGraphBuilder: window=20, threshold=0.25, method=ewm_demean, ewm_halflife=30, shrinkage_gamma=0.1, symmetric=True
+[2025-09-25 03:53:16,838][__main__][INFO] - [AdvGraph] Enabled training-time FinancialGraphBuilder (method=ewm_demean, k=15, thr=0.25)
+[2025-09-25 03:53:17,361][__main__][INFO] - SWA enabled: averaging parameters after 0.67 of epochs (lr_factor=0.50)
+[2025-09-25 03:53:17,366][__main__][INFO] - Running first-batch probe...
+[2025-09-25 03:53:17,984][__main__][INFO] - Batch 0: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 03:53:18,222][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 03:53:19,179][__main__][INFO] - Batch 1: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 03:53:19,306][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 03:53:20,256][__main__][INFO] - Batch 2: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 03:53:20,383][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 03:53:21,318][__main__][INFO] - ✓ First-batch probe passed
+[2025-09-25 03:53:21,318][__main__][INFO] - First batch probe passed
+[2025-09-25 03:53:21,953][__main__][INFO] - [SamplerCheck] first_batch_size=256 (configured=2048)
+[2025-09-25 03:53:21,953][__main__][INFO] - 
+==================================================
+[2025-09-25 03:53:21,954][__main__][INFO] - [main] Epoch 1/120
+[2025-09-25 03:53:21,954][__main__][INFO] - Learning rate: 0.000250
+[2025-09-25 03:53:21,954][__main__][INFO] - [sched] epoch=1 knn_k=10 edge_dropout=0.20
+Epoch 1:   0%|                                                                                                                  | 0/25029 [00:00<?, ?it/s][2025-09-25 03:53:22,579][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 03:53:22,991][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 03:53:23,205][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 03:53:23,270][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 03:53:23,509][__main__][ERROR] - [loss] No matching horizons found in predictions/targets; returning zero loss.
+Epoch 1:   0%|                                                                                                                  | 0/25029 [00:01<?, ?it/s]
+[2025-09-25 03:53:23,521][__main__][ERROR] - [PhaseTraining] failed or disabled: No inf checks were recorded for this optimizer.; falling back to standard training
+[2025-09-25 03:53:23,522][__main__][INFO] - Starting training loop (main)...
+[2025-09-25 03:53:23,522][__main__][INFO] - Time budget: 2.0 hours
+[2025-09-25 03:53:23,522][__main__][INFO] - Eval every: 100 steps
+[2025-09-25 03:53:23,522][__main__][INFO] - Heartbeat interval: 30s
+[2025-09-25 03:53:23,523][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=100
+[2025-09-25 03:53:23,523][__main__][INFO] - [GraphBuilder] initialized from /home/ubuntu/gogooku3-standalone/output/atft_data/*.parquet (lookback=60, k=15)
+[2025-09-25 03:53:23,524][src.data.utils.graph_builder][INFO] - FinancialGraphBuilder: window=20, threshold=0.25, method=ewm_demean, ewm_halflife=30, shrinkage_gamma=0.1, symmetric=True
+[2025-09-25 03:53:23,524][__main__][INFO] - [AdvGraph] Enabled training-time FinancialGraphBuilder (method=ewm_demean, k=15, thr=0.25)
+[2025-09-25 03:53:24,142][__main__][WARNING] - SWA init failed: Only Tensors created explicitly by the user (graph leaves) support the deepcopy protocol at the moment.  If you were attempting to deepcopy a module, this may be because of a torch.nn.utils.weight_norm usage, see https://github.com/pytorch/pytorch/pull/103001
+[2025-09-25 03:53:24,151][__main__][INFO] - Running first-batch probe...
+[2025-09-25 03:53:24,778][__main__][INFO] - Batch 0: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 03:53:24,899][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 03:53:24,904][__main__][INFO] - Batch 1: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 03:53:25,022][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 03:53:25,024][__main__][INFO] - Batch 2: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 03:53:25,145][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 03:53:25,152][__main__][INFO] - ✓ First-batch probe passed
+[2025-09-25 03:53:25,152][__main__][INFO] - First batch probe passed
+[2025-09-25 03:53:25,770][__main__][INFO] - [SamplerCheck] first_batch_size=256 (configured=2048)
+[2025-09-25 03:53:25,770][__main__][INFO] - 
+==================================================
+[2025-09-25 03:53:25,770][__main__][INFO] - [main] Epoch 1/120
+[2025-09-25 03:53:25,770][__main__][INFO] - Learning rate: 0.000250
+[2025-09-25 03:53:25,770][__main__][INFO] - [sched] epoch=1 knn_k=10 edge_dropout=0.20
+Epoch 1:   0%|                                                                                                                  | 0/25029 [00:00<?, ?it/s][2025-09-25 03:53:26,391][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 03:53:26,395][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 03:53:26,579][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 03:53:26,643][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+Epoch 1:   0%|                                                                                                                  | 0/25029 [00:01<?, ?it/s]
+Error executing job with overrides: ['data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data', 'model.hidden_size=256', 'improvements.compile_model=true', 'train.batch.train_batch_size=2048', 'train.optimizer.lr=5e-4', 'train.trainer.max_epochs=120', 'train.trainer.gradient_clip_val=1.0', 'data.distributed.enabled=false', 'data.distributed.num_workers=0', 'data.memory.chunk_size=10000', 'data.memory.cache_size_gb=8']
+Traceback (most recent call last):
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 7281, in train
+    best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 6387, in run_training
+    scaler.step(optimizer)
+  File "/usr/local/lib/python3.10/dist-packages/torch/amp/grad_scaler.py", line 458, in step
+    len(optimizer_state["found_inf_per_device"]) > 0
+AssertionError: No inf checks were recorded for this optimizer.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 7285, in train
+    best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
+  File "/home/ubuntu/gogooku3-standalone/scripts/train_atft.py", line 6325, in run_training
+    scaler.unscale_(optimizer)
+  File "/usr/local/lib/python3.10/dist-packages/torch/amp/grad_scaler.py", line 331, in unscale_
+    raise RuntimeError(
+RuntimeError: unscale_() has already been called on this optimizer since the last update().
+
+Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+wandb: 
+wandb: 🚀 View run train_20250925_125209 at: 
+wandb: Find logs at: wandb/run-20250925_035209-af1tysgb/logs
+
+❌ Training failed: Command '['/usr/bin/python', '/home/ubuntu/gogooku3-standalone/scripts/train_atft.py', '--config-path', '/home/ubuntu/gogooku3-standalone/configs/atft', '--config-name', 'config_production', 'data.source.data_dir=/home/ubuntu/gogooku3-standalone/output/atft_data', 'model.hidden_size=256', 'improvements.compile_model=true', 'train.batch.train_batch_size=2048', 'train.optimizer.lr=5e-4', 'train.trainer.max_epochs=120', 'train.trainer.gradient_clip_val=1.0', 'data.distributed.enabled=false', 'data.distributed.num_workers=0', 'data.memory.chunk_size=10000', 'data.memory.cache_size_gb=8']' returned non-zero exit status 1.
+make: *** [Makefile:462: train-optimized-stable] Error 1
+
+----
+
+make train-optimized-stable
+⚡ Running stable optimized training (recommended)
+   ✅ No DataLoader worker errors
+   ✅ Full optimizations from PDF analysis
+   ✅ Stable memory management
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+[2025-09-25 12:44:38,904][__main__][INFO] - Starting production training...
+[2025-09-25 12:44:38,918][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-25 12:44:38,920][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-25 12:44:38,922][__main__][INFO] - Using device: cuda
+[2025-09-25 12:44:38,922][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-25 12:44:38,922][__main__][INFO] - GPU Memory: 85.1GB
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+[2025-09-25 12:44:39,389][src.utils.monitoring][WARNING] - W&B initialization failed: first argument must be callable or None
+[2025-09-25 12:44:39,395][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-25 12:44:39,396][__main__][INFO] - Found hidden_size=256 at path: model.hidden_size
+[2025-09-25 12:44:39,397][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass.
+[2025-09-25 12:44:39,397][__main__][INFO] - Setting up data module...
+[2025-09-25 12:44:39,397][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-25 12:44:39,398][__main__][INFO] - [Hydra-Struct] data group keys: ['graph_builder', 'name', 'schema', 'use_buffered_loader', 'source', 'memory', 'distributed', 'sampling', 'time_series', 'features', 'graph']
+[2025-09-25 12:44:39,654][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
+[2025-09-25 12:44:39,675][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
+[2025-09-25 12:44:39,715][src.gogooku3.training.atft.data_module][WARNING] - FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow
