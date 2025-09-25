@@ -1828,11 +1828,14 @@ def train_epoch(
                             scaler.step(optimizer)
                         except AssertionError as _e:
                             logger.error(f"[optim] GradScaler step skipped: {_e}")
-                        scaler.update()
                     else:
                         optimizer.step()
                 else:
                     logger.warning("[optim] No gradients; skipping optimizer.step()")
+
+                # Always update scaler to maintain consistent state
+                if scaler_is_enabled:
+                    scaler.update()
                 optimizer.zero_grad(set_to_none=True)  # メモリ効率向上
 
             # 統計更新
@@ -6018,17 +6021,48 @@ def train(config: DictConfig) -> None:
                                     model, features, edge_index, edge_attr
                                 )
 
-                            # Normalize output keys IMMEDIATELY: point_horizon_X -> horizon_X
+                            # Debug logging to track key transformation
+                            if global_step == 0:
+                                logger.info(f"[DEBUG-KEYS] Raw model output type: {type(outputs)}")
+                                if isinstance(outputs, dict):
+                                    logger.info(f"[DEBUG-KEYS] Raw output top-level keys: {list(outputs.keys())}")
+                                    if "predictions" in outputs:
+                                        logger.info(f"[DEBUG-KEYS] predictions type: {type(outputs['predictions'])}")
+                                        if isinstance(outputs["predictions"], dict):
+                                            logger.info(f"[DEBUG-KEYS] predictions keys: {list(outputs['predictions'].keys())}")
+                                logger.info(f"[DEBUG-KEYS] Target type: {type(targets)}")
+                                if isinstance(targets, dict):
+                                    logger.info(f"[DEBUG-KEYS] Target keys: {list(targets.keys())}")
+
+                            # Normalize output keys: point_horizon_X -> horizon_Xd
+                            # Handle both nested {"predictions": {...}} and flat structures
                             if isinstance(outputs, dict):
-                                normalized_outputs = {}
-                                for k, v in outputs.items():
-                                    if k.startswith("point_horizon_"):
-                                        # Convert point_horizon_X to horizon_X
-                                        new_key = k.replace("point_horizon_", "horizon_")
-                                        normalized_outputs[new_key] = v
-                                    else:
-                                        normalized_outputs[k] = v
-                                outputs = normalized_outputs
+                                # Check if we have nested predictions dict
+                                if "predictions" in outputs and isinstance(outputs["predictions"], dict):
+                                    # Normalize keys within the predictions dict
+                                    normalized_predictions = {}
+                                    for k, v in outputs["predictions"].items():
+                                        if k.startswith("point_horizon_"):
+                                            # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
+                                            horizon_num = k.replace("point_horizon_", "")
+                                            new_key = f"horizon_{horizon_num}d"
+                                            normalized_predictions[new_key] = v
+                                        else:
+                                            normalized_predictions[k] = v
+                                    # Keep the nested structure
+                                    outputs["predictions"] = normalized_predictions
+                                else:
+                                    # Flat structure - normalize directly
+                                    normalized_outputs = {}
+                                    for k, v in outputs.items():
+                                        if k.startswith("point_horizon_"):
+                                            # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
+                                            horizon_num = k.replace("point_horizon_", "")
+                                            new_key = f"horizon_{horizon_num}d"
+                                            normalized_outputs[new_key] = v
+                                        else:
+                                            normalized_outputs[k] = v
+                                    outputs = normalized_outputs
 
                             # Force ALL outputs to FP32 for loss calculation
                             outputs = {
@@ -6067,6 +6101,22 @@ def train(config: DictConfig) -> None:
                                     raise TypeError(
                                         f"Expected loss to be a Tensor, got {type(loss)}"
                                     )
+                            # Check if loss is zero or invalid - skip batch if so
+                            if not torch.is_tensor(loss) or torch.isnan(loss) or torch.isinf(loss):
+                                logger.warning(
+                                    f"[skip-batch] Invalid loss detected: type={type(loss)}, value={loss}"
+                                )
+                                mb_start = mb_end
+                                continue
+
+                            # Skip batch if loss is effectively zero (no valid targets)
+                            if loss.item() < 1e-10:
+                                logger.warning(
+                                    f"[skip-batch] Zero loss detected ({loss.item():.2e}), likely no valid targets in batch"
+                                )
+                                mb_start = mb_end
+                                continue
+
                             # Optional regularization: include model-provided sparsity/alpha penalty
                             try:
                                 _sp_lambda = float(os.getenv("SPARSITY_LAMBDA", "0.0"))
@@ -6161,17 +6211,35 @@ def train(config: DictConfig) -> None:
                                     model, features, edge_index, edge_attr
                                 )
 
-                                # Normalize output keys IMMEDIATELY: point_horizon_X -> horizon_X
+                                # Normalize output keys: point_horizon_X -> horizon_Xd
+                                # Handle both nested {"predictions": {...}} and flat structures
                                 if isinstance(outputs, dict):
-                                    normalized_outputs = {}
-                                    for k, v in outputs.items():
-                                        if k.startswith("point_horizon_"):
-                                            # Convert point_horizon_X to horizon_X
-                                            new_key = k.replace("point_horizon_", "horizon_")
-                                            normalized_outputs[new_key] = v
-                                        else:
-                                            normalized_outputs[k] = v
-                                    outputs = normalized_outputs
+                                    # Check if we have nested predictions dict
+                                    if "predictions" in outputs and isinstance(outputs["predictions"], dict):
+                                        # Normalize keys within the predictions dict
+                                        normalized_predictions = {}
+                                        for k, v in outputs["predictions"].items():
+                                            if k.startswith("point_horizon_"):
+                                                # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
+                                                horizon_num = k.replace("point_horizon_", "")
+                                                new_key = f"horizon_{horizon_num}d"
+                                                normalized_predictions[new_key] = v
+                                            else:
+                                                normalized_predictions[k] = v
+                                        # Keep the nested structure
+                                        outputs["predictions"] = normalized_predictions
+                                    else:
+                                        # Flat structure - normalize directly
+                                        normalized_outputs = {}
+                                        for k, v in outputs.items():
+                                            if k.startswith("point_horizon_"):
+                                                # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
+                                                horizon_num = k.replace("point_horizon_", "")
+                                                new_key = f"horizon_{horizon_num}d"
+                                                normalized_outputs[new_key] = v
+                                            else:
+                                                normalized_outputs[k] = v
+                                        outputs = normalized_outputs
 
                                 # outputs/targets 双方をサニタイズ
                                 if isinstance(outputs, dict):
@@ -6194,6 +6262,22 @@ def train(config: DictConfig) -> None:
                                     raise TypeError(
                                         f"Expected loss to be a Tensor, got {type(loss)}"
                                     )
+                            # Check if loss is zero or invalid - skip batch if so
+                            if not torch.is_tensor(loss) or torch.isnan(loss) or torch.isinf(loss):
+                                logger.warning(
+                                    f"[skip-batch] Invalid loss detected: type={type(loss)}, value={loss}"
+                                )
+                                mb_start = mb_end
+                                continue
+
+                            # Skip batch if loss is effectively zero (no valid targets)
+                            if loss.item() < 1e-10:
+                                logger.warning(
+                                    f"[skip-batch] Zero loss detected ({loss.item():.2e}), likely no valid targets in batch"
+                                )
+                                mb_start = mb_end
+                                continue
+
                             # Optional regularization: include model-provided sparsity/alpha penalty
                             try:
                                 _sp_lambda = float(os.getenv("SPARSITY_LAMBDA", "0.0"))
@@ -6430,8 +6514,8 @@ def train(config: DictConfig) -> None:
 
                         n_micro_steps += 1
                         if n_micro_steps % grad_accum == 0:
-                            # Only unscale if scaler is enabled
-                            if scaler_enabled:
+                            # Only unscale if scaler is enabled and we have gradients
+                            if scaler_enabled and any(p.grad is not None for p in model.parameters()):
                                 scaler.unscale_(optimizer)
 
                             # Check gradient norms before clipping
@@ -6495,18 +6579,17 @@ def train(config: DictConfig) -> None:
                                 model.parameters(), max_norm=1.0
                             )
 
-                            # Optimizer step with AMP safety
-                            if any(p.grad is not None for p in model.parameters()):
-                                if scaler_enabled:
-                                    try:
-                                        scaler.step(optimizer)
-                                    except AssertionError as _e:
-                                        logger.error(f"[optim] GradScaler step skipped: {_e}")
-                                    scaler.update()
-                                else:
-                                    optimizer.step()
+                            # Optimizer step - always attempt even with no/zero gradients
+                            # This ensures scaler state consistency
+                            if scaler_enabled:
+                                try:
+                                    scaler.step(optimizer)
+                                except AssertionError as _e:
+                                    logger.error(f"[optim] GradScaler step skipped: {_e}")
+                                # Always update scaler to maintain consistent state
+                                scaler.update()
                             else:
-                                logger.warning("[optim] No gradients; skipping optimizer.step()")
+                                optimizer.step()
 
                             optimizer.zero_grad(set_to_none=True)
                             global_step += 1
@@ -6576,17 +6659,21 @@ def train(config: DictConfig) -> None:
                         pbar.set_postfix({"loss": f"{avg:.4f}"})
                 # Flush tail grads
                 if n_micro_steps % max(1, grad_accum) != 0:
-                    scaler.unscale_(optimizer)
+                    # Always unscale and clip regardless of gradient presence
+                    if scaler_enabled:
+                        scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    # Skip step if no gradients were produced (e.g., empty loss)
-                    if any(p.grad is not None for p in model.parameters()):
+
+                    # Always step and update to maintain consistent state
+                    if scaler_enabled:
                         try:
                             scaler.step(optimizer)
                         except AssertionError as _e:
                             logger.error(f"[optim] GradScaler step skipped: {_e}")
+                        # Always update to maintain state consistency
                         scaler.update()
                     else:
-                        logger.warning("[optim] No gradients; skipping optimizer.step()")
+                        optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
                 # Log training loss (removed unused variables)
                 if n_micro_steps > 0:
@@ -6885,17 +6972,35 @@ def train(config: DictConfig) -> None:
                                     eval_model, features, edge_index, edge_attr
                                 )
 
-                                # Normalize output keys: point_horizon_X -> horizon_X
+                                # Normalize output keys: point_horizon_X -> horizon_Xd
+                                # Handle both nested {"predictions": {...}} and flat structures
                                 if isinstance(outputs, dict):
-                                    normalized_outputs = {}
-                                    for k, v in outputs.items():
-                                        if k.startswith("point_horizon_"):
-                                            # Convert point_horizon_X to horizon_X
-                                            new_key = k.replace("point_horizon_", "horizon_")
-                                            normalized_outputs[new_key] = v
-                                        else:
-                                            normalized_outputs[k] = v
-                                    outputs = normalized_outputs
+                                    # Check if we have nested predictions dict
+                                    if "predictions" in outputs and isinstance(outputs["predictions"], dict):
+                                        # Normalize keys within the predictions dict
+                                        normalized_predictions = {}
+                                        for k, v in outputs["predictions"].items():
+                                            if k.startswith("point_horizon_"):
+                                                # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
+                                                horizon_num = k.replace("point_horizon_", "")
+                                                new_key = f"horizon_{horizon_num}d"
+                                                normalized_predictions[new_key] = v
+                                            else:
+                                                normalized_predictions[k] = v
+                                        # Keep the nested structure
+                                        outputs["predictions"] = normalized_predictions
+                                    else:
+                                        # Flat structure - normalize directly
+                                        normalized_outputs = {}
+                                        for k, v in outputs.items():
+                                            if k.startswith("point_horizon_"):
+                                                # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
+                                                horizon_num = k.replace("point_horizon_", "")
+                                                new_key = f"horizon_{horizon_num}d"
+                                                normalized_outputs[new_key] = v
+                                            else:
+                                                normalized_outputs[k] = v
+                                        outputs = normalized_outputs
 
                                 # Use valid masks if present in validation batch
                                 vmask = (
