@@ -155,6 +155,22 @@ def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
             
     return reshaped
 
+# ---- Output helpers ---------------------------------------------------------
+def _unwrap_predictions(obj):
+    """Return the dict that actually holds horizon predictions.
+
+    Many models return a top-level dict containing a nested "predictions"
+    dictionary with keys like "point_horizon_1", "horizon_1", etc. This
+    helper unwraps that common structure. If the input is already a flat
+    dict of tensors, it is returned unchanged.
+    """
+    try:
+        if isinstance(obj, dict) and isinstance(obj.get("predictions"), dict):
+            return obj["predictions"]
+    except Exception:
+        pass
+    return obj
+
 # ---- Label clipping helper -------------------------------------------------
 def _parse_label_clip_map(env_val: str | None):
     """Parse LABEL_CLIP_BPS_MAP like '1:2000,5:3000,10:5000' -> dict{h: clip_value_in_return}
@@ -1086,6 +1102,12 @@ class MultiHorizonLoss(nn.Module):
         targets: Dict[str, Tensor] - 各ホライゾンのターゲット
         valid_masks: Dict[str, Tensor] - 各ホライゾンの有効マスク（オプション）
         """
+        # Unwrap nested structure if caller passed the model's full output dict
+        try:
+            if isinstance(predictions, dict) and isinstance(predictions.get("predictions"), dict):
+                predictions = predictions["predictions"]
+        except Exception:
+            pass
         # Initialize as zero (will accumulate loss tensors)
         # Robustly infer device/dtype from the first tensor value in nested dicts
         def _first_tensor(o):
@@ -1669,16 +1691,16 @@ def train_epoch(
             # Loss computation in FP32 for stability
             with torch.amp.autocast(_amp_device, enabled=False):
                 # Ensure all outputs and targets are FP32 and properly shaped
-                outputs_fp32 = _reshape_to_batch_only({
-                    k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
-                })
-                targets_fp32 = _reshape_to_batch_only({
-                    k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
-                })
-                if isinstance(outputs_fp32, dict) and isinstance(outputs_fp32.get('predictions'), dict):
-                    predictions_fp32 = outputs_fp32['predictions']
-                else:
-                    predictions_fp32 = outputs_fp32
+                preds_raw = _unwrap_predictions(outputs)
+                predictions_fp32 = _reshape_to_batch_only(
+                    {
+                        k: (v.float() if torch.is_tensor(v) else v)
+                        for k, v in (preds_raw.items() if isinstance(preds_raw, dict) else {})
+                    }
+                ) if isinstance(preds_raw, dict) else preds_raw
+                targets_fp32 = _reshape_to_batch_only(
+                    {k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()}
+                )
 
 
                 # マスク付きマルチホライゾン損失
@@ -1786,17 +1808,31 @@ def train_epoch(
                 except Exception as _e:
                     logger.warning(f"debug logging failed: {_e}")
 
-            # Backward pass
-            scaler.scale(loss / gradient_accumulation_steps).backward()
+            # Backward pass - check if scaler is available and enabled
+            scaler_is_enabled = hasattr(scaler, '_enabled') and scaler._enabled
+            if scaler_is_enabled:
+                scaler.scale(loss / gradient_accumulation_steps).backward()
+            else:
+                (loss / gradient_accumulation_steps).backward()
 
             # Gradient accumulation
             if (batch_idx + 1) % gradient_accumulation_steps == 0:
                 # Gradient clipping
-                scaler.unscale_(optimizer)
+                if scaler_is_enabled:
+                    scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                scaler.step(optimizer)
-                scaler.update()
+                if any(p.grad is not None for p in model.parameters()):
+                    if scaler_is_enabled:
+                        try:
+                            scaler.step(optimizer)
+                        except AssertionError as _e:
+                            logger.error(f"[optim] GradScaler step skipped: {_e}")
+                        scaler.update()
+                    else:
+                        optimizer.step()
+                else:
+                    logger.warning("[optim] No gradients; skipping optimizer.step()")
                 optimizer.zero_grad(set_to_none=True)  # メモリ効率向上
 
             # 統計更新
@@ -2369,9 +2405,13 @@ def validate(model, dataloader, criterion, device):
                             )
 
                 # Reshape to [B] format for consistency with training path
-                outputs = _reshape_to_batch_only({
-                    k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
-                })
+                preds_raw = _unwrap_predictions(outputs)
+                outputs = _reshape_to_batch_only(
+                    {
+                        k: (v.float() if torch.is_tensor(v) else v)
+                        for k, v in (preds_raw.items() if isinstance(preds_raw, dict) else {})
+                    }
+                ) if isinstance(preds_raw, dict) else preds_raw
                 targets = _reshape_to_batch_only({
                     k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
                 })
@@ -3335,7 +3375,9 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
     lr = float(getattr(final_config.train.optimizer, "lr", 2e-4))
     wd = float(getattr(final_config.train.optimizer, "weight_decay", 1e-4))
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
-    scaler = torch.amp.GradScaler("cuda", enabled=False)
+    # Phase training specific scaler (disabled by default)
+    phase_scaler_enabled = False  # Phase training typically doesn't use mixed precision
+    scaler = torch.amp.GradScaler("cuda", enabled=phase_scaler_enabled)
 
     # Criterion (point loss by default; env toggles for extras)
     try:
@@ -5101,6 +5143,8 @@ def train(config: DictConfig) -> None:
     # Mixed Precision用のScaler（保守的設定 - 緊急修正版）
     # torch.amp API に更新（FutureWarning回避）
     # bf16ではスケーリング不要なので無効化
+    # Properly handle scaler enablement based on AMP settings
+    scaler_enabled = use_amp and amp_dtype == torch.float16
     scaler = torch.amp.GradScaler(
         "cuda",
         init_scale=1024.0,  # 小さめの初期スケール（元: 65536）
@@ -5108,8 +5152,9 @@ def train(config: DictConfig) -> None:
         backoff_factor=0.5,
         growth_interval=500,  # 頻繁に調整（元: 1000）
         # bf16ではスケーリング無効化（再現性・安定性向上）
-        enabled=(use_amp and amp_dtype == torch.float16),
+        enabled=scaler_enabled,
     )
+    logger.info(f"[AMP] GradScaler initialized: enabled={scaler_enabled}, amp_dtype={amp_dtype}")
 
     # 最適化
     # 追加損失のON/OFFは簡易に環境変数で制御（必要ならHydraへ昇格）
@@ -5989,7 +6034,15 @@ def train(config: DictConfig) -> None:
                                 )
                             # Calculate loss in FP32 with valid masks
                             with torch.amp.autocast("cuda", enabled=False):
-                                loss, losses = criterion(outputs, targets, valid_masks)
+                                preds_for_loss = _unwrap_predictions(outputs)
+                                if isinstance(preds_for_loss, dict):
+                                    preds_for_loss = {
+                                        k: (v.float() if torch.is_tensor(v) else v)
+                                        for k, v in preds_for_loss.items()
+                                    }
+                                loss, losses = criterion(
+                                    preds_for_loss, targets, valid_masks
+                                )
                                 # Debug: Check loss type
                                 if not isinstance(loss, torch.Tensor):
                                     logger.error(
@@ -6099,7 +6152,10 @@ def train(config: DictConfig) -> None:
                                                 v, f"outputs[{k}]", clamp=50.0
                                             )
                                 # Use already computed valid_masks
-                                loss, losses = criterion(outputs, targets, valid_masks)
+                                preds_for_loss = _unwrap_predictions(outputs)
+                                loss, losses = criterion(
+                                    preds_for_loss, targets, valid_masks
+                                )
                                 # Debug: Check loss type
                                 if not isinstance(loss, torch.Tensor):
                                     logger.error(
@@ -6132,7 +6188,11 @@ def train(config: DictConfig) -> None:
                                 optimizer.zero_grad(set_to_none=True)
                                 mb_start = mb_end
                                 continue
-                        scaler.scale(loss).backward()
+                        # Only use scaler if it's enabled
+                        if scaler_enabled:
+                            scaler.scale(loss).backward()
+                        else:
+                            loss.backward()
 
                         # Log loss breakdown and gradients (detailed diagnostics)
                         grad_log_every = int(os.getenv("GRAD_LOG_EVERY", "100"))
@@ -6322,7 +6382,9 @@ def train(config: DictConfig) -> None:
 
                         n_micro_steps += 1
                         if n_micro_steps % grad_accum == 0:
-                            scaler.unscale_(optimizer)
+                            # Only unscale if scaler is enabled
+                            if scaler_enabled:
+                                scaler.unscale_(optimizer)
 
                             # Check gradient norms before clipping
                             def grad_norm(module):
@@ -6384,8 +6446,20 @@ def train(config: DictConfig) -> None:
                             torch.nn.utils.clip_grad_norm_(
                                 model.parameters(), max_norm=1.0
                             )
-                            scaler.step(optimizer)
-                            scaler.update()
+
+                            # Optimizer step with AMP safety
+                            if any(p.grad is not None for p in model.parameters()):
+                                if scaler_enabled:
+                                    try:
+                                        scaler.step(optimizer)
+                                    except AssertionError as _e:
+                                        logger.error(f"[optim] GradScaler step skipped: {_e}")
+                                    scaler.update()
+                                else:
+                                    optimizer.step()
+                            else:
+                                logger.warning("[optim] No gradients; skipping optimizer.step()")
+
                             optimizer.zero_grad(set_to_none=True)
                             global_step += 1
 
@@ -6456,8 +6530,15 @@ def train(config: DictConfig) -> None:
                 if n_micro_steps % max(1, grad_accum) != 0:
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    scaler.step(optimizer)
-                    scaler.update()
+                    # Skip step if no gradients were produced (e.g., empty loss)
+                    if any(p.grad is not None for p in model.parameters()):
+                        try:
+                            scaler.step(optimizer)
+                        except AssertionError as _e:
+                            logger.error(f"[optim] GradScaler step skipped: {_e}")
+                        scaler.update()
+                    else:
+                        logger.warning("[optim] No gradients; skipping optimizer.step()")
                     optimizer.zero_grad(set_to_none=True)
                 # Log training loss (removed unused variables)
                 if n_micro_steps > 0:
@@ -7281,6 +7362,18 @@ def train(config: DictConfig) -> None:
                 best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
         except Exception as _e:
             logger.error(f"[PhaseTraining] failed or disabled: {_e}; falling back to standard training")
+            # Reset critical resources before fallback to prevent double initialization
+            optimizer.zero_grad(set_to_none=True)
+            # Reinitialize scaler for fallback
+            scaler = torch.amp.GradScaler(
+                "cuda",
+                init_scale=1024.0,
+                growth_factor=1.5,
+                backoff_factor=0.5,
+                growth_interval=500,
+                enabled=scaler_enabled,
+            )
+            logger.info("[Fallback] Reset optimizer and scaler for standard training")
             ckpt_tag = os.getenv("CKPT_TAG", "main").strip() or "main"
             best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
 
