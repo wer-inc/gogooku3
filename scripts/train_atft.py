@@ -1582,6 +1582,30 @@ def train_epoch(
     for batch_idx, batch in enumerate(pbar):
         # データをGPUに転送（非同期）
             features = batch["features"].to(device, non_blocking=True)
+
+            # Apply feature normalization (Z-score per batch)
+            if os.environ.get("ENABLE_FEATURE_NORM", "1") == "1":
+                with torch.no_grad():
+                    # Compute batch statistics
+                    batch_mean = features.mean(dim=(0, 1), keepdim=True)
+                    batch_std = features.std(dim=(0, 1), keepdim=True)
+
+                    # Avoid division by zero
+                    batch_std = torch.clamp(batch_std, min=1e-6)
+
+                    # Z-score normalization
+                    features = (features - batch_mean) / batch_std
+
+                    # Clip extreme values
+                    clip_value = float(os.environ.get("FEATURE_CLIP_VALUE", "10.0"))
+                    if clip_value > 0:
+                        features = torch.clamp(features, min=-clip_value, max=clip_value)
+
+                    # Debug logging for first batch
+                    if batch_idx == 0 and epoch == 0:
+                        logger.info(f"[feature-norm] Applied Z-score normalization with clip={clip_value}")
+                        logger.info(f"[feature-norm] Feature stats after norm: mean={features.mean():.4f}, std={features.std():.4f}")
+
             # Normalize and reshape targets
             targets = {}
             raw_targets = batch.get("targets", {})
@@ -1882,8 +1906,27 @@ def first_batch_probe(model, dataloader, device, n=3):
                 break
 
             features = batch["features"].to(device, non_blocking=True)
+
+            # Apply feature normalization (Z-score per batch) - for probe
+            if os.environ.get("ENABLE_FEATURE_NORM", "1") == "1":
+                with torch.no_grad():
+                    # Compute batch statistics
+                    batch_mean = features.mean(dim=(0, 1), keepdim=True)
+                    batch_std = features.std(dim=(0, 1), keepdim=True)
+
+                    # Avoid division by zero
+                    batch_std = torch.clamp(batch_std, min=1e-6)
+
+                    # Z-score normalization
+                    features = (features - batch_mean) / batch_std
+
+                    # Clip extreme values
+                    clip_value = float(os.environ.get("FEATURE_CLIP_VALUE", "10.0"))
+                    if clip_value > 0:
+                        features = torch.clamp(features, min=-clip_value, max=clip_value)
+
             logger.info(
-                f"Batch {i}: features shape={features.shape}, dtype={features.dtype}"
+                f"Batch {i}: features shape={features.shape}, dtype={features.dtype}, mean={features.mean():.4f}, std={features.std():.4f}"
             )
 
             try:
@@ -2208,7 +2251,25 @@ def evaluate_model_metrics(
                 break
 
             features = batch["features"].to(device)
-            
+
+            # Apply feature normalization (Z-score per batch) - same as training
+            if os.environ.get("ENABLE_FEATURE_NORM", "1") == "1":
+                with torch.no_grad():
+                    # Compute batch statistics
+                    batch_mean = features.mean(dim=(0, 1), keepdim=True)
+                    batch_std = features.std(dim=(0, 1), keepdim=True)
+
+                    # Avoid division by zero
+                    batch_std = torch.clamp(batch_std, min=1e-6)
+
+                    # Z-score normalization
+                    features = (features - batch_mean) / batch_std
+
+                    # Clip extreme values
+                    clip_value = float(os.environ.get("FEATURE_CLIP_VALUE", "10.0"))
+                    if clip_value > 0:
+                        features = torch.clamp(features, min=-clip_value, max=clip_value)
+
             # Normalize and reshape targets for validation
             raw_targets = batch.get("targets", {})
             targets = {}

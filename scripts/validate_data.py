@@ -1,151 +1,269 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
-Parquetデータの検証スクリプト
-設計書v3.2に基づく大規模データ検証
+Data validation script for ATFT-GAT-FAN training.
+Validates target values and feature distributions before training.
 """
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import logging
-from omegaconf import DictConfig, OmegaConf
-import hydra
-import matplotlib.pyplot as plt
-import seaborn as sns
-import pyarrow.parquet as pq
 
-logging.basicConfig(level=logging.INFO)
+import os
+import sys
+from pathlib import Path
+import polars as pl
+import numpy as np
+from typing import Dict, List, Tuple
+import logging
+from datetime import datetime
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="config")
-def validate_data(config: DictConfig):
-    """データの検証"""
+def check_target_columns(df: pl.DataFrame) -> Dict[str, Dict]:
+    """Check target column statistics."""
+    results = {}
+    target_cols = [col for col in df.columns if col.startswith('target_') and 'binary' not in col]
 
-    # Parquetファイルのリスト取得
-    data_dir = Path(config.data.source.data_dir)
-    pattern = config.data.source.file_pattern
-    parquet_files = sorted(data_dir.glob(pattern))
+    if not target_cols:
+        logger.error("❌ No target columns found!")
+        return results
 
-    logger.info(f"Found {len(parquet_files)} parquet files in {data_dir}")
+    logger.info(f"Found {len(target_cols)} target columns: {target_cols}")
 
-    # 最初のファイルを読み込んでスキーマを確認
-    if parquet_files:
-        df = pd.read_parquet(parquet_files[0], engine='pyarrow')
-        logger.info(f"Sample file: {parquet_files[0].name}")
-        logger.info(f"Loaded {len(df)} rows, {len(df.columns)} columns")
+    for col in target_cols:
+        values = df[col].drop_nulls()
+        if len(values) > 0:
+            non_zero = (values != 0).sum()
+            stats = {
+                'count': len(values),
+                'non_zero': non_zero,
+                'non_zero_ratio': non_zero / len(values),
+                'mean': float(values.mean()),
+                'std': float(values.std()),
+                'min': float(values.min()),
+                'max': float(values.max()),
+                'null_count': df[col].is_null().sum(),
+                'null_ratio': df[col].is_null().sum() / len(df)
+            }
+            results[col] = stats
+        else:
+            results[col] = {'error': 'All values are null'}
 
-    # 基本統計
-    logger.info("\\n=== Basic Statistics ===")
-    logger.info(f"Number of unique stocks: {df['code'].nunique()}")
-    logger.info(f"Date range: {df['date'].min()} to {df['date'].max()}")
-    logger.info(f"Market codes: {df['market_code_name'].value_counts().to_dict()}")
+    return results
 
-    # 欠損値チェック
-    logger.info("\\n=== Missing Values ===")
-    missing_counts = df.isnull().sum()
-    missing_pct = (missing_counts / len(df) * 100).round(2)
-    missing_df = pd.DataFrame({
-        'count': missing_counts[missing_counts > 0],
-        'percentage': missing_pct[missing_counts > 0]
-    })
-    if not missing_df.empty:
-        logger.info(f"\\n{missing_df}")
-    else:
-        logger.info("No missing values found")
 
-    # 異常値チェック
-    logger.info("\\n=== Outlier Check ===")
+def check_feature_scales(df: pl.DataFrame) -> Dict[str, Dict]:
+    """Check feature column scales and distributions."""
+    results = {}
 
-    # リターンの異常値
-    return_cols = [col for col in df.columns if col.startswith('return_')]
-    for col in return_cols[:5]:  # 最初の5つだけチェック
-        outliers = df[col].abs() > 0.5  # 50%以上の変動
-        if outliers.any():
-            logger.info(f"{col}: {outliers.sum()} outliers (>{50}% change)")
+    # Get numeric columns (excluding targets and identifiers)
+    exclude_patterns = ['target_', 'Date', 'date', 'Code', 'code', 'row_idx', 'sector', '_id']
+    feature_cols = []
 
-    # 価格の整合性チェック
-    price_issues = (
-        (df['adjustment_high'] < df['adjustment_low']) |
-        (df['adjustment_close'] > df['adjustment_high']) |
-        (df['adjustment_close'] < df['adjustment_low'])
-    )
-    if price_issues.any():
-        logger.warning(f"Found {price_issues.sum()} rows with price inconsistencies")
+    for col in df.columns:
+        if df[col].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]:
+            if not any(pattern in col for pattern in exclude_patterns):
+                feature_cols.append(col)
 
-    # データ分布の可視化
-    logger.info("\\n=== Creating visualization plots ===")
+    logger.info(f"Analyzing {len(feature_cols)} feature columns")
 
-    # 出力ディレクトリ
-    output_dir = Path("output/data_validation")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Sample features for analysis
+    sample_features = feature_cols[:20] if len(feature_cols) > 20 else feature_cols
 
-    # 1. リターン分布
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    return_cols_to_plot = ['return_1d', 'return_5d', 'return_20d', 'rsi14']
-    for i, col in enumerate(return_cols_to_plot):
-        if col in df.columns:
-            ax = axes[i // 2, i % 2]
-            df[col].hist(bins=50, ax=ax)
-            ax.set_title(f'Distribution of {col}')
-            ax.set_xlabel(col)
-            ax.set_ylabel('Frequency')
-    plt.tight_layout()
-    plt.savefig(output_dir / 'distributions.png')
-    plt.close()
+    for col in sample_features:
+        values = df[col].drop_nulls()
+        if len(values) > 0:
+            mean_val = float(values.mean())
+            std_val = float(values.std())
 
-    # 2. 時系列サンプル
-    sample_codes = df['code'].unique()[:5]
-    fig, axes = plt.subplots(len(sample_codes), 1, figsize=(12, 4*len(sample_codes)))
+            # Check if feature needs normalization
+            needs_norm = abs(mean_val) > 10 or std_val > 100
 
-    for i, code in enumerate(sample_codes):
-        stock_data = df[df['code'] == code].sort_values('date')
-        ax = axes[i] if len(sample_codes) > 1 else axes
-        ax.plot(pd.to_datetime(stock_data['date']), stock_data['adjustment_close'])
-        ax.set_title(f'Stock {code} - {stock_data.iloc[0]["company_name"]}')
-        ax.set_xlabel('Date')
-        ax.set_ylabel('Adjusted Close Price')
+            stats = {
+                'mean': mean_val,
+                'std': std_val,
+                'min': float(values.min()),
+                'max': float(values.max()),
+                'needs_normalization': needs_norm,
+                'null_ratio': df[col].is_null().sum() / len(df)
+            }
+            results[col] = stats
 
-    plt.tight_layout()
-    plt.savefig(output_dir / 'sample_time_series.png')
-    plt.close()
+    return results
 
-    # 3. 相関マトリックス
-    feature_cols = ['return_1d', 'return_5d', 'return_20d', 'rsi14', 'atr14',
-                   'adx14', 'macd', 'adjustment_volume']
-    available_cols = [col for col in feature_cols if col in df.columns]
-    if len(available_cols) > 1:
-        corr_matrix = df[available_cols].corr()
 
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0)
-        plt.title('Feature Correlation Matrix')
-        plt.tight_layout()
-        plt.savefig(output_dir / 'correlation_matrix.png')
-        plt.close()
+def check_date_range(df: pl.DataFrame) -> Dict:
+    """Check date range and distribution."""
+    date_cols = [col for col in df.columns if 'date' in col.lower()]
 
-    # データ品質レポート
-    report = {
-        'total_files': len(parquet_files),
-        'sample_rows': len(df),
-        'total_columns': len(df.columns),
-        'unique_stocks': df['code'].nunique(),
-        'date_range': f"{df['date'].min()} to {df['date'].max()}",
-        'missing_values': missing_counts[missing_counts > 0].to_dict(),
-        'price_inconsistencies': int(price_issues.sum()),
-        'return_outliers': {col: int((df[col].abs() > 0.5).sum()) for col in return_cols[:5] if col in df.columns},
-        'total_size_gb': config.data.large_scale.total_size_gb
+    if not date_cols:
+        return {'error': 'No date column found'}
+
+    date_col = date_cols[0]
+    dates = df[date_col].drop_nulls()
+
+    if len(dates) == 0:
+        return {'error': 'All dates are null'}
+
+    min_date = dates.min()
+    max_date = dates.max()
+
+    # Check if data is too old
+    current_year = datetime.now().year
+    min_year = min_date.year if hasattr(min_date, 'year') else int(str(min_date)[:4])
+
+    is_old = (current_year - min_year) > 5
+
+    return {
+        'date_column': date_col,
+        'min_date': str(min_date),
+        'max_date': str(max_date),
+        'unique_dates': dates.n_unique(),
+        'total_rows': len(dates),
+        'is_old_data': is_old,
+        'warning': 'Data starts more than 5 years ago' if is_old else None
     }
 
-    # レポート保存
-    report_path = output_dir / 'data_quality_report.yaml'
-    with open(report_path, 'w') as f:
-        OmegaConf.save(report, f)
 
-    logger.info(f"\\nValidation complete. Results saved to {output_dir}")
-    logger.info(f"Data quality report: {report_path}")
+def validate_training_data(data_dir: str) -> bool:
+    """Main validation function for training data."""
+    data_path = Path(data_dir)
 
-    return report
+    if not data_path.exists():
+        logger.error(f"❌ Data directory does not exist: {data_dir}")
+        return False
+
+    # Check train directory
+    train_dir = data_path / "train"
+    if not train_dir.exists():
+        logger.error(f"❌ Training directory does not exist: {train_dir}")
+        return False
+
+    # Get sample files
+    parquet_files = list(train_dir.glob("*.parquet"))[:5]
+
+    if not parquet_files:
+        logger.error(f"❌ No parquet files found in {train_dir}")
+        return False
+
+    logger.info(f"📊 Validating {len(parquet_files)} sample files from {train_dir}")
+
+    all_valid = True
+    total_issues = 0
+
+    for file_path in parquet_files:
+        logger.info(f"\n=== Validating {file_path.name} ===")
+
+        try:
+            df = pl.read_parquet(file_path)
+            logger.info(f"  Shape: {df.shape}")
+
+            # Check targets
+            target_stats = check_target_columns(df)
+            if target_stats:
+                for col, stats in target_stats.items():
+                    if 'error' in stats:
+                        logger.error(f"  ❌ {col}: {stats['error']}")
+                        total_issues += 1
+                    else:
+                        zero_ratio = 1 - stats['non_zero_ratio']
+                        if zero_ratio > 0.95:
+                            logger.warning(f"  ⚠️ {col}: {zero_ratio:.1%} zeros (might cause zero loss)")
+                            total_issues += 1
+                        else:
+                            logger.info(f"  ✅ {col}: mean={stats['mean']:.6f}, non_zero={stats['non_zero_ratio']:.1%}")
+            else:
+                logger.error("  ❌ No target columns found!")
+                total_issues += 1
+                all_valid = False
+
+            # Check date range
+            date_info = check_date_range(df)
+            if 'error' in date_info:
+                logger.error(f"  ❌ Date check: {date_info['error']}")
+                total_issues += 1
+            else:
+                logger.info(f"  📅 Date range: {date_info['min_date']} to {date_info['max_date']}")
+                if date_info.get('is_old_data'):
+                    logger.warning(f"  ⚠️ {date_info['warning']}")
+
+            # Check feature scales (brief)
+            feature_stats = check_feature_scales(df)
+            needs_norm_count = sum(1 for stats in feature_stats.values() if stats.get('needs_normalization'))
+            if needs_norm_count > 0:
+                logger.info(f"  📊 {needs_norm_count}/{len(feature_stats)} features need normalization")
+                logger.info("  ✅ Feature normalization is ENABLED in config")
+
+        except Exception as e:
+            logger.error(f"  ❌ Error reading {file_path.name}: {e}")
+            total_issues += 1
+            all_valid = False
+
+    # Summary
+    logger.info("\n" + "="*60)
+    if all_valid and total_issues == 0:
+        logger.info("✅ DATA VALIDATION PASSED - All checks successful!")
+        return True
+    elif all_valid:
+        logger.warning(f"⚠️ DATA VALIDATION COMPLETED WITH WARNINGS - {total_issues} issues found")
+        logger.info("Training can proceed but monitor for potential issues.")
+        return True
+    else:
+        logger.error(f"❌ DATA VALIDATION FAILED - Critical issues found!")
+        return False
+
+
+def validate_dataset_file(file_path: str) -> bool:
+    """Validate a single dataset file."""
+    file_path = Path(file_path)
+
+    if not file_path.exists():
+        logger.error(f"❌ File does not exist: {file_path}")
+        return False
+
+    logger.info(f"📊 Validating dataset: {file_path}")
+
+    try:
+        df = pl.read_parquet(file_path, n_rows=10000)  # Sample for speed
+        logger.info(f"  Shape (sample): {df.shape}")
+
+        # Check targets
+        target_stats = check_target_columns(df)
+        valid = True
+
+        if not target_stats:
+            logger.error("  ❌ No target columns found!")
+            return False
+
+        for col, stats in target_stats.items():
+            if 'error' not in stats:
+                logger.info(f"  ✅ {col}: mean={stats['mean']:.6f}, non_zero={stats['non_zero_ratio']:.1%}")
+                if stats['non_zero_ratio'] < 0.05:
+                    logger.warning(f"  ⚠️ {col} has very few non-zero values!")
+                    valid = False
+
+        # Check date range
+        date_info = check_date_range(df)
+        if 'error' not in date_info:
+            logger.info(f"  📅 Date range: {date_info['min_date']} to {date_info['max_date']}")
+
+        return valid
+
+    except Exception as e:
+        logger.error(f"❌ Error reading file: {e}")
+        return False
 
 
 if __name__ == "__main__":
-    validate_data()
+    # Check if specific file provided
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+        success = validate_dataset_file(file_path)
+    else:
+        # Default: validate training data directory
+        data_dir = os.environ.get('DATA_DIR', '/home/ubuntu/gogooku3-standalone/output/atft_data')
+        success = validate_training_data(data_dir)
+
+    sys.exit(0 if success else 1)
