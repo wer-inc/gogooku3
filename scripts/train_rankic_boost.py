@@ -106,6 +106,7 @@ def main():
         str(project_root / "scripts/train_atft.py"),
         "--config-path", "../configs/atft",
         "--config-name", "config_rankic_boost",  # Use our dedicated config
+        "data.source.data_dir=output/atft_data",  # Explicitly override data path
     ]
 
     # Add any command line arguments passed to this script
