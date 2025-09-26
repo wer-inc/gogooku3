@@ -1,0 +1,7 @@
+- data.source.data_dir=output/atft_data
+- model.hidden_size=256
+- train.batch.train_batch_size=512
+- train.optimizer.lr=0.0002
+- train.trainer.max_epochs=120
+- train.trainer.precision=bf16-mixed
+- train.trainer.gradient_clip_val=1.0
