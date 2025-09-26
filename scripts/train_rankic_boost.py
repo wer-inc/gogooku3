@@ -11,7 +11,6 @@ import sys
 import subprocess
 import logging
 from pathlib import Path
-from datetime import datetime
 
 # Setup logging
 logging.basicConfig(
@@ -65,11 +64,11 @@ def main():
         "FEATURE_CLIP_VALUE": "10.0",
         "ENABLE_FEATURE_NORM": "1",
 
-        # DataLoader optimization
+        # DataLoader optimization (safe settings to prevent worker crashes)
         "ALLOW_UNSAFE_DATALOADER": "1",
-        "NUM_WORKERS": "8",
-        "PERSISTENT_WORKERS": "1",
-        "PREFETCH_FACTOR": "4",
+        "NUM_WORKERS": "2",          # Reduced from 8 to prevent worker crashes
+        "PERSISTENT_WORKERS": "0",   # Disabled for stability
+        "PREFETCH_FACTOR": "2",      # Reduced from 4
         "PIN_MEMORY": "1",
 
         # GPU optimization
@@ -129,14 +128,14 @@ def main():
     logger.info(f"  RankIC Weight: 0.5 (maximum)")
     logger.info(f"  Sharpe Weight: 0.3")
     logger.info(f"  CS-IC Weight: 0.2")
-    logger.info(f"  Workers: 8 (full parallelization)")
+    logger.info(f"  Workers: 2 (stable configuration)")
     logger.info(f"  Torch Compile: Enabled")
     logger.info("=" * 80)
 
     # Execute training
     try:
         logger.info("Starting training process...")
-        result = subprocess.run(
+        subprocess.run(
             cmd,
             env=env,
             check=True,
@@ -151,8 +150,28 @@ def main():
 
     except subprocess.CalledProcessError as e:
         logger.error(f"❌ Training failed with exit code {e.returncode}")
+
+        # Check for specific error types and provide solutions
         if "CUDA out of memory" in str(e):
             logger.error("💡 Try reducing batch size in configs/atft/train/rankic_boost.yaml")
+            logger.error("   Or set NUM_WORKERS=0 to reduce memory usage")
+        elif "DataLoader worker" in str(e):
+            logger.error("💡 DataLoader worker crashed. Retrying with NUM_WORKERS=0...")
+
+            # Retry with no workers
+            env["NUM_WORKERS"] = "0"
+            env["PERSISTENT_WORKERS"] = "0"
+            env["PREFETCH_FACTOR"] = "1"
+
+            logger.info("Retrying with single-process data loading...")
+            try:
+                subprocess.run(cmd, env=env, check=True, text=True, bufsize=1)
+                logger.info("✅ Training completed successfully with NUM_WORKERS=0!")
+                return 0
+            except subprocess.CalledProcessError as retry_e:
+                logger.error(f"❌ Retry also failed: {retry_e.returncode}")
+                return retry_e.returncode
+
         return e.returncode
 
     except KeyboardInterrupt:
