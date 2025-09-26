@@ -6168,3 +6168,84 @@ Epoch 1:   1%|▎                                                    | 138/25029
   - 推定時間: Phase 1開始まで約10-12分
 
   RankICがまだ0.0719で固定されていますが、これはPhase 0の特徴です。Phase 1でGAT機能が有効化されると改善が期待されます。
+
+  -----
+
+env HIDDEN_SIZE=256 USE_RANKIC=1 RANKIC_WEIGHT=0.3 \
+python scripts/train_atft.py \
+  data.source.data_dir=output/atft_data_future \
+  model.hidden_size=256 \
+  train.batch.train_batch_size=512 \
+  train.optimizer.lr=0.0002 \
+  train.trainer.max_epochs=120
+
+-----
+
+● 🚀 実行コマンド (Training Command with Future Returns)
+
+  データ変換が完了したら、以下のコマンドを実行してください：
+
+  HIDDEN_SIZE=256 \
+  BATCH_SIZE=512 \
+  LEARNING_RATE=2e-4 \
+  MAX_EPOCHS=120 \
+  USE_RANKIC=1 \
+  RANKIC_WEIGHT=0.3 \
+  SHARPE_WEIGHT=0.4 \
+  python scripts/train_atft.py \
+    --config-path ../configs/atft \
+    --config-name config_production_optimized \
+    data.source.data_dir=output/atft_data \
+    model.hidden_size=256 \
+    train.batch.train_batch_size=512 \
+    train.optimizer.lr=0.0002 \
+    train.trainer.max_epochs=120 \
+    train.trainer.precision=bf16-mixed \
+    train.trainer.check_val_every_n_epoch=1 \
+    train.trainer.enable_progress_bar=true
+
+  📊 期待される結果：
+
+  - Target RankIC: > 0.075 (baseline)
+  - データ: 正しい未来リターン (future returns)
+  - モデル: ATFT-GAT-FAN with 256 hidden size
+  - 最適化: RankIC重視の損失関数
+
+  データ変換の進捗: 8% (353/4490 stocks) - 完了まで約12分
+
+-----
+
+● run_full_dataset.pyを使っても問題ありません！むしろ推奨です。
+
+  run_full_dataset.pyの利点：
+
+  1. ワンショットで全工程を自動化
+  2. 最適化済み（並列処理、効率的なデータ取得）
+  3. エラーハンドリング完備
+  4. TOPIXやフローデータも含む完全なデータセット
+
+  実行コマンド：
+
+  # Step 1: フルデータセット作成（5年分）
+  python scripts/pipelines/run_full_dataset.py \
+    --jquants \
+    --start-date 2020-09-26 \
+    --end-date 2025-09-26 \
+    2>&1 | tee build_dataset.log
+
+  # Step 2: 未来リターンに修正（重要！）
+  python scripts/fix_future_returns.py
+
+  # Step 3: ATFT形式に変換
+  python scripts/integrated_ml_training_pipeline.py \
+    --data-path output/ml_dataset_future_returns.parquet \
+    --only-convert
+
+  # Step 4: トレーニング実行
+  env HIDDEN_SIZE=256 USE_RANKIC=1 RANKIC_WEIGHT=0.3 \
+  python scripts/train_atft.py \
+    data.source.data_dir=output/atft_data \
+    model.hidden_size=256 \
+    train.batch.train_batch_size=512 \
+    train.optimizer.lr=0.0002 \
+    train.trainer.max_epochs=120
