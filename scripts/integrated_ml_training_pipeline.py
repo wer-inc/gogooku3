@@ -1220,6 +1220,12 @@ async def main():
         action="store_true",
         help="Run SafeTrainingPipeline prior to training for leakage checks",
     )
+    # Convenience flag: convert only (no training). Sugar for --max-epochs 0
+    parser.add_argument(
+        "--only-convert",
+        action="store_true",
+        help="Convert to ATFT format only (no training)",
+    )
     # 既知以外のオプションはHydraオーバーライドとしてそのままtrain_atft.pyに渡す
     args, unknown = parser.parse_known_args()
 
@@ -1251,6 +1257,10 @@ async def main():
         pipeline.atft_settings["batch_size"] = int(args.batch_size)
     if args.lr is not None:
         pipeline.atft_settings["learning_rate"] = float(args.lr)
+
+    # If --only-convert is supplied, skip training regardless of other settings
+    if bool(getattr(args, "only_convert", False)):
+        pipeline.atft_settings["max_epochs"] = 0
 
     print("=" * 60)
     print("Complete ATFT-GAT-FAN Training Pipeline")

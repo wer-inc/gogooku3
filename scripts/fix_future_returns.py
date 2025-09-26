@@ -2,24 +2,27 @@
 """
 Fix returns to be FUTURE returns instead of PAST returns
 目的: returns_*dを正しい未来リターンに修正
+
+- デフォルト入力は Step1 の成果物に合わせて `output/ml_dataset_latest_full.parquet`
+- Ultra‑clean を使う場合は `--input output/ml_dataset_ultra_clean.parquet` を指定
 """
 
+import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
 
-def fix_future_returns():
+
+def fix_future_returns(input_path: Path, output_path: Path) -> Path:
     """過去リターンを未来リターンに修正"""
 
     print("=" * 60)
     print("🔧 FIXING RETURNS TO BE FUTURE RETURNS")
     print("=" * 60)
 
-    # Input and output paths
-    input_path = Path("/home/ubuntu/gogooku3-standalone/output/ml_dataset_ultra_clean.parquet")
-    output_path = Path("/home/ubuntu/gogooku3-standalone/output/ml_dataset_future_returns.parquet")
-
     print(f"\n📂 Loading data from: {input_path}")
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input parquet not found: {input_path}")
     df = pd.read_parquet(input_path)
     print(f"✅ Original data shape: {df.shape}")
 
@@ -111,6 +114,7 @@ def fix_future_returns():
 
     # Save the corrected dataset
     print(f"\n💾 Saving corrected dataset to: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(output_path, index=False)
     print(f"✅ Dataset with future returns saved successfully!")
 
@@ -136,6 +140,27 @@ def fix_future_returns():
 
     return output_path
 
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Convert returns_*d to FUTURE returns")
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=Path("output/ml_dataset_latest_full.parquet"),
+        help="Input ML dataset parquet (default: output/ml_dataset_latest_full.parquet)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("output/ml_dataset_future_returns.parquet"),
+        help="Output parquet path (default: output/ml_dataset_future_returns.parquet)",
+    )
+    args = parser.parse_args()
+
+    out = fix_future_returns(args.input, args.output)
+    print(f"\n✨ Dataset with future returns ready at: {out}")
+    return 0
+
+
 if __name__ == "__main__":
-    output_path = fix_future_returns()
-    print(f"\n✨ Dataset with future returns ready at: {output_path}")
+    raise SystemExit(main())
