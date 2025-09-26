@@ -64,12 +64,12 @@ def main():
         "FEATURE_CLIP_VALUE": "10.0",
         "ENABLE_FEATURE_NORM": "1",
 
-        # DataLoader optimization (safe settings to prevent worker crashes)
-        "ALLOW_UNSAFE_DATALOADER": "1",
-        "NUM_WORKERS": "2",          # Reduced from 8 to prevent worker crashes
-        "PERSISTENT_WORKERS": "0",   # Disabled for stability
-        "PREFETCH_FACTOR": "2",      # Reduced from 4
-        "PIN_MEMORY": "1",
+        # DataLoader optimization (single-process for absolute stability)
+        "ALLOW_UNSAFE_DATALOADER": "0",  # Disable unsafe mode
+        "NUM_WORKERS": "0",          # Single-process mode (no worker crashes)
+        "PERSISTENT_WORKERS": "0",   # Not applicable with NUM_WORKERS=0
+        "PREFETCH_FACTOR": "2",      # Still works with single-process
+        "PIN_MEMORY": "1",           # Keep pinned memory for GPU transfer
 
         # GPU optimization
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
@@ -128,8 +128,8 @@ def main():
     logger.info(f"  RankIC Weight: 0.5 (maximum)")
     logger.info(f"  Sharpe Weight: 0.3")
     logger.info(f"  CS-IC Weight: 0.2")
-    logger.info(f"  Workers: 2 (stable configuration)")
-    logger.info(f"  Torch Compile: Enabled")
+    logger.info(f"  Workers: 0 (single-process for stability)")
+    logger.info(f"  Torch Compile: Enabled (max-autotune for GPU optimization)")
     logger.info("=" * 80)
 
     # Execute training
@@ -153,24 +153,9 @@ def main():
 
         # Check for specific error types and provide solutions
         if "CUDA out of memory" in str(e):
-            logger.error("💡 Try reducing batch size in configs/atft/train/rankic_boost.yaml")
-            logger.error("   Or set NUM_WORKERS=0 to reduce memory usage")
-        elif "DataLoader worker" in str(e):
-            logger.error("💡 DataLoader worker crashed. Retrying with NUM_WORKERS=0...")
-
-            # Retry with no workers
-            env["NUM_WORKERS"] = "0"
-            env["PERSISTENT_WORKERS"] = "0"
-            env["PREFETCH_FACTOR"] = "1"
-
-            logger.info("Retrying with single-process data loading...")
-            try:
-                subprocess.run(cmd, env=env, check=True, text=True, bufsize=1)
-                logger.info("✅ Training completed successfully with NUM_WORKERS=0!")
-                return 0
-            except subprocess.CalledProcessError as retry_e:
-                logger.error(f"❌ Retry also failed: {retry_e.returncode}")
-                return retry_e.returncode
+            logger.error("💡 Solution: Reduce batch size in configs/atft/train/rankic_boost.yaml")
+            logger.error("   Current batch size: 2048")
+            logger.error("   Try: 1024 or 512")
 
         return e.returncode
 

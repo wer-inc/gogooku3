@@ -516,12 +516,12 @@ train-fixed:
 	@python scripts/train_fixed.py
 
 train-rankic-boost:
-	@echo "🚀 Running RankIC-boosted training (fundamental solution)"
+	@echo "🚀 Running RankIC-boosted training (stable single-process mode)"
 	@echo "   ✅ Dedicated Hydra config: config_rankic_boost.yaml"
 	@echo "   ✅ RANKIC_WEIGHT=0.5 (maximum RankIC focus)"
-	@echo "   ✅ NUM_WORKERS=2 (stable configuration)"
+	@echo "   ✅ NUM_WORKERS=0 (single-process, no crashes)"
 	@echo "   ✅ Batch size 2048, LR 5e-4"
-	@echo "   ✅ Auto-retry with NUM_WORKERS=0 if worker crashes"
+	@echo "   ✅ GPU optimized with torch.compile"
 	@python scripts/train_rankic_boost.py
 
 # ============================================================================
