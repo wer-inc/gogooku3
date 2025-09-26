@@ -47,7 +47,9 @@ time_series:
     gap_days: 5
 
 # 特徴量設定（ML_DATASET_COLUMNS.md準拠）
+# NOTE: Auto-detected as 189 features from actual dataset
 features:
+  input_dim: 189  # Explicitly set to match actual dataset features
   # 基本特徴量（現在値）
   basic:
     price_volume:

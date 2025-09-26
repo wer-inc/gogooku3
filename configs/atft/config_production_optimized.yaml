@@ -150,15 +150,17 @@ model:
   name: ATFT_GAT_FAN
   hidden_size: 256  # Increased from 64
 
-  # Input dimensions aligned with feature groups
+  # Input dimensions aligned with actual dataset (189 features)
+  # Updated based on PDF analysis: actual dataset has 189 features
   input_dims:
     basic_features: 46
     technical_features: 50
+    # Total will be auto-detected as 189 from dataset
     ma_derived_features: 20
     returns_features: 15
     market_features: 26
     flows_features: 17
-    total_features: 174  # Adjusted to actual feature count
+    total_features: 189  # Adjusted to match actual ML dataset feature count
 
   # Variable Selection Networks (VSN) per feature group
   variable_selection:

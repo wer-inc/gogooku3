@@ -1,0 +1,72 @@
+# Production-ready training targets with date filtering
+
+.PHONY: train-production
+train-production: ## Production training with 2018+ data (recommended)
+	@echo "🚀 PRODUCTION TRAINING"
+	@echo "   ✅ Date filter: 2018-01-01+ (valid targets)"
+	@echo "   ✅ Target columns: returns_*d"
+	@echo "   ✅ Stable single-process DataLoader"
+	@echo "   ✅ RankIC/Sharpe optimization"
+	@OUTPUT_BASE=/home/ubuntu/gogooku3-standalone/output/atft_data \
+	NUM_WORKERS=0 \
+	ALLOW_UNSAFE_DATALOADER=0 \
+	FORCE_SINGLE_PROCESS=1 \
+	MIN_TRAINING_DATE="2018-01-01" \
+	BATCH_SIZE=512 \
+	USE_RANKIC=1 \
+	RANKIC_WEIGHT=0.2 \
+	CS_IC_WEIGHT=0.15 \
+	SHARPE_WEIGHT=0.3 \
+	python scripts/train_atft.py \
+		--config-path ../configs/atft \
+		--config-name config_production_optimized \
+		train.trainer.max_epochs=120 \
+		model.hidden_size=256 \
+		train.batch.batch_size=512 \
+		train.optimizer.lr=2e-4
+
+.PHONY: train-production-test
+train-production-test: ## Quick test with 1 epoch
+	@echo "🧪 PRODUCTION TEST (1 epoch)"
+	@OUTPUT_BASE=/home/ubuntu/gogooku3-standalone/output/atft_data \
+	NUM_WORKERS=0 \
+	ALLOW_UNSAFE_DATALOADER=0 \
+	MIN_TRAINING_DATE="2020-01-01" \
+	BATCH_SIZE=256 \
+	python scripts/train_atft.py \
+		--config-path ../configs/atft \
+		--config-name config_production_optimized \
+		train.trainer.max_epochs=1 \
+		model.hidden_size=128 \
+		train.batch.batch_size=256
+
+.PHONY: check-dataset
+check-dataset: ## Check dataset for valid targets
+	@echo "📊 Checking dataset..."
+	@python scripts/check_dataset_production.py
+
+.PHONY: help-production
+help-production: ## Show production training guide
+	@echo "================================"
+	@echo "PRODUCTION TRAINING GUIDE"
+	@echo "================================"
+	@echo ""
+	@echo "1. Check dataset:"
+	@echo "   make check-dataset"
+	@echo ""
+	@echo "2. Test training (1 epoch):"
+	@echo "   make train-production-test"
+	@echo ""
+	@echo "3. Full production training:"
+	@echo "   make train-production"
+	@echo ""
+	@echo "Key improvements:"
+	@echo "  - Date filter: 2018+ data only (valid targets)"
+	@echo "  - Target columns: returns_*d (not feat_ret_*d)"
+	@echo "  - Single-process DataLoader (stable)"
+	@echo "  - RankIC/Sharpe optimization from PDF"
+	@echo ""
+	@echo "If training still shows zero loss:"
+	@echo "  1. Check target columns exist: make check-dataset"
+	@echo "  2. Try newer data: MIN_TRAINING_DATE=2020-01-01 make train-production-test"
+	@echo "  3. Check logs for 'No matching horizons' messages"

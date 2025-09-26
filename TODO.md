@@ -4552,3 +4552,1583 @@ Epoch 1:   0%|                                                          | 13/250
 [2025-09-25 14:12:00,624][src.graph.graph_builder][INFO] - Built correlation graph: 131 nodes, 1310 edges
 [2025-09-25 14:12:00,659][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1310
 [2025-09-25 14:12:00,990][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+
+-----
+
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:20,292][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 77/25029 [01:24<3:03:45,  2.26it/s, loss=0.0000][2025-09-25 22:33:20,296][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:20,301][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:20,490][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:20,557][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:20,724][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:20,735][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 78/25029 [01:24<3:03:54,  2.26it/s, loss=0.0000][2025-09-25 22:33:20,740][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:20,744][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:20,934][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:21,001][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:21,170][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:21,181][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 79/25029 [01:25<3:04:24,  2.25it/s, loss=0.0000][2025-09-25 22:33:21,186][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:21,190][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:21,382][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:21,450][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:21,615][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:21,629][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 80/25029 [01:25<3:04:53,  2.25it/s, loss=0.0000][2025-09-25 22:33:21,633][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:21,638][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:21,827][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:21,894][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:22,063][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:22,076][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 81/25029 [01:26<3:05:10,  2.25it/s, loss=0.0000][2025-09-25 22:33:22,080][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:22,084][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:22,276][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:22,344][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:22,514][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:22,526][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 82/25029 [01:26<3:05:47,  2.24it/s, loss=0.0000][2025-09-25 22:33:22,531][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:22,535][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:22,727][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:22,795][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:22,963][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:22,963][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:22,974][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 83/25029 [01:27<3:05:57,  2.24it/s, loss=0.0000][2025-09-25 22:33:22,978][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:22,983][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:33:23,088][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:33:23,124][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:33:23,291][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:23,302][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 84/25029 [01:27<2:50:58,  2.43it/s, loss=0.0000][2025-09-25 22:33:23,306][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:23,311][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:23,502][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:23,569][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:23,737][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:23,746][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 85/25029 [01:27<2:55:06,  2.37it/s, loss=0.0000][2025-09-25 22:33:23,750][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:23,755][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:23,946][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:24,013][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:24,182][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:24,194][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 86/25029 [01:28<2:58:24,  2.33it/s, loss=0.0000][2025-09-25 22:33:24,198][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:24,203][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:24,397][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:24,464][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:24,634][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:24,646][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 87/25029 [01:28<3:01:18,  2.29it/s, loss=0.0000][2025-09-25 22:33:24,651][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:24,655][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:24,849][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:24,917][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:25,087][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:25,099][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 88/25029 [01:29<3:03:25,  2.27it/s, loss=0.0000][2025-09-25 22:33:25,104][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:25,108][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:25,301][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:25,368][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:25,534][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:25,545][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 89/25029 [01:29<3:03:54,  2.26it/s, loss=0.0000][2025-09-25 22:33:25,549][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:25,553][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:25,742][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:25,809][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:25,974][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:25,974][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:25,974][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:25,975][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:25,975][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:25,975][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:25,985][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 90/25029 [01:30<3:03:33,  2.26it/s, loss=0.0000][2025-09-25 22:33:25,989][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:25,994][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:26,185][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:26,252][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:26,422][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:26,434][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 91/25029 [01:30<3:04:33,  2.25it/s, loss=0.0000][2025-09-25 22:33:26,438][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:26,443][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:26,633][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:26,700][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:26,868][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:26,878][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 92/25029 [01:30<3:04:26,  2.25it/s, loss=0.0000][2025-09-25 22:33:26,882][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:26,886][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:27,078][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:27,145][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:27,312][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:27,322][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 93/25029 [01:31<3:04:29,  2.25it/s, loss=0.0000][2025-09-25 22:33:27,326][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:27,330][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:27,523][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:27,590][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:27,761][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:27,761][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:27,771][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 94/25029 [01:31<3:05:09,  2.24it/s, loss=0.0000][2025-09-25 22:33:27,775][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:27,780][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:27,970][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:28,037][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:28,201][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:28,212][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 95/25029 [01:32<3:04:29,  2.25it/s, loss=0.0000][2025-09-25 22:33:28,215][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:28,220][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:28,410][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:28,477][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:28,642][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:28,642][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:28,651][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 96/25029 [01:32<3:03:52,  2.26it/s, loss=0.0000][2025-09-25 22:33:28,655][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:28,659][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:28,847][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:28,914][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:29,090][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 97/25029 [01:33<3:03:26,  2.27it/s, loss=0.0000][2025-09-25 22:33:29,093][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:29,098][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:33:29,200][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:33:29,236][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:33:29,404][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:29,404][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:18,168][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 98/25029 [02:22<104:06:12, 15.03s/it, loss=0.0000][2025-09-25 22:34:18,172][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:18,176][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:18,367][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:18,433][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:18,587][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:18,597][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 99/25029 [02:22<73:45:40, 10.65s/it, loss=0.0000][2025-09-25 22:34:18,601][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:18,605][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:18,788][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:18,851][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:19,019][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 100/25029 [02:23<52:30:31,  7.58s/it, loss=0.0000][2025-09-25 22:34:19,023][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:19,028][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:19,217][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:19,285][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:19,453][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:19,453][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:19,453][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:19,454][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:19,454][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:19,454][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:19,464][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 101/25029 [02:23<37:40:44,  5.44s/it, loss=0.0000][2025-09-25 22:34:19,468][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:19,473][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:19,664][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:19,731][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:19,899][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:19,909][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 102/25029 [02:23<27:18:00,  3.94s/it, loss=0.0000][2025-09-25 22:34:19,914][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:19,919][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:20,108][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:20,175][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:20,352][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 103/25029 [02:24<20:01:45,  2.89s/it, loss=0.0000][2025-09-25 22:34:20,357][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:20,361][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:20,551][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:20,617][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:20,782][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:20,792][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 104/25029 [02:24<14:55:56,  2.16s/it, loss=0.0000][2025-09-25 22:34:20,796][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:20,801][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:20,990][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:21,057][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:21,225][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:21,238][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 105/25029 [02:25<11:22:43,  1.64s/it, loss=0.0000][2025-09-25 22:34:21,242][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:21,247][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:21,436][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:21,503][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:21,671][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:21,671][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:21,682][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 106/25029 [02:25<8:53:16,  1.28s/it, loss=0.0000][2025-09-25 22:34:21,687][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:21,691][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:21,882][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:21,949][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:22,115][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:22,126][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 107/25029 [02:26<7:08:35,  1.03s/it, loss=0.0000][2025-09-25 22:34:22,131][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:22,135][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:22,330][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:22,398][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:22,566][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:22,566][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:22,577][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 108/25029 [02:26<5:56:07,  1.17it/s, loss=0.0000][2025-09-25 22:34:22,581][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:22,586][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:22,777][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:22,844][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:23,011][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:23,024][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 109/25029 [02:27<5:04:57,  1.36it/s, loss=0.0000][2025-09-25 22:34:23,028][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:23,033][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:23,223][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:23,291][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:23,460][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:23,472][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 110/25029 [02:27<4:29:23,  1.54it/s, loss=0.0000][2025-09-25 22:34:23,477][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:23,481][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:23,673][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:23,741][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:23,911][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:23,911][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:23,922][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 111/25029 [02:27<4:04:40,  1.70it/s, loss=0.0000][2025-09-25 22:34:23,927][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:23,931][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:34:24,033][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:34:24,069][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:34:24,235][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:24,247][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 112/25029 [02:28<3:31:37,  1.96it/s, loss=0.0000][2025-09-25 22:34:24,251][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:24,256][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:24,448][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:24,516][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:24,683][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:24,695][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 113/25029 [02:28<3:23:53,  2.04it/s, loss=0.0000][2025-09-25 22:34:24,699][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:24,703][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:24,895][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:24,963][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:25,130][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:25,142][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 114/25029 [02:29<3:18:27,  2.09it/s, loss=0.0000][2025-09-25 22:34:25,146][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:25,151][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:25,343][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:25,410][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:25,575][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:25,587][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 115/25029 [02:29<3:14:19,  2.14it/s, loss=0.0000][2025-09-25 22:34:25,591][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:25,595][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:25,786][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:25,854][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:26,020][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:26,032][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 116/25029 [02:30<3:11:31,  2.17it/s, loss=0.0000][2025-09-25 22:34:26,037][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:26,041][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:26,232][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:26,300][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:26,470][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:26,481][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 117/25029 [02:30<3:09:53,  2.19it/s, loss=0.0000][2025-09-25 22:34:26,485][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:26,489][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:26,680][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:26,747][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:26,917][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:26,928][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 118/25029 [02:30<3:08:40,  2.20it/s, loss=0.0000][2025-09-25 22:34:26,933][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:26,937][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:27,129][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:27,197][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:27,365][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:27,365][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:27,376][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 119/25029 [02:31<3:07:46,  2.21it/s, loss=0.0000][2025-09-25 22:34:27,380][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:27,384][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:27,573][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:27,641][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:27,805][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:27,819][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 120/25029 [02:31<3:06:41,  2.22it/s, loss=0.0000][2025-09-25 22:34:27,823][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:27,828][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:28,017][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:28,085][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:28,251][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:28,262][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 121/25029 [02:32<3:05:51,  2.23it/s, loss=0.0000][2025-09-25 22:34:28,266][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:28,271][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:28,460][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:28,528][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:28,695][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:28,695][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:28,706][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 122/25029 [02:32<3:05:19,  2.24it/s, loss=0.0000][2025-09-25 22:34:28,710][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:28,714][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:28,905][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:28,972][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:29,140][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:29,150][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 123/25029 [02:33<3:05:06,  2.24it/s, loss=0.0000][2025-09-25 22:34:29,155][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:29,159][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:29,352][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:29,419][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:29,590][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:29,590][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:29,590][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:29,591][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:29,591][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:29,591][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:29,602][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 124/25029 [02:33<3:05:50,  2.23it/s, loss=0.0000][2025-09-25 22:34:29,607][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:29,611][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:29,802][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:29,869][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:30,037][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,037][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,037][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,038][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,038][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,038][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,048][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 125/25029 [02:34<3:05:31,  2.24it/s, loss=0.0000][2025-09-25 22:34:30,051][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:30,056][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:34:30,159][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:34:30,195][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:34:30,362][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,374][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 126/25029 [02:34<2:50:33,  2.43it/s, loss=0.0000][2025-09-25 22:34:30,379][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:30,383][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:30,446][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:30,447][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:30,461][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,632][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,632][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,643][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 127/25029 [02:34<2:32:59,  2.71it/s, loss=0.0000][2025-09-25 22:34:30,649][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:30,653][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:30,713][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:30,714][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:30,728][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:30,893][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,905][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 128/25029 [02:34<2:19:34,  2.97it/s, loss=0.0000][2025-09-25 22:34:30,910][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:30,914][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:30,974][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:30,975][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:30,989][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,159][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,159][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,169][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 129/25029 [02:35<2:10:35,  3.18it/s, loss=0.0000][2025-09-25 22:34:31,174][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,178][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:31,238][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:31,238][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:31,252][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,421][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,433][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 130/25029 [02:35<2:04:20,  3.34it/s, loss=0.0000][2025-09-25 22:34:31,438][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,443][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:31,504][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:31,504][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:31,518][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,687][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,700][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 131/25029 [02:35<2:00:12,  3.45it/s, loss=0.0000][2025-09-25 22:34:31,704][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,709][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:31,769][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:31,770][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:31,783][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,952][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,964][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 132/25029 [02:36<1:56:58,  3.55it/s, loss=0.0000][2025-09-25 22:34:31,969][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,973][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,034][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,035][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,048][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:32,220][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:32,232][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 133/25029 [02:36<1:55:15,  3.60it/s, loss=0.0000][2025-09-25 22:34:32,237][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:32,241][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,302][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,303][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,316][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:32,486][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:32,499][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 134/25029 [02:36<1:54:04,  3.64it/s, loss=0.0000][2025-09-25 22:34:32,505][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:32,512][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,572][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,573][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,587][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:32,756][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:32,756][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:32,756][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:32,757][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:32,757][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:32,757][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:32,767][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 135/25029 [02:36<1:53:06,  3.67it/s, loss=0.0000][2025-09-25 22:34:32,772][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:32,777][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,837][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,838][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,852][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,024][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,024][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:33,035][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 136/25029 [02:37<1:52:28,  3.69it/s, loss=0.0000][2025-09-25 22:34:33,040][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:33,044][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:33,105][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:33,106][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:33,120][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,291][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:33,303][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 137/25029 [02:37<1:52:05,  3.70it/s, loss=0.0000][2025-09-25 22:34:33,308][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:33,312][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:33,373][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:33,374][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:33,388][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,558][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:33,570][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 138/25029 [02:37<1:51:41,  3.71it/s, loss=0.0000][2025-09-25 22:34:33,575][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:33,580][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:33,641][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:33,642][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:33,656][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,827][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+
+
+
+
+
+
+
+
+
+
+--------------
+
+現在実行中の処理に以下のログが出力されています。多分色々問題がありそうですが、改善案を出してください。
+
+あなたはdeeplearningの世界一トップエンジニアです。
+現在実行中の処理に以下のログが出力されています。多分色々問題がありそうですが、改善案を出してください
+
+   make train-optimized-stable
+⚡ Running stable optimized training (recommended)
+   ✅ No DataLoader worker errors
+   ✅ Full optimizations from PDF analysis
+   ✅ Stable memory management
+   ✅ Fixed horizon key mismatch
+   ✅ Zero loss guards added
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+[2025-09-25 14:10:33,393][__main__][INFO] - Starting production training...
+[2025-09-25 14:10:33,407][__main__][INFO] - [EnvOverride] DEGENERACY_ABORT = False (via environment)
+[2025-09-25 14:10:33,408][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-09-25 14:10:33,410][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-09-25 14:10:33,412][__main__][INFO] - Using device: cuda
+[2025-09-25 14:10:33,412][__main__][INFO] - GPU: NVIDIA A100 80GB PCIe
+[2025-09-25 14:10:33,412][__main__][INFO] - GPU Memory: 85.1GB
+wandb: Currently logged in as: wer-inc-jp (wer-inc) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Changes to your `wandb` environment variables will be ignored because your `wandb` session has already started. For more information on how to modify your settings with `wandb.init()` arguments, please refer to https://wandb.me/wandb-init.
+[2025-09-25 14:10:33,959][src.utils.monitoring][WARNING] - W&B initialization failed: first argument must be callable or None
+[2025-09-25 14:10:33,966][__main__][INFO] - [Hydra-Struct] Set default model.gat.alpha_min=0.3
+[2025-09-25 14:10:33,967][__main__][INFO] - Found hidden_size=256 at path: model.hidden_size
+[2025-09-25 14:10:33,968][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass.
+[2025-09-25 14:10:33,969][__main__][INFO] - Setting up data module...
+[2025-09-25 14:10:33,969][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'feature_columns']
+[2025-09-25 14:10:33,969][__main__][INFO] - [Hydra-Struct] data group keys: ['graph_builder', 'name', 'schema', 'use_buffered_loader', 'source', 'memory', 'distributed', 'sampling', 'time_series', 'features', 'graph']
+[2025-09-25 14:10:34,041][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 4445 train, 4387 val, 4246 test files
+[2025-09-25 14:10:34,065][src.gogooku3.training.atft.data_module][INFO] - ✅ Auto-detected 189 feature columns
+[2025-09-25 14:11:06,202][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 6223196 windows across 4445 files
+[2025-09-25 14:11:20,550][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1271808 windows across 4387 files
+[2025-09-25 14:11:34,486][src.gogooku3.training.atft.data_module][INFO] - Built sequence_dates metadata: 1262736 windows across 4246 files
+[2025-09-25 14:11:34,496][src.gogooku3.training.atft.data_module][INFO] - ✅ Datasets created: train=6223196 samples
+[2025-09-25 14:11:34,500][__main__][INFO] - Creating data loaders...
+[2025-09-25 14:11:35,678][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 2370 days, 25029 batches
+[2025-09-25 14:11:35,822][src.gogooku3.data.samplers.day_batch_sampler][INFO] - DayBatchSampler initialized: 1990 days, 6291 batches
+[2025-09-25 14:11:35,822][__main__][INFO] - DayBatchSampler enabled (min_nodes_per_day=20)
+[2025-09-25 14:11:35,826][src.gogooku3.training.atft.data_module][INFO] - [feature-clip] Applied feature clipping at ±10.00 (set FEATURE_CLIP_VALUE to adjust)
+[2025-09-25 14:11:36,178][__main__][INFO] - [input_dim] detected from data: F=189 (was: 13)
+[2025-09-25 14:11:36,178][__main__][INFO] - ✅ Train batches: 25029
+[2025-09-25 14:11:36,178][__main__][INFO] - ✅ Val batches: 6291
+[2025-09-25 14:11:36,178][__main__][INFO] - Validating label normalization...
+[2025-09-25 14:11:36,795][src.gogooku3.training.atft.data_module][INFO] - [feature-clip] Applied feature clipping at ±10.00 (set FEATURE_CLIP_VALUE to adjust)
+[2025-09-25 14:11:37,771][__main__][INFO] - Target horizon_10d: mean=0.008477, std=0.062600
+[2025-09-25 14:11:37,772][__main__][INFO] - Target horizon_1d: mean=0.010248, std=0.019758
+[2025-09-25 14:11:37,772][__main__][INFO] - Target horizon_20d: mean=0.029357, std=0.101632
+[2025-09-25 14:11:37,772][__main__][INFO] - Target horizon_5d: mean=0.014308, std=0.053079
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-keys] ['features', 'targets', 'codes', 'date']
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] features: <class 'torch.Tensor'>
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] targets: <class 'dict'>
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] codes: <class 'list'>
+[2025-09-25 14:11:38,396][__main__][INFO] - [debug-first-batch-type] date: <class 'str'>
+[2025-09-25 14:11:38,413][__main__][INFO] - Initializing model...
+[2025-09-25 14:11:38,414][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Feature dimensions - Basic: 8, Technical: 23, MA-derived: 17, Interaction: 8, Flow: 4, Returns: 4
+[2025-09-25 14:11:38,414][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - Total current features: 64, Historical: 0, Total: 64
+[2025-09-25 14:11:38,617][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - ATFT-GAT-FAN initialized with 64 dynamic features
+[2025-09-25 14:11:38,674][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 64, got 189). Rebuilding variable selection network.
+[2025-09-25 14:11:39,260][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Adjusting backbone projection input dim from 512 to 256
+[2025-09-25 14:11:39,300][__main__][INFO] - ATFT-GAT-FAN model parameters: 41,552,162
+[2025-09-25 14:11:39,300][__main__][WARNING] - runtime_guards module not found, skipping guards
+[2025-09-25 14:11:39,300][__main__][INFO] - [AMP] GradScaler initialized: enabled=True, amp_dtype=torch.float16
+[2025-09-25 14:11:39,309][__main__][INFO] - [OPT-AUDIT] ✓ Optimizer covers 41552162/41552162 trainable params
+[2025-09-25 14:11:39,309][__main__][INFO] - Batch size: 2048
+[2025-09-25 14:11:39,309][__main__][INFO] - Gradient accumulation steps: 1
+[2025-09-25 14:11:39,309][__main__][INFO] - Effective batch size: 2048
+[2025-09-25 14:11:39,309][__main__][INFO] - Starting training loop (main)...
+[2025-09-25 14:11:39,310][__main__][INFO] - Time budget: 2.0 hours
+[2025-09-25 14:11:39,310][__main__][INFO] - Eval every: 100 steps
+[2025-09-25 14:11:39,310][__main__][INFO] - Heartbeat interval: 30s
+[2025-09-25 14:11:39,310][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=100
+[2025-09-25 14:11:39,310][__main__][INFO] - [GraphBuilder] initialized from /home/ubuntu/gogooku3-standalone/output/atft_data/*.parquet (lookback=60, k=15)
+[2025-09-25 14:11:39,311][src.data.utils.graph_builder][INFO] - FinancialGraphBuilder: window=20, threshold=0.25, method=ewm_demean, ewm_halflife=30, shrinkage_gamma=0.1, symmetric=True
+[2025-09-25 14:11:39,311][__main__][INFO] - [AdvGraph] Enabled training-time FinancialGraphBuilder (method=ewm_demean, k=15, thr=0.25)
+[2025-09-25 14:11:39,315][__main__][INFO] - Running first-batch probe...
+[2025-09-25 14:11:40,314][__main__][INFO] - Batch 0: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 14:11:40,550][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 14:11:41,510][__main__][INFO] - Batch 1: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 14:11:41,641][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 14:11:42,605][__main__][INFO] - Batch 2: features shape=torch.Size([256, 20, 189]), dtype=torch.float32
+[2025-09-25 14:11:42,736][__main__][INFO] -   Output features: shape=(256, 20), dtype=torch.float32
+[2025-09-25 14:11:43,681][__main__][INFO] - ✓ First-batch probe passed
+[2025-09-25 14:11:43,681][__main__][INFO] - First batch probe passed
+[2025-09-25 14:11:44,340][__main__][INFO] - [SamplerCheck] first_batch_size=256 (configured=2048)
+[2025-09-25 14:11:44,340][__main__][INFO] - 
+==================================================
+[2025-09-25 14:11:44,340][__main__][INFO] - [main] Epoch 1/120
+[2025-09-25 14:11:44,340][__main__][INFO] - Learning rate: 0.000250
+[2025-09-25 14:11:44,341][__main__][INFO] - [sched] epoch=1 knn_k=10 edge_dropout=0.20
+Epoch 1:   0%|                                                                                  | 0/25029 [00:00<?, ?it/s][2025-09-25 14:11:44,966][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:45,367][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:45,573][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:45,636][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:45,894][__main__][ERROR] - [loss] No matching horizons found in predictions/targets; returning zero loss.
+[2025-09-25 14:11:45,906][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 1/25029 [00:01<10:50:08,  1.56s/it, loss=0.0000][2025-09-25 14:11:45,914][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:45,918][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:46,104][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:46,169][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:46,454][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 2/25029 [00:02<6:42:05,  1.04it/s, loss=0.0000][2025-09-25 14:11:46,458][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:46,462][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:46,650][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:46,713][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:46,888][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 3/25029 [00:02<5:01:15,  1.38it/s, loss=0.0000][2025-09-25 14:11:46,892][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:46,896][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:47,088][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:47,155][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:47,336][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 4/25029 [00:02<4:15:57,  1.63it/s, loss=0.0000][2025-09-25 14:11:48,302][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:48,306][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:48,502][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:48,564][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:48,747][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 5/25029 [00:04<6:15:52,  1.11it/s, loss=0.0000][2025-09-25 14:11:49,706][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:49,710][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:49,903][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:49,967][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:50,154][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 6/25029 [00:05<7:27:34,  1.07s/it, loss=0.0000][2025-09-25 14:11:51,119][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:51,123][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:51,320][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:51,383][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:51,578][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 7/25029 [00:07<8:15:27,  1.19s/it, loss=0.0000][2025-09-25 14:11:52,534][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:52,539][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:52,735][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:52,798][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:52,985][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 8/25029 [00:08<8:44:28,  1.26s/it, loss=0.0000][2025-09-25 14:11:53,931][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:53,935][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:54,128][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:54,191][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:54,374][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                           | 9/25029 [00:10<9:01:32,  1.30s/it, loss=0.0000][2025-09-25 14:11:55,333][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:55,338][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:55,539][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:55,603][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:55,798][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 10/25029 [00:11<9:17:39,  1.34s/it, loss=0.0000][2025-09-25 14:11:56,753][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:56,757][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:56,950][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:57,012][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:57,201][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 11/25029 [00:12<9:26:01,  1.36s/it, loss=0.0000][2025-09-25 14:11:58,146][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:58,150][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:58,348][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:58,413][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:11:58,604][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 12/25029 [00:14<9:31:48,  1.37s/it, loss=0.0000][2025-09-25 14:11:59,562][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:11:59,566][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 14:11:59,762][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 14:11:59,824][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 14:12:00,013][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+Epoch 1:   0%|                                                          | 13/25029 [00:15<9:36:30,  1.38s/it, loss=0.0000][2025-09-25 14:12:00,517][__main__][INFO] - [EDGE-TS] asof=2015-10-21 staleness_days=1
+[2025-09-25 14:12:00,522][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=131
+[2025-09-25 14:12:00,624][src.graph.graph_builder][INFO] - Built correlation graph: 131 nodes, 1310 edges
+[2025-09-25 14:12:00,659][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1310
+[2025-09-25 14:12:00,990][__main__][WARNING] - [optim] No gradients; skipping optimizer.step()
+
+-----
+
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:20,283][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:20,292][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 77/25029 [01:24<3:03:45,  2.26it/s, loss=0.0000][2025-09-25 22:33:20,296][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:20,301][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:20,490][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:20,557][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:20,724][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:20,725][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:20,735][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 78/25029 [01:24<3:03:54,  2.26it/s, loss=0.0000][2025-09-25 22:33:20,740][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:20,744][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:20,934][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:21,001][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:21,170][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:21,171][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:21,181][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 79/25029 [01:25<3:04:24,  2.25it/s, loss=0.0000][2025-09-25 22:33:21,186][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:21,190][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:21,382][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:21,450][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:21,615][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:21,616][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:21,629][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 80/25029 [01:25<3:04:53,  2.25it/s, loss=0.0000][2025-09-25 22:33:21,633][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:21,638][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:21,827][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:21,894][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:22,063][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:22,064][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:22,076][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 81/25029 [01:26<3:05:10,  2.25it/s, loss=0.0000][2025-09-25 22:33:22,080][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:22,084][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:22,276][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:22,344][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:22,514][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:22,515][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:22,526][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 82/25029 [01:26<3:05:47,  2.24it/s, loss=0.0000][2025-09-25 22:33:22,531][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:22,535][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:22,727][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:22,795][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:22,963][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:22,963][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:22,964][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:22,974][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 83/25029 [01:27<3:05:57,  2.24it/s, loss=0.0000][2025-09-25 22:33:22,978][__main__][INFO] - [EDGE-TS] asof=2015-10-28 staleness_days=1
+[2025-09-25 22:33:22,983][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:33:23,088][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:33:23,124][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:33:23,291][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:23,292][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:23,302][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 84/25029 [01:27<2:50:58,  2.43it/s, loss=0.0000][2025-09-25 22:33:23,306][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:23,311][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:23,502][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:23,569][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:23,736][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:23,737][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:23,746][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 85/25029 [01:27<2:55:06,  2.37it/s, loss=0.0000][2025-09-25 22:33:23,750][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:23,755][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:23,946][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:24,013][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:24,182][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:24,183][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:24,194][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 86/25029 [01:28<2:58:24,  2.33it/s, loss=0.0000][2025-09-25 22:33:24,198][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:24,203][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:24,397][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:24,464][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:24,634][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:24,635][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:24,646][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 87/25029 [01:28<3:01:18,  2.29it/s, loss=0.0000][2025-09-25 22:33:24,651][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:24,655][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:24,849][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:24,917][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:25,087][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:25,088][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:25,099][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 88/25029 [01:29<3:03:25,  2.27it/s, loss=0.0000][2025-09-25 22:33:25,104][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:25,108][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:25,301][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:25,368][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:25,534][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:25,535][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:25,545][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 89/25029 [01:29<3:03:54,  2.26it/s, loss=0.0000][2025-09-25 22:33:25,549][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:25,553][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:25,742][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:25,809][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:25,974][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:25,974][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:25,974][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:25,975][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:25,975][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:25,975][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:25,985][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 90/25029 [01:30<3:03:33,  2.26it/s, loss=0.0000][2025-09-25 22:33:25,989][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:25,994][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:26,185][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:26,252][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:26,422][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:26,423][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:26,434][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 91/25029 [01:30<3:04:33,  2.25it/s, loss=0.0000][2025-09-25 22:33:26,438][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:26,443][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:26,633][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:26,700][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:26,867][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:26,868][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:26,878][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 92/25029 [01:30<3:04:26,  2.25it/s, loss=0.0000][2025-09-25 22:33:26,882][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:26,886][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:27,078][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:27,145][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:27,312][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:27,313][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:27,322][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 93/25029 [01:31<3:04:29,  2.25it/s, loss=0.0000][2025-09-25 22:33:27,326][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:27,330][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:27,523][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:27,590][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:27,760][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:27,761][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:27,761][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:27,771][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 94/25029 [01:31<3:05:09,  2.24it/s, loss=0.0000][2025-09-25 22:33:27,775][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:27,780][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:27,970][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:28,037][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:28,201][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:28,202][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:28,212][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 95/25029 [01:32<3:04:29,  2.25it/s, loss=0.0000][2025-09-25 22:33:28,215][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:28,220][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:28,410][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:28,477][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:28,641][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:28,642][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:28,642][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:28,651][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 96/25029 [01:32<3:03:52,  2.26it/s, loss=0.0000][2025-09-25 22:33:28,655][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:28,659][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:33:28,847][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:33:28,914][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:33:29,079][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:33:29,090][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                     | 97/25029 [01:33<3:03:26,  2.27it/s, loss=0.0000][2025-09-25 22:33:29,093][__main__][INFO] - [EDGE-TS] asof=2015-10-29 staleness_days=1
+[2025-09-25 22:33:29,098][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:33:29,200][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:33:29,236][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:33:29,404][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:33:29,404][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:18,156][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:18,168][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 98/25029 [02:22<104:06:12, 15.03s/it, loss=0.0000][2025-09-25 22:34:18,172][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:18,176][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:18,367][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:18,433][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:18,587][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:18,588][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:18,597][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 99/25029 [02:22<73:45:40, 10.65s/it, loss=0.0000][2025-09-25 22:34:18,601][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:18,605][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:18,788][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:18,851][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:19,008][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:19,019][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 100/25029 [02:23<52:30:31,  7.58s/it, loss=0.0000][2025-09-25 22:34:19,023][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:19,028][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:19,217][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:19,285][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:19,453][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:19,453][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:19,453][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:19,454][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:19,454][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:19,454][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:19,464][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 101/25029 [02:23<37:40:44,  5.44s/it, loss=0.0000][2025-09-25 22:34:19,468][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:19,473][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:19,664][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:19,731][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:19,898][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:19,899][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:19,909][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 102/25029 [02:23<27:18:00,  3.94s/it, loss=0.0000][2025-09-25 22:34:19,914][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:19,919][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:20,108][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:20,175][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:20,340][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:20,352][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 103/25029 [02:24<20:01:45,  2.89s/it, loss=0.0000][2025-09-25 22:34:20,357][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:20,361][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:20,551][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:20,617][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:20,782][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:20,783][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:20,792][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 104/25029 [02:24<14:55:56,  2.16s/it, loss=0.0000][2025-09-25 22:34:20,796][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:20,801][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:20,990][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:21,057][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:21,225][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:21,226][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:21,238][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                   | 105/25029 [02:25<11:22:43,  1.64s/it, loss=0.0000][2025-09-25 22:34:21,242][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:21,247][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:21,436][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:21,503][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:21,671][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:21,671][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:21,672][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:21,682][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 106/25029 [02:25<8:53:16,  1.28s/it, loss=0.0000][2025-09-25 22:34:21,687][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:21,691][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:21,882][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:21,949][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:22,115][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:22,116][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:22,126][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 107/25029 [02:26<7:08:35,  1.03s/it, loss=0.0000][2025-09-25 22:34:22,131][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:22,135][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:22,330][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:22,398][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:22,566][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:22,566][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:22,567][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:22,577][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 108/25029 [02:26<5:56:07,  1.17it/s, loss=0.0000][2025-09-25 22:34:22,581][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:22,586][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:22,777][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:22,844][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:23,011][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:23,012][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:23,024][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 109/25029 [02:27<5:04:57,  1.36it/s, loss=0.0000][2025-09-25 22:34:23,028][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:23,033][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:23,223][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:23,291][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:23,460][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:23,461][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:23,472][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 110/25029 [02:27<4:29:23,  1.54it/s, loss=0.0000][2025-09-25 22:34:23,477][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:23,481][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:23,673][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:23,741][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:23,911][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:23,911][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:23,912][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:23,922][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 111/25029 [02:27<4:04:40,  1.70it/s, loss=0.0000][2025-09-25 22:34:23,927][__main__][INFO] - [EDGE-TS] asof=2015-11-01 staleness_days=1
+[2025-09-25 22:34:23,931][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:34:24,033][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:34:24,069][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:34:24,235][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:24,236][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:24,247][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 112/25029 [02:28<3:31:37,  1.96it/s, loss=0.0000][2025-09-25 22:34:24,251][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:24,256][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:24,448][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:24,516][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:24,683][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:24,684][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:24,695][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 113/25029 [02:28<3:23:53,  2.04it/s, loss=0.0000][2025-09-25 22:34:24,699][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:24,703][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:24,895][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:24,963][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:25,130][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:25,131][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:25,142][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 114/25029 [02:29<3:18:27,  2.09it/s, loss=0.0000][2025-09-25 22:34:25,146][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:25,151][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:25,343][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:25,410][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:25,575][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:25,576][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:25,587][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 115/25029 [02:29<3:14:19,  2.14it/s, loss=0.0000][2025-09-25 22:34:25,591][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:25,595][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:25,786][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:25,854][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:26,020][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:26,021][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:26,032][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 116/25029 [02:30<3:11:31,  2.17it/s, loss=0.0000][2025-09-25 22:34:26,037][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:26,041][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:26,232][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:26,300][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:26,470][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:26,471][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:26,481][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 117/25029 [02:30<3:09:53,  2.19it/s, loss=0.0000][2025-09-25 22:34:26,485][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:26,489][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:26,680][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:26,747][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:26,917][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:26,918][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:26,928][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▏                                                    | 118/25029 [02:30<3:08:40,  2.20it/s, loss=0.0000][2025-09-25 22:34:26,933][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:26,937][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:27,129][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:27,197][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:27,365][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:27,365][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:27,366][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:27,376][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 119/25029 [02:31<3:07:46,  2.21it/s, loss=0.0000][2025-09-25 22:34:27,380][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:27,384][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:27,573][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:27,641][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:27,805][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:27,806][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:27,819][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 120/25029 [02:31<3:06:41,  2.22it/s, loss=0.0000][2025-09-25 22:34:27,823][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:27,828][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:28,017][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:28,085][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:28,251][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:28,252][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:28,262][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 121/25029 [02:32<3:05:51,  2.23it/s, loss=0.0000][2025-09-25 22:34:28,266][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:28,271][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:28,460][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:28,528][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:28,695][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:28,695][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:28,696][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:28,706][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 122/25029 [02:32<3:05:19,  2.24it/s, loss=0.0000][2025-09-25 22:34:28,710][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:28,714][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:28,905][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:28,972][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:29,139][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:29,140][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:29,150][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 123/25029 [02:33<3:05:06,  2.24it/s, loss=0.0000][2025-09-25 22:34:29,155][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:29,159][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:29,352][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:29,419][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:29,590][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:29,590][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:29,590][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:29,591][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:29,591][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:29,591][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:29,602][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 124/25029 [02:33<3:05:50,  2.23it/s, loss=0.0000][2025-09-25 22:34:29,607][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:29,611][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:29,802][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 2560 edges
+[2025-09-25 22:34:29,869][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=2560
+[2025-09-25 22:34:30,037][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,037][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,037][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,038][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,038][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,038][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,048][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   0%|▎                                                    | 125/25029 [02:34<3:05:31,  2.24it/s, loss=0.0000][2025-09-25 22:34:30,051][__main__][INFO] - [EDGE-TS] asof=2015-11-03 staleness_days=1
+[2025-09-25 22:34:30,056][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=135
+[2025-09-25 22:34:30,159][src.graph.graph_builder][INFO] - Built correlation graph: 135 nodes, 1350 edges
+[2025-09-25 22:34:30,195][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=1350
+[2025-09-25 22:34:30,362][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,363][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,374][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 126/25029 [02:34<2:50:33,  2.43it/s, loss=0.0000][2025-09-25 22:34:30,379][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:30,383][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:30,446][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:30,447][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:30,461][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,631][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,632][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,632][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,643][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 127/25029 [02:34<2:32:59,  2.71it/s, loss=0.0000][2025-09-25 22:34:30,649][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:30,653][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:30,713][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:30,714][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:30,728][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:30,893][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:30,894][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:30,905][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 128/25029 [02:34<2:19:34,  2.97it/s, loss=0.0000][2025-09-25 22:34:30,910][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:30,914][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:30,974][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:30,975][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:30,989][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,158][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,159][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,159][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,169][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 129/25029 [02:35<2:10:35,  3.18it/s, loss=0.0000][2025-09-25 22:34:31,174][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,178][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:31,238][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:31,238][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:31,252][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,421][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,422][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,433][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 130/25029 [02:35<2:04:20,  3.34it/s, loss=0.0000][2025-09-25 22:34:31,438][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,443][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:31,504][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:31,504][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:31,518][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,687][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,688][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,700][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 131/25029 [02:35<2:00:12,  3.45it/s, loss=0.0000][2025-09-25 22:34:31,704][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,709][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:31,769][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:31,770][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:31,783][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:31,952][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:31,953][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:31,964][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 132/25029 [02:36<1:56:58,  3.55it/s, loss=0.0000][2025-09-25 22:34:31,969][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:31,973][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,034][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,035][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,048][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:32,220][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:32,221][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:32,232][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 133/25029 [02:36<1:55:15,  3.60it/s, loss=0.0000][2025-09-25 22:34:32,237][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:32,241][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,302][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,303][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,316][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:32,486][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:32,487][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:32,499][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 134/25029 [02:36<1:54:04,  3.64it/s, loss=0.0000][2025-09-25 22:34:32,505][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:32,512][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,572][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,573][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,587][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:32,756][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:32,756][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:32,756][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:32,757][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:32,757][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:32,757][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:32,767][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 135/25029 [02:36<1:53:06,  3.67it/s, loss=0.0000][2025-09-25 22:34:32,772][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:32,777][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:32,837][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:32,838][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:32,852][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,023][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,024][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,024][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:33,035][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 136/25029 [02:37<1:52:28,  3.69it/s, loss=0.0000][2025-09-25 22:34:33,040][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:33,044][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:33,105][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:33,106][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:33,120][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,291][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,292][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:33,303][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 137/25029 [02:37<1:52:05,  3.70it/s, loss=0.0000][2025-09-25 22:34:33,308][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:33,312][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:33,373][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:33,374][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:33,388][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,558][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,559][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+[2025-09-25 22:34:33,570][__main__][WARNING] - [skip-batch] Zero loss detected (0.00e+00), likely no valid targets in batch
+Epoch 1:   1%|▎                                                    | 138/25029 [02:37<1:51:41,  3.71it/s, loss=0.0000][2025-09-25 22:34:33,575][__main__][INFO] - [EDGE-TS] asof=2015-11-04 staleness_days=1
+[2025-09-25 22:34:33,580][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=256
+[2025-09-25 22:34:33,641][src.graph.graph_builder][WARNING] - No edges found with correlation threshold, creating minimal graph
+[2025-09-25 22:34:33,642][src.graph.graph_builder][INFO] - Built correlation graph: 256 nodes, 510 edges
+[2025-09-25 22:34:33,656][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=510
+[2025-09-25 22:34:33,827][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']

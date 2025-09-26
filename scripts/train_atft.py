@@ -80,6 +80,7 @@ def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
       - horizon_1, horizon_5d, horizon1, h1
       - target_1d, return_5d, label_ret_10_bps
       - point_horizon_1 (model output alias)
+      - feat_ret_1d, feat_ret_5d (actual dataset columns)
       - numeric strings like '1', 5
     """
     try:
@@ -99,9 +100,21 @@ def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
         if m and int(m.group(1)) in horizons:
             return f"horizon_{int(m.group(1))}"
 
+    # IMPORTANT: Handle feat_ret_*d columns from dataset
+    if skey.startswith("feat_ret_"):
+        m = re.match(r"feat_ret_(\d+)d$", skey)
+        if m and int(m.group(1)) in horizons:
+            return f"horizon_{int(m.group(1))}"
+
+    # IMPORTANT: Handle returns_*d columns (actual dataset format)
+    if skey.startswith("returns_"):
+        m = re.match(r"returns_(\d+)d$", skey)
+        if m and int(m.group(1)) in horizons:
+            return f"horizon_{int(m.group(1))}"
+
     # Extract number from various formats
     patterns = [
-        r"return_(\d+)d?",
+        r"return_(\d+)d?",         # return_5d (single return)
         r"target_(\d+)d?",
         r"label_ret_(\d+)_bps",
         r"h(\d+)$",               # h1, h5
@@ -1145,6 +1158,7 @@ class MultiHorizonLoss(nn.Module):
             targ_candidates = [
                 f"horizon_{horizon}",
                 f"horizon_{horizon}d",
+                f"feat_ret_{horizon}d",    # Add actual dataset column names
                 f"point_horizon_{horizon}",
                 f"h{horizon}",
             ]
@@ -1260,13 +1274,26 @@ class MultiHorizonLoss(nn.Module):
                         dir_loss = self._bce(logits, target_bin)
                         loss = loss + self.direction_aux_weight * dir_loss
                 losses[f"horizon_{horizon}"] = loss.detach()
-                # 集約重み
+                # 集約重み - OPTIMIZED for 1d/5d focus based on PDF analysis
                 if cur_weights is not None and horizon in cur_weights:
                     weight = float(cur_weights[horizon])
                 else:
-                    weight = 1.0 / np.sqrt(horizon)
-                    if int(horizon) == 1 and self.h1_loss_mult != 1.0:
-                        weight = weight * self.h1_loss_mult
+                    # Enhanced weighting to prioritize 1d and 5d predictions
+                    # Analysis showed these horizons are most important for performance
+                    # Can be overridden with env vars: HORIZON_WEIGHT_1D, HORIZON_WEIGHT_5D, etc.
+                    if int(horizon) == 1:
+                        weight = float(os.getenv("HORIZON_WEIGHT_1D", "1.0"))  # Maximum weight for 1-day
+                        if self.h1_loss_mult != 1.0:
+                            weight = weight * self.h1_loss_mult
+                    elif int(horizon) == 5:
+                        weight = float(os.getenv("HORIZON_WEIGHT_5D", "0.6"))  # High weight for 5-day (was ~0.45)
+                    elif int(horizon) == 10:
+                        weight = float(os.getenv("HORIZON_WEIGHT_10D", "0.3"))  # Moderate weight for 10-day (was ~0.32)
+                    elif int(horizon) == 20:
+                        weight = float(os.getenv("HORIZON_WEIGHT_20D", "0.2"))  # Lower weight for 20-day (was ~0.22)
+                    else:
+                        # Fallback for other horizons
+                        weight = 1.0 / np.sqrt(horizon)
                 total_loss = total_loss + weight * loss
                 weights.append(weight)
                 contribution_count += 1
@@ -1634,6 +1661,20 @@ def train_epoch(
             else:
                 valid_masks = None
 
+            # Debug: Check if we have actual data in the batch (first few batches only)
+            if epoch == 0 and batch_idx < 3:
+                logger.info(f"[DEBUG] Batch {batch_idx}: features shape={features.shape}")
+                if 'date' in batch:
+                    try:
+                        dates = batch['date']
+                        if torch.is_tensor(dates):
+                            # Convert tensor dates to readable format if possible
+                            logger.info(f"[DEBUG] Date range in batch: {dates.min().item():.0f} - {dates.max().item():.0f}")
+                        else:
+                            logger.info(f"[DEBUG] Date info: {type(dates)}")
+                    except:
+                        pass
+
             # （旧train_epoch経路）GAT融合α下限の設定はrun_training側で実施
 
             # Mixed Precision Training (最適化設定)
@@ -1727,11 +1768,64 @@ def train_epoch(
                 )
 
 
+                # Debug: Check for zero/invalid targets more frequently
+                if batch_idx < 100 and batch_idx % 10 == 0:  # Check every 10th batch for first 100 batches
+                    logger.info(f"[DEBUG-BATCH-{batch_idx}] Checking target values:")
+                    all_zeros = True
+                    for k, v in targets_fp32.items():
+                        if torch.is_tensor(v):
+                            valid = torch.isfinite(v)
+                            nonzero = (v != 0.0)
+                            # Check if ANY values are non-zero
+                            if nonzero.any():
+                                all_zeros = False
+                            logger.info(f"  {k}: shape={v.shape}, "
+                                      f"valid={valid.sum().item()}/{v.numel()}, "
+                                      f"nonzero={nonzero.sum().item()}/{v.numel()}, "
+                                      f"mean={v[valid].mean().item() if valid.any() else 0:.6f}, "
+                                      f"std={v[valid].std().item() if valid.any() else 0:.6f}, "
+                                      f"min={v[valid].min().item() if valid.any() else 0:.6f}, "
+                                      f"max={v[valid].max().item() if valid.any() else 0:.6f}")
+                            # Show first 5 actual values to debug
+                            if v.numel() > 0:
+                                sample_values = v.flatten()[:5].tolist()
+                                logger.info(f"    Sample values: {sample_values}")
+
+                    if all_zeros:
+                        logger.warning(f"[DEBUG-BATCH-{batch_idx}] ALL TARGETS ARE ZERO!")
+                        # Check date information
+                        if 'date' in batch:
+                            logger.info(f"  Batch date: {batch.get('date', 'unknown')}")
+
+                    # Also check predictions
+                    logger.info(f"[DEBUG-BATCH-{batch_idx}] Checking prediction values:")
+                    for k, v in predictions_fp32.items():
+                        if torch.is_tensor(v) and 'horizon' in k:
+                            logger.info(f"  {k}: mean={v.mean().item():.6f}, std={v.std().item():.6f}, "
+                                      f"min={v.min().item():.6f}, max={v.max().item():.6f}")
+
                 # マスク付きマルチホライゾン損失
+                # Additional check before loss computation
+                # Count how many target values are actually non-zero
+                total_nonzero = 0
+                total_values = 0
+                for k, v in targets_fp32.items():
+                    if torch.is_tensor(v):
+                        total_nonzero += (v != 0.0).sum().item()
+                        total_values += v.numel()
+
+                if batch_idx < 100 and total_nonzero == 0:
+                    logger.warning(f"[ZERO-TARGET-BATCH-{batch_idx}] All {total_values} target values are zero!")
+                    # Try to understand why
+                    if 'date' in batch:
+                        logger.info(f"  Date: {batch.get('date', 'unknown')}")
+                    if 'codes' in batch and isinstance(batch['codes'], list) and len(batch['codes']) > 0:
+                        logger.info(f"  Sample codes: {batch['codes'][:5]}")
+
                 loss_result = criterion(
                     predictions_fp32, targets_fp32, valid_masks=valid_masks
                 )
-                
+
                 # Handle both single value and tuple return
                 if isinstance(loss_result, tuple):
                     loss, losses = loss_result
@@ -4429,6 +4523,12 @@ def train(config: DictConfig) -> None:
             )
             cv_folds = 1
 
+    # Apply minimum date filter for all data to ensure valid targets
+    min_date_filter = os.getenv("MIN_TRAINING_DATE", "2016-01-01")
+    if min_date_filter:
+        logger.info(f"[data-filter] Global minimum date filter: {min_date_filter}")
+        logger.info("[data-filter] This ensures sufficient history for computing forward-looking returns")
+
     # データローダー作成（単一学習 or 第1foldのみ実行）
     logger.info("Creating data loaders...")
     if cv_folds >= 2 and fold_ranges:
@@ -4501,6 +4601,14 @@ def train(config: DictConfig) -> None:
             cv_folds = 1
 
         if cv_folds >= 2:
+            # Apply minimum date filter to ensure valid targets (forward-looking returns need history)
+            min_date_filter = os.getenv("MIN_TRAINING_DATE", "2016-01-01")
+            if min_date_filter:
+                logger.info(f"[data-filter] Filtering training data to dates >= {min_date_filter}")
+                start_date_filter = pd.to_datetime(min_date_filter)
+            else:
+                start_date_filter = None
+
             train_ds = ProductionDatasetV2(
                 data_module.train_files
                 if hasattr(data_module, "train_files")
@@ -4508,7 +4616,7 @@ def train(config: DictConfig) -> None:
                 final_config,
                 mode="train",
                 target_scalers=None,
-                start_date=None,
+                start_date=start_date_filter,  # Filter early dates
                 end_date=train_end_eff,
             )
             if len(train_ds) == 0:
@@ -5916,15 +6024,66 @@ def train(config: DictConfig) -> None:
                             except Exception:
                                 thr = 0.3
                             # Use local correlation edge builder (batch-level)
+                            # OPTIMIZATION: Cache graph builder to avoid reinitialization
                             from src.graph.graph_builder import GraphBuilder as _GBL, GBConfig as _GBC
 
-                            _gb_local = _GBL(
-                                _GBC(max_nodes=int(feats_full.size(0)), edge_threshold=float(thr))
-                            )
+                            # Use module-level cache to avoid reference errors
+                            if not hasattr(sys.modules[__name__], '_graph_builder_cache'):
+                                sys.modules[__name__]._graph_builder_cache = {}
+
+                            cache_key = f"{feats_full.size(0)}_{thr}"
+                            if cache_key not in sys.modules[__name__]._graph_builder_cache:
+                                _gb_local = _GBL(
+                                    _GBC(max_nodes=int(feats_full.size(0)), edge_threshold=float(thr))
+                                )
+                                sys.modules[__name__]._graph_builder_cache[cache_key] = _gb_local
+                            else:
+                                _gb_local = sys.modules[__name__]._graph_builder_cache[cache_key]
+
                             win = int(min(feats_full.size(1), 20))
-                            ei, ea = _gb_local.build_correlation_edges(
-                                feats_full.to(device), window=win, k=int(max(1, k_try))
-                            )
+
+                            # OPTIMIZATION: Cache computed graphs by date if using DayBatchSampler
+                            # Extract date information if available to cache graphs per trading day
+                            graph_cache_key = None
+                            if 'date' in batch:
+                                try:
+                                    # Use first date in batch as cache key (assumes same-day batches)
+                                    if torch.is_tensor(batch['date']):
+                                        date_val = batch['date'][0].item()
+                                    else:
+                                        date_val = batch['date'][0]
+                                    graph_cache_key = f"graph_{date_val}_{feats_full.size(0)}_{win}_{k_try}"
+                                except:
+                                    graph_cache_key = None
+
+                            # Check graph results cache
+                            if not hasattr(sys.modules[__name__], '_graph_results_cache'):
+                                sys.modules[__name__]._graph_results_cache = {}
+                                sys.modules[__name__]._graph_cache_hits = 0
+                                sys.modules[__name__]._graph_cache_misses = 0
+
+                            if graph_cache_key and graph_cache_key in sys.modules[__name__]._graph_results_cache:
+                                # Use cached graph
+                                ei, ea = sys.modules[__name__]._graph_results_cache[graph_cache_key]
+                                sys.modules[__name__]._graph_cache_hits += 1
+                                if sys.modules[__name__]._graph_cache_hits % 100 == 0:
+                                    logger.debug(f"Graph cache hits: {sys.modules[__name__]._graph_cache_hits}, misses: {sys.modules[__name__]._graph_cache_misses}")
+                            else:
+                                # Compute new graph
+                                ei, ea = _gb_local.build_correlation_edges(
+                                    feats_full.to(device), window=win, k=int(max(1, k_try))
+                                )
+                                sys.modules[__name__]._graph_cache_misses += 1
+
+                                # Cache the result if we have a valid key
+                                if graph_cache_key and isinstance(ei, torch.Tensor):
+                                    # Keep cache size reasonable (e.g., last 100 graphs)
+                                    if len(sys.modules[__name__]._graph_results_cache) > 100:
+                                        # Remove oldest entries
+                                        keys_to_remove = list(sys.modules[__name__]._graph_results_cache.keys())[:20]
+                                        for k in keys_to_remove:
+                                            del sys.modules[__name__]._graph_results_cache[k]
+                                    sys.modules[__name__]._graph_results_cache[graph_cache_key] = (ei, ea)
                             if isinstance(ei, torch.Tensor) and ei.numel() > 0:
                                 edge_index = ei.to(device, non_blocking=True)
                                 # Enrich with market/sector similarity if available

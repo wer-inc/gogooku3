@@ -229,8 +229,17 @@ def test_forward_pass(model, config):
         logger.info(f"✓ Output keys: {list(outputs.keys())}")
 
         if 'predictions' in outputs:
-            pred_shape = outputs['predictions'].shape
-            logger.info(f"✓ Predictions shape: {pred_shape}")
+            predictions = outputs['predictions']
+            # Handle both tensor and dict outputs
+            if isinstance(predictions, torch.Tensor):
+                pred_shape = predictions.shape
+                logger.info(f"✓ Predictions shape: {pred_shape}")
+            elif isinstance(predictions, dict):
+                logger.info(f"✓ Predictions keys: {list(predictions.keys())}")
+                # Log shapes for each prediction horizon
+                for key, val in predictions.items():
+                    if torch.is_tensor(val):
+                        logger.info(f"  - {key} shape: {val.shape}")
 
         return outputs
 
@@ -318,7 +327,11 @@ def test_training_step(model, optimizer, config):
             sharpe_weight=0.0   # 一時的に無効化
         )
 
-        logger.info(f"Predictions shape: {outputs['predictions'].shape}")
+        # Handle both tensor and dict predictions
+        if isinstance(outputs['predictions'], dict):
+            logger.info(f"Predictions keys: {list(outputs['predictions'].keys())}")
+        else:
+            logger.info(f"Predictions shape: {outputs['predictions'].shape}")
         logger.info(f"Targets shape: {batch['targets'].shape}")
 
         loss = criterion(outputs['predictions'], batch['targets'])
