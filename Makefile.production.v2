@@ -1,0 +1,96 @@
+# Production-ready training with single dataset file
+
+.PHONY: train-production-v2
+train-production-v2: ## Production training with single dataset file
+	@echo "🚀 PRODUCTION TRAINING V2"
+	@echo "   ✅ Using single ML dataset file"
+	@echo "   ✅ Date filter: 2018-01-01+ (via MIN_TRAINING_DATE)"
+	@echo "   ✅ Target columns: returns_*d"
+	@echo "   ✅ Stable single-process DataLoader"
+	@OUTPUT_BASE=/home/ubuntu/gogooku3-standalone/output \
+	DATA_PATH=/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet \
+	NUM_WORKERS=0 \
+	ALLOW_UNSAFE_DATALOADER=0 \
+	MIN_TRAINING_DATE="2018-01-01" \
+	USE_RANKIC=1 \
+	RANKIC_WEIGHT=0.2 \
+	CS_IC_WEIGHT=0.15 \
+	SHARPE_WEIGHT=0.3 \
+	python scripts/integrated_ml_training_pipeline.py \
+		--data-path /home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet \
+		--batch-size 512 \
+		--lr 2e-4 \
+		--max-epochs 120 \
+		--hidden-size 256
+
+.PHONY: train-test-v2
+train-test-v2: ## Quick test with integrated pipeline (1 epoch)
+	@echo "🧪 PRODUCTION TEST V2 (1 epoch)"
+	@OUTPUT_BASE=/home/ubuntu/gogooku3-standalone/output \
+	DATA_PATH=/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet \
+	NUM_WORKERS=0 \
+	ALLOW_UNSAFE_DATALOADER=0 \
+	MIN_TRAINING_DATE="2020-01-01" \
+	python scripts/integrated_ml_training_pipeline.py \
+		--data-path /home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet \
+		--batch-size 256 \
+		--lr 2e-4 \
+		--max-epochs 1 \
+		--hidden-size 128 \
+		--skip-data-prep
+
+.PHONY: train-test-simple
+train-test-simple: ## Simplest test - direct training
+	@echo "🔧 SIMPLEST TEST - Direct training"
+	@echo "   Using integrated pipeline with ML dataset"
+	@NUM_WORKERS=0 \
+	ALLOW_UNSAFE_DATALOADER=0 \
+	MIN_TRAINING_DATE="2020-01-01" \
+	python scripts/test_direct_training.py
+
+.PHONY: train-test-normalized
+train-test-normalized: ## Test with proper normalization
+	@echo "📊 NORMALIZED TEST - With data scaling"
+	@echo "   Proper feature normalization and gradient clipping"
+	@NUM_WORKERS=0 \
+	ALLOW_UNSAFE_DATALOADER=0 \
+	MIN_TRAINING_DATE="2020-01-01" \
+	python scripts/test_normalized_training.py
+
+.PHONY: prepare-atft-data
+prepare-atft-data: ## Prepare data for ATFT training from ML dataset
+	@echo "📊 Preparing ATFT data from ML dataset..."
+	@python scripts/prepare_atft_data.py \
+		--input output/ml_dataset_latest_full.parquet \
+		--output output/atft_data_production \
+		--train-ratio 0.7 \
+		--val-ratio 0.15 \
+		--test-ratio 0.15 \
+		--min-date "2018-01-01"
+	@echo "✅ Data prepared in output/atft_data_production/"
+
+.PHONY: check-dataset
+check-dataset: ## Check dataset for valid targets
+	@echo "📊 Checking dataset..."
+	@python scripts/check_dataset_production.py
+
+.PHONY: help-v2
+help-v2: ## Show production training guide V2
+	@echo "================================"
+	@echo "PRODUCTION TRAINING GUIDE V2"
+	@echo "================================"
+	@echo ""
+	@echo "Option 1: Integrated Pipeline (Recommended)"
+	@echo "  1. Check dataset: make check-dataset"
+	@echo "  2. Test (1 epoch): make -f Makefile.production.v2 train-test-v2"
+	@echo "  3. Full training: make -f Makefile.production.v2 train-production-v2"
+	@echo ""
+	@echo "Option 2: Prepare ATFT-specific data"
+	@echo "  1. Prepare data: make -f Makefile.production.v2 prepare-atft-data"
+	@echo "  2. Use original ATFT training"
+	@echo ""
+	@echo "The integrated pipeline:"
+	@echo "  - Uses ML dataset directly (no train/val/test split needed)"
+	@echo "  - Handles date filtering automatically"
+	@echo "  - Fixes target column mapping (returns_*d)"
+	@echo "  - Stable single-process execution"
