@@ -6132,3 +6132,39 @@ Epoch 1:   1%|▎                                                    | 138/25029
 [2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
 [2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
 [2025-09-25 22:34:33,828][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_10d', 'horizon_1d', 'horizon_20d', 'horizon_5d']
+
+-----
+
+ env HIDDEN_SIZE=256 USE_RANKIC=1 RANKIC_WEIGHT=0.3 SHARPE_WEIGHT=0.4 CS_IC_WEIGHT=0.15 USE_HUBER=1 HUBER_WEIGHT=0.1 FEATURE_CLIP_VALUE=10.0
+  MIN_TRAINING_DATE="2018-01-01" NUM_WORKERS=0 DEGENERACY_GUARD=1 OUTPUT_NOISE_STD=0.02 python scripts/train_atft.py
+  data.source.data_dir=output/atft_data model.hidden_size=256 train.batch.train_batch_size=512 train.optimizer.lr=0.0002 train.trainer.max_epochs=120
+  train.trainer.precision=bf16-mixed train.trainer.gradient_clip_val=1.0
+
+
+  リアルタイムログ監視設定済み
+
+  📊 最新の訓練状況 (Phase 0: Baseline)
+
+  Epoch 2/5 完了:
+  - Val RankIC: 0.0719 (変化なし)
+  - Val Loss: 0.0539
+  - Train RankIC: 0.0012 (改善中)
+
+  リアルタイムログを見る方法:
+
+  1. バックグラウンドで実行中のモニター (ID: 146368)
+    - 自動的にEpoch、RankIC、Loss情報を抽出
+  2. 直接コマンドで見る場合:
+  # 最新のログを確認
+  tail -n 50 logs/ml_training.log
+
+  # 継続的に監視
+  tail -f logs/ml_training.log
+
+  🔄 現在の進捗:
+
+  - Phase 0/4: ベースライン学習中 (Epoch 2/5)
+  - 次のPhase: あと3エポックでPhase 1 (GAT)へ移行
+  - 推定時間: Phase 1開始まで約10-12分
+
+  RankICがまだ0.0719で固定されていますが、これはPhase 0の特徴です。Phase 1でGAT機能が有効化されると改善が期待されます。
