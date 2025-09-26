@@ -1,0 +1,128 @@
+# RankIC Boost Training Configuration
+# Optimized for maximum RankIC improvement with aggressive financial metrics focus
+
+name: rankic_boost
+
+# Batch configuration optimized for speed and stability
+batch:
+  train_batch_size: 2048  # Larger batches for stable gradients
+  val_batch_size: 6144
+  test_batch_size: 6144
+  num_workers: 8          # Full parallelization (controlled by env var)
+  prefetch_factor: 8
+  persistent_workers: true
+  pin_memory: true
+  gradient_accumulation_steps: 1
+
+# Optimizer configuration - aggressive learning
+optimizer:
+  type: adamw
+  lr: 0.0005              # Higher learning rate for faster convergence
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  eps: 1e-7
+
+# Learning rate scheduler - adaptive with plateau detection
+scheduler:
+  type: ReduceLROnPlateau
+  factor: 0.5             # Halve LR on plateau
+  patience: 5             # Wait 5 epochs before reducing
+  min_lr: 1e-6
+  verbose: true
+  threshold: 0.0001
+  threshold_mode: rel
+  warmup_steps: 2000      # Gradual warmup
+  gamma: 0.95
+
+# Training configuration
+trainer:
+  max_epochs: 120         # Extended training for convergence
+  gradient_clip_val: 1.0  # Standard clipping
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 1
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+  num_sanity_val_steps: 2
+  log_every_n_steps: 10
+  enable_progress_bar: true
+  enable_model_summary: true
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  limit_test_batches: 1.0
+  precision: bf16-mixed  # Mixed precision for speed
+  deterministic: false
+  benchmark: true
+  profiler: null
+  detect_anomaly: false
+  enable_checkpointing: true
+  max_time: null
+  min_steps: null
+  max_steps: -1
+
+# Early stopping focused on RankIC
+early_stopping:
+  monitor: val/rank_ic_5d  # Monitor 5-day RankIC
+  mode: max
+  patience: 15              # More patience for RankIC
+  min_delta: 0.001
+  verbose: true
+
+# Multi-horizon prediction configuration
+prediction:
+  horizons: [1, 5, 10, 20]
+  horizon_specific_architecture: true
+  horizon_weights: [1.0, 1.0, 1.0, 1.0]  # Balanced
+
+# Loss configuration - MAXIMUM RANKIC FOCUS
+loss:
+  type: huber_multi_horizon
+  huber_delta: 0.01
+  multi_horizon_weights: [1.0, 1.0, 1.0, 1.0]
+  use_coverage_penalty: true
+  coverage_alpha: 0.02
+  rankic_weight: 0.5      # MAXIMUM weight for RankIC (env var controlled)
+  sharpe_weight: 0.3      # High Sharpe weight (env var controlled)
+  l2_lambda: 0.001
+  # Additional losses controlled by environment variables:
+  # USE_CS_IC=1 CS_IC_WEIGHT=0.2
+  # USE_HUBER=1 HUBER_WEIGHT=0.1
+
+# Model checkpointing - save best RankIC models
+checkpoint:
+  monitor: val/rank_ic_5d  # Save based on RankIC
+  mode: max
+  save_top_k: 3
+  save_last: false
+  save_on_train_epoch_end: false
+  filename: 'rankic_boost-{epoch:03d}-{val_rank_ic_5d:.6f}'
+
+# Logging
+logging:
+  log_every_n_steps: 10
+  log_grad_norm: true
+  log_learning_rate: true
+
+# Mixed precision settings
+grad_scaler:
+  init_scale: 65536.0
+  growth_factor: 2.0
+  backoff_factor: 0.5
+  growth_interval: 2000
+
+# EMA settings
+ema:
+  enabled: false
+  decay: 0.999
+  update_every_step: true
+
+# Validation stability
+validation:
+  per_date_metrics: true
+  outlier_detection: true
+  outlier_threshold: 3.0
+
+# Data safety
+data:
+  correlation_eps: 1e-8
+  correlation_clamp: [-0.999, 0.999]
+  nan_fill_value: 0.0

@@ -6249,3 +6249,128 @@ python scripts/train_atft.py \
     train.batch.train_batch_size=512 \
     train.optimizer.lr=0.0002 \
     train.trainer.max_epochs=120
+
+-----
+
+● 📝 パイプライン改善総合レポート
+
+  🎯 達成状況
+
+  | 項目         | 改善前                      | 改善後                 | 状態     |
+  |------------|--------------------------|---------------------|--------|
+  | データリーケージ   | returns_1dが過去リターン（相関1.0） | future returnsに修正済み | ✅ 完了   |
+  | Val RankIC | 0.0719で停滞                | 0.0626（実信号あり）       | 🟡 改善中 |
+  | ベースライン     | 非現実的（0.98+）              | 現実的（0.0813）         | ✅ 達成   |
+  | データ形式      | 未変換                      | ATFT形式（4445ファイル）    | ✅ 完了   |
+
+  🔧 実装済み改善
+
+  1. データリーケージ修正 ✅
+
+  # 修正前: 過去リターン
+  df['returns_1d'] = df['Close'].pct_change(1)  # 昨日のリターン
+
+  # 修正後: 未来リターン
+  df['future_returns_1d'] = df['Close'].pct_change(1).shift(-1)  # 明日のリターン
+
+  2. 最適化パラメータ設定 ✅
+
+  # 主要改善点
+  RANKIC_WEIGHT=0.5      # 0.3→0.5（RankIC重視）
+  LEARNING_RATE=5e-4     # 2e-4→5e-4（学習率増加）
+  HIDDEN_SIZE=256        # 64→256（モデル容量増加）
+  BATCH_SIZE=2048        # 512→2048（バッチ最適化）
+  NUM_WORKERS=4          # 0→4（並列化）
+
+  3. 特徴量分析スクリプト ✅
+
+  - LightGBMベースライン実装
+  - 特徴量重要度の自動分析
+  - カテゴリ別重要度集計
+
+  📊 現在の課題と対策
+
+  問題1: Val RankICが目標未達
+
+  - 現状: 0.0626
+  - 目標: 0.075+
+  - 対策案:
+    a. Phase Training重みの調整
+    b. Feature Attentionの強化
+    c. データ正規化の改善
+
+  問題2: Train RankICが低い
+
+  - 現状: -0.0048〜0.0147
+  - 原因: モデルが学習信号を捉えられていない
+  - 対策案:
+    a. 学習率スケジュールの最適化
+    b. Warmup期間の延長
+    c. 正則化の調整
+
+  💡 推奨アクション
+
+  短期的改善（即実行可能）
+
+  1. 学習率調整
+  # Warmup付き学習
+  --lr 1e-3 --warmup-epochs 5
+  2. データ拡張
+  # ノイズ追加で汎化性能向上
+  OUTPUT_NOISE_STD=0.02
+  3. Early Stopping調整
+  --early-stopping --patience 30 --monitor val/rank_ic_5d
+
+  中期的改善（1-2週間）
+
+  1. アーキテクチャ改良
+    - Multi-head attention追加
+    - Residual connections強化
+    - Layer normalization位置最適化
+  2. データパイプライン最適化
+    - データローダー並列化
+    - メモリマップファイル使用
+    - 動的バッチサイズ調整
+  3. ハイパーパラメータ最適化
+    - Optuna統合
+    - ベイズ最適化
+    - グリッドサーチ自動化
+
+  🚀 次のステップ
+
+  1. 即座に実行:
+  # 改良版学習スクリプト実行
+  make train-optimized
+  2. モニタリング:
+  # RankIC推移監視
+  tail -f logs/ml_training.log | grep RankIC
+  3. 結果分析:
+  # パフォーマンス評価
+  python scripts/evaluate_model.py --checkpoint best_model.pth
+
+  📈 期待される成果
+
+  適切な実装により：
+  - Val RankIC: 0.08+（ベースライン超え）
+  - 訓練時間: 50%短縮（並列化効果）
+  - メモリ使用: 30%削減（最適化効果）
+
+  これらの改善により、目標Sharpe比0.849達成への道筋が明確になります。
+
+  ----
+
+  env HIDDEN_SIZE=256 USE_RANKIC=1 RANKIC_WEIGHT=0.5 SHARPE_WEIGHT=0.3 \
+  CS_IC_WEIGHT=0.2 USE_HUBER=1 HUBER_WEIGHT=0.1 \
+  OUTPUT_NOISE_STD=0.02 FEATURE_CLIP_VALUE=10.0 \
+  ALLOW_UNSAFE_DATALOADER=1 NUM_WORKERS=8 PERSISTENT_WORKERS=1 \
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  python scripts/train_atft.py \
+    data.source.data_dir=output/atft_data \
+    model.hidden_size=256 \
+    train.batch.train_batch_size=2048 \
+    train.optimizer.lr=5e-4 \
+    train.trainer.max_epochs=120 \
+    train.trainer.precision=bf16-mixed \
+    train.trainer.gradient_clip_val=1.0 \
+    improvements.warmup_epochs=5 \
+    improvements.plateau_scheduler=true

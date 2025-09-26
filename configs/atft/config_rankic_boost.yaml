@@ -1,0 +1,78 @@
+# RankIC Boost Configuration - Aggressive optimization for maximum RankIC improvement
+# This config focuses on maximizing RankIC through optimized loss weights and training parameters
+
+defaults:
+  - _self_
+  - data: jpx_large_scale
+  - model: atft_gat_fan
+  - train: rankic_boost  # Use our custom training configuration
+  - hardware: default
+  - override hydra/hydra_logging: default
+  - override hydra/job_logging: default
+
+# Override data source to use ATFT format
+data:
+  source:
+    data_dir: output/atft_data
+  graph_builder:
+    cache_dir: graph_cache
+    ewm_halflife: 30
+    k: 15
+    edge_threshold: 0.25
+    log_mktcap_col: log_mktcap
+    lookback: 60
+    method: ewm_demean
+    min_obs: 40
+    use_in_training: true
+    return_cols:
+    - return_1d
+    - feat_ret_1d
+    sector_col: sector33
+    shrinkage_gamma: 0.1
+    size_tau: 1.0
+    source_glob: ${data.source.data_dir}/*.parquet
+    symmetric: true
+
+# Model configuration - use larger hidden size for better capacity
+model:
+  hidden_size: 256  # Increased from default for better pattern learning
+
+# Debug settings
+debug:
+  detect_anomaly: false
+  enabled: false
+  fast_dev_run: 10
+  profiler: false
+
+# Hydra configuration
+hydra:
+  job:
+    chdir: false
+    name: ATFT-RankIC-Boost
+  run:
+    dir: logs/${now:%Y-%m-%d}/${now:%H-%M-%S}_rankic_boost
+  sweep:
+    dir: logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+# Improvements enabled
+improvements:
+  auto_recover_oom: true
+  compile_model: true  # Enable torch.compile for performance
+  edge_dropout_p: 0.0
+  ema_decay: 0.999
+  emergency_checkpoint: false
+  enable_tensorboard: true
+  enable_wandb: true
+  freq_dropout_max_width: 0.2
+  freq_dropout_p: 0.1
+  graph_augmentation: true
+  hidden_dropout_p: 0.1
+  label_smoothing: 0.01
+  snapshot_ensemble: false
+  use_auxiliary_tasks: false
+  use_coverage_penalty: true
+  use_ema: false  # Disabled by default
+  use_gradient_penalty: false
+  use_mixup: false
+  use_swa: false
