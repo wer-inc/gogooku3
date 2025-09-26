@@ -519,9 +519,9 @@ train-rankic-boost:
 	@echo "🚀 Running RankIC-boosted training (fundamental solution)"
 	@echo "   ✅ Dedicated Hydra config: config_rankic_boost.yaml"
 	@echo "   ✅ RANKIC_WEIGHT=0.5 (maximum RankIC focus)"
-	@echo "   ✅ NUM_WORKERS=8 (full parallelization)"
+	@echo "   ✅ NUM_WORKERS=2 (stable configuration)"
 	@echo "   ✅ Batch size 2048, LR 5e-4"
-	@echo "   ✅ Clean architecture with proper configuration management"
+	@echo "   ✅ Auto-retry with NUM_WORKERS=0 if worker crashes"
 	@python scripts/train_rankic_boost.py
 
 # ============================================================================
