@@ -36,6 +36,7 @@ help:
 	@echo "make train-integrated-safe            - Run with SafeTrainingPipeline validation first"
 	@echo "make train-integrated-hpo             - Run with hyperparameter optimization"
 	@echo "make train-atft                       - Run ATFT training directly"
+	@echo "make atft-convert DATA=...            - Convert ML parquet to ATFT format only (no training)"
 	@echo "make train-safe                       - Run SafeTrainingPipeline only"
 	@echo "make smoke                            - Quick 1-epoch smoke test"
 	@echo ""
@@ -198,6 +199,12 @@ PATTERN ?= output/*.parquet
 research-lags:
 	@echo "⏱  Lag audit for pattern: $(PATTERN)"
 	python scripts/tools/lag_audit_stub.py "$(PATTERN)"
+
+# Convert only (no training): Unified pipeline sugar
+.PHONY: atft-convert
+DATA ?= output/ml_dataset_future_returns.parquet
+atft-convert:
+	python scripts/integrated_ml_training_pipeline.py --data-path $${DATA} --only-convert
 
 # Research: chain baseline and lags
 .PHONY: research-all

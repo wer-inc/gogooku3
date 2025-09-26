@@ -104,9 +104,9 @@ class UnifiedFeatureConverter:
         if not need:
             return out
 
-        # Map from existing returns columns
+        # Map from existing future-return columns first, then legacy returns
         for h in need[:]:
-            for cand in (f"returns_{h}d", f"feat_ret_{h}d"):
+            for cand in (f"feat_ret_{h}d", f"returns_{h}d"):
                 if cand in out.columns:
                     out = out.with_columns(pl.col(cand).alias(f"target_{h}d"))
                     need.remove(h)
@@ -138,10 +138,22 @@ class UnifiedFeatureConverter:
     def _detect_feature_columns(self, df: pl.DataFrame) -> List[str]:
         """Auto-detect feature columns (numeric columns excluding metadata)"""
         exclude_cols = {"Code", "Date", "code", "date", "index", "split_fold"}
-        numeric_cols = [
-            col for col in df.columns
-            if col not in exclude_cols and df[col].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]
-        ]
+        # Exclude obvious label/return columns to prevent leakage
+        def _is_feature(c: str) -> bool:
+            if c in exclude_cols:
+                return False
+            name = c.lower()
+            # Remove targets/returns variants
+            leakage_tokens = [
+                "target_", "returns_", "log_returns_", "feat_ret_", "future_returns_",
+                "label", "_y", "_target",
+            ]
+            if any(tok in name for tok in leakage_tokens):
+                return False
+            # Only numeric dtypes are eligible
+            return df[c].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]
+
+        numeric_cols = [c for c in df.columns if _is_feature(c)]
 
         logger.info(f"Detected {len(numeric_cols)} feature columns")
         return numeric_cols
