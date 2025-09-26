@@ -48,6 +48,7 @@ help:
 	@echo "make train-optimized                  - Run with all PDF-recommended optimizations"
 	@echo "make train-optimized-report           - Show optimization report"
 	@echo "make train-optimized-dry              - Dry run to check configuration"
+	@echo "make train-rankic-boost               - Aggressive RankIC optimization (fastest improvement)"
 	@echo ""
 	@echo "Stable Single-Process Training:"
 	@echo "make train-stable                     - Force single-process stable training (no crashes)"
@@ -513,6 +514,15 @@ train-fixed:
 	@echo "   ✅ PDF optimizations applied"
 	@echo "   ✅ Stable execution guaranteed"
 	@python scripts/train_fixed.py
+
+train-rankic-boost:
+	@echo "🚀 Running RankIC-boosted training (fundamental solution)"
+	@echo "   ✅ Dedicated Hydra config: config_rankic_boost.yaml"
+	@echo "   ✅ RANKIC_WEIGHT=0.5 (maximum RankIC focus)"
+	@echo "   ✅ NUM_WORKERS=8 (full parallelization)"
+	@echo "   ✅ Batch size 2048, LR 5e-4"
+	@echo "   ✅ Clean architecture with proper configuration management"
+	@python scripts/train_rankic_boost.py
 
 # ============================================================================
 # Feature Preservation ML Pipeline (全特徴量保持)
