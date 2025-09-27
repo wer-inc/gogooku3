@@ -14,6 +14,10 @@ from pathlib import Path
 
 import aiohttp
 import polars as pl
+from src.features.calendar_utils import (
+    build_next_bday_expr_from_calendar_df,
+    build_next_bday_expr_from_dates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +147,7 @@ async def enrich_and_save(
     jquants: bool,
     start_date: str,
     end_date: str,
+    business_days: list[str] | None = None,
     trades_spec_path: Path | None = None,
     topix_parquet: Path | None = None,
     # Multi-index OHLC integration (optional)
@@ -800,7 +805,7 @@ async def enrich_and_save(
                             logger.info(f"Fetching short selling data {start_date} → {end_date} for enrichment")
 
                             # Fetch both ratio and positions data
-                            ss_df = await fetcher3.get_short_selling(session, start_date, end_date)
+                            ss_df = await fetcher3.get_short_selling(session, start_date, end_date, business_days=business_days)
                             if ss_df is not None and not ss_df.is_empty():
                                 short_df = ss_df
                                 # Save for reuse
@@ -812,7 +817,7 @@ async def enrich_and_save(
                                     pass
 
                             if positions_df is None:
-                                pos_df = await fetcher3.get_short_selling_positions(session, start_date, end_date)
+                                pos_df = await fetcher3.get_short_selling_positions(session, start_date, end_date, business_days=business_days)
                                 if pos_df is not None and not pos_df.is_empty():
                                     positions_df = pos_df
                                     # Save for reuse
@@ -1003,7 +1008,7 @@ async def enrich_and_save(
                             logger.info(f"Fetching sector short selling data {start_date} → {end_date} for enrichment")
 
                             # Fetch sector short selling data
-                            ss_df = await fetcher5.get_sector_short_selling(session, start_date, end_date)
+                            ss_df = await fetcher5.get_sector_short_selling(session, start_date, end_date, business_days=business_days)
                             if ss_df is not None and not ss_df.is_empty():
                                 sector_short_df = ss_df
                                 # Save for reuse
@@ -1024,12 +1029,20 @@ async def enrich_and_save(
                 # Import and apply sector short selling features
                 from src.gogooku3.features.short_selling_sector import add_sector_short_selling_block
 
+                # Build calendar-aware next business day callable
+                if business_days:
+                    _next_bd_expr = build_next_bday_expr_from_dates(business_days)
+                else:
+                    _dates = df.select("Date").unique().sort("Date")["Date"].to_list() if "Date" in df.columns else []
+                    _next_bd_expr = build_next_bday_expr_from_dates(_dates)
+
                 df = add_sector_short_selling_block(
                     quotes=df,
                     ss_df=sector_short_df,
                     listed_info_df=listed_info_df,
                     enable_z_scores=enable_sector_short_z_scores,
                     enable_relative_features=True,
+                    calendar_next_bday=_next_bd_expr,
                 )
 
                 logger.info("Sector short selling features attached successfully")
@@ -1037,12 +1050,19 @@ async def enrich_and_save(
                 logger.info("Sector short selling requested but no data available; adding null features")
                 # Add null sector short selling features for consistency
                 from src.gogooku3.features.short_selling_sector import add_sector_short_selling_block
+                if business_days:
+                    _next_bd_expr = build_next_bday_expr_from_dates(business_days)
+                else:
+                    _dates = df.select("Date").unique().sort("Date")["Date"].to_list() if "Date" in df.columns else []
+                    _next_bd_expr = build_next_bday_expr_from_dates(_dates)
+
                 df = add_sector_short_selling_block(
                     quotes=df,
                     ss_df=None,
                     listed_info_df=listed_info_df,
                     enable_z_scores=enable_sector_short_z_scores,
                     enable_relative_features=True,
+                    calendar_next_bday=_next_bd_expr,
                 )
         else:
             logger.info("Sector short selling not enabled; skipping")
@@ -1097,13 +1117,15 @@ async def enrich_and_save(
 
             if opt_feats_df is not None and not opt_feats_df.is_empty():
                 try:
-                    from src.gogooku3.features.futures_features import build_next_bday_expr_from_quotes
                     from src.gogooku3.features.index_option import (
                         build_option_market_aggregates,
                         attach_option_market_to_equity,
                     )
-
-                    nb = build_next_bday_expr_from_quotes(df)
+                    if business_days:
+                        nb = build_next_bday_expr_from_dates(business_days)
+                    else:
+                        _dates = df.select("Date").unique().sort("Date")["Date"].to_list() if "Date" in df.columns else []
+                        nb = build_next_bday_expr_from_dates(_dates)
                     mkt = build_option_market_aggregates(opt_feats_df, next_bday_expr=nb)
                     df = attach_option_market_to_equity(df, mkt)
                     logger.info("Option market aggregates attached (opt_iv_cmat_*, opt_term_slope_30_60, flows)")

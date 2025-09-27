@@ -81,18 +81,11 @@ def build_daily_effective(
 
     Returns a DataFrame sorted by (Code, effective_start).
     """
-    # Use Python-level add_business_days for consistent behavior
-    def _eff_start(published):
-        if published is not None:
-            # PublishedDate present → T+1 business day
-            return _add_business_days_jp(published, 1)
-        # Should not happen for daily margin data, but fallback to None
-        return None
+    # Prefer injected holiday-aware next-business-day expr; fall back to weekday-only
+    nbd = next_business_day or _next_business_day_jp
 
     d = df_d.with_columns(
-        pl.col("PublishedDate").map_elements(
-            lambda pub_date: _eff_start(pub_date), return_dtype=pl.Date
-        ).alias("effective_start")
+        nbd(pl.col("PublishedDate")).alias("effective_start")
     )
 
     d = d.sort(["Code", "effective_start"])
@@ -321,6 +314,7 @@ def add_daily_margin_block(
     adv20_df: pl.DataFrame | None = None,
     *,
     enable_z_scores: bool = True,
+    next_business_day: Callable[[pl.Expr], pl.Expr] | None = None,
 ) -> pl.DataFrame:
     """
     Complete pipeline: daily margin → features → attach to quotes.
@@ -342,8 +336,8 @@ def add_daily_margin_block(
             pl.lit(None, dtype=pl.Int8).alias("is_dmi_valid"),
         ])
 
-    # Step 1: Build effective dates
-    d = build_daily_effective(daily_df)
+    # Step 1: Build effective dates (holiday-aware if provided)
+    d = build_daily_effective(daily_df, next_business_day=next_business_day)
 
     # Step 2: Add core features
     d = add_daily_core_features(d)
@@ -392,3 +386,20 @@ def create_interaction_features(df: pl.DataFrame) -> pl.DataFrame:
         df = df.with_columns(interactions)
 
     return df
+    elif str(publish_reason_dtype) == str(pl.Object):  # dict-like objects
+        def get_from_object(key: str) -> pl.Expr:
+            return (
+                pl.when(pl.col("PublishReason").is_not_null())
+                .then(
+                    pl.col("PublishReason").map_elements(lambda x: (x or {}).get(key, "0"), return_dtype=pl.Utf8)
+                )
+                .otherwise("0")
+                .eq("1")
+                .cast(pl.Int8)
+                .alias(f"dmi_reason_{key.lower()}")
+            )
+
+        d = d.with_columns([get_from_object(flag) for flag in reason_flags])
+        d = d.with_columns(
+            sum(pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags).alias("dmi_reason_count")
+        )

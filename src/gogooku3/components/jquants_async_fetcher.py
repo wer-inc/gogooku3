@@ -878,7 +878,7 @@ class JQuantsAsyncFetcher:
         return out.sort(["Date"]) if "Date" in out.columns else out
 
     async def get_daily_margin_interest(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
     ) -> pl.DataFrame:
         """Fetch daily margin interest series with correction handling.
 
@@ -949,24 +949,34 @@ class JQuantsAsyncFetcher:
 
         # Fetch data for each business day in range
         all_rows: list[dict] = []
-        cur = start
-        while cur <= end:
-            # Only fetch for business days (weekdays)
-            if cur.weekday() < 5:
-                date_str = cur.strftime("%Y-%m-%d")
-                items = await _fetch_for_date(date_str)
+        if business_days:
+            def _canon(d: str) -> str:
+                return f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+            for d in business_days:
+                d_str = _canon(d)
+                try:
+                    if not (start <= _dt.datetime.strptime(d_str, "%Y-%m-%d").date() <= end):
+                        continue
+                except Exception:
+                    continue
+                items = await _fetch_for_date(d_str)
                 if items:
                     all_rows.extend(items)
-            cur += _dt.timedelta(days=1)
+        else:
+            cur = start
+            while cur <= end:
+                # Only fetch for business days (weekdays)
+                if cur.weekday() < 5:
+                    date_str = cur.strftime("%Y-%m-%d")
+                    items = await _fetch_for_date(date_str)
+                    if items:
+                        all_rows.extend(items)
+                cur += _dt.timedelta(days=1)
 
         if not all_rows:
             return pl.DataFrame()
 
-        # Handle PublishReason struct field separately
-        for row in all_rows:
-            if "PublishReason" in row and isinstance(row["PublishReason"], dict):
-                # Convert dict to string representation to avoid schema issues
-                row["PublishReason"] = str(row["PublishReason"])
+        # Keep PublishReason as dict when provided (features側でStruct/Utf8両対応)
 
         # Create DataFrame - let Polars infer types first
         df = pl.DataFrame(all_rows)
@@ -997,8 +1007,8 @@ class JQuantsAsyncFetcher:
             pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
             _dtcol("PublishedDate") if "PublishedDate" in cols else pl.lit(None, dtype=pl.Date).alias("PublishedDate"),
             _dtcol("ApplicationDate") if "ApplicationDate" in cols else pl.lit(None, dtype=pl.Date).alias("ApplicationDate"),
-            # PublishReason is now a string (was converted from dict above)
-            pl.col("PublishReason").cast(pl.Utf8) if "PublishReason" in cols else pl.lit(None, dtype=pl.Utf8).alias("PublishReason"),
+            # PublishReason はそのまま（dict/Null）
+            (pl.col("PublishReason")) if "PublishReason" in cols else pl.lit(None).alias("PublishReason"),
             # Core margin balances
             _float_col("ShortMarginOutstanding"),
             _float_col("LongMarginOutstanding"),
@@ -1471,10 +1481,15 @@ class JQuantsAsyncFetcher:
         return out
 
     async def get_short_selling(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
     ) -> pl.DataFrame:
         """
         Fetch short selling data from J-Quants API.
+
+        API Requirements:
+        - Must specify either 'date' OR 'sector33code'
+        - Cannot use from/to without sector33code
+        - We iterate through each date to get all sectors' data
 
         Args:
             session: aiohttp session
@@ -1489,46 +1504,71 @@ class JQuantsAsyncFetcher:
         sentinel = {"", "-", "*", "null", "NULL", "None"}
 
         rows: list[dict] = []
-        pagination_key: str | None = None
-        formatted_from = self._format_date_param(from_date)
-        formatted_to = self._format_date_param(to_date)
-        while True:
-            params = {"from": formatted_from, "to": formatted_to}
-            if pagination_key:
-                params["pagination_key"] = pagination_key
 
-            try:
-                status, data = await self._request_json(
-                    session,
-                    "GET",
-                    url,
-                    label="short_selling",
-                    params=params,
-                    headers=headers,
-                )
-            except Exception as exc:  # pragma: no cover - network failure path
-                self._logger.exception("Error fetching short selling data")
-                raise RuntimeError("Failed to fetch short selling data") from exc
+        # Iterate through each date to get all sectors' data
+        import datetime
+        current_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
+        end_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
 
-            if status == 404:
-                self._logger.warning("Short selling endpoint returned 404; treating as empty.")
-                return pl.DataFrame()
-            if status != 200 or not isinstance(data, dict):
-                body_preview = str(data)[:256]
-                self._logger.error(
-                    "J-Quants short_selling failed (status=%s, body=%s)",
-                    status,
-                    body_preview,
-                )
-                raise RuntimeError(f"J-Quants short_selling request failed with status {status}")
+        self._logger.info(f"Fetching short selling data from {from_date} to {to_date}")
 
-            batch = data.get("short_selling") or []
-            if batch:
-                rows.extend(batch)
+        def _iter_dates() -> list[str]:
+            if business_days:
+                out = []
+                for d in business_days:
+                    d_str = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+                    if from_date <= d_str <= to_date:
+                        out.append(d_str)
+                return out
+            out = []
+            cur = current_date
+            while cur <= end_date:
+                out.append(cur.strftime("%Y-%m-%d"))
+                cur += datetime.timedelta(days=1)
+            return out
 
-            pagination_key = data.get("pagination_key")
-            if not pagination_key:
-                break
+        for date_str in _iter_dates():
+            formatted_date = self._format_date_param(date_str)
+            # Use date parameter for each date
+            params = {"date": formatted_date if formatted_date else date_str}
+
+            self._logger.debug(f"Fetching short selling for date: {date_str}")
+
+            pagination_key: str | None = None
+            while True:
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+
+                try:
+                    status, data = await self._request_json(
+                        session,
+                        "GET",
+                        url,
+                        label="short_selling",
+                        params=params,
+                        headers=headers,
+                    )
+
+                    if status == 200 and isinstance(data, dict):
+                        batch = data.get("short_selling") or []
+                        if batch:
+                            rows.extend(batch)
+
+                        pagination_key = data.get("pagination_key")
+                        if not pagination_key:
+                            break
+                    elif status == 404:
+                        self._logger.debug(f"No short selling data for {date_str}")
+                        break
+                    else:
+                        self._logger.warning(f"Failed to fetch short selling for {date_str}, status: {status}")
+                        break
+
+                except Exception as e:
+                    self._logger.warning(f"Error fetching short selling for {date_str}: {e}")
+                    break
+
+        # end for date loop
 
         if not rows:
             return pl.DataFrame()
@@ -1571,10 +1611,15 @@ class JQuantsAsyncFetcher:
         return df
 
     async def get_short_selling_positions(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
     ) -> pl.DataFrame:
         """
         Fetch short selling positions data from J-Quants API.
+
+        API Requirements:
+        - Must specify either 'code', 'disclosed_date', or 'calculated_date'
+        - For date ranges, use 'disclosed_date_from'/'disclosed_date_to' (not 'from'/'to')
+        - We iterate through each disclosed_date to get all data
 
         Args:
             session: aiohttp session
@@ -1589,13 +1634,35 @@ class JQuantsAsyncFetcher:
         sentinel = {"", "-", "*", "null", "NULL", "None"}
 
         rows: list[dict] = []
-        pagination_key: str | None = None
-        formatted_from = self._format_date_param(from_date)
-        formatted_to = self._format_date_param(to_date)
-        while True:
-            params = {"from": formatted_from, "to": formatted_to}
-            if pagination_key:
-                params["pagination_key"] = pagination_key
+
+        # Iterate through each date using disclosed_date parameter
+        import datetime
+        current_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
+        end_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
+
+        self._logger.info(f"Fetching short selling positions from {from_date} to {to_date}")
+
+        def _iter_dates() -> list[str]:
+            if business_days:
+                out = []
+                for d in business_days:
+                    d_str = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+                    if from_date <= d_str <= to_date:
+                        out.append(d_str)
+                return out
+            out = []
+            cur = current_date
+            while cur <= end_date:
+                out.append(cur.strftime("%Y-%m-%d"))
+                cur += datetime.timedelta(days=1)
+            return out
+
+        for date_str in _iter_dates():
+            formatted_date = self._format_date_param(date_str)
+            # Use disclosed_date parameter for each date
+            params = {"disclosed_date": formatted_date if formatted_date else date_str}
+
+            self._logger.debug(f"Fetching short positions for disclosed_date: {date_str}")
 
             try:
                 status, data = await self._request_json(
@@ -1606,33 +1673,20 @@ class JQuantsAsyncFetcher:
                     params=params,
                     headers=headers,
                 )
-            except Exception as exc:  # pragma: no cover - network failure path
-                self._logger.exception("Error fetching short selling positions data")
-                raise RuntimeError("Failed to fetch short selling positions data") from exc
 
-            if status == 404:
-                self._logger.warning(
-                    "Short selling positions endpoint returned 404; treating as empty."
-                )
-                return pl.DataFrame()
-            if status != 200 or not isinstance(data, dict):
-                body_preview = str(data)[:256]
-                self._logger.error(
-                    "J-Quants short_selling_positions failed (status=%s, body=%s)",
-                    status,
-                    body_preview,
-                )
-                raise RuntimeError(
-                    f"J-Quants short_selling_positions request failed with status {status}"
-                )
+                if status == 200 and isinstance(data, dict):
+                    batch = data.get("short_selling_positions") or []
+                    if batch:
+                        rows.extend(batch)
+                elif status == 404:
+                    self._logger.debug(f"No short positions data for {date_str}")
+                else:
+                    self._logger.warning(f"Failed to fetch short positions for {date_str}, status: {status}")
 
-            batch = data.get("short_selling_positions") or []
-            if batch:
-                rows.extend(batch)
+            except Exception as e:
+                self._logger.warning(f"Error fetching short positions for {date_str}: {e}")
 
-            pagination_key = data.get("pagination_key")
-            if not pagination_key:
-                break
+        # end for date loop
 
         if not rows:
             return pl.DataFrame()
@@ -1783,10 +1837,15 @@ class JQuantsAsyncFetcher:
         return df
 
     async def get_sector_short_selling(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
     ) -> pl.DataFrame:
         """
         Fetch sector-wise short selling data from J-Quants API (/markets/short_selling).
+
+        API Requirements:
+        - Must specify either 'date' OR 'sector33code'
+        - When using date range (from/to), must also specify sector33code
+        - Without sector33code, we iterate through each date individually
 
         Args:
             session: aiohttp session
@@ -1799,49 +1858,62 @@ class JQuantsAsyncFetcher:
         all_data = []
 
         url = f"{self.base_url}/markets/short_selling"
-        params = {
-            "from": self._format_date_param(from_date),
-            "to": self._format_date_param(to_date),
-        }
-        headers = {"Authorization": f"Bearer {self.id_token}"}
 
-        try:
-            status, data = await self._request_json(
-                session,
-                "GET",
-                url,
-                label="sector_short_selling",
-                params=params,
-                headers=headers,
-            )
-        except asyncio.TimeoutError as exc:  # pragma: no cover - network failure path
-            self._logger.exception(
-                "Timeout fetching sector short selling",
-                extra={"from_date": params["from"], "to_date": params["to"]},
-            )
-            raise RuntimeError("Timeout fetching sector short selling data") from exc
-        except Exception as exc:  # pragma: no cover
-            self._logger.exception("Error fetching sector short selling")
-            raise RuntimeError("Failed to fetch sector short selling data") from exc
+        # Since we don't have sector33code, iterate through each date
+        import datetime
+        current_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
+        end_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
 
-        if status == 404:
-            self._logger.warning("Sector short selling endpoint not found (404); returning empty.")
-            return pl.DataFrame()
-        if status != 200 or data is None:
-            body_preview = str(data)[:256]
-            self._logger.error(
-                "J-Quants sector short selling failed (status=%s, body=%s)",
-                status,
-                body_preview,
-            )
-            raise RuntimeError(
-                f"J-Quants sector short selling request failed with status {status}"
-            )
+        self._logger.info(f"Fetching sector short selling data from {from_date} to {to_date}")
 
-        if isinstance(data, dict) and "short_selling" in data:
-            all_data.extend(data["short_selling"])
-        elif isinstance(data, list):
-            all_data.extend(data)
+        def _iter_dates() -> list[str]:
+            if business_days:
+                out = []
+                for d in business_days:
+                    d_str = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+                    if from_date <= d_str <= to_date:
+                        out.append(d_str)
+                return out
+            out: list[str] = []
+            cur = current_date
+            while cur <= end_date:
+                out.append(cur.strftime("%Y-%m-%d"))
+                cur += datetime.timedelta(days=1)
+            return out
+
+        for date_str in _iter_dates():
+            params = {"date": date_str}  # Use single date parameter
+
+            self._logger.debug(f"Fetching sector short selling for date: {date_str}")
+
+            headers = {"Authorization": f"Bearer {self.id_token}"}
+
+            try:
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    url,
+                    label="sector_short_selling",
+                    params=params,
+                    headers=headers,
+                )
+
+                if status == 200 and data is not None:
+                    if isinstance(data, dict) and "short_selling" in data:
+                        all_data.extend(data["short_selling"])
+                    elif isinstance(data, list):
+                        all_data.extend(data)
+                elif status == 404:
+                    self._logger.debug(f"No sector short selling data for {date_str}")
+                else:
+                    self._logger.warning(f"Failed to fetch sector short selling for {date_str}, status: {status}")
+
+            except asyncio.TimeoutError:
+                self._logger.warning(f"Timeout fetching sector short selling for {date_str}")
+            except Exception as e:
+                self._logger.warning(f"Error fetching sector short selling for {date_str}: {e}")
+
+        # end for date loop
 
         if not all_data:
             return pl.DataFrame()

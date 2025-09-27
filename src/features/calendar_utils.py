@@ -1,6 +1,20 @@
 """
-営業日カレンダーユーティリティ
-Trading Calendar APIを活用した営業日計算
+営業日カレンダー ユーティリティ
+
+- Trading Calendar API または既存の株式日次グリッドから、
+  翌営業日（T+1）を計算するための共通ヘルパーを提供します。
+  パイプライン全体で同一の定義に基づく T+1 を実現することが目的です。
+
+主なAPI:
+- TradingCalendarUtil: 営業日判定, 前後営業日の計算
+- create_next_bd_expr(calendar_df): カレンダーDFから pl.Expr を返す
+- build_next_bday_expr_from_dates(business_days): 営業日リストから pl.Expr を返す
+- build_next_bday_expr_from_quotes(quotes_df): quotesのDate列から pl.Expr を返す
+
+既定の営業日定義（equity_mode=True）:
+- HolidayDivision in {1,2} を営業日とする（1=営業日, 2=半日）
+  祝日取引 (3) はデフォルトでは含めない。
+  先物/オプション用途などで含めたい場合は、明示的に include_divisions を渡すこと。
 """
 
 import logging
@@ -39,10 +53,13 @@ class TradingCalendarUtil:
             return
 
         # HolidayDivision: 1=営業日, 0=非営業日, 2=半日, 3=祝日取引
-        # 営業日として扱うのは 1, 2, 3
-        business_days_df = self.calendar_df.filter(
-            pl.col("HolidayDivision").is_in([1, 2, 3])
-        )
+        # 既定は株式モード: 1,2 のみを営業日として扱う（必要に応じて3を含める設計に拡張）
+        if "HolidayDivision" in self.calendar_df.columns:
+            business_days_df = self.calendar_df.filter(
+                pl.col("HolidayDivision").is_in([1, 2])
+            )
+        else:
+            business_days_df = self.calendar_df
 
         # Date列を日付型に変換
         if "Date" in business_days_df.columns:
@@ -200,9 +217,13 @@ def create_next_bd_expr(calendar_df: pl.DataFrame) -> pl.Expr:
         df.with_columns(next_bd_expr(calendar_df).alias("next_bd"))
     """
     # 営業日リストを作成
-    business_days = calendar_df.filter(
-        pl.col("HolidayDivision").is_in([1, 2, 3])
-    )["Date"].to_list()
+    include = [1, 2]
+    if "HolidayDivision" in calendar_df.columns:
+        business_days = (
+            calendar_df.filter(pl.col("HolidayDivision").is_in(include))["Date"].to_list()
+        )
+    else:
+        business_days = calendar_df["Date"].to_list()
 
     # 各日付に対して次の営業日をマッピング
     next_bd_map = {}
@@ -218,6 +239,82 @@ def create_next_bd_expr(calendar_df: pl.DataFrame) -> pl.Expr:
 
     # Polars式として返す
     return pl.col("Date").map_dict(next_bd_map, default=pl.col("Date") + pl.duration(days=1))
+
+
+# =============== New public helpers ===============
+def build_next_bday_expr_from_dates(dates: list) -> callable:
+    """営業日リストから次営業日 pl.Expr→pl.Expr を返す関数を生成。
+
+    Args:
+        dates: 営業日（pl.Date あるいは date 互換）の昇順リスト
+
+    Returns:
+        Callable[[pl.Expr], pl.Expr]: 入力日付列に対応する翌営業日列を返す関数
+    """
+    if not dates:
+        def _fallback(col: pl.Expr) -> pl.Expr:
+            return col + pl.duration(days=1)
+        return _fallback
+
+    # 作業用に昇順ユニーク化
+    uniq = []
+    seen = set()
+    for d in dates:
+        if d in seen:
+            continue
+        uniq.append(d)
+        seen.add(d)
+
+    next_map: dict = {}
+    for i in range(len(uniq) - 1):
+        next_map[uniq[i]] = uniq[i + 1]
+
+    # 最終日の次は +1 日（安全側のダミー）
+    last = uniq[-1]
+    if isinstance(last, str):
+        from datetime import datetime, timedelta
+        last_dt = datetime.strptime(last, "%Y-%m-%d").date()
+        next_map[last] = last_dt + timedelta(days=1)
+    else:
+        from datetime import timedelta
+        next_map[last] = last + timedelta(days=1)
+
+    def _expr(col: pl.Expr) -> pl.Expr:
+        return col.map_dict(next_map, default=col + pl.duration(days=1))
+
+    return _expr
+
+
+def build_next_bday_expr_from_quotes(quotes_df: pl.DataFrame) -> callable:
+    """quotesのDate列から次営業日関数を生成（従来の実装を共通化）。"""
+    if quotes_df.is_empty() or "Date" not in quotes_df.columns:
+        def _fallback(col: pl.Expr) -> pl.Expr:
+            return col + pl.duration(days=1)
+        return _fallback
+
+    dates = quotes_df.select("Date").unique().sort("Date")["Date"].to_list()
+    return build_next_bday_expr_from_dates(dates)
+
+
+def build_next_bday_expr_from_calendar_df(calendar_df: pl.DataFrame, *, include_divisions: list[int] | None = None) -> callable:
+    """カレンダーDFから次営業日関数を生成。
+
+    Args:
+        calendar_df: Trading Calendar データ（Date, HolidayDivision を含む想定）
+        include_divisions: 営業日に含める区分（既定: [1,2] 株式モード）
+    """
+    include = include_divisions or [1, 2]
+    if calendar_df.is_empty():
+        def _fallback(col: pl.Expr) -> pl.Expr:
+            return col + pl.duration(days=1)
+        return _fallback
+
+    if "HolidayDivision" in calendar_df.columns:
+        df = calendar_df.filter(pl.col("HolidayDivision").is_in(include))
+    else:
+        df = calendar_df
+    dates = df.select("Date").unique().sort("Date")["Date"].to_list()
+    return build_next_bday_expr_from_dates(dates)
 
 
 def validate_business_day_coverage(

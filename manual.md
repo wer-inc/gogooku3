@@ -1,5 +1,7 @@
 # データセット生成
-make dataset-full-gpu START=2020-01-01 END=2024-12-31
+make dataset-full-gpu START=2015-09-27 END=2025-09-26
 
 # 学習コマンド
 make train-rankic-boost
+
+

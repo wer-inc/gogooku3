@@ -260,6 +260,7 @@ def add_sector_short_selling_block(
     *,
     enable_z_scores: bool = True,
     enable_relative_features: bool = True,
+    calendar_next_bday: Optional[Callable[[pl.Expr], pl.Expr]] = None,
 ) -> pl.DataFrame:
     """
     Complete sector short selling features integration pipeline.
@@ -295,21 +296,27 @@ def add_sector_short_selling_block(
 
         return quotes.with_columns(null_exprs)
 
-    # Step 1: Build sector-level features
-    sector_feats = build_sector_short_features(ss_df, enable_z_scores=enable_z_scores)
+    # Step 1: Build sector-level features (inject calendar-aware next BD when supplied)
+    sector_feats = build_sector_short_features(
+        ss_df,
+        calendar_next_bday=calendar_next_bday,
+        enable_z_scores=enable_z_scores,
+    )
 
     # Step 2: Create sector mapping if available
+    # Prefer existing sector assignment on quotes when present; otherwise fall back to listed_info
     sector_map = None
-    if listed_info_df is not None:
-        # Create sector33 mapping from listed_info
-        sector_map = (listed_info_df
-                     .filter(pl.col("sector33_code").is_not_null())
-                     .select(["Code", "sector33_code"])
-                     .with_columns([
-                        pl.col("Date").alias("valid_from"),  # Simplified mapping
-                        (pl.col("Date") + pl.duration(days=365)).alias("valid_to")  # 1 year validity
-                     ])
-                     .unique(["Code"], keep="last"))
+    if listed_info_df is not None and ("sec33" not in quotes.columns and "sector33_code" not in quotes.columns):
+        sector_map = (
+            listed_info_df
+            .filter(pl.col("sector33_code").is_not_null())
+            .select(["Code", "sector33_code", "Date"])  # Date is snapshot date
+            .with_columns([
+                pl.col("Date").alias("valid_from"),
+                (pl.col("Date") + pl.duration(days=365)).alias("valid_to"),
+            ])
+            .unique(["Code"], keep="last")
+        )
 
     # Step 3: Attach to quotes via as-of join
     result = attach_sector_short_to_quotes(quotes, sector_feats, sector_map)
@@ -352,11 +359,11 @@ def validate_sector_short_features(df: pl.DataFrame) -> dict:
         if restrict_p99 > 0.9:
             validation["warnings"].append(f"Extreme restriction ratio: {restrict_p99:.3f}")
 
-    # Data leak detection (corrected: Date < effective_date should be normal)
+    # Data leak detection: flags rows where feature applied BEFORE effective date
     if all(c in df.columns for c in ["Date", "effective_date"]):
-        leaks = df.filter(pl.col("Date") >= pl.col("effective_date")).height
+        leaks = df.filter(pl.col("Date") < pl.col("effective_date")).height
         validation["data_leaks"] = leaks
         if leaks > 0:
-            validation["warnings"].append(f"Potential data leakage detected: {leaks} rows where Date >= effective_date")
+            validation["warnings"].append(f"Potential data leakage detected: {leaks} rows where Date < effective_date")
 
     return validation
