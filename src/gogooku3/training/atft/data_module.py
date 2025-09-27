@@ -752,7 +752,13 @@ class ProductionDataModuleV2:
             pl.UInt8,
         }
 
-        feature_cols = [col for col in df.columns if col not in exclude_cols and df.schema[col] in numeric_dtypes]
+        # Exclude target columns (target_1d, target_5d, etc.) as well
+        feature_cols = [
+            col for col in df.columns
+            if col not in exclude_cols
+            and not col.startswith('target_')  # Exclude all target columns
+            and df.schema[col] in numeric_dtypes
+        ]
         # Optional: intersect with externally selected features (JSON list)
         selected_path = os.getenv("SELECTED_FEATURES_JSON", "").strip()
         if selected_path:

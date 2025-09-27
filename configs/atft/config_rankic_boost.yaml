@@ -14,6 +14,14 @@ defaults:
 data:
   source:
     data_dir: output/atft_data
+  # Fix prediction horizons to match actual data columns (target_1d, target_5d, target_10d, target_20d)
+  time_series:
+    sequence_length: 20
+    prediction_horizons: [1, 5, 10, 20]  # Match actual target columns in data
+  schema:
+    date_column: Date  # Capital D as in the actual data
+    code_column: Code  # Capital C as in the actual data
+    target_column: target  # Base name, will create target_1d, target_5d, etc.
   graph_builder:
     cache_dir: graph_cache
     ewm_halflife: 30
