@@ -193,9 +193,9 @@ def add_publish_reason_flags(d: pl.DataFrame) -> pl.DataFrame:
             return (
                 pl.when(pl.col("PublishReason").is_not_null())
                 .then(
-                    pl.col("PublishReason").struct.field(key).cast(pl.Utf8).fill_null("0")
+                    pl.col("PublishReason").struct.field(key).cast(pl.Utf8).fill_null(pl.lit("0"))
                 )
-                .otherwise("0")
+                .otherwise(pl.lit("0"))
                 .eq("1")
                 .cast(pl.Int8)
                 .alias(f"dmi_reason_{key.lower()}")
@@ -203,7 +203,9 @@ def add_publish_reason_flags(d: pl.DataFrame) -> pl.DataFrame:
 
         d = d.with_columns([get_reason_flag(flag) for flag in reason_flags])
         d = d.with_columns(
-            sum(pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags).alias("dmi_reason_count")
+            pl.sum_horizontal(
+                [pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags]
+            ).cast(pl.Int8).alias("dmi_reason_count")
         )
 
     elif publish_reason_dtype == pl.Utf8:
@@ -218,7 +220,32 @@ def add_publish_reason_flags(d: pl.DataFrame) -> pl.DataFrame:
 
         d = d.with_columns([contains_flag(flag) for flag in reason_flags])
         d = d.with_columns(
-            sum(pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags).alias("dmi_reason_count")
+            pl.sum_horizontal(
+                [pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags]
+            ).cast(pl.Int8).alias("dmi_reason_count")
+        )
+
+    # Polars Object (dict-like) handling
+    elif "Object" in str(publish_reason_dtype):
+        def get_from_object(key: str) -> pl.Expr:
+            return (
+                pl.when(pl.col("PublishReason").is_not_null())
+                .then(
+                    pl.col("PublishReason").map_elements(
+                        lambda x: (x or {}).get(key, "0"), return_dtype=pl.Utf8
+                    )
+                )
+                .otherwise(pl.lit("0"))
+                .eq("1")
+                .cast(pl.Int8)
+                .alias(f"dmi_reason_{key.lower()}")
+            )
+
+        d = d.with_columns([get_from_object(flag) for flag in reason_flags])
+        d = d.with_columns(
+            pl.sum_horizontal(
+                [pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags]
+            ).cast(pl.Int8).alias("dmi_reason_count")
         )
 
     else:
@@ -229,6 +256,10 @@ def add_publish_reason_flags(d: pl.DataFrame) -> pl.DataFrame:
         d = d.with_columns(pl.lit(0, dtype=pl.Int8).alias("dmi_reason_count"))
 
     # Add regulation classification ordinal mapping
+    if "TSEMarginBorrowingAndLendingRegulationClassification" not in d.columns:
+        # Column not present; set null level for compatibility
+        return d.with_columns(pl.lit(None, dtype=pl.Int8).alias("dmi_tse_reg_level"))
+
     reg_map = {
         "001": 1,  # JSF caution/restriction
         "002": 2,  # TSE daily publication
@@ -386,20 +417,3 @@ def create_interaction_features(df: pl.DataFrame) -> pl.DataFrame:
         df = df.with_columns(interactions)
 
     return df
-    elif str(publish_reason_dtype) == str(pl.Object):  # dict-like objects
-        def get_from_object(key: str) -> pl.Expr:
-            return (
-                pl.when(pl.col("PublishReason").is_not_null())
-                .then(
-                    pl.col("PublishReason").map_elements(lambda x: (x or {}).get(key, "0"), return_dtype=pl.Utf8)
-                )
-                .otherwise("0")
-                .eq("1")
-                .cast(pl.Int8)
-                .alias(f"dmi_reason_{key.lower()}")
-            )
-
-        d = d.with_columns([get_from_object(flag) for flag in reason_flags])
-        d = d.with_columns(
-            sum(pl.col(f"dmi_reason_{flag.lower()}") for flag in reason_flags).alias("dmi_reason_count")
-        )

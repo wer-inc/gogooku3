@@ -600,10 +600,43 @@ class _InternalDayBatchSampler(Sampler):
         self.shuffle = shuffle
 
     def _build_date_indices(self) -> dict[str, list[int]]:
-        """Build mapping from dates to indices (placeholder)."""
-        # This would need actual implementation based on dataset structure
-        logger.warning("Using placeholder date indices - implement actual date grouping")
-        return {"default": list(range(len(self.dataset)))}
+        """Build mapping from dates to indices using dataset metadata when available.
+
+        Prefer `dataset.sequence_dates` (numpy datetime64[D] for each sample window).
+        Falls back to a single default bucket if unavailable or mismatched.
+        """
+        try:
+            seq_dates = getattr(self.dataset, "sequence_dates", None)
+            total_len = len(self.dataset)
+            if seq_dates is None or len(seq_dates) != total_len:
+                logger.warning(
+                    "DayBatchSampler: sequence_dates unavailable or length mismatch (%s vs %s); using single bucket",
+                    0 if seq_dates is None else len(seq_dates),
+                    total_len,
+                )
+                return {"default": list(range(total_len))}
+
+            # Build buckets: ISO string keys to keep dict small and deterministic
+            buckets: dict[str, list[int]] = {}
+            # Convert once to ISO strings for hashing; numpy datetime64 -> str
+            # This is efficient as it avoids per-batch parquet scans
+            for idx, d in enumerate(seq_dates):
+                # Safe conversion to YYYY-MM-DD
+                try:
+                    key = str(d)[:10]
+                except Exception:
+                    key = str(d)
+                if key not in buckets:
+                    buckets[key] = []
+                buckets[key].append(idx)
+
+            # Optionally drop degenerate very small buckets by merging
+            # Keep as-is for transparency
+            logger.info("DayBatchSampler: built %d day buckets", len(buckets))
+            return buckets
+        except Exception as exc:
+            logger.warning("DayBatchSampler: fallback to single bucket due to: %s", exc)
+            return {"default": list(range(len(self.dataset)))}
 
     def __iter__(self):
         """Iterate over batches grouped by day."""

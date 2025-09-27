@@ -1,5 +1,6 @@
 import polars as pl
 
+from datetime import date
 from src.features.calendar_utils import build_next_bday_expr_from_dates
 from src.gogooku3.features.margin_daily import build_daily_effective
 from src.gogooku3.features.short_selling_sector import build_sector_short_features
@@ -22,7 +23,7 @@ def test_margin_daily_tplus1_holiday_jump():
 
     nb = build_next_bday_expr_from_dates(["2024-01-05", "2024-01-09"])  # 1/08 相当を休場とみなしスキップ
     eff = build_daily_effective(daily, next_business_day=nb)
-    assert eff.select(pl.col("effective_start")).item() == pl.date(2024, 1, 9)
+    assert eff.select(pl.col("effective_start")).to_series().item() == date(2024, 1, 9)
 
 
 def test_sector_short_tplus1_holiday_jump():
@@ -40,5 +41,4 @@ def test_sector_short_tplus1_holiday_jump():
 
     nb = build_next_bday_expr_from_dates(["2024-01-05", "2024-01-09"])  # holiday skip
     feats = build_sector_short_features(ss, calendar_next_bday=nb, enable_z_scores=False)
-    assert feats.select(pl.col("effective_date")).item() == pl.date(2024, 1, 9)
-
+    assert feats.select(pl.col("effective_date")).to_series().item() == date(2024, 1, 9)

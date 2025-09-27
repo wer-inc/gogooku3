@@ -77,14 +77,39 @@ def build_sector_short_features(
 
     calendar_fn = calendar_next_bday or _next_business_day_jp
 
-    # 1) データ整形とセクター内集計
+    # 1) データ整形とセクター内集計（列名の方言に寛容）
+    cols = set(ss_df.columns)
+    # Build tolerant expressions for three key columns
+    if "SellingExcludingShortSellingTurnoverValue" in cols:
+        sell_ex_short_expr = pl.col("SellingExcludingShortSellingTurnoverValue").cast(pl.Float64)
+    elif {"Selling", "ShortSelling"}.issubset(cols):
+        sell_ex_short_expr = pl.col("Selling").cast(pl.Float64) - pl.col("ShortSelling").cast(pl.Float64)
+    else:
+        sell_ex_short_expr = pl.lit(None, dtype=pl.Float64)
+
+    if "ShortSellingWithRestrictionsTurnoverValue" in cols:
+        short_with_expr = pl.col("ShortSellingWithRestrictionsTurnoverValue").cast(pl.Float64)
+    elif "ShortSellingWithPriceRestriction" in cols:
+        short_with_expr = pl.col("ShortSellingWithPriceRestriction").cast(pl.Float64)
+    else:
+        short_with_expr = pl.lit(None, dtype=pl.Float64)
+
+    if "ShortSellingWithoutRestrictionsTurnoverValue" in cols:
+        short_without_expr = pl.col("ShortSellingWithoutRestrictionsTurnoverValue").cast(pl.Float64)
+    elif {"ShortSelling", "ShortSellingWithPriceRestriction"}.issubset(cols):
+        short_without_expr = (
+            pl.col("ShortSelling").cast(pl.Float64) - pl.col("ShortSellingWithPriceRestriction").cast(pl.Float64)
+        )
+    else:
+        short_without_expr = pl.lit(None, dtype=pl.Float64)
+
     s = (ss_df
          .with_columns([
             pl.col("Date").cast(pl.Date).alias("Date"),
             pl.col("Sector33Code").cast(pl.Utf8).alias("sec33"),
-            pl.col("SellingExcludingShortSellingTurnoverValue").cast(pl.Float64).alias("sell_ex_short"),
-            pl.col("ShortSellingWithRestrictionsTurnoverValue").cast(pl.Float64).alias("short_with"),
-            pl.col("ShortSellingWithoutRestrictionsTurnoverValue").cast(pl.Float64).alias("short_without"),
+            sell_ex_short_expr.alias("sell_ex_short"),
+            short_with_expr.alias("short_with"),
+            short_without_expr.alias("short_without"),
          ])
          .group_by(["Date", "sec33"]).agg([
             pl.col("sell_ex_short").sum(),
@@ -94,29 +119,32 @@ def build_sector_short_features(
     )
 
     # 2) セクター内派生特徴量
-    s = (s.with_columns([
-            # 空売り総額と売り代金総額
-            (pl.col("short_with") + pl.col("short_without")).alias("short_turnover"),
-            (pl.col("sell_ex_short") + pl.col("short_with") + pl.col("short_without")).alias("total_selling"),
-        ])
-        .with_columns([
-            # 基本比率
-            (pl.col("short_turnover") / (pl.col("total_selling") + EPS)).alias("ss_sec33_short_share"),
-            (pl.col("short_with") / (pl.col("short_turnover") + EPS)).alias("ss_sec33_restrict_share"),
-            pl.col("short_turnover").alias("ss_sec33_short_turnover"),
-        ])
-        .sort(["sec33", "Date"])
-        .with_columns([
-            # 変化・モメンタム特徴量 (1-5日で効きやすい)
+    s = s.with_columns([
+        # 空売り総額と売り代金総額
+        (pl.col("short_with") + pl.col("short_without")).alias("short_turnover"),
+        (pl.col("sell_ex_short") + pl.col("short_with") + pl.col("short_without")).alias("total_selling"),
+    ]).with_columns([
+        # 基本比率
+        (pl.col("short_turnover") / (pl.col("total_selling") + EPS)).alias("ss_sec33_short_share"),
+        (pl.col("short_with") / (pl.col("short_turnover") + EPS)).alias("ss_sec33_restrict_share"),
+        pl.col("short_turnover").alias("ss_sec33_short_turnover"),
+    ]).sort(["sec33", "Date"])
+
+    # 短小サンプルではウィンドウ/差分をスキップ（旧Polarsの制約回避）
+    if s.height >= 2:
+        s = s.with_columns([
             pl.col("ss_sec33_short_share").diff().over("sec33").alias("ss_sec33_short_share_d1"),
             pl.col("ss_sec33_restrict_share").diff().over("sec33").alias("ss_sec33_restrict_share_d1"),
-            (pl.col("ss_sec33_short_share") -
-             pl.col("ss_sec33_short_share").rolling_mean(5).over("sec33")).alias("ss_sec33_short_mom5"),
-            # 2次差分 (加速度)
-            (pl.col("ss_sec33_short_share").diff().over("sec33") -
-             pl.col("ss_sec33_short_share").diff().over("sec33").shift(1).over("sec33")).alias("ss_sec33_short_accel"),
+            (pl.col("ss_sec33_short_share") - pl.col("ss_sec33_short_share").rolling_mean(5).over("sec33")).alias("ss_sec33_short_mom5"),
+            (pl.col("ss_sec33_short_share").diff().over("sec33") - pl.col("ss_sec33_short_share").diff().over("sec33").shift(1).over("sec33")).alias("ss_sec33_short_accel"),
         ])
-    )
+    else:
+        s = s.with_columns([
+            pl.lit(None, dtype=pl.Float64).alias("ss_sec33_short_share_d1"),
+            pl.lit(None, dtype=pl.Float64).alias("ss_sec33_restrict_share_d1"),
+            pl.lit(None, dtype=pl.Float64).alias("ss_sec33_short_mom5"),
+            pl.lit(None, dtype=pl.Float64).alias("ss_sec33_short_accel"),
+        ])
 
     # Z-score features (optional, can be disabled for performance)
     if enable_z_scores:

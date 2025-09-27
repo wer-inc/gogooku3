@@ -85,6 +85,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--jquants", action="store_true", help="Use JQuants API (requires .env)"
     )
+    # Trading calendar API usage (enable to enumerate business days accurately)
+    parser.add_argument(
+        "--use-calendar-api",
+        action="store_true",
+        default=True,
+        help="Use Trading Calendar API to enumerate business days (default: enabled)",
+    )
     parser.add_argument(
         "--start-date", type=str, default=None, help="YYYY-MM-DD (default: today-5y)"
     )
