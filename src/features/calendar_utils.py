@@ -256,10 +256,17 @@ def build_next_bday_expr_from_dates(dates: list) -> callable:
             return col + pl.duration(days=1)
         return _fallback
 
-    # 作業用に昇順ユニーク化
+    # 作業用に昇順ユニーク化（文字列は日付に正規化）
     uniq = []
     seen = set()
     for d in dates:
+        # 正規化: "YYYY-MM-DD" 文字列は date に変換
+        if isinstance(d, str):
+            try:
+                from datetime import datetime as _dt
+                d = _dt.strptime(d, "%Y-%m-%d").date()
+            except Exception:
+                pass
         if d in seen:
             continue
         uniq.append(d)
@@ -270,17 +277,14 @@ def build_next_bday_expr_from_dates(dates: list) -> callable:
         next_map[uniq[i]] = uniq[i + 1]
 
     # 最終日の次は +1 日（安全側のダミー）
+    from datetime import timedelta
     last = uniq[-1]
-    if isinstance(last, str):
-        from datetime import datetime, timedelta
-        last_dt = datetime.strptime(last, "%Y-%m-%d").date()
-        next_map[last] = last_dt + timedelta(days=1)
-    else:
-        from datetime import timedelta
-        next_map[last] = last + timedelta(days=1)
+    next_map[last] = last + timedelta(days=1)
 
     def _expr(col: pl.Expr) -> pl.Expr:
-        return col.map_dict(next_map, default=col + pl.duration(days=1))
+        # 入力列を一旦Utf8へ → Dateに正規化してからマッピング（出力もDate）
+        base = col.cast(pl.Utf8, strict=False).str.strptime(pl.Date, strict=False)
+        return base.map_dict(next_map, default=base + pl.duration(days=1)).cast(pl.Date)
 
     return _expr
 

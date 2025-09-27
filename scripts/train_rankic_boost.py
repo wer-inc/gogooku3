@@ -26,13 +26,41 @@ def main():
     project_root = Path(__file__).parent.parent
     os.chdir(project_root)
 
-    # Check if ATFT data exists
+    # Check if ATFT data exists; if not, try to auto-convert from latest ML dataset
     atft_data_path = project_root / "output/atft_data"
     if not atft_data_path.exists():
-        logger.error(f"❌ ATFT data not found at {atft_data_path}")
-        logger.error("Please run data conversion first:")
-        logger.error("  python scripts/integrated_ml_training_pipeline.py --only-convert")
-        return 1
+        logger.warning(f"⚠️ ATFT data not found at {atft_data_path}; attempting auto-conversion from latest dataset…")
+        latest = project_root / "output/ml_dataset_latest_full.parquet"
+        if not latest.exists():
+            # fallback: pick the newest ml_dataset_*.parquet
+            try:
+                import glob
+                cands = sorted(glob.glob(str(project_root / "output/ml_dataset_*_full.parquet")))
+                if not cands:
+                    cands = sorted(glob.glob(str(project_root / "output/ml_dataset_*.parquet")))
+                latest = Path(cands[-1]) if cands else latest
+            except Exception:
+                pass
+
+        if latest and latest.exists():
+            try:
+                logger.info(f"🔄 Converting ML dataset to ATFT format: {latest}")
+                subprocess.run([
+                    sys.executable,
+                    str(project_root / "scripts/models/unified_feature_converter.py"),
+                    "--input", str(latest),
+                    "--output", "output/atft_data",
+                ], check=True)
+            except subprocess.CalledProcessError as e:
+                logger.error(f"❌ Auto-conversion failed (exit={e.returncode}). Please convert manually.")
+                return e.returncode
+        else:
+            logger.error("❌ No ML dataset found under output/. Run: make dataset-full-gpu START=… END=…")
+            return 1
+
+        if not atft_data_path.exists():
+            logger.error("❌ ATFT data still missing after conversion. Aborting.")
+            return 1
 
     # Check train/val/test splits
     required_dirs = ["train", "val", "test"]
@@ -40,6 +68,17 @@ def main():
         if not (atft_data_path / dir_name).exists():
             logger.error(f"❌ Missing {dir_name} directory in {atft_data_path}")
             return 1
+
+    # Optional: quick dataset sanity check (targets, id columns, duplicates)
+    try:
+        sanity_script = project_root / "scripts/ci/dataset_sanity.py"
+        if sanity_script.exists():
+            logger.info("[preflight] Running dataset sanity checks (scripts/ci/dataset_sanity.py)")
+            subprocess.run([sys.executable, str(sanity_script)], check=False)
+        else:
+            logger.info("[preflight] dataset_sanity.py not found; skipping")
+    except Exception as e:
+        logger.warning(f"[preflight] dataset sanity check skipped: {e}")
 
     # Setup environment variables for RankIC optimization
     env = os.environ.copy()

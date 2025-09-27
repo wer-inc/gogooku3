@@ -5712,6 +5712,38 @@ def train(config: DictConfig) -> None:
                     method=str(getattr(gb_cfg, "method", "ewm_demean")),
                     symmetric=bool(getattr(gb_cfg, "symmetric", True)),
                 )
+                # Ensure at least one return-like column exists; add fallbacks if needed
+                try:
+                    import glob
+                    import polars as pl
+                    sample = next(iter(glob.iglob(gbc.source_glob)), None)
+                    if sample:
+                        cols = set(pl.read_parquet(sample, n_rows=0).columns)
+                        current = list(gbc.return_cols)
+                        # Add common fallbacks if dataset uses different labels
+                        for alt in ("feat_ret_1d", "target_1d"):
+                            if alt in cols and alt not in current:
+                                current.append(alt)
+                        if current != list(gbc.return_cols):
+                            gbc = GBConfig(
+                                source_glob=gbc.source_glob,
+                                lookback=gbc.lookback,
+                                k=gbc.k,
+                                ewm_halflife=gbc.ewm_halflife,
+                                shrinkage_gamma=gbc.shrinkage_gamma,
+                                min_obs=gbc.min_obs,
+                                size_tau=gbc.size_tau,
+                                cache_dir=gbc.cache_dir,
+                                return_cols=tuple(current),
+                                sector_col=gbc.sector_col,
+                                log_mktcap_col=gbc.log_mktcap_col,
+                                method=gbc.method,
+                                symmetric=gbc.symmetric,
+                            )
+                            logger.info("[GraphBuilder] return_cols extended to %s", current)
+                except Exception as _e:
+                    logger.warning("[GraphBuilder] return_cols fallback check skipped: %s", _e)
+
                 gb = GraphBuilder(gbc)
                 logger.info(
                     f"[GraphBuilder] initialized from {gbc.source_glob} (lookback={gbc.lookback}, k={gbc.k})"
