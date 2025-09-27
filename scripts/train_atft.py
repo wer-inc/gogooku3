@@ -974,7 +974,13 @@ class MultiHorizonLoss(nn.Module):
         self.use_rankic = use_rankic
         self.rankic_weight = float(rankic_weight)
         self.use_pinball = use_pinball
-        self.quantiles = tuple(quantiles)
+        self.quantiles = tuple(float(q) for q in quantiles)
+        self._median_quantile_index: int | None = None
+        if self.quantiles:
+            self._median_quantile_index = min(
+                range(len(self.quantiles)),
+                key=lambda idx: abs(self.quantiles[idx] - 0.5),
+            )
         self.pinball_weight = float(pinball_weight)
         # CS-IC 補助ロス
         self.use_cs_ic = bool(use_cs_ic)
@@ -1043,6 +1049,47 @@ class MultiHorizonLoss(nn.Module):
             losses.append(torch.maximum(q * e, (q - 1) * e))
         return self._masked_mean(torch.stack(losses, dim=0), mask)
 
+    def _coerce_point_prediction(
+        self, yhat: torch.Tensor, target: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Ensure prediction tensor matches target shape for point losses."""
+        if not torch.is_tensor(yhat):
+            return yhat
+
+        result = yhat
+        target_last_dim = None
+        if target is not None and torch.is_tensor(target) and target.dim() >= 1:
+            target_last_dim = target.shape[-1]
+
+        if result.dim() >= 1:
+            last_dim = result.shape[-1]
+            if target_last_dim == 1 and last_dim != 1:
+                if (
+                    self._median_quantile_index is not None
+                    and last_dim == len(self.quantiles)
+                ):
+                    result = result[..., self._median_quantile_index]
+                else:
+                    result = result.mean(dim=-1)
+            elif (
+                self._median_quantile_index is not None
+                and last_dim == len(self.quantiles)
+            ):
+                result = result[..., self._median_quantile_index]
+
+            if result.dim() >= 1 and result.shape[-1] == 1:
+                result = result.squeeze(-1)
+
+        if target is not None and torch.is_tensor(target):
+            while target.dim() > result.dim():
+                result = result.unsqueeze(-1)
+            if target.dim() == result.dim() and target_last_dim == 1 and (
+                result.shape[-1] != 1
+            ):
+                result = result.unsqueeze(-1)
+
+        return result
+
     def _rankic_penalty(
         self,
         yhat: torch.Tensor,
@@ -1062,12 +1109,28 @@ class MultiHorizonLoss(nn.Module):
             # Accept float/bool masks
             if m.dtype != torch.bool:
                 m = m.to(dtype=torch.bool)
-            if m.numel() == yhat_f.numel():
-                yhat_f = yhat_f[m]
-                y_f = y_f[m]
+
+            # Ensure all tensors have the same size before masking
+            min_size = min(yhat_f.numel(), y_f.numel())
+            yhat_f = yhat_f[:min_size]
+            y_f = y_f[:min_size]
+
+            # Apply mask if it matches the size
+            if m.numel() >= min_size:
+                m = m[:min_size]
+                if m.any():  # Only apply if there are True values
+                    yhat_f = yhat_f[m]
+                    y_f = y_f[m]
         # Guard small samples
         if yhat_f.numel() <= 1:
             return yhat_f.new_zeros(())
+
+        # Final safety check: ensure same shape
+        if yhat_f.shape != y_f.shape:
+            min_size = min(yhat_f.numel(), y_f.numel())
+            yhat_f = yhat_f[:min_size]
+            y_f = y_f[:min_size]
+
         # Pearson correlation (detach target) -> 1 - corr
         yhat_f = yhat_f - yhat_f.mean()
         y_f = y_f - y_f.mean()
@@ -1084,6 +1147,10 @@ class MultiHorizonLoss(nn.Module):
         y_f = y.view(-1).float().detach()
         if yhat_f.numel() <= 1:
             return yhat_f.new_zeros(())
+        if yhat_f.shape != y_f.shape:
+            min_size = min(yhat_f.numel(), y_f.numel())
+            yhat_f = yhat_f[:min_size]
+            y_f = y_f[:min_size]
         yhat_f = (yhat_f - yhat_f.mean()) / (yhat_f.std(unbiased=False) + 1e-8)
         y_f = (y_f - y_f.mean()) / (y_f.std(unbiased=False) + 1e-8)
         return 1.0 - (yhat_f * y_f).mean()
@@ -1148,7 +1215,9 @@ class MultiHorizonLoss(nn.Module):
         # 現在のホライズン重み
         cur_weights = self._get_current_weights()
 
+
         for horizon in self.horizons:
+
             pred_candidates = [
                 f"point_horizon_{horizon}",
                 f"horizon_{horizon}",
@@ -1163,13 +1232,17 @@ class MultiHorizonLoss(nn.Module):
                 f"h{horizon}",
             ]
 
+
             pred_key = next((k for k in pred_candidates if k in predictions), None)
             targ_key = next((k for k in targ_candidates if k in targets), None)
+
+
             if pred_key is None or targ_key is None:
                 continue
 
-            yhat = predictions[pred_key].squeeze(-1)
+            raw_yhat = predictions[pred_key]
             y = targets[targ_key]
+            yhat = self._coerce_point_prediction(raw_yhat, y)
 
             # Get valid mask for this horizon
             mask = None
@@ -1191,173 +1264,174 @@ class MultiHorizonLoss(nn.Module):
                 # Create mask from finite values
                 mask = torch.isfinite(y) if torch.is_tensor(y) else None
 
-                # Use masked MSE
-                if mask is not None:
-                    loss = self._masked_mean((yhat - y) ** 2, mask)
-                else:
-                    loss = self.mse(yhat, y)
-                # 予測分散の下限を促す正則化（勾配が yhat に確実に返るよう std ベース・二乗ペナルティ）
-                if self.pred_var_weight > 0.0 and self.pred_var_min > 0.0:
-                    try:
-                        std_yhat = yhat.float().view(-1).std(unbiased=False)
-                        # min_std - std に対する ReLU^2 ペナルティ（std が閾値未満だと強く押し上げる）
-                        var_penalty = torch.relu(self.pred_var_min - std_yhat).pow(2)
-                        if torch.isfinite(std_yhat):
-                            loss = loss + self.pred_var_weight * var_penalty
-                    except Exception:
-                        pass
-                # Huber mix（外れ値ロバスト化）
-                if self.use_huber and self.huber_weight > 0.0:
-                    hub = torch.nn.functional.smooth_l1_loss(
-                        yhat, y, beta=self.huber_delta, reduction="mean"
-                    )
-                    loss = (1.0 - self.huber_weight) * loss + self.huber_weight * hub
-                # Pinball（任意）
-                if self.use_pinball and self.pinball_weight > 0:
-                    loss = loss + self.pinball_weight * self._pinball_loss(yhat, y)
-                # CRPS 近似（Quantile ヘッドがある場合、Pinballの多分位和で近似）
-                q_key = f"quantile_horizon_{horizon}"
-                if self.use_crps and q_key in predictions:
-                    q_out = predictions[q_key]
-                    if q_out.dim() == yhat.dim() + 1:
-                        # 非交差は学習で担保できないため、単調化を後段で行う前提の簡易近似
-                        quantiles = torch.sigmoid(
-                            torch.linspace(
-                                0.05, 0.95, q_out.shape[-1], device=q_out.device
-                            )
-                        )
-                        y_expand = y.unsqueeze(-1)
-                        e = y_expand - q_out
-                        pinball = torch.maximum(quantiles * e, (quantiles - 1) * e)
-                        loss = loss + self.pinball_weight * torch.mean(pinball)
-                # RankIC（任意）
-                if self.use_rankic and self.rankic_weight > 0:
-                    loss = loss + self.rankic_weight * self._rankic_penalty(
-                        yhat, y, mask
-                    )
-                # CS-IC 補助ロス（順位整合/相関強化）
-                if self.use_cs_ic and self.cs_ic_weight > 0:
-                    loss = loss + self.cs_ic_weight * self._cs_ic_loss(yhat, y)
-                # Student-t NLL（任意, ヘテロスケ）
-                t_key = f"t_params_horizon_{horizon}"
-                if self.use_t_nll and self.nll_weight > 0 and t_key in predictions:
-                    t_params = predictions[t_key]
-                    if t_params.shape[-1] >= 3:
-                        mu_t = t_params[..., 0].squeeze(-1)
-                        sigma_raw = t_params[..., 1].squeeze(-1)
-                        nu_raw = t_params[..., 2].squeeze(-1)
-                        loss = loss + self.nll_weight * self._student_t_nll(
-                            mu_t, sigma_raw, nu_raw, y
-                        )
-                # σによる誤差重み（オプション）: λ * E[|e| / σ]
-                if self.sigma_weighting_lambda > 0.0 and t_key in predictions:
-                    t_params = predictions[t_key]
-                    if t_params.shape[-1] >= 2:
-                        sigma = (
-                            torch.nn.functional.softplus(t_params[..., 1].squeeze(-1))
-                            + 1e-6
-                        )
-                        # Avoid under/overflow in bf16/amp
-                        sigma = torch.clamp(sigma, 1e-4, 1e3)
-                        abs_err = torch.abs(yhat - y)
-                        loss = loss + self.sigma_weighting_lambda * torch.mean(
-                            abs_err / sigma
-                        )
-                # 方向分類の補助損失（BCE with logits）
-                if self.direction_aux_weight > 0.0 and self._bce is not None:
-                    dir_key = f"direction_horizon_{horizon}"
-                    if dir_key in predictions:
-                        logits = predictions[dir_key].squeeze(-1)
-                        # 小さすぎる値は0とみなす閾値（ノイズ抑制）
-                        with torch.no_grad():
-                            target_bin = (y > 0.0).float()
-                        dir_loss = self._bce(logits, target_bin)
-                        loss = loss + self.direction_aux_weight * dir_loss
-                losses[f"horizon_{horizon}"] = loss.detach()
-                # 集約重み - OPTIMIZED for 1d/5d focus based on PDF analysis
-                if cur_weights is not None and horizon in cur_weights:
-                    weight = float(cur_weights[horizon])
-                else:
-                    # Enhanced weighting to prioritize 1d and 5d predictions
-                    # Analysis showed these horizons are most important for performance
-                    # Can be overridden with env vars: HORIZON_WEIGHT_1D, HORIZON_WEIGHT_5D, etc.
-                    if int(horizon) == 1:
-                        weight = float(os.getenv("HORIZON_WEIGHT_1D", "1.0"))  # Maximum weight for 1-day
-                        if self.h1_loss_mult != 1.0:
-                            weight = weight * self.h1_loss_mult
-                    elif int(horizon) == 5:
-                        weight = float(os.getenv("HORIZON_WEIGHT_5D", "0.6"))  # High weight for 5-day (was ~0.45)
-                    elif int(horizon) == 10:
-                        weight = float(os.getenv("HORIZON_WEIGHT_10D", "0.3"))  # Moderate weight for 10-day (was ~0.32)
-                    elif int(horizon) == 20:
-                        weight = float(os.getenv("HORIZON_WEIGHT_20D", "0.2"))  # Lower weight for 20-day (was ~0.22)
-                    else:
-                        # Fallback for other horizons
-                        weight = 1.0 / np.sqrt(horizon)
-                total_loss = total_loss + weight * loss
-                weights.append(weight)
-                contribution_count += 1
+            # Use masked MSE
+            if mask is not None:
+                loss = self._masked_mean((yhat - y) ** 2, mask)
+            else:
+                loss = self.mse(yhat, y)
 
-                # 動的RMSE更新
-                if self.use_dynamic_weighting:
+            # 予測分散の下限を促す正則化（勾配が yhat に確実に返るよう std ベース・二乗ペナルティ）
+            if self.pred_var_weight > 0.0 and self.pred_var_min > 0.0:
+                try:
+                    std_yhat = yhat.float().view(-1).std(unbiased=False)
+                    # min_std - std に対する ReLU^2 ペナルティ（std が閾値未満だと強く押し上げる）
+                    var_penalty = torch.relu(self.pred_var_min - std_yhat).pow(2)
+                    if torch.isfinite(std_yhat):
+                        loss = loss + self.pred_var_weight * var_penalty
+                except Exception:
+                    pass
+            # Huber mix（外れ値ロバスト化）
+            if self.use_huber and self.huber_weight > 0.0:
+                hub = torch.nn.functional.smooth_l1_loss(
+                    yhat, y, beta=self.huber_delta, reduction="mean"
+                )
+                loss = (1.0 - self.huber_weight) * loss + self.huber_weight * hub
+            # Pinball（任意）
+            if self.use_pinball and self.pinball_weight > 0:
+                loss = loss + self.pinball_weight * self._pinball_loss(yhat, y)
+            # CRPS 近似（Quantile ヘッドがある場合、Pinballの多分位和で近似）
+            q_key = f"quantile_horizon_{horizon}"
+            if self.use_crps and q_key in predictions:
+                q_out = predictions[q_key]
+                if q_out.dim() == yhat.dim() + 1:
+                    # 非交差は学習で担保できないため、単調化を後段で行う前提の簡易近似
+                    quantiles = torch.sigmoid(
+                        torch.linspace(
+                            0.05, 0.95, q_out.shape[-1], device=q_out.device
+                        )
+                    )
+                    y_expand = y.unsqueeze(-1)
+                    e = y_expand - q_out
+                    pinball = torch.maximum(quantiles * e, (quantiles - 1) * e)
+                    loss = loss + self.pinball_weight * torch.mean(pinball)
+            # RankIC（任意）
+            if self.use_rankic and self.rankic_weight > 0:
+                loss = loss + self.rankic_weight * self._rankic_penalty(
+                    yhat, y, mask
+                )
+            # CS-IC 補助ロス（順位整合/相関強化）
+            if self.use_cs_ic and self.cs_ic_weight > 0:
+                loss = loss + self.cs_ic_weight * self._cs_ic_loss(yhat, y)
+            # Student-t NLL（任意, ヘテロスケ）
+            t_key = f"t_params_horizon_{horizon}"
+            if self.use_t_nll and self.nll_weight > 0 and t_key in predictions:
+                t_params = predictions[t_key]
+                if t_params.shape[-1] >= 3:
+                    mu_t = t_params[..., 0].squeeze(-1)
+                    sigma_raw = t_params[..., 1].squeeze(-1)
+                    nu_raw = t_params[..., 2].squeeze(-1)
+                    loss = loss + self.nll_weight * self._student_t_nll(
+                        mu_t, sigma_raw, nu_raw, y
+                    )
+            # σによる誤差重み（オプション）: λ * E[|e| / σ]
+            if self.sigma_weighting_lambda > 0.0 and t_key in predictions:
+                t_params = predictions[t_key]
+                if t_params.shape[-1] >= 2:
+                    sigma = (
+                        torch.nn.functional.softplus(t_params[..., 1].squeeze(-1))
+                        + 1e-6
+                    )
+                    # Avoid under/overflow in bf16/amp
+                    sigma = torch.clamp(sigma, 1e-4, 1e3)
+                    abs_err = torch.abs(yhat - y)
+                    loss = loss + self.sigma_weighting_lambda * torch.mean(
+                        abs_err / sigma
+                    )
+            # 方向分類の補助損失（BCE with logits）
+            if self.direction_aux_weight > 0.0 and self._bce is not None:
+                dir_key = f"direction_horizon_{horizon}"
+                if dir_key in predictions:
+                    logits = predictions[dir_key].squeeze(-1)
+                    # 小さすぎる値は0とみなす閾値（ノイズ抑制）
                     with torch.no_grad():
-                        # データの鮮度（staleness）を追跡
-                        if not hasattr(self, "_staleness_days_list"):
-                            self._staleness_days_list = []
+                        target_bin = (y > 0.0).float()
+                    dir_loss = self._bce(logits, target_bin)
+                    loss = loss + self.direction_aux_weight * dir_loss
+            losses[f"horizon_{horizon}"] = loss.detach()
+            # 集約重み - OPTIMIZED for 1d/5d focus based on PDF analysis
+            if cur_weights is not None and horizon in cur_weights:
+                weight = float(cur_weights[horizon])
+            else:
+                # Enhanced weighting to prioritize 1d and 5d predictions
+                # Analysis showed these horizons are most important for performance
+                # Can be overridden with env vars: HORIZON_WEIGHT_1D, HORIZON_WEIGHT_5D, etc.
+                if int(horizon) == 1:
+                    weight = float(os.getenv("HORIZON_WEIGHT_1D", "1.0"))  # Maximum weight for 1-day
+                    if self.h1_loss_mult != 1.0:
+                        weight = weight * self.h1_loss_mult
+                elif int(horizon) == 5:
+                    weight = float(os.getenv("HORIZON_WEIGHT_5D", "0.6"))  # High weight for 5-day (was ~0.45)
+                elif int(horizon) == 10:
+                    weight = float(os.getenv("HORIZON_WEIGHT_10D", "0.3"))  # Moderate weight for 10-day (was ~0.32)
+                elif int(horizon) == 20:
+                    weight = float(os.getenv("HORIZON_WEIGHT_20D", "0.2"))  # Lower weight for 20-day (was ~0.22)
+                else:
+                    # Fallback for other horizons
+                    weight = 1.0 / np.sqrt(horizon)
+            total_loss = total_loss + weight * loss
+            weights.append(weight)
+            contribution_count += 1
 
-                        # 現在のバッチのタイムスタンプを取得
-                        if hasattr(self, "current_batch_timestamp"):
-                            batch_ts = self.current_batch_timestamp
+            # 動的RMSE更新
+            if self.use_dynamic_weighting:
+                with torch.no_grad():
+                    # データの鮮度（staleness）を追跡
+                    if not hasattr(self, "_staleness_days_list"):
+                        self._staleness_days_list = []
+
+                    # 現在のバッチのタイムスタンプを取得
+                    if hasattr(self, "current_batch_timestamp"):
+                        batch_ts = self.current_batch_timestamp
+                    else:
+                        # デフォルト値（実際の実装では適切なタイムスタンプを使用）
+                        batch_ts = torch.tensor(0.0)
+
+                    # データの鮮度を計算（日数単位）
+                    try:
+                        # データソースの最終更新時刻を取得
+                        if hasattr(self, "data_last_updated"):
+                            data_ts = self.data_last_updated
                         else:
                             # デフォルト値（実際の実装では適切なタイムスタンプを使用）
-                            batch_ts = torch.tensor(0.0)
+                            data_ts = torch.tensor(0.0)
 
-                        # データの鮮度を計算（日数単位）
-                        try:
-                            # データソースの最終更新時刻を取得
-                            if hasattr(self, "data_last_updated"):
-                                data_ts = self.data_last_updated
-                            else:
-                                # デフォルト値（実際の実装では適切なタイムスタンプを使用）
-                                data_ts = torch.tensor(0.0)
+                        # 鮮度を日数で計算
+                        staleness_days = (batch_ts - data_ts).item() / (
+                            24 * 3600
+                        )  # 秒から日数に変換
+                        self._staleness_days_list.append(staleness_days)
 
-                            # 鮮度を日数で計算
-                            staleness_days = (batch_ts - data_ts).item() / (
-                                24 * 3600
-                            )  # 秒から日数に変換
-                            self._staleness_days_list.append(staleness_days)
+                        # 鮮度の統計情報をログ出力
+                        if (
+                            len(self._staleness_days_list) % 100 == 0
+                        ):  # 100バッチごとにログ
+                            avg_staleness = np.mean(
+                                self._staleness_days_list[-100:]
+                            )
+                            max_staleness = np.max(self._staleness_days_list[-100:])
+                            logger.info(
+                                f"Data staleness stats (last 100 batches): "
+                                f"avg={avg_staleness:.2f} days, max={max_staleness:.2f} days"
+                            )
 
-                            # 鮮度の統計情報をログ出力
-                            if (
-                                len(self._staleness_days_list) % 100 == 0
-                            ):  # 100バッチごとにログ
-                                avg_staleness = np.mean(
-                                    self._staleness_days_list[-100:]
-                                )
-                                max_staleness = np.max(self._staleness_days_list[-100:])
-                                logger.info(
-                                    f"Data staleness stats (last 100 batches): "
-                                    f"avg={avg_staleness:.2f} days, max={max_staleness:.2f} days"
-                                )
+                    except Exception as e:
+                        logger.warning(f"Failed to calculate data staleness: {e}")
+                        self._staleness_days_list.append(0.0)
 
-                        except Exception as e:
-                            logger.warning(f"Failed to calculate data staleness: {e}")
-                            self._staleness_days_list.append(0.0)
-
-                        rmse = (
-                            torch.sqrt(torch.mean((yhat - y) ** 2))
-                            .detach()
-                            .float()
-                            .item()
-                        )
-                        prev = self._ema_rmse.get(int(horizon), None)
-                        if prev is None:
-                            self._ema_rmse[int(horizon)] = rmse
-                        else:
-                            alpha = self.dynamic_alpha
-                            self._ema_rmse[int(horizon)] = (
-                                1 - alpha
-                            ) * prev + alpha * rmse
+                    rmse = (
+                        torch.sqrt(torch.mean((yhat - y) ** 2))
+                        .detach()
+                        .float()
+                        .item()
+                    )
+                    prev = self._ema_rmse.get(int(horizon), None)
+                    if prev is None:
+                        self._ema_rmse[int(horizon)] = rmse
+                    else:
+                        alpha = self.dynamic_alpha
+                        self._ema_rmse[int(horizon)] = (
+                            1 - alpha
+                        ) * prev + alpha * rmse
 
         if contribution_count > 0:
             total_loss = total_loss / float(np.sum(weights))

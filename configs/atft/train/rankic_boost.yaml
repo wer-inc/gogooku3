@@ -69,15 +69,23 @@ early_stopping:
 
 # Multi-horizon prediction configuration
 prediction:
-  horizons: [1, 5, 10, 20]
+  horizons: [1, 5, 10, 20]  # Must match data.time_series.prediction_horizons
   horizon_specific_architecture: true
-  horizon_weights: [1.0, 1.0, 1.0, 1.0]  # Balanced
+  horizon_weights:
+    1: 1.0    # Most important for daily trading
+    5: 0.8    # Important for weekly
+    10: 0.6   # Moderate importance
+    20: 0.4   # Least important
 
 # Loss configuration - MAXIMUM RANKIC FOCUS
 loss:
   type: huber_multi_horizon
   huber_delta: 0.01
-  multi_horizon_weights: [1.0, 1.0, 1.0, 1.0]
+  multi_horizon_weights:
+    1: 1.0    # Matches prediction.horizon_weights
+    5: 0.8
+    10: 0.6
+    20: 0.4
   use_coverage_penalty: true
   coverage_alpha: 0.02
   rankic_weight: 0.5      # MAXIMUM weight for RankIC (env var controlled)
