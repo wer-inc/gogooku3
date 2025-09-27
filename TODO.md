@@ -6378,3 +6378,26 @@ python scripts/train_atft.py \
 ---
 
 make train-rankic-boost
+
+---
+
+確認のために output/ml_dataset_latest_full.parquet のスキーマを実際に読み出し、docs/ml/dataset_new.md 内でバッククォート
+  （`col`）で記載されている列名と照合しました。その結果は次の通りです。
+
+  - ドキュメント側から抽出できた列名（小文字化して比較）: 137 列
+  - 実際の Parquet に含まれる列名: 198 列
+  - 上記 137 列のうち、Parquet で見つからなかったもの: 87 列
+
+  特に欠落が目立ったのは以下のグループです。
+
+  - dmi_* 系（dmi_credit_ratio, dmi_days_since_pub, dmi_short_long_ratio, dmi_total など）
+  - flow_activity_high, flow_activity_low, activity_ratio, days_since_flow_right
+  - ema20_slope, ema60_slope, effective_start, effective_date など
+
+  一方で、ドキュメントにはないものの実データには存在する列（例: flow_activity_ratio, flow_foreign_net_ratio, beta_stability_60d
+  など）も多数あります。
+
+  つまり、「dataset_new.md に列挙されたすべてのカラムが現在の出力ファイルに含まれている」という認識は誤りで、現状の
+  run_full_dataset.py／dataset-full(-gpu) パイプラインはドキュメントよりも縮退したサブセットを生成しています。必要な列を揃える
+  には、ドキュメントで言及されている DMI・詳細フロー・スロープ系の指標をパイプラインに再実装／有効化し、再度出力データを検証す
+  る必要があります。
