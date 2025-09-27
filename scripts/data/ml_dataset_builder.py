@@ -26,6 +26,7 @@ from src.gogooku3.features.margin_daily import (
 from src.gogooku3.features.short_selling import (
     add_short_selling_block as _add_short_selling_block,
 )
+from src.features.calendar_utils import build_next_bday_expr_from_quotes
 
 
 logger = logging.getLogger(__name__)
@@ -2261,11 +2262,15 @@ class MLDatasetBuilder:
             except Exception as e:
                 logger.warning(f"[builder] ADV fallback (Volume) failed: {e}")
 
+        # Build a next-business-day mapper (quotes由来のグリッドから共通ヘルパーで生成)
+        _next_bd = build_next_bday_expr_from_quotes(df)
+
         out = _add_daily_margin_block(
             quotes=df,
             daily_df=daily_df,
             adv20_df=adv20_df,
             enable_z_scores=enable_z_scores,
+            next_business_day=_next_bd,
         )
 
         # Coverage log

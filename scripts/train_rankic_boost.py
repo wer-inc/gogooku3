@@ -64,11 +64,16 @@ def main():
         "FEATURE_CLIP_VALUE": "10.0",
         "ENABLE_FEATURE_NORM": "1",
 
-        # DataLoader optimization (single-process for absolute stability)
-        "ALLOW_UNSAFE_DATALOADER": "0",  # Disable unsafe mode
-        "NUM_WORKERS": "0",          # Single-process mode (no worker crashes)
-        "PERSISTENT_WORKERS": "0",   # Not applicable with NUM_WORKERS=0
-        "PREFETCH_FACTOR": "2",      # Still works with single-process
+        # Batch size optimization - CRITICAL for GPU utilization
+        "BATCH_SIZE": "2048",        # Explicitly set batch size (fixes default 64 issue)
+        "VAL_BATCH_SIZE": "4096",    # Larger validation batch for speed
+        "MAX_BATCH_SIZE": "4096",    # Maximum allowed batch size
+
+        # DataLoader optimization - Enable full parallelization
+        "ALLOW_UNSAFE_DATALOADER": "1",  # Enable multi-process dataloader
+        "NUM_WORKERS": "8",          # Use 8 workers for data loading
+        "PERSISTENT_WORKERS": "1",   # Keep workers alive between epochs
+        "PREFETCH_FACTOR": "4",      # Prefetch more batches
         "PIN_MEMORY": "1",           # Keep pinned memory for GPU transfer
 
         # GPU optimization
@@ -76,6 +81,12 @@ def main():
         "TORCH_BACKENDS_CUDNN_BENCHMARK": "1",
         "TF32_ENABLED": "1",
         "CUDA_LAUNCH_BLOCKING": "0",
+
+        # Mixed Precision Training - CRITICAL for A100 performance
+        "USE_BF16": "1",             # Use BFloat16 for A100 optimization
+        "AMP_ENABLED": "1",          # Enable automatic mixed precision
+        "USE_SAFE_AMP": "1",         # Safe AMP mode
+        "GRADIENT_CHECKPOINTING": "0",  # Disable for now (can enable if OOM)
 
         # Model configuration
         "HIDDEN_SIZE": "256",
@@ -88,7 +99,6 @@ def main():
         # Safety features
         "DEGENERACY_GUARD": "1",
         "DEGENERACY_ABORT": "0",
-        "USE_SAFE_AMP": "1",
 
         # Phase-aware training (optional, can be disabled)
         "USE_PHASE_TRAINING": "0",  # Disable for now, let config control
@@ -121,15 +131,19 @@ def main():
     logger.info(f"  Train Config: configs/atft/train/rankic_boost.yaml")
     logger.info(f"  Data: {atft_data_path}")
     logger.info(f"  Hidden Size: 256")
-    logger.info(f"  Batch Size: 2048")
+    logger.info(f"  Batch Size: 2048 (Optimized for A100)")
+    logger.info(f"  Val Batch Size: 4096")
     logger.info(f"  Learning Rate: 5e-4")
     logger.info(f"  Max Epochs: 120")
-    logger.info("Optimization:")
+    logger.info("GPU Optimization:")
+    logger.info(f"  Mixed Precision: BF16 enabled")
+    logger.info(f"  Workers: 8 (parallel data loading)")
+    logger.info(f"  Persistent Workers: Yes")
+    logger.info(f"  Torch Compile: max-autotune")
+    logger.info("Loss Weights:")
     logger.info(f"  RankIC Weight: 0.5 (maximum)")
     logger.info(f"  Sharpe Weight: 0.3")
     logger.info(f"  CS-IC Weight: 0.2")
-    logger.info(f"  Workers: 0 (single-process for stability)")
-    logger.info(f"  Torch Compile: Enabled (max-autotune for GPU optimization)")
     logger.info("=" * 80)
 
     # Execute training

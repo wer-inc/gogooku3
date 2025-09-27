@@ -652,7 +652,7 @@ df = df.with_columns([
 **Ablation 推奨**：Base → +A（高優先度10本）→ +B（中優先度）で **Purged KFold+Embargo** 評価。
 **期待**：RankIC +0.01〜+0.03（短期側）、Sharpe +0.1〜+0.3 の底上げ（データ期間・ユニバース次第）。
 
----
+---/
 
 ## 追加の運用ヒント
 

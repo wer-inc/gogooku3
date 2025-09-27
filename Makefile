@@ -9,8 +9,8 @@ help:
 	@echo "make test         - Run tests"
 	@echo "make run          - Start Dagster UI"
 	@echo "make clean        - Clean up environment"
-	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset"
-	@echo "make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD - Build dataset with GPU-ETL enabled"
+	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset (395 features)"
+	@echo "make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD - Build dataset with GPU-ETL (all 395 features enabled by default)"
 	@echo "make dataset-full-prod START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/full_dataset.yaml"
 	@echo "make dataset-full-research START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/research_full_indices.yaml"
 	@echo "make check-indices  DATASET=output/ml_dataset_latest_full.parquet - Validate indices features"
@@ -130,10 +130,10 @@ minio-create-bucket:
 dataset-full:
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END}
 
-# GPU-ETL acceleration enabled dataset generation
+# GPU-ETL acceleration enabled dataset generation (all features enabled by default)
 .PHONY: dataset-full-gpu
 dataset-full-gpu:
-	@echo "🚀 Running dataset generation with GPU-ETL enabled"
+	@echo "🚀 Running dataset generation with GPU-ETL enabled (all 395 features enabled by default)"
 	@export REQUIRE_GPU=1 USE_GPU_ETL=1 RMM_POOL_SIZE=70GB CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src && \
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --gpu-etl
 

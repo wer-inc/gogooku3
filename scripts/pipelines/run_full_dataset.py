@@ -173,7 +173,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-daily-margin",
         action="store_true",
-        help="Enable daily margin interest features (default: auto; on when JQuants or parquet present)",
+        default=True,  # Default enabled for complete 395 features
+        help="Enable daily margin interest features (default: enabled)",
     )
     # Futures options
     parser.add_argument(
@@ -202,7 +203,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-advanced-vol",
         action="store_true",
-        help="Enable Yang–Zhang volatility and VoV features",
+        default=True,  # Default enabled for complete 395 features
+        help="Enable Yang–Zhang volatility and VoV features (default: enabled)",
     )
     parser.add_argument(
         "--adv-vol-windows",
@@ -233,13 +235,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-advanced-features",
         action="store_true",
-        help="Enable advanced T+0 features (RSI×Vol, momentum×volume, MACD slope, cross-sectional ranks, calendar)",
+        default=True,  # Default enabled for complete 395 features
+        help="Enable advanced T+0 features (RSI×Vol, momentum×volume, MACD slope, cross-sectional ranks, calendar) (default: enabled)",
     )
     # Graph-structured features (correlation graph)
     parser.add_argument(
         "--enable-graph-features",
         action="store_true",
-        help="Enable graph-structured features (degree, peer corr mean, peer count)",
+        default=True,  # Default enabled for complete 395 features
+        help="Enable graph-structured features (degree, peer corr mean, peer count) (default: enabled)",
     )
     parser.add_argument(
         "--graph-window",
@@ -281,7 +285,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-sector-cs",
         action="store_true",
-        help="Enable sector cross-sectional features (sector-relative deviations, ranks, z-scores)",
+        default=True,  # Default enabled for complete 395 features
+        help="Enable sector cross-sectional features (sector-relative deviations, ranks, z-scores) (default: enabled)",
     )
     parser.add_argument(
         "--sector-cs-cols",
@@ -581,6 +586,18 @@ async def main() -> int:
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
             await fetcher.authenticate(session)
 
+            # Optional: use Trading Calendar API to enumerate business days
+            business_days: list[str] | None = None
+            if args.use_calendar_api:
+                try:
+                    cal_fetcher = TradingCalendarFetcher(api_client=fetcher)
+                    cal = await cal_fetcher.get_trading_calendar(start_date, end_date, session)
+                    all_bdays = cal.get("business_days", [])
+                    business_days = [d for d in all_bdays if d >= start_date]
+                    logger.info("Trading calendar fetched: %s business days", len(all_bdays))
+                except Exception as e:
+                    logger.warning(f"Trading calendar fetch failed; fallback to weekday-only: {e}")
+
             fetch_coroutines: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
 
             logger.info(
@@ -611,7 +628,7 @@ async def main() -> int:
                 (
                     "daily_margin",
                     "daily margin interest",
-                    fetcher.get_daily_margin_interest(session, start_date, end_date),
+                    fetcher.get_daily_margin_interest(session, start_date, end_date, business_days=business_days),
                 )
             )
 
@@ -746,33 +763,42 @@ async def main() -> int:
                 fetch_aux: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
 
                 if args.enable_short_selling:
-                    logger.info("Fetching short selling ratio data")
-                    fetch_aux.append(
-                        (
-                            "short_selling",
-                            "short selling data",
-                            fetcher.get_short_selling(_session_aux, start_date, end_date),
+                    logger.info(f"Fetching short selling ratio data from {start_date} to {end_date}")
+                    if start_date and end_date:
+                        fetch_aux.append(
+                            (
+                                "short_selling",
+                                "short selling data",
+                                fetcher.get_short_selling(_session_aux, start_date, end_date, business_days=business_days),
+                            )
                         )
-                    )
+                    else:
+                        logger.warning(f"Invalid date range for short selling: start={start_date}, end={end_date}")
 
-                    logger.info("Fetching short selling positions data")
-                    fetch_aux.append(
-                        (
-                            "short_positions",
-                            "short selling positions data",
-                            fetcher.get_short_selling_positions(_session_aux, start_date, end_date),
+                    logger.info(f"Fetching short selling positions data from {start_date} to {end_date}")
+                    if start_date and end_date:
+                        fetch_aux.append(
+                            (
+                                "short_positions",
+                                "short selling positions data",
+                                fetcher.get_short_selling_positions(_session_aux, start_date, end_date, business_days=business_days),
+                            )
                         )
-                    )
+                    else:
+                        logger.warning(f"Invalid date range for short positions: start={start_date}, end={end_date}")
 
                 if args.enable_sector_short_selling:
-                    logger.info("Fetching sector-wise short selling data")
-                    fetch_aux.append(
-                        (
-                            "sector_short",
-                            "sector short selling data",
-                            fetcher.get_sector_short_selling(_session_aux, start_date, end_date),
+                    logger.info(f"Fetching sector-wise short selling data from {start_date} to {end_date}")
+                    if start_date and end_date:
+                        fetch_aux.append(
+                            (
+                                "sector_short",
+                                "sector short selling data",
+                                fetcher.get_sector_short_selling(_session_aux, start_date, end_date, business_days=business_days),
+                            )
                         )
-                    )
+                    else:
+                        logger.warning(f"Invalid date range for sector short: start={start_date}, end={end_date}")
 
                 if fetch_aux:
                     aux_results = await asyncio.gather(
@@ -925,6 +951,7 @@ async def main() -> int:
         jquants=args.jquants,
         start_date=start_date,
         end_date=end_date,
+        business_days=locals().get('business_days', None),
         trades_spec_path=trades_spec_path,
         topix_parquet=args.topix_parquet,
         enable_indices=args.enable_indices,
