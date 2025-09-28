@@ -28,10 +28,20 @@ def main():
         from src.gogooku3.training.atft.data_module import StreamingParquetDataset
         import polars as pl
 
-        # Use existing ML dataset
-        dataset_path = Path("/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet")
+        # Use existing ML dataset - try multiple possible paths
+        possible_paths = [
+            Path("/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet"),
+            Path("/home/ubuntu/gogooku3-standalone/tmp_train.parquet"),
+            Path("/home/ubuntu/gogooku3-standalone/output/ml_dataset_20250928_084147_full.parquet"),
+        ]
 
-        if not dataset_path.exists():
+        dataset_path = None
+        for path in possible_paths:
+            if path.exists():
+                dataset_path = path
+                break
+
+        if dataset_path is None:
             print(f"❌ Dataset not found: {dataset_path}")
             return False
 

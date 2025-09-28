@@ -626,7 +626,6 @@ async def main() -> int:
                     logger.warning(f"Trading calendar fetch failed; fallback to weekday-only: {e}")
             # Fallback to naive weekday-only calendar when API is disabled or failed
             if not business_days:
-                from datetime import datetime, timedelta
                 _bd = []
                 _cur = datetime.strptime(start_date, "%Y-%m-%d")
                 _end = datetime.strptime(end_date, "%Y-%m-%d")
