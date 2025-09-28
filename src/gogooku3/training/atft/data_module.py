@@ -295,8 +295,22 @@ class StreamingParquetDataset(Dataset):
             if exposure_columns is None:
                 exposure_cols_env = os.getenv("EXPOSURE_COLUMNS", "market_cap,beta,sector_code")
                 exposure_columns = exposure_cols_env.split(",")
-            self.exposure_columns = exposure_columns
-            logger.info(f"[Phase2] Exposure features enabled: {self.exposure_columns}")
+
+            # Filter to only columns that actually exist in the data
+            self.exposure_columns = []
+            for col in exposure_columns:
+                if col in sample_columns:
+                    self.exposure_columns.append(col)
+                    logger.debug(f"[Phase2] Found exposure column: {col}")
+                else:
+                    logger.debug(f"[Phase2] Exposure column not found in data: {col}")
+
+            if self.exposure_columns:
+                logger.info(f"[Phase2] Exposure features enabled with available columns: {self.exposure_columns}")
+            else:
+                logger.warning("[Phase2] No exposure columns found in data, using placeholders")
+                # Keep the requested columns for placeholder generation
+                self.exposure_columns = exposure_columns
 
             # マッピング辞書の初期化
             self.date_to_group_id: dict[str, int] = {}
@@ -310,12 +324,19 @@ class StreamingParquetDataset(Dataset):
             logger.debug("[Phase2] Exposure features disabled (USE_EXPOSURE_FEATURES=0)")
 
         # Pre-compute per-file window offsets for fast index resolution
+        # Only add exposure columns that actually exist in the data
+        exposure_cols_to_add = []
+        if self.use_exposure_features and self.exposure_columns:
+            for col in self.exposure_columns:
+                if col in sample_columns:
+                    exposure_cols_to_add.append(col)
+
         self._columns_needed = list(
             dict.fromkeys(
                 list(self.feature_columns)
                 + list(self.target_columns)
                 + [self.code_column, self.date_column]
-                + (list(self.exposure_columns) if self.use_exposure_features else [])
+                + exposure_cols_to_add
             )
         )
         self._file_window_counts: list[int] = []
@@ -611,33 +632,39 @@ class StreamingParquetDataset(Dataset):
             # 3. exposures: 露出特徴量 (torch.float)
             exposures = []
 
-            # market_cap (対数変換)
-            if "market_cap" in self.exposure_columns and "market_cap" in window.columns:
-                mkt_cap = window["market_cap"][-1] if "market_cap" in window.columns else None
-                if mkt_cap is not None:
+            # market_cap (対数変換) - only if column exists
+            if "market_cap" in self.exposure_columns:
+                if "market_cap" in window.columns:
+                    mkt_cap = window["market_cap"][-1]
                     mkt_cap_val = self._to_python_scalar(mkt_cap)
                     if mkt_cap_val is not None and mkt_cap_val > 0:
                         exposures.append(np.log(float(mkt_cap_val)))
                     else:
                         exposures.append(0.0)
                 else:
+                    # Column requested but not available - use placeholder
                     exposures.append(0.0)
 
-            # beta
-            if "beta" in self.exposure_columns and "beta" in window.columns:
-                beta_val = window["beta"][-1] if "beta" in window.columns else None
-                if beta_val is not None:
+            # beta - only if column exists
+            if "beta" in self.exposure_columns:
+                if "beta" in window.columns:
+                    beta_val = window["beta"][-1]
                     beta_scalar = self._to_python_scalar(beta_val)
                     exposures.append(float(beta_scalar) if beta_scalar is not None else 0.0)
                 else:
+                    # Column requested but not available - use placeholder
                     exposures.append(0.0)
 
-            # sector_code (One-Hot)
+            # sector_code (One-Hot) - only if column exists
             if "sector_code" in self.exposure_columns:
-                sector_val = window["sector_code"][-1] if "sector_code" in window.columns else None
-                sector_scalar = self._to_python_scalar(sector_val)
-                sector_onehot = self._sector_to_onehot(sector_scalar)
-                exposures.extend(sector_onehot)
+                if "sector_code" in window.columns:
+                    sector_val = window["sector_code"][-1]
+                    sector_scalar = self._to_python_scalar(sector_val)
+                    sector_onehot = self._sector_to_onehot(sector_scalar)
+                    exposures.extend(sector_onehot)
+                else:
+                    # Column requested but not available - use placeholder one-hot
+                    exposures.extend([0.0])
 
             # Convert to tensor
             if exposures:
