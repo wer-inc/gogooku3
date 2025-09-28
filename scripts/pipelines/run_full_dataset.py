@@ -54,6 +54,7 @@ except Exception:
 # Import JQuants fetcher to get trade-spec directly (moved out of _archive)
 from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
 from scripts.pipelines.run_pipeline_v4_optimized import JQuantsPipelineV4Optimized
+from scripts.components.trading_calendar_fetcher import TradingCalendarFetcher  # type: ignore
 from src.pipeline.full_dataset import enrich_and_save
 
 logging.basicConfig(
@@ -554,6 +555,25 @@ async def main() -> int:
 
     flow_start_date = flow_start_dt.strftime("%Y-%m-%d")
 
+    # If we already know the earliest business day for the requested window,
+    # align the flow start to it to avoid subscription-boundary 400 errors.
+    try:
+        _bd_env = os.getenv("__BDAYS_HINT__")
+        if _bd_env:
+            # Expect comma-separated YYYY-MM-DD list if provided by upstream steps
+            _b = [b for b in _bd_env.split(",") if b]
+            if _b:
+                first_b = min(_b)
+                if first_b > flow_start_date:
+                    logger.info(
+                        "Flow start pre-aligned to first business day %s (was %s)",
+                        first_b,
+                        flow_start_date,
+                    )
+                    flow_start_date = first_b
+    except Exception:
+        pass
+
     logger.info("=== STEP 0: Prepare trade-spec for flow features ===")
     trades_spec_path: Path | None = None
     listed_info_path: Path | None = args.listed_info_parquet
@@ -604,6 +624,25 @@ async def main() -> int:
                     logger.info("Trading calendar fetched: %s business days", len(all_bdays))
                 except Exception as e:
                     logger.warning(f"Trading calendar fetch failed; fallback to weekday-only: {e}")
+            # Fallback to naive weekday-only calendar when API is disabled or failed
+            if not business_days:
+                from datetime import datetime, timedelta
+                _bd = []
+                _cur = datetime.strptime(start_date, "%Y-%m-%d")
+                _end = datetime.strptime(end_date, "%Y-%m-%d")
+                while _cur <= _end:
+                    if _cur.weekday() < 5:  # Mon-Fri
+                        _bd.append(_cur.strftime("%Y-%m-%d"))
+                    _cur += timedelta(days=1)
+                business_days = _bd
+                logger.info("Using weekday-only calendar: %d days", len(business_days))
+
+            # Align flow start to first available business day
+            if business_days:
+                _first = next((d for d in business_days if d >= flow_start_date), business_days[0])
+                if _first > flow_start_date:
+                    logger.info("Flow start adjusted to first business day: %s -> %s", flow_start_date, _first)
+                    flow_start_date = _first
 
             fetch_coroutines: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
 
