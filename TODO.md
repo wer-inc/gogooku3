@@ -6401,3 +6401,173 @@ make train-rankic-boost
   run_full_dataset.py／dataset-full(-gpu) パイプラインはドキュメントよりも縮退したサブセットを生成しています。必要な列を揃える
   には、ドキュメントで言及されている DMI・詳細フロー・スロープ系の指標をパイプラインに再実装／有効化し、再度出力データを検証す
   る必要があります。
+
+  -----
+
+  現在の環境を調査した結果、以下の最適化設定を推奨します：
+
+  🖥️ ハードウェア環境
+
+  - GPU: NVIDIA A100 80GB PCIe (利用可能)
+  - CPU: 24コア AMD EPYC 7V13
+  - メモリ: 216GB RAM (185GB利用可能)
+
+  📋 推奨環境変数設定 (.env)
+
+  # API並列処理の最適化
+  MAX_CONCURRENT_FETCH=75    # JQuants API有料プラン向け最大並列数
+  MAX_PARALLEL_WORKERS=20     # CPU並列処理数（24コアの80%使用）
+
+  # GPU最適化
+  USE_GPU_ETL=1              # GPU-ETL有効化（RAPIDS/cuDF使用）
+  RMM_POOL_SIZE=70GB         # A100 80GBの87%をメモリプールに割当
+  CUDA_VISIBLE_DEVICES=0     # GPU 0を使用
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # メモリフラグメンテーション回避
+
+  # データローダー最適化
+  NUM_WORKERS=8              # マルチワーカーDataLoader
+  PERSISTENT_WORKERS=1       # ワーカー再利用で起動オーバーヘッド削減
+  PREFETCH_FACTOR=4         # プリフェッチバッファ
+  PIN_MEMORY=1              # GPU転送高速化
+
+  # トレーニング最適化
+  ALLOW_UNSAFE_DATALOADER=1  # マルチワーカー強制有効化
+  USE_RANKIC=1              # RankIC損失関数使用
+  TORCH_COMPILE_MODE=max-autotune  # torch.compile最大最適化
+
+  🚀 高性能コマンド実行例
+
+  1. GPU最速データセット生成（全395特徴量）
+
+  # 10年分のデータを最高速で生成
+  make dataset-full-gpu START=2015-09-27 END=2025-09-26
+
+  # バックグラウンド実行（長時間処理向け）
+  make dataset-full-gpu-bg START=2015-09-27 END=2025-09-26
+
+  2. 最適化トレーニング
+
+  # PDF分析ベースの最適化設定でトレーニング
+  make train-optimized
+
+  # GPU最速トレーニング（最新データセット自動検出）
+  make train-gpu-latest
+
+  # 並列HPO（ハイパーパラメータ最適化）
+  make hpo-run HPO_TRIALS=50 HPO_STUDY=atft_hpo_production
+
+  ⚡ パフォーマンス最適化のポイント
+
+  データ取得の最適化
+
+  - 75並列API: asyncio.gather()で最大75並列リクエスト
+  - バッチ処理: 50銘柄単位でバッチ並列化
+  - GPU-ETL: cuDFで10-100倍高速化
+
+  トレーニングの最適化
+
+  - マルチワーカー: 8ワーカーでGPU利用率2-3倍向上
+  - torch.compile: 10-30%速度向上（PyTorch 2.x）
+  - Mixed Precision: bf16で2倍高速化
+
+  メモリ最適化
+
+  - RMMプール: 70GB事前確保でアロケーション高速化
+  - Expandableセグメント: フラグメンテーション防止
+  - Polars遅延評価: メモリ効率的なデータ処理
+
+  📊 期待パフォーマンス
+
+  | タスク            | 通常設定     | 最適化設定   | 改善率      |
+  |----------------|----------|---------|----------|
+  | データセット生成（10年分） | 数時間      | 30-60分  | 3-5倍     |
+  | API並列度         | 10       | 75      | 7.5倍     |
+  | GPU利用率         | 30-40%   | 80-95%  | 2-3倍     |
+  | トレーニング速度       | baseline | +30-50% | 1.3-1.5倍 |
+  | メモリ使用効率        | 17GB     | 7GB     | 59%削減    |
+
+  🔧 トラブルシューティング
+
+  CUDA OOM発生時:
+  export RMM_POOL_SIZE=50GB  # プールサイズ削減
+  export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:512"
+
+  API制限エラー時:
+  export MAX_CONCURRENT_FETCH=50  # 並列度を下げる
+
+  CPU負荷が高すぎる場合:
+  export MAX_PARALLEL_WORKERS=12  # CPUコア数の50%に削減
+  export NUM_WORKERS=4  # DataLoaderワーカー削減
+
+  これらの設定により、Claude CLIでのデータ処理・モデル訓練を最大限高速化できます。
+
+  結論: とても良いです。提案は本リポの実装とほぼ一致しており、そのまま採用可能です。既存のMakeターゲット/スクリプトが各項目をカ
+  バーしています。
+
+  適合状況（実装のマッピング）
+
+  - GPU-ETLとRMMプール: --gpu-etlとRMM初期化を標準対応。scripts/pipelines/run_full_dataset.py:432 → src/utils/gpu_etl.py:56 の
+  init_rmm()を呼び出し、RMM_POOL_SIZEを尊重。
+  - J-Quants並列取得: 並列セマフォをMAX_CONCURRENT_FETCHで制御（自動スロットリング付き）。scripts/pipelines/
+  run_pipeline_v4_optimized.py:143、src/gogooku3/components/jquants_async_fetcher.py:123。
+  - データセット生成ターゲット: make dataset-full-gpu/dataset-full-gpu-bgが既に用意（395特徴量前提）。Makefile:136、
+  Makefile:146。
+  - GPU最速学習（最新データ自動検出）: make train-gpu-latest（Safe版もあり）。Makefile:296、Makefile:300。実体はscripts/
+  train_gpu_latest.sh:1。
+  - DataLoader最適化envを完全対応: NUM_WORKERS/PREFETCH_FACTOR/PIN_MEMORY/PERSISTENT_WORKERS/ALLOW_UNSAFE_DATALOADERを安全ガー
+  ド込みで反映。src/gogooku3/training/atft/data_module.py:50〜104。
+  - RankIC/Sharpe等の損失: 既存ターゲットでUSE_RANKIC=1等を渡しています（例: train-optimized-stable）。
+  - torch.compile: モードmax-autotuneに対応したラッパあり。scripts/train_with_torch_compile.py:92。
+
+  推奨の微調整（A100 80GB前提）
+
+  - .env（A100用の上書き案）
+      - RMM_POOL_SIZE=70GB（ETL時にのみ。学習と同時実行は避ける）
+      - MAX_CONCURRENT_FETCH=75（有料API前提。制限に当たる場合は50→30へ段階調整）
+      - JQUANTS_TCP_LIMIT=100、JQUANTS_TCP_LIMIT_PER_HOST=50（aiohttpの接続上限も整合。run_full_dataset.pyで使用）
+      - CPUスレッド（ETL向け、学習とは独立に）: POLARS_MAX_THREADS=20、RAYON_NUM_THREADS=20、ARROW_NUM_THREADS=20、
+  PYARROW_NUM_THREADS=20
+      - 学習安定: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+      - TRAIN_PRECISION=bf16-mixed（A100ではbf16推奨。scripts/train_gpu_latest.shが尊重）
+  - 学習時のワーカー
+      - まずNUM_WORKERS=8/PREFETCH_FACTOR=4/PERSISTENT_WORKERS=1/PIN_MEMORY=1でOK。I/Oが細い環境やワーカークラッシュが出る場合
+  はNUM_WORKERS=4→2へ段階的に下げる（ALLOW_UNSAFE_DATALOADER=1前提）。
+  - 併走に関する注意
+      - ETLのRMM_POOL_SIZE=70GBは学習と同時実行するとVRAM競合しやすいので、ETLと学習は時間分離（またはETL側を50GBに）。
+  - すでにあるHPOターゲットの活用
+      - make hpo-run HPO_TRIALS=50 HPO_STUDY=atft_hpo_productionはそのまま有効（Makefile既定を上書き可能）。
+
+  コマンド確認（そのまま実行可）
+
+  - データセット生成（10年分/最高速）: make dataset-full-gpu START=2015-09-27 END=2025-09-26
+  - バックグラウンド実行: make dataset-full-gpu-bg START=2015-09-27 END=2025-09-26
+  - 最適化トレーニング: make train-optimized（保守的設定。より高速はtrain-optimized-stable）
+  - GPU最速トレーニング（最新検出）: make train-gpu-latest（bf16推奨ならTRAIN_PRECISION=bf16-mixed make train-gpu-latest）
+
+  トラブルシューティングの実戦値
+
+  - CUDA OOM（ETL/学習）
+      - ETL: RMM_POOL_SIZE=50GBへ下げる
+      - 学習: PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:512"、TRAIN_BATCH_SIZEを半
+  減、+train.batch.gradient_accumulation_stepsで勾配蓄積
+  - APIレート制限
+      - MAX_CONCURRENT_FETCH=50に一段階ダウン
+      - スロットリング制御も活用: JQUANTS_THROTTLE_BACKOFF（例: 0.7）、JQUANTS_THROTTLE_SLEEP_SECS（例: 1.5）、
+  JQUANTS_MIN_CONCURRENCY（例: 8）
+  - CPU過負荷
+      - ETL系は前述のPOLARS_*/ARROW_*を調整
+      - 学習系はモジュールが自動でスレッド上限を絞るため基本不要（data_module.py参照）
+
+  気になる点（小さな差分）
+
+  - 提案のMAX_PARALLEL_WORKERSはコード側で直接参照していません。ETLのCPU並列はPOLARS_MAX_THREADS等で実効制御するのが確実です。
+  - make train-optimizedは安全側でNUM_WORKERS=2起点です。最大性能ならtrain-optimized-stableまたはtrain-gpu-latestに
+  TRAIN_NUM_WORKERS=8等を渡す運用が実務的です。
+
+  次のアクション（ご希望なら実施します）
+
+  - .envをA100最適値に更新（上記推奨を反映）
+  - 必要ならMakefileにA100プリセット（例: train-a100-fast, etl-a100-fast）を追加
+  - 進行監視の補助: make train-gpu-monitor/make train-gpu-progressのセットアップ確認
+
+  この方針で進めて問題なければ、.envのA100向け調整をこちらで反映しますか？（反映後、上記コマンドでそのまま回せます）
