@@ -6641,3 +6641,233 @@ make train-rankic-boost
 
   必要なら、SoftSortベースのSpearman近似や露出中立ペナルティも実装まで進めます。進めますか？（A/B設計と小さな検証ループまで作り
   ます）
+
+  ----
+
+  ごもっともです。**今回のモデルにとって“グラフ”は核**なので、完全OFFは最終手段にすべきではありません。
+代わりに、**“重いところだけ外して、GAT が必要とする肝（エッジ）を残す”** ＋ **“計算量を数桁落とす設計”** で進めれば、性能を維持／向上しながらデータ生成を現実的なコストにできます。
+
+以下、**すぐに実行できる対策 → 実装パッチ案 → 推奨フラグ／コマンド → 検証の仕方 → 長期的強化**の順に整理します。
+
+---
+
+## 結論（短く）
+
+* **OFFにしない。** ただし **NetworkXの重いノード指標（中心性など29列）** は一旦外し、
+  **“スパースな動的エッジ（Top‑K近傍）”** を**週次**で更新、**キャッシュ**して流用。
+* **GAT はエッジさえあれば機能**します。中心性・PageRank等は“あれば嬉しい”系であり、**最初の土台には不要**。
+* **精度リスクを抑えつつ**、生成時間とメモリを大幅削減できます。
+
+---
+
+## 1) すぐ効く現実解（優先度高 → 低）
+
+### A. **Edges‑Only モード**（GATに必要十分）
+
+* **やること**: グラフは **Top‑K 近傍のエッジ＋重み（相関/EWMA相関）だけ**を作る。
+  ノード指標（degree/closeness/pagerank など 29列）は**出力しない**。
+* **効果**: NetworkX の重い中心性計算が消え、**計算の主戦場を“近傍探索”に限定**できる。
+* **精度面**: GAT は**隣接行列（edge_index, edge_weight）**でメッセージパッシングするため、**エッジが本体**。
+  ノード指標はメッセージから暗黙に学べることが多く、まずは**エッジだけで十分**です。
+
+**推奨フラグ（新設/既存）**
+
+```
+--graph-mode edges            # edges-only。features（ノード指標）を出さない
+--graph-topk 10               # 1銘柄あたり近傍K=10（10〜20でA/B）
+--graph-window 60             # 60営業日窓（既存と同じ）
+--graph-metric ewm_corr       # EWMA相関（ノイズに強い）
+--graph-update weekly         # 週次更新（毎日→週1で十分）
+--graph-cache-dir output/graph_cache
+```
+
+### B. **近傍探索の“多段スパース化”**（N×N を作らない）
+
+* **Block×GPU内積 or FAISS** で **Top‑K のみ**を引き抜く。
+
+  * 60日リターンを**日次z標準化**→ 列ベクトルを**L2正規化** → **内積=相関**。
+  * **全対全の相関行列を作らず**、ブロック分割して `X @ X_i^T` を順次計算し、各列の**Top‑Kのみ保持**。
+  * FAISS（CPU/GPU）の Inner‑Product 検索でも可。
+* **結果**: メモリを **O(NK)** に、計算も **N×K 取得**に抑えられる。
+
+**擬似コード（実装の最小イメージ）**
+
+```python
+# R: (W, N) ＝ W日×N銘柄のリターン（直近窓）。日次z標準化後に列L2正規化。
+Z = zscore_by_day(R)              # (W, N)
+X = normalize_cols(Z).T.astype(np.float32)  # (N, W)
+
+topk = 10; bs = 1024
+edges = []
+
+for i in range(0, N, bs):
+    Qi = X[i:i+bs]                # (b, W)
+    S  = X @ Qi.T                 # (N, b)  ← 相関(内積)。GPUでバッチ内積
+    # 自分自身を除外しつつ、各列のTop-Kのみを残す
+    Ii = np.argpartition(S, -topk, axis=0)[-topk:]  # 近似でもOK
+    Wi = np.take_along_axis(S, Ii, axis=0)
+    # COOで append（src, dst, weight）
+    edges.append(coo_from_topk(Ii, Wi, offset=i))
+edge_index, edge_weight = coalesce(edges)  # スパース隣接
+```
+
+### C. **更新頻度を落とす（週次/隔週）＋キャッシュ**
+
+* **週次グラフ**を作り、同週の営業日は**同じエッジを再利用**。
+* **キャッシュキー**は `(week_id, universe_hash, window, topk, metric)`。
+* これで**Tのオーダ**を（ほぼ）**T/5**に削減。データ生成の再実行も高速化。
+
+### D. **ユニバース制限（オプション）**
+
+* 初期は **TOP流動性 1500銘柄** だけでエッジ構築 → **全銘柄に転写**。
+
+  * 非ユニバース銘柄は、**同セクターの代表銘柄に一対多で接続**（軽量フェイルセーフ）。
+* **相関行列の次元をまず圧縮**でき、近傍探索が安定します。
+
+### E. **“安い”ノード派生量だけを追加（任意）**
+
+* どうしてもノード指標を少し使いたいなら **degree / peer_count / peer_corr_mean** のみ。
+
+  * これらは **エッジ集合からO(E)** で計算可能（NetworkX不要）。
+  * closeness / betweenness / pagerank は**一旦オフ**（必要なら後述のGPU実装へ）。
+
+---
+
+## 2) 実装パッチ（最小差分で導入）
+
+> 既存 `scripts/pipelines/run_full_dataset.py` に“モード切替”を入れるだけで開始できます。
+
+**引数を追加**
+
+```python
+parser.add_argument("--graph-mode", choices=["off","edges","features"], default="edges")
+parser.add_argument("--graph-topk", type=int, default=10)
+parser.add_argument("--graph-update", choices=["daily","weekly"], default="weekly")
+parser.add_argument("--graph-metric", choices=["ewm_corr","corr","factor_knn"], default="ewm_corr")
+parser.add_argument("--graph-cache-dir", type=str, default="output/graph_cache")
+```
+
+**分岐（疑似）**
+
+```python
+if args.graph_mode == "off":
+    skip_graph()
+elif args.graph_mode == "edges":
+    edge_index, edge_weight = build_sparse_edges(
+        returns_window, topk=args.graph_topk, metric=args.graph_metric, cache_dir=args.graph_cache_dir,
+        update=args.graph_update
+    )
+    save_edge_coo(day, edge_index, edge_weight)
+elif args.graph_mode == "features":
+    # 既存ルート（ただし後述の高速化適用を推奨）
+```
+
+**週次キャッシュキー**
+
+```python
+week_id = date_to_week_id(day)
+key = f"{week_id}-{universe_hash}-{window}-{topk}-{metric}.npz"
+```
+
+**“安い”ノード派生量**
+
+```python
+# degree / peer_count / peer_corr_mean
+deg = np.bincount(edge_index[0], minlength=N)
+peer_count = deg.astype(np.int32)
+peer_corr_mean = scatter_mean(edge_weight, edge_index[0], N)
+```
+
+> `scatter_mean` は numpy なら `np.add.at`、PyTorch なら `torch.scatter_add` で代用可。
+
+---
+
+## 3) 推奨の実行フロー（コマンド例）
+
+### スモーク（2〜3年、Edges‑Only）
+
+```bash
+make dataset-full-gpu START=2022-09-01 END=2025-09-26 \
+EXTRA_FLAGS="--graph-mode edges --graph-topk 10 --graph-window 60 \
+--graph-update weekly --graph-metric ewm_corr --graph-cache-dir output/graph_cache"
+```
+
+### 本線（5年、Edges‑Only + 週次キャッシュ）
+
+```bash
+make dataset-full-gpu START=2020-09-06 END=2025-09-26 \
+EXTRA_FLAGS="--graph-mode edges --graph-topk 10 --graph-window 60 \
+--graph-update weekly --graph-metric ewm_corr --graph-cache-dir output/graph_cache"
+```
+
+> 既存の **GAT は edge_index/edge_weight をそのまま利用**できます（モデル側の変更は不要/最小）。
+
+---
+
+## 4) 検証方法（“グラフを切らないで速くする”の確認）
+
+1. **グラフ診断（必須）**
+
+   * 平均/中央値 **degree**、**isolated率**、**最大成分サイズ**
+   * **edge_weight** 分布（相関の強さ）
+   * 週次で**連続性**（先週とのエッジ再現率）
+     → 極端にスパース/密になっていないかをチェックし、`topk, threshold` を微調整。
+
+2. **アブレーション**
+
+   * **Edges‑Only** vs **Edges +（安い）ノード派生量**
+   * RankIC/IR/Decile/Sharpe（コスト後）への寄与を比較。
+     → **エッジだけで十分**なら、ノード指標は恒久的にOffでOK。
+
+3. **A/B（Top‑K と更新頻度）**
+
+   * `topk ∈ {10, 15, 20}`、`update ∈ {weekly, biweekly}`
+   * 大きいほど計算は増、精度は頭打ちになりやすい。**10 or 15**が多くの事例で良好。
+
+---
+
+## 5) （任意）さらに攻める強化策
+
+* **FAISS/Annoy で ANN 近傍**
+  60日ベクトルを 32〜64次元へ圧縮（PCA など）→ **内積近傍探索**で Top‑K。
+  → “一発でTop‑Kだけ”を取りに行ける。
+* **低ランク近似**
+  `Z ≈ U S Vᵀ` の **truncated SVD** で N×N を構成せず、**V S**（N×r）上で近傍探索。
+* **Graphical Lasso / precision sparsity**
+  逆相関の非ゼロからエッジ抽出（理論的にスパース）。**密度調整が容易**。
+* **cuGraph / NetworKit**
+  PageRank/connected components などを **GPU/高速ライブラリ**で（必要になったら）。
+* **セクター＋相関の二層グラフ**
+  セクター同士の骨格エッジ＋Top‑K相関の微細エッジ（**安価で頑健**）。
+
+---
+
+## 6) よくある不安への回答
+
+* **Q: エッジだけでノード指標を切ると精度が落ちない？**
+  **A:** GATの主効果は**隣接からの情報集約**です。ノード指標は冗長になりがちで、まずは**エッジ品質（誰と繋ぐか・重み）**を上げた方が効きやすいです。必要なら**安い派生量（degree/peer_count/peer_corr_mean）**を追加してください。
+
+* **Q: 日次ではなく週次更新で大丈夫？**
+  **A:** 相関の構造は日次で大きく変わりにくいので、**週次でほぼ同等**のことが多いです。むしろ日次更新は**推定誤差が増える**面もあります。週次＋EWMA相関の方が**安定**です。
+
+* **Q: Top‑K はいくつにすべき？**
+  **A:** 10〜20が実務上のレンジ。**密すぎると過学習や計算増**、**疎すぎると情報不足**。**10 or 15**から始め、isolated率/成分サイズを見て調整。
+
+---
+
+## 7) ロールアウトの勘所（KPIゲート）
+
+* **Graph健全性**: isolated率 < 5%、最大成分 > 70%N、平均degree ≈ K±2
+* **学習KPI改善**: RankIC(1d/5d) ≧ベース、IR↑、Sharpe（コスト後）↑、Turnover↔︎/↓
+* **コスト**: 生成時間とメモリが許容範囲に収まる（内部モニタに閾値を置く）
+
+---
+
+### まとめ
+
+* **グラフは切らない**。ただし、**“Edges‑Only＋週次＋Top‑K＋キャッシュ”**で**重い部分だけ大胆に捨てる**。
+* それでも足りなければ、**FAISS/低ランク近似**や**Graphical Lasso**で**N×Nを回避**。
+* 必要に応じて**安いノード派生量**を足す。重い中心性は後回し。
+
+この方針なら、**GATの旨味（銘柄間の情報伝播）を保ったまま**、生成のボトルネックを外せます。
+差分の書き起こしや `run_full_dataset.py` への具体的パッチが必要なら、最小変更で落とし込みます。
