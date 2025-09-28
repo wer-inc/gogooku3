@@ -952,6 +952,22 @@ class MultiHorizonLoss(nn.Module):
         # 追加: CS相関(IC)補助ロス
         use_cs_ic: bool = True,
         cs_ic_weight: float = 0.05,
+        # 追加: SoftRank Spearman近似
+        use_soft_spearman: bool = False,
+        spearman_weight: float = 0.0,
+        spearman_tau_base: float = 0.5,
+        spearman_sample_ratio: float = 0.5,
+        # 追加: 露出中立ペナルティ（R²型）
+        use_exposure_neutral: bool = False,
+        exposure_weight: float = 0.0,
+        exposure_lambda_reg: float = 1e-4,
+        # 追加: 回転率ペナルティ
+        use_turnover_penalty: bool = False,
+        turnover_weight: float = 0.0,
+        turnover_alpha: float = 0.9,
+        # 追加: ホライズン整合性
+        use_horizon_consistency: bool = False,
+        consistency_weight: float = 0.0,
         use_pinball: bool = False,
         quantiles=(0.2, 0.5, 0.8),
         pinball_weight: float = 0.0,
@@ -1008,6 +1024,29 @@ class MultiHorizonLoss(nn.Module):
         self.huber_delta = float(huber_delta)
         self.huber_weight = float(huber_weight)
         self.h1_loss_mult = float(h1_loss_mult)
+
+        # SoftRank Spearman追加パラメータ
+        self.use_soft_spearman = use_soft_spearman
+        self.spearman_weight = float(spearman_weight)
+        self.spearman_tau_base = float(spearman_tau_base)
+        self.spearman_sample_ratio = float(spearman_sample_ratio)
+
+        # 露出中立ペナルティ（R²型）
+        self.use_exposure_neutral = use_exposure_neutral
+        self.exposure_weight = float(exposure_weight)
+        self.exposure_lambda_reg = float(exposure_lambda_reg)
+
+        # 回転率ペナルティ
+        self.use_turnover_penalty = use_turnover_penalty
+        self.turnover_weight = float(turnover_weight)
+        self.turnover_alpha = float(turnover_alpha)
+        from collections import defaultdict
+        self._ema_state = defaultdict(dict)  # {horizon: {sid: ema_value}}
+
+        # ホライズン整合性
+        self.use_horizon_consistency = use_horizon_consistency
+        self.consistency_weight = float(consistency_weight)
+
         # Horizon weights
         self._preset_weights = None
         if horizon_weights:
@@ -1205,6 +1244,123 @@ class MultiHorizonLoss(nn.Module):
         yhat_f = (yhat_f - yhat_f.mean()) / (yhat_f.std(unbiased=False) + 1e-8)
         y_f = (y_f - y_f.mean()) / (y_f.std(unbiased=False) + 1e-8)
         return 1.0 - (yhat_f * y_f).mean()
+
+    @staticmethod
+    def _zscore(x: torch.Tensor, dim: int = 0, eps: float = 1e-6) -> torch.Tensor:
+        """標準化（Z-score）"""
+        mu = x.mean(dim=dim, keepdim=True)
+        sd = x.std(dim=dim, keepdim=True).clamp_min(eps)
+        return (x - mu) / sd
+
+    def _soft_rank(self, s: torch.Tensor, tau_eff: float) -> torch.Tensor:
+        """SoftRank: 微分可能な順位近似
+        s: [N] - スコア
+        tau_eff: 温度パラメータ（自動スケール済み）
+        """
+        diff = s.unsqueeze(1) - s.unsqueeze(0)  # [N, N]
+        P = torch.sigmoid(-diff / tau_eff)  # P_ij ≈ I[s_i < s_j]
+        rank = 1.0 + P.sum(dim=1)  # [N]
+        return rank
+
+    def _spearman_loss_per_group(self, yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """グループ（日）ごとのSpearman相関損失"""
+        n = yhat.size(0)
+        if n < 10:  # 小サンプルスキップ
+            return yhat.new_tensor(0.0)
+
+        # サブサンプリング（計算量制御）
+        if self.spearman_sample_ratio < 1.0 and n > 100:
+            k = max(50, int(n * self.spearman_sample_ratio))
+            idx = torch.randperm(n, device=yhat.device)[:k]
+            yhat = yhat[idx]
+            y = y[idx]
+            n = k
+
+        # 自動スケール温度
+        tau_eff = self.spearman_tau_base * (yhat.std() + 1e-6)
+
+        # SoftRank計算
+        sr = self._soft_rank(yhat, tau_eff)
+        sr = self._zscore(sr, dim=0)
+
+        # ターゲットのランク（average rank for ties）
+        yr = torch.argsort(torch.argsort(y)).float() + 1
+        yr = self._zscore(yr, dim=0)
+
+        # Spearman相関
+        rho = (sr * yr).mean()
+        return 1.0 - rho  # maximize ρ → minimize 1-ρ
+
+    def _r2_penalty(self, yhat: torch.Tensor, X: torch.Tensor, lambda_reg: float = None) -> torch.Tensor:
+        """R²型露出ペナルティ（Ridge回帰ベース）"""
+        if lambda_reg is None:
+            lambda_reg = self.exposure_lambda_reg
+
+        # 標準化
+        yhat = self._zscore(yhat, dim=0)
+        X = self._zscore(X, dim=0)
+
+        # Ridge回帰: beta = (X'X + λI)^(-1) X'y
+        XtX = X.t() @ X
+        n_features = XtX.size(0)
+        XtX = XtX + lambda_reg * torch.eye(n_features, device=XtX.device)
+        Xty = X.t() @ yhat
+
+        try:
+            beta = torch.linalg.solve(XtX, Xty)
+        except:
+            return yhat.new_tensor(0.0)
+
+        # R² = ||Xβ||² / ||y||²
+        y_pred = X @ beta
+        r2 = (y_pred ** 2).sum() / ((yhat ** 2).sum() + 1e-8)
+        return r2  # minimize R²
+
+    def _turnover_penalty(self, preds: torch.Tensor, sids: torch.Tensor, horizon: int) -> torch.Tensor:
+        """回転率ペナルティ（勾配修正版）"""
+        losses = []
+        em = self._ema_state[horizon]
+
+        for p, sid in zip(preds, sids):  # predsはdetachしない
+            sid_key = sid.item() if hasattr(sid, 'item') else sid
+
+            if sid_key in em:
+                prev = em[sid_key]
+                losses.append((p - prev).abs())  # 勾配はpに流れる
+            else:
+                prev = p.detach()  # 初回のみdetach
+
+            # EMA更新（ここでdetach）
+            em[sid_key] = self.turnover_alpha * prev + (1 - self.turnover_alpha) * p.detach()
+
+        if len(losses) == 0:
+            return preds.new_tensor(0.0)
+        return torch.stack(losses).mean()
+
+    def _horizon_consistency(self, pred: torch.Tensor) -> torch.Tensor:
+        """ホライズン間整合性ロス"""
+        H = pred.size(1)
+        if H < 2:
+            return pred.new_tensor(0.0)
+
+        loss = pred.new_tensor(0.0)
+        cnt = 0
+
+        # 連続ホライズン間の相関を高める
+        for h in range(H - 1):
+            h1 = pred[:, h]
+            h2 = pred[:, h + 1]
+
+            # 標準化
+            h1 = self._zscore(h1, dim=0)
+            h2 = self._zscore(h2, dim=0)
+
+            # 相関
+            corr = (h1 * h2).mean()
+            loss = loss + (1.0 - corr)
+            cnt += 1
+
+        return loss / max(cnt, 1)
 
     @staticmethod
     def _student_t_nll(
@@ -5472,6 +5628,26 @@ def train(config: DictConfig) -> None:
     use_pairwise_rank = os.getenv("USE_PAIRWISE_RANK", "0") == "1"
     pairwise_rank_w = float(os.getenv("PAIRWISE_RANK_WEIGHT", "0.0")) if use_pairwise_rank else 0.0
     pairwise_sample_ratio = float(os.getenv("PAIRWISE_SAMPLE_RATIO", "0.25"))
+
+    # 追加: SoftRank Spearman
+    use_soft_spearman = os.getenv("USE_SOFT_SPEARMAN", "0") == "1"
+    spearman_weight = float(os.getenv("SPEARMAN_WEIGHT", "0.0")) if use_soft_spearman else 0.0
+    spearman_tau_base = float(os.getenv("SPEARMAN_TAU_BASE", "0.5"))
+    spearman_sample_ratio = float(os.getenv("SPEARMAN_SAMPLE_RATIO", "0.5"))
+
+    # 追加: 露出中立ペナルティ
+    use_exposure_neutral = os.getenv("USE_EXPOSURE_NEUTRAL", "0") == "1"
+    exposure_weight = float(os.getenv("EXPOSURE_WEIGHT", "0.0")) if use_exposure_neutral else 0.0
+    exposure_lambda_reg = float(os.getenv("EXPOSURE_LAMBDA_REG", "1e-4"))
+
+    # 追加: 回転率ペナルティ
+    use_turnover_penalty = os.getenv("USE_TURNOVER_PENALTY", "0") == "1"
+    turnover_weight = float(os.getenv("TURNOVER_WEIGHT", "0.0")) if use_turnover_penalty else 0.0
+    turnover_alpha = float(os.getenv("TURNOVER_EMA_ALPHA", "0.9"))
+
+    # 追加: ホライズン整合性
+    use_horizon_consistency = os.getenv("USE_HORIZON_CONSISTENCY", "0") == "1"
+    consistency_weight = float(os.getenv("CONSISTENCY_WEIGHT", "0.0")) if use_horizon_consistency else 0.0
     pinball_w = float(os.getenv("PINBALL_WEIGHT", "0.3")) if use_pinball else 0.0
     # モデルconfigの分位を損失側へ反映
     q_list = None
@@ -5582,6 +5758,19 @@ def train(config: DictConfig) -> None:
         pairwise_sample_ratio=pairwise_sample_ratio,
         use_cs_ic=use_cs_ic_env,
         cs_ic_weight=cs_ic_weight_env,
+        # 新規追加パラメータ
+        use_soft_spearman=use_soft_spearman,
+        spearman_weight=spearman_weight,
+        spearman_tau_base=spearman_tau_base,
+        spearman_sample_ratio=spearman_sample_ratio,
+        use_exposure_neutral=use_exposure_neutral,
+        exposure_weight=exposure_weight,
+        exposure_lambda_reg=exposure_lambda_reg,
+        use_turnover_penalty=use_turnover_penalty,
+        turnover_weight=turnover_weight,
+        turnover_alpha=turnover_alpha,
+        use_horizon_consistency=use_horizon_consistency,
+        consistency_weight=consistency_weight,
         use_pinball=use_pinball,
         quantiles=tuple(q_list) if q_list else (0.2, 0.5, 0.8),
         pinball_weight=pinball_w,
