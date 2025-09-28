@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ATFT-GAT-FAN: Advanced financial ML system for Japanese stock market prediction. Multi-horizon forecasting using Graph Attention Networks with production-grade time-series safety protocols. Target Sharpe ratio: 0.849.
 
+### Hardware Environment
+- **GPU**: NVIDIA A100 80GB PCIe
+- **CPU**: 24-core AMD EPYC 7V13
+- **Memory**: 216GB RAM
+- **Storage**: 291GB SSD
+
 ## Essential Commands
 
 ### Quick Start
@@ -40,8 +46,12 @@ make train-gpu-latest              # Use latest dataset with GPU
 
 ### Data Pipeline
 ```bash
-# Build full dataset (required before training)
-make dataset-full START=2020-09-06 END=2025-09-06
+# GPU-accelerated dataset generation (RECOMMENDED - all 395 features enabled by default)
+make dataset-full-gpu START=2015-09-27 END=2025-09-26      # GPU-ETL with RAPIDS/cuDF
+make dataset-full-gpu-bg START=2015-09-27 END=2025-09-26   # Background execution
+
+# Standard dataset generation
+make dataset-full START=2020-09-06 END=2025-09-06          # CPU-only processing
 
 # Alternative dataset commands
 make dataset-full-research START=2020-09-06 END=2025-09-06  # With research features
@@ -106,7 +116,19 @@ JQuants API → Raw Data → Feature Engineering → ML Dataset → Training Pip
 
 ### Core Components
 
-**`scripts/integrated_ml_training_pipeline.py`** - Main orchestrator:
+**`scripts/pipelines/run_full_dataset.py`** - Dataset generation orchestrator:
+- Coordinates complete 395-feature dataset creation
+- All feature modules enabled by default (GPU-ETL, graphs, options, etc.)
+- Manages JQuants API fetching with up to 75 concurrent requests
+- Integrates run_pipeline_v4_optimized.py for base data
+
+**`scripts/pipelines/run_pipeline_v4_optimized.py`** - Optimized data pipeline:
+- JQuantsAsyncFetcher with semaphore control (MAX_CONCURRENT_FETCH=75)
+- Axis-based optimization (by-date vs by-code fetching)
+- Batch processing with asyncio.gather()
+- Event detection and incremental updates
+
+**`scripts/integrated_ml_training_pipeline.py`** - Training orchestrator:
 1. Loads ML dataset (auto-detects or uses `--data-path`)
 2. Optionally runs SafeTrainingPipeline (`--run-safe-pipeline`)
 3. Builds correlation graphs (`--adv-graph-train`)
@@ -121,7 +143,7 @@ JQuants API → Raw Data → Feature Engineering → ML Dataset → Training Pip
 
 **`src/gogooku3/`** - Modern package structure (v2.0.0):
 - `data/`: ProductionDatasetV3, CrossSectionalNormalizerV2, WalkForwardSplitterV2
-- `features/`: QualityFinancialFeaturesGenerator, 189+ features
+- `features/`: QualityFinancialFeaturesGenerator, 395 features total
 - `models/`: ATFT-GAT-FAN (~5.6M params), LightGBM baseline
 - `training/`: SafeTrainingPipeline (7-step validation)
 - `graph/`: FinancialGraphBuilder (correlation networks)
@@ -179,11 +201,32 @@ JQuants API → Raw Data → Feature Engineering → ML Dataset → Training Pip
 
 **Key Environment Variables**:
 ```bash
+# JQuants API credentials (required)
 JQUANTS_AUTH_EMAIL=xxx
 JQUANTS_AUTH_PASSWORD=xxx
-ALLOW_UNSAFE_DATALOADER=1    # Enable multi-worker
-USE_RANKIC=1                  # RankIC optimization
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # GPU memory
+
+# Performance optimization
+MAX_CONCURRENT_FETCH=75      # JQuants API parallel requests
+MAX_PARALLEL_WORKERS=20       # CPU parallel processing
+USE_GPU_ETL=1                # GPU-accelerated ETL (RAPIDS/cuDF)
+RMM_POOL_SIZE=70GB           # GPU memory pool for A100 80GB
+CUDA_VISIBLE_DEVICES=0       # GPU device selection
+
+# Training optimization
+ALLOW_UNSAFE_DATALOADER=1    # Enable multi-worker DataLoader
+NUM_WORKERS=8                # DataLoader workers
+PERSISTENT_WORKERS=1         # Reuse workers across epochs
+PREFETCH_FACTOR=4           # Prefetch batches
+PIN_MEMORY=1                # GPU memory pinning
+
+# Loss function optimization
+USE_RANKIC=1                 # RankIC loss component
+RANKIC_WEIGHT=0.2           # RankIC weight
+CS_IC_WEIGHT=0.15           # Cross-sectional IC weight
+SHARPE_WEIGHT=0.3           # Sharpe ratio weight
+
+# Memory optimization
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # GPU memory fragmentation fix
 ```
 
 ## Common Issues & Solutions
@@ -221,8 +264,26 @@ ls -la output/ml_dataset_latest_full.parquet
 
 **Feature mismatch warnings**:
 - Check `configs/atft/feature_categories.yaml`
-- Ensure 189 features properly categorized
+- Ensure 395 features properly categorized
 - VSN/FAN/SAN require correct grouping
+
+**Graph builder warnings (normal for early dates)**:
+```
+WARNING - No valid codes for graph building on 2015-11-10
+WARNING - Insufficient codes (0) for graph building
+```
+- **Cause**: Early dates (2015-2016) have limited data
+- **Impact**: None - graph features set to 0 for those dates
+- **Solution**: Expected behavior, processing continues normally
+
+**NumPy RuntimeWarning in correlation**:
+```
+RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+```
+- **Cause**: Zero standard deviation (no price movement)
+- **Impact**: None - NaN values handled automatically
+- **Solution**: Normal behavior for inactive stocks
 
 ## Performance Benchmarks
 
@@ -238,6 +299,13 @@ ls -la output/ml_dataset_latest_full.parquet
 - **Model Size**: ~5.6M parameters
 - **Training**: 75-120 epochs
 - **Batch Size**: 2048-4096
+
+### Parallel Processing Performance
+- **API Fetching**: 75 concurrent requests (asyncio)
+- **Data Pipeline**: 50-stock batches
+- **CPU Utilization**: 20 workers (80% of 24 cores)
+- **GPU-ETL**: 10-100x faster with RAPIDS/cuDF
+- **Expected Dataset Generation**: 30-60 minutes for 10 years
 
 ## Key Implementation Patterns
 
