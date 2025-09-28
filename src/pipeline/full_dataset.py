@@ -136,7 +136,20 @@ def save_with_symlinks(
 
 
 def _find_latest(glob: str) -> Path | None:
-    cands = sorted((Path('output')).glob(glob))
+    """Find the latest matching file anywhere under `output/`.
+
+    The original implementation only searched the top-level `output/` directory,
+    which caused auto-discovery to miss files saved under subfolders like
+    `output/raw/margin/`. This recursive variant searches the entire tree and
+    preserves the existing naming convention where file names embed sortable
+    date tokens.
+    """
+    base = Path("output")
+    if not base.exists():
+        return None
+    # Use rglob to search recursively. Sorted() will order lexicographically;
+    # our filenames contain YYYYMMDD tokens so lexical order matches recency.
+    cands = sorted(base.rglob(glob))
     return cands[-1] if cands else None
 
 

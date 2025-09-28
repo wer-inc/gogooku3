@@ -219,6 +219,7 @@ class StreamingParquetDataset(Dataset):
         sequence_length: int = 60,
         normalize_online: bool = True,
         cache_size: int = 10000,
+        exposure_columns: list[str] | None = None,
     ):
         """
         Initialize streaming parquet dataset.
@@ -230,6 +231,7 @@ class StreamingParquetDataset(Dataset):
             sequence_length: Sequence length for time series
             normalize_online: Apply online normalization
             cache_size: Number of samples to cache in memory
+            exposure_columns: Columns to use for exposure features (e.g. market_cap, beta, sector_code)
         """
         cleaned_paths: list[Path] = []
         missing_paths: list[str] = []
@@ -286,12 +288,34 @@ class StreamingParquetDataset(Dataset):
         self._cache: dict[int, dict[str, Any]] = {}
         self._cache_indices: list[int] = []
 
+        # Phase 2: 露出中立・回転率・整合性ロスのための拡張フィールド
+        self.use_exposure_features = os.getenv("USE_EXPOSURE_FEATURES", "0") == "1"
+        if self.use_exposure_features:
+            # 露出特徴量の列設定
+            if exposure_columns is None:
+                exposure_cols_env = os.getenv("EXPOSURE_COLUMNS", "market_cap,beta,sector_code")
+                exposure_columns = exposure_cols_env.split(",")
+            self.exposure_columns = exposure_columns
+            logger.info(f"[Phase2] Exposure features enabled: {self.exposure_columns}")
+
+            # マッピング辞書の初期化
+            self.date_to_group_id: dict[str, int] = {}
+            self.code_to_sid: dict[str, int] = {}
+            self.sector_to_id: dict[str, int] = {}
+            self._next_group_id = 0
+            self._next_sid = 0
+            self._next_sector_id = 0
+        else:
+            self.exposure_columns = []
+            logger.debug("[Phase2] Exposure features disabled (USE_EXPOSURE_FEATURES=0)")
+
         # Pre-compute per-file window offsets for fast index resolution
         self._columns_needed = list(
             dict.fromkeys(
                 list(self.feature_columns)
                 + list(self.target_columns)
                 + [self.code_column, self.date_column]
+                + (list(self.exposure_columns) if self.use_exposure_features else [])
             )
         )
         self._file_window_counts: list[int] = []
@@ -459,6 +483,42 @@ class StreamingParquetDataset(Dataset):
             return f"horizon_{int(horizon)}d"
         return column
 
+    def _date_to_group_id_fn(self, date_value: Any) -> int:
+        """Convert date to group ID for daily batching."""
+        if date_value is None:
+            return 0
+        date_str = str(date_value)[:10]  # YYYY-MM-DD format
+        if date_str not in self.date_to_group_id:
+            self.date_to_group_id[date_str] = self._next_group_id
+            self._next_group_id += 1
+        return self.date_to_group_id[date_str]
+
+    def _code_to_sid_fn(self, code_value: Any) -> int:
+        """Convert stock code to stock ID."""
+        if code_value is None:
+            return 0
+        code_str = str(code_value)
+        if code_str not in self.code_to_sid:
+            self.code_to_sid[code_str] = self._next_sid
+            self._next_sid += 1
+        return self.code_to_sid[code_str]
+
+    def _sector_to_onehot(self, sector_value: Any) -> list[float]:
+        """Convert sector code to one-hot vector."""
+        if sector_value is None:
+            # Return zero vector for unknown sectors
+            return [0.0] * max(1, len(self.sector_to_id))
+
+        sector_str = str(sector_value)
+        if sector_str not in self.sector_to_id:
+            self.sector_to_id[sector_str] = self._next_sector_id
+            self._next_sector_id += 1
+
+        # Create one-hot vector
+        onehot = [0.0] * max(1, self._next_sector_id)
+        onehot[self.sector_to_id[sector_str]] = 1.0
+        return onehot
+
     @staticmethod
     def _to_python_scalar(value: Any) -> Any:
         """Convert Polars scalar-like objects to native Python types."""
@@ -535,6 +595,56 @@ class StreamingParquetDataset(Dataset):
             sample["code"] = str(sample["code"])
         if sample["date"] is not None:
             sample["date"] = str(sample["date"])
+
+        # Phase 2: 拡張フィールドの追加
+        if self.use_exposure_features:
+            # 1. group_day: 日付グループID (torch.long)
+            sample["group_day"] = torch.tensor(
+                self._date_to_group_id_fn(sample["date"]), dtype=torch.long
+            )
+
+            # 2. sid: 銘柄ID (torch.long)
+            sample["sid"] = torch.tensor(
+                self._code_to_sid_fn(sample["code"]), dtype=torch.long
+            )
+
+            # 3. exposures: 露出特徴量 (torch.float)
+            exposures = []
+
+            # market_cap (対数変換)
+            if "market_cap" in self.exposure_columns and "market_cap" in window.columns:
+                mkt_cap = window["market_cap"][-1] if "market_cap" in window.columns else None
+                if mkt_cap is not None:
+                    mkt_cap_val = self._to_python_scalar(mkt_cap)
+                    if mkt_cap_val is not None and mkt_cap_val > 0:
+                        exposures.append(np.log(float(mkt_cap_val)))
+                    else:
+                        exposures.append(0.0)
+                else:
+                    exposures.append(0.0)
+
+            # beta
+            if "beta" in self.exposure_columns and "beta" in window.columns:
+                beta_val = window["beta"][-1] if "beta" in window.columns else None
+                if beta_val is not None:
+                    beta_scalar = self._to_python_scalar(beta_val)
+                    exposures.append(float(beta_scalar) if beta_scalar is not None else 0.0)
+                else:
+                    exposures.append(0.0)
+
+            # sector_code (One-Hot)
+            if "sector_code" in self.exposure_columns:
+                sector_val = window["sector_code"][-1] if "sector_code" in window.columns else None
+                sector_scalar = self._to_python_scalar(sector_val)
+                sector_onehot = self._sector_to_onehot(sector_scalar)
+                exposures.extend(sector_onehot)
+
+            # Convert to tensor
+            if exposures:
+                sample["exposures"] = torch.tensor(exposures, dtype=torch.float32)
+            else:
+                # Empty exposures if no features found
+                sample["exposures"] = torch.zeros(1, dtype=torch.float32)
 
         return sample
 
@@ -705,6 +815,12 @@ class ProductionDataModuleV2:
         feature_columns = self._get_feature_columns()
         target_columns = self._get_target_columns()
 
+        # Phase 2: 露出特徴量の設定
+        exposure_columns = None
+        if os.getenv("USE_EXPOSURE_FEATURES", "0") == "1":
+            exposure_cols_env = os.getenv("EXPOSURE_COLUMNS", "market_cap,beta,sector_code")
+            exposure_columns = exposure_cols_env.split(",")
+
         # Create datasets
         self.train_dataset = StreamingParquetDataset(
             file_paths=train_files,
@@ -714,6 +830,7 @@ class ProductionDataModuleV2:
             date_column=self.config.data.schema.date_column,
             sequence_length=self.config.data.time_series.sequence_length,
             normalize_online=self.config.normalization.online_normalization.enabled,
+            exposure_columns=exposure_columns,
         )
 
         if val_files:
@@ -725,6 +842,7 @@ class ProductionDataModuleV2:
                 date_column=self.config.data.schema.date_column,
                 sequence_length=self.config.data.time_series.sequence_length,
                 normalize_online=self.config.normalization.online_normalization.enabled,
+                exposure_columns=exposure_columns,
             )
 
         if test_files:
@@ -736,6 +854,7 @@ class ProductionDataModuleV2:
                 date_column=self.config.data.schema.date_column,
                 sequence_length=self.config.data.time_series.sequence_length,
                 normalize_online=self.config.normalization.online_normalization.enabled,
+                exposure_columns=exposure_columns,
             )
 
         logger.info(f"✅ Datasets created: train={len(self.train_dataset)} samples")
