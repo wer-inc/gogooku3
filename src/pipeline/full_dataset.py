@@ -516,7 +516,23 @@ async def enrich_and_save(
     # Graph-structured features (Phase 3): degree, peer corr mean, peer count
     try:
         if enable_graph_features:
-            from src.gogooku3.features.graph_features import add_graph_features
+            # Try to use GPU-accelerated version first
+            use_gpu_graph = False
+            try:
+                import cugraph
+                import cupy as cp
+                if cp.cuda.runtime.getDeviceCount() > 0:
+                    from src.gogooku3.features.graph_features_gpu import add_graph_features
+                    use_gpu_graph = True
+                    logger.info("✅ Using GPU-accelerated graph computation (cuGraph detected)")
+            except ImportError:
+                pass
+
+            # Fallback to CPU version if GPU not available
+            if not use_gpu_graph:
+                from src.gogooku3.features.graph_features import add_graph_features
+                logger.info("📊 Using CPU graph computation (cuGraph not available)")
+
             df = add_graph_features(
                 df,
                 return_col="returns_1d" if "returns_1d" in df.columns else "feat_ret_1d",

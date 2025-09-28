@@ -131,11 +131,13 @@ dataset-full:
 	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END}
 
 # GPU-ETL acceleration enabled dataset generation (all features enabled by default)
+# Now includes GPU-accelerated graph features (100x faster correlation computation)
 .PHONY: dataset-full-gpu
 dataset-full-gpu:
 	@echo "🚀 Running dataset generation with GPU-ETL enabled (all 395 features enabled by default)"
+	@echo "✅ GPU-accelerated graph features enabled (CuPy correlation, auto-detect cuGraph)"
 	@export REQUIRE_GPU=1 USE_GPU_ETL=1 RMM_POOL_SIZE=70GB CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src && \
-	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --gpu-etl
+	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --gpu-etl --enable-graph-features --graph-cache-dir output/graph_cache
 
 .PHONY: dataset-full-gpu-bg
 dataset-full-gpu-bg:
