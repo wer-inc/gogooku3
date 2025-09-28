@@ -6571,3 +6571,73 @@ make train-rankic-boost
   - 進行監視の補助: make train-gpu-monitor/make train-gpu-progressのセットアップ確認
 
   この方針で進めて問題なければ、.envのA100向け調整をこちらで反映しますか？（反映後、上記コマンドでそのまま回せます）
+
+  ----
+
+  以下は、現状コードを踏まえた「限界と突破口」、実装済みの改善、すぐ動かせる手順、実運用/KPIまでの要点です。
+
+  現状の把握（要点）
+
+  - データ: J-Quants由来の価格/指標/先物/信用/インデックス等をPolars中心で395特徴量まで拡張。GPU-ETLあり（make dataset-full-
+  gpu）。
+  - 学習: ATFT-GAT-FANを中核。日次クロスセクション学習を前提にDayBatchSamplerで漏洩制御。RankIC/Sharpe/CS-ICなど金融メトリクス
+  を損失に組込み（主系はscripts/train_atft.py）。
+  - 課題: 既存のRankIC（順位相関）項の一部は非微分（argsort）実装が残存（勾配が流れにくい）。RankIC最適化をより「効く」信号に強
+  化する余地が大きい。コスト/回転率・エクスポージャ中立性の明示的制御も伸び代。
+
+  実装済みの改善（本タスクで追加）
+
+  - ペアワイズ順位学習（RankNet型）をMultiHorizonLossへ追加。クロスセクション内でペアの勝敗をロジスティック損失で最適化し、差の
+  微分が素直に勾配として返るためRankIC向上が安定化。
+      - 追加フラグ（環境変数）: USE_PAIRWISE_RANK=1, PAIRWISE_RANK_WEIGHT=0.2, PAIRWISE_SAMPLE_RATIO=0.25（日内ペアのサンプリン
+  グ率）
+      - 変更箇所:
+          - scripts/train_atft.py:13 に import torch.nn.functional as F
+          - scripts/train_atft.py:950 付近（MultiHorizonLoss.__init__）に引数3つを追加
+          - scripts/train_atft.py:1155 付近に def _pairwise_rank_loss(...) 実装
+          - scripts/train_atft.py:1364 付近のforward内でロス合成（RankIC/CS-ICに加算）
+          - scripts/train_atft.py:5472 付近で環境変数を読み込み、scripts/train_atft.py:5581 付近でCriterionへ引き渡し
+          - scripts/train_rankic_boost.py:88-96 に既定で有効化（RankIC Boost時は自動ON）
+
+  すぐに試す手順（10年データ→学習）
+
+  - データ生成（10年）:
+      - make dataset-full-gpu START=2015-09-27 END=2025-09-26
+  - RankICブースト学習（本改良を既定で有効化）:
+      - make train-rankic-boost
+  - 追加の高速検証:
+      - ベースライン/遅延監査/レポート: make research-plus
+      - 折別のRankIC/HitRate: make research-folds
+
+  期待効果
+
+  - 従来の相関ベース（1–corr）に加え、順位の「勝敗」を直接最適化するため、日次RankICの立ち上がりと安定性が向上しやすい。
+  - PAIRWISE_SAMPLE_RATIOによりO(N^2)を避け高銘柄数でも現実的な計算に。
+
+  推奨パラメータ（初期）
+
+  - 1次適用: PAIRWISE_RANK_WEIGHT=0.2, PAIRWISE_SAMPLE_RATIO=0.25
+  - A/B比較: 0.1/0.2/0.3で3水準、5エポックごとにVal RankIC(1d/5d)とRankIC IRを比較。
+
+  今後の突破口（追加提案）
+
+  - Differentiable Spearman: SoftSort/NeuralSort系の近似順位でSpearman自体を微分可能に（今回のRankNetはその前段）。実装は本ロス
+  のオプションとして併設可能。
+  - 露出中立ペナルティ: 予測とlog_mktcap/β/セクターOneHotの相関を明示的に抑制（相関^2ペナルティ）。回転率ペナルティ（|Δポジショ
+  ン|）も加えて実運用のコスト意識を損失に内生化。
+  - マルチホライズン整合性: h1→h5→h10→h20の符号/スケール整合を滑らかにする一貫性ロス（小重み）でブレ低減。
+  - 自己教師あり事前学習: 価格系列のマスク再構成/時系列コントラストで表現力を事前強化してから微調整。
+  - グラフ強化: 既存の相関GATに時変エッジ/エッジドロップの強化、セクター共通性＋相関の二層グラフ併用。
+
+  検証/KPI（実用レベル指標）
+
+  - 日次RankIC(1d/5d/10d/20d)、RankIC IR、Decileスプレッド、HitRate、Sharpe（トイ・ポートフォリオ）、Turnover（想定コスト控除後
+  も）。reports/とoutput/のCSV/HTMLを保存。
+
+  注意点
+
+  - J-Quants発表日基準のラグは引き続き厳格運用（make research-lagsで点検）。20営業日エンバーゴをCVで担保。
+  - 大規模バッチ時のメモリはPAIRWISE_SAMPLE_RATIOで調整。
+
+  必要なら、SoftSortベースのSpearman近似や露出中立ペナルティも実装まで進めます。進めますか？（A/B設計と小さな検証ループまで作り
+  ます）

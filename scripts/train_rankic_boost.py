@@ -88,6 +88,10 @@ def main():
         # RankIC and financial metrics optimization
         "USE_RANKIC": "1",
         "RANKIC_WEIGHT": "0.5",      # Maximum RankIC weight
+        # Pairwise rank learning (RankNet-style)
+        "USE_PAIRWISE_RANK": "1",
+        "PAIRWISE_RANK_WEIGHT": "0.2",
+        "PAIRWISE_SAMPLE_RATIO": "0.25",
         "SHARPE_WEIGHT": "0.3",      # Strong Sharpe focus
         "CS_IC_WEIGHT": "0.2",       # Cross-sectional IC
         "USE_CS_IC": "1",

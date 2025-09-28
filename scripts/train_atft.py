@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 import logging
 from pathlib import Path
 import sys
@@ -944,6 +945,10 @@ class MultiHorizonLoss(nn.Module):
         horizons=[1, 5, 10, 20],
         use_rankic: bool = False,
         rankic_weight: float = 0.0,
+        # 追加: ペアワイズ順位学習（RankNet 型）
+        use_pairwise_rank: bool = False,
+        pairwise_rank_weight: float = 0.0,
+        pairwise_sample_ratio: float = 0.25,
         # 追加: CS相関(IC)補助ロス
         use_cs_ic: bool = True,
         cs_ic_weight: float = 0.05,
@@ -985,6 +990,14 @@ class MultiHorizonLoss(nn.Module):
         # CS-IC 補助ロス
         self.use_cs_ic = bool(use_cs_ic)
         self.cs_ic_weight = float(cs_ic_weight)
+        # Pairwise rank parameters
+        self.use_pairwise_rank = bool(use_pairwise_rank)
+        self.pairwise_rank_weight = float(pairwise_rank_weight)
+        try:
+            r = float(pairwise_sample_ratio)
+            self.pairwise_sample_ratio = max(0.0, min(1.0, r))
+        except Exception:
+            self.pairwise_sample_ratio = 0.25
         self.use_t_nll = use_t_nll
         self.nll_weight = float(nll_weight)
         self.use_crps = (
@@ -1137,6 +1150,44 @@ class MultiHorizonLoss(nn.Module):
         denom = yhat_f.std(unbiased=False) * y_f.std(unbiased=False) + 1e-8
         corr = (yhat_f * y_f).mean() / denom
         return 1.0 - corr
+
+    @staticmethod
+    def _pairwise_rank_loss(
+        yhat: torch.Tensor, y: torch.Tensor, sample_ratio: float = 0.25
+    ) -> torch.Tensor:
+        """RankNet 型のペアワイズロス（日次クロスセクション内）
+
+        損失: softplus(-s * (yhat_i - yhat_j)) の平均。
+        s = sign(y_i - y_j)。ゼロ差は無視。計算量削減のためランダムに m ペア抽出。
+        """
+        # 1D 化
+        yhat = yhat.view(-1).float()
+        y = y.view(-1).float().detach()
+        n = int(y.numel())
+        if n < 3:
+            return yhat.new_zeros(())
+
+        # サンプル数 m を決定（[2, n//2] 範囲で安全化）
+        m = int(max(2, min(n // 2, round(max(0.0, min(1.0, float(sample_ratio))) * n))))
+        if m <= 1:
+            return yhat.new_zeros(())
+
+        perm = torch.randperm(n, device=y.device)
+        i_idx = perm[:m]
+        j_idx = perm[m : 2 * m]
+        if j_idx.numel() < i_idx.numel():
+            extra = torch.randint(0, n, (i_idx.numel() - j_idx.numel(),), device=y.device)
+            j_idx = torch.cat([j_idx, extra], dim=0)
+
+        yi = y[i_idx]
+        yj = y[j_idx]
+        s = torch.sign(yi - yj)  # +1 / -1 / 0
+        mask = s.ne(0)
+        if not mask.any():
+            return yhat.new_zeros(())
+        s = s[mask]
+        d = yhat[i_idx][mask] - yhat[j_idx][mask]
+        return F.softplus(-s * d).mean()
 
     @staticmethod
     def _cs_ic_loss(yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -1309,6 +1360,14 @@ class MultiHorizonLoss(nn.Module):
                 loss = loss + self.rankic_weight * self._rankic_penalty(
                     yhat, y, mask
                 )
+            # 追加: ペアワイズ順位ロス（任意）
+            if self.use_pairwise_rank and self.pairwise_rank_weight > 0.0:
+                try:
+                    pw = self._pairwise_rank_loss(yhat, y, self.pairwise_sample_ratio)
+                    if torch.isfinite(pw):
+                        loss = loss + self.pairwise_rank_weight * pw
+                except Exception:
+                    pass
             # CS-IC 補助ロス（順位整合/相関強化）
             if self.use_cs_ic and self.cs_ic_weight > 0:
                 loss = loss + self.cs_ic_weight * self._cs_ic_loss(yhat, y)
@@ -5409,6 +5468,10 @@ def train(config: DictConfig) -> None:
     use_rankic = os.getenv("USE_RANKIC", "0") == "1"
     use_pinball = os.getenv("USE_PINBALL", "0") == "1"
     rankic_w = float(os.getenv("RANKIC_WEIGHT", "0.5")) if use_rankic else 0.0
+    # 追加: ペアワイズ順位ロスの制御
+    use_pairwise_rank = os.getenv("USE_PAIRWISE_RANK", "0") == "1"
+    pairwise_rank_w = float(os.getenv("PAIRWISE_RANK_WEIGHT", "0.0")) if use_pairwise_rank else 0.0
+    pairwise_sample_ratio = float(os.getenv("PAIRWISE_SAMPLE_RATIO", "0.25"))
     pinball_w = float(os.getenv("PINBALL_WEIGHT", "0.3")) if use_pinball else 0.0
     # モデルconfigの分位を損失側へ反映
     q_list = None
@@ -5514,6 +5577,9 @@ def train(config: DictConfig) -> None:
         horizons=final_config.data.time_series.prediction_horizons,
         use_rankic=use_rankic,
         rankic_weight=rankic_w,
+        use_pairwise_rank=use_pairwise_rank,
+        pairwise_rank_weight=pairwise_rank_w,
+        pairwise_sample_ratio=pairwise_sample_ratio,
         use_cs_ic=use_cs_ic_env,
         cs_ic_weight=cs_ic_weight_env,
         use_pinball=use_pinball,
