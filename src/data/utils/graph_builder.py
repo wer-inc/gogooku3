@@ -151,6 +151,13 @@ class FinancialGraphBuilder:
         # 日付範囲を計算
         date_start = date_end - timedelta(days=self.correlation_window + 10)  # バッファ含む
 
+        # 型正規化（Date vs Datetimeの不一致を避ける）
+        try:
+            if data.schema.get('date', None) is not None and data['date'].dtype != pl.Date:
+                data = data.with_columns(pl.col('date').cast(pl.Date, strict=False))
+        except Exception:
+            pass
+
         # データフィルタ
         filtered_data = data.filter(
             (pl.col('date') >= date_start) &
@@ -203,7 +210,7 @@ class FinancialGraphBuilder:
         self,
         return_matrix: np.ndarray
     ) -> np.ndarray:
-        """相関行列を計算"""
+        """相関行列を計算（GPU最適化あり）"""
         n_stocks = return_matrix.shape[0]
 
         if n_stocks < 2:
@@ -211,16 +218,40 @@ class FinancialGraphBuilder:
 
         try:
             if self.correlation_method == 'pearson':
-                # Pearson相関
-                corr_matrix = np.corrcoef(return_matrix)
+                # GPU最適化: CuPyが利用可能であればGPUで相関行列を計算
+                use_gpu = False
+                try:
+                    import cupy as cp  # type: ignore
+                    if cp.cuda.runtime.getDeviceCount() > 0:
+                        use_gpu = True
+                except Exception:
+                    use_gpu = False
+
+                if use_gpu:
+                    Xg = None
+                    try:
+                        Xg = cp.asarray(return_matrix, dtype=cp.float64)
+                        corr_g = cp.corrcoef(Xg)
+                        corr_matrix = cp.asnumpy(corr_g)
+                    finally:
+                        # 明示的にGPUメモリを解放
+                        try:
+                            del Xg, corr_g  # type: ignore[name-defined]
+                        except Exception:
+                            pass
+                else:
+                    # CPUフォールバック
+                    corr_matrix = np.corrcoef(return_matrix)
+
             elif self.correlation_method == 'spearman':
                 # Spearman相関（ランク相関）
                 from scipy.stats import spearmanr
                 corr_matrix, _ = spearmanr(return_matrix, axis=1)
                 if np.isscalar(corr_matrix):
                     corr_matrix = np.array([[corr_matrix]])
+
             elif self.correlation_method == 'ewm_demean':
-                # Exponentially-weighted correlation with per-asset de-meaning
+                # Exponentially-weighted correlation with per-asset de-meaning（CPU）
                 X = return_matrix.astype(np.float64, copy=False)  # [N,T]
                 N, T = X.shape
                 lam = np.log(2.0) / float(self.ewm_halflife)

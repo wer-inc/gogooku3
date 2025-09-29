@@ -373,12 +373,21 @@ def add_graph_features(
             .alias("graph_pagerank_z_in_comp"),
         ])
 
+        # Normalize dtypes before join to avoid Date/datetime mismatch
+        graph_df = graph_df.rename({"code": "Code", "date": "Date"})
+        if graph_df.schema.get("Date", None) is not None and graph_df["Date"].dtype != pl.Date:
+            try:
+                graph_df = graph_df.with_columns(pl.col("Date").cast(pl.Date, strict=False))
+            except Exception:
+                pass
+        if df.schema.get("Date", None) is not None and df["Date"].dtype != pl.Date:
+            try:
+                df = df.with_columns(pl.col("Date").cast(pl.Date, strict=False))
+            except Exception:
+                pass
+
         # Merge back with original dataframe
-        df = df.join(
-            graph_df.rename({"code": "Code", "date": "Date"}),
-            on=["Code", "Date"],
-            how="left"
-        )
+        df = df.join(graph_df, on=["Code", "Date"], how="left")
 
         # Fill nulls with 0
         graph_cols = [col for col in df.columns if col.startswith("graph_") or col.startswith("peer_")]

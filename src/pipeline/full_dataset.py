@@ -1664,6 +1664,11 @@ async def enrich_and_save(
 
         # Finally, project to the exact schema (drops all non-spec columns)
         keep_cols = [c for c in DOC_COLUMNS if c in df.columns]
+        # Preserve optional graph features (GPU/CPU) and peer_* stats if present
+        opt_extra = [c for c in df.columns if c.startswith("graph_") or c.startswith("peer_")]
+        for c in opt_extra:
+            if c not in keep_cols:
+                keep_cols.append(c)
         logger.info(
             "Post-alignment column check: MarketCode=%s, sector33_code=%s, shares_outstanding=%s, stmt_yoy_sales=%s",
             "MarketCode" in df.columns,

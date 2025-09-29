@@ -756,6 +756,22 @@ class JQuantsPipelineV4Optimized:
             if not statements_df.is_empty():
                 result = self._ensure_code_utf8(statements_df)
                 statements_df = result if result is not None and not result.is_empty() else statements_df
+                # Save a reusable parquet for future runs (caching)
+                try:
+                    outdir = self.output_dir
+                    outdir.mkdir(parents=True, exist_ok=True)
+                    out_path = outdir / f"event_raw_statements_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+                    statements_df.write_parquet(out_path)
+                    # Maintain a stable symlink for fallback loaders
+                    try:
+                        link = outdir / "event_raw_statements.parquet"
+                        if link.exists() or link.is_symlink():
+                            link.unlink()
+                        link.symlink_to(out_path)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.warning(f"  Failed to save statements parquet for reuse: {e}")
 
             if not trades_spec_df.is_empty():
                 result = self._ensure_code_utf8(trades_spec_df)
@@ -880,7 +896,7 @@ class JQuantsPipelineV4Optimized:
         try:
             if trades_spec_df is None or trades_spec_df.is_empty():
                 # フォールバック: output/ 以下のtrades_spec parquetを探索
-                flow_cands = sorted(self.output_dir.glob("trades_spec_*.parquet"))
+                flow_cands = sorted(self.output_dir.rglob("trades_spec_*.parquet"))
                 if flow_cands:
                     trades_spec_df = pl.read_parquet(flow_cands[-1])
             if trades_spec_df is not None and not trades_spec_df.is_empty():
@@ -902,7 +918,7 @@ class JQuantsPipelineV4Optimized:
 
         # Margin weekly (existing style): auto-discover under output/, skip if missing
         try:
-            cands = sorted(self.output_dir.glob("weekly_margin_interest_*.parquet"))
+            cands = sorted(self.output_dir.rglob("weekly_margin_interest_*.parquet"))
             wdf = pl.read_parquet(cands[-1]) if cands else None
             if wdf is not None and not wdf.is_empty():
                 df = self.builder.add_margin_weekly_block(
@@ -1016,7 +1032,7 @@ class JQuantsPipelineV4Optimized:
                 import re as _re
                 best = None
                 best_span = -1
-                for cand in sorted((self.output_dir).glob('topix_history_*.parquet')):
+                for cand in sorted((self.output_dir).rglob('topix_history_*.parquet')):
                     m = _re.search(r"topix_history_(\d{8})_(\d{8})\.parquet$", cand.name)
                     if not m:
                         continue
@@ -1031,7 +1047,7 @@ class JQuantsPipelineV4Optimized:
             try:
                 import re as _re
                 flow_best = None
-                for cand in sorted((self.output_dir).glob('trades_spec_*.parquet')):
+                for cand in sorted((self.output_dir).rglob('trades_spec_*.parquet')):
                     flow_best = cand
                 trades_spec_df = pl.read_parquet(flow_best) if flow_best else pl.DataFrame()
             except Exception:
