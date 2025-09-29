@@ -174,6 +174,13 @@ class FinancialGraphBuilder:
         # 日付範囲を計算
         date_start = date_end - timedelta(days=self.correlation_window + 10)
 
+        # 型正規化（Date vs Datetimeの不一致を避ける）
+        try:
+            if data.schema.get('date', None) is not None and data['date'].dtype != pl.Date:
+                data = data.with_columns(pl.col('date').cast(pl.Date, strict=False))
+        except Exception:
+            pass
+
         # データフィルタ
         filtered_data = data.filter(
             (pl.col('date') >= date_start) &
