@@ -13,6 +13,8 @@ help:
 	@echo "make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD - Build dataset with GPU-ETL (all 395 features enabled by default)"
 	@echo "make dataset-full-prod START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/full_dataset.yaml"
 	@echo "make dataset-full-research START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/research_full_indices.yaml"
+	@echo "make clean-dataset-artifacts           - Remove dataset artifacts under output/ (keeps raw/, caches)"
+	@echo "make rebuild-dataset [START=YYYY-MM-DD END=YYYY-MM-DD] - Clean artifacts then run dataset-full-gpu (defaults: 2015-09-27..2025-09-26)"
 	@echo "make check-indices  DATASET=output/ml_dataset_latest_full.parquet - Validate indices features"
 	@echo "make fetch-all    START=YYYY-MM-DD END=YYYY-MM-DD - Fetch prices/topix/trades_spec/statements"
 	@echo "make clean-deprecated                 - Remove deprecated shim scripts (use --apply via VAR APPLY=1)"
@@ -133,11 +135,67 @@ dataset-full:
 # GPU-ETL acceleration enabled dataset generation (all features enabled by default)
 # Now includes GPU-accelerated graph features (100x faster correlation computation)
 .PHONY: dataset-full-gpu
+# Tunables (can be overridden on the command line):
+#   GRAPH_THRESHOLD=0.5 GRAPH_MAX_K=6 CACHE_DIR=output/graph_cache
+GRAPH_THRESHOLD ?= 0.5
+GRAPH_MAX_K ?= 6
+CACHE_DIR ?= output/graph_cache
+
 dataset-full-gpu:
-	@echo "🚀 Running dataset generation with GPU-ETL enabled (all 395 features enabled by default)"
-	@echo "✅ GPU-accelerated graph features enabled (CuPy correlation, auto-detect cuGraph)"
-	@export REQUIRE_GPU=1 USE_GPU_ETL=1 RMM_POOL_SIZE=70GB CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src && \
-	python scripts/pipelines/run_full_dataset.py --jquants --start-date $${START} --end-date $${END} --gpu-etl --enable-graph-features --graph-cache-dir output/graph_cache
+	@echo "🚀 Running dataset generation with GPU-ETL enabled (395 features)"
+	@echo "✅ Graph: cuGraph/CuPy with safer memory config (cuda_async + spill)"
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "Usage: make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD"; exit 1; }
+	@# Prefer async allocator + spill to avoid pool OOM. Allow overriding via env if needed.
+	@export REQUIRE_GPU=1 USE_GPU_ETL=1 \
+	  RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=0 CUDF_SPILL=1 \
+	  CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src && \
+	python scripts/pipelines/run_full_dataset.py \
+	  --jquants --start-date $${START} --end-date $${END} \
+	  --gpu-etl --enable-graph-features \
+	  --graph-cache-dir $(CACHE_DIR) \
+	  --graph-threshold $(GRAPH_THRESHOLD) --graph-max-k $(GRAPH_MAX_K) \
+	  --futures-continuous \
+	  --attach-nk225-option-market \
+	  --sector-onehot33
+
+#
+# Convenience: one-liners for safe cleanup + rebuild
+#
+.PHONY: clean-dataset-artifacts rebuild-dataset
+
+# Only remove ML dataset artifacts; keep raw sources and caches intact.
+clean-dataset-artifacts:
+	@echo "🧹 Removing dataset artifacts under output/ and output/datasets (keeping raw/*, caches)"
+	@set -e; \
+	rm -f output/ml_dataset_*.parquet output/ml_dataset_*_metadata.json 2>/dev/null || true; \
+	rm -f output/performance_report_*.json 2>/dev/null || true; \
+	rm -f output/datasets/ml_dataset_*_full.parquet output/datasets/ml_dataset_*_full_metadata.json 2>/dev/null || true; \
+	for link in \
+	  output/ml_dataset_latest_full.parquet \
+	  output/ml_dataset_latest_full_metadata.json \
+	  output/datasets/ml_dataset_latest_full.parquet \
+	  output/datasets/ml_dataset_latest_full_metadata.json; do \
+	  [ -L "$$link" ] && unlink "$$link" || true; \
+	done; \
+	echo "✅ Cleanup complete."
+
+# Defaults for rebuild (overridable):
+DEFAULT_START ?= 2015-09-27
+DEFAULT_END   ?= 2025-09-26
+
+# Clean artifacts then run GPU-ETL dataset build.
+# Usage:
+#   make rebuild-dataset                       # uses DEFAULT_START/DEFAULT_END
+#   make rebuild-dataset START=YYYY-MM-DD END=YYYY-MM-DD
+rebuild-dataset:
+	@set -euo pipefail; \
+	$(MAKE) clean-dataset-artifacts; \
+	START_VAL="$(START)"; END_VAL="$(END)"; \
+	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
+	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
+	echo "🚀 Rebuilding dataset with START=$$START_VAL END=$$END_VAL"; \
+	$(MAKE) dataset-full-gpu START=$$START_VAL END=$$END_VAL
 
 .PHONY: dataset-full-gpu-bg
 dataset-full-gpu-bg:
@@ -149,7 +207,19 @@ dataset-full-gpu-bg:
 	@ts=$$(date +%Y%m%d_%H%M%S); \
 	log=_logs/background/dataset_full_gpu_$$ts.log; \
 	echo "🚀 Launching dataset-full-gpu in background (log: $$log)"; \
-	nohup bash -lc "START=$$START END=$$END $(MAKE) dataset-full-gpu" > $$log 2>&1 &
+	nohup bash -lc 'export REQUIRE_GPU=1 USE_GPU_ETL=1 \
+	  RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=0 CUDF_SPILL=1 \
+	  CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src; \
+	  python scripts/pipelines/run_full_dataset.py \
+	    --jquants --start-date '"$$START"' --end-date '"$$END"' \
+	    --gpu-etl --enable-graph-features \
+	    --graph-cache-dir '"$(CACHE_DIR)"' \
+	    --graph-threshold '"$(GRAPH_THRESHOLD)"' --graph-max-k '"$(GRAPH_MAX_K)"' \
+	    --futures-continuous \
+	    --attach-nk225-option-market \
+	    --sector-onehot33' \
+	  > $$log 2>&1 & \
+	echo "Started PID $$! (log: $$log)"
 
 .PHONY: dataset-full-prod
 dataset-full-prod:

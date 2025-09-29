@@ -353,8 +353,8 @@ def add_graph_features(
             feats_rows.append(row)
 
     # Convert to Polars DataFrame
-    if feats_rows:
-        graph_df = pl.DataFrame(feats_rows)
+        if feats_rows:
+            graph_df = pl.DataFrame(feats_rows)
 
         # Additional derived features
         graph_df = graph_df.with_columns([
@@ -394,5 +394,12 @@ def add_graph_features(
         df = df.with_columns([
             pl.col(col).fill_null(0) for col in graph_cols
         ])
+
+        # Free CuPy memory blocks between dates (best-effort)
+        try:
+            import cupy as cp  # type: ignore
+            cp.get_default_memory_pool().free_all_blocks()
+        except Exception:
+            pass
 
     return df
