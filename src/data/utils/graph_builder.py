@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import pickle
 from datetime import date, datetime, timedelta
+import gzip
 from pathlib import Path
 from typing import Any
 
@@ -112,7 +113,7 @@ class FinancialGraphBuilder:
         cache_file = self.cache_dir / f"{cache_key}.pkl"
         if cache_file.exists():
             try:
-                with open(cache_file, 'rb') as f:
+                with gzip.open(cache_file, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
                 logger.warning(f"Failed to load cache {cache_file}: {e}")
@@ -125,8 +126,14 @@ class FinancialGraphBuilder:
 
         cache_file = self.cache_dir / f"{cache_key}.pkl"
         try:
-            with open(cache_file, 'wb') as f:
-                pickle.dump(data, f)
+            # Drop huge correlation matrix to reduce cache size
+            data_to_save = dict(data)
+            if 'correlation_matrix' in data_to_save:
+                data_to_save.pop('correlation_matrix', None)
+
+            # Compressed pickle (~3-10x smaller depending on payload)
+            with gzip.open(cache_file, 'wb', compresslevel=3) as f:
+                pickle.dump(data_to_save, f, protocol=pickle.HIGHEST_PROTOCOL)
             logger.debug(f"Saved graph cache: {cache_file}")
         except Exception as e:
             logger.warning(f"Failed to save cache {cache_file}: {e}")

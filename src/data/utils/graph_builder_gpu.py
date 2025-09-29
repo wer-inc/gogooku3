@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import pickle
 from datetime import date, datetime, timedelta
+import gzip
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +131,7 @@ class FinancialGraphBuilder:
         cache_file = self.cache_dir / f"{cache_key}.pkl"
         if cache_file.exists():
             try:
-                with open(cache_file, 'rb') as f:
+                with gzip.open(cache_file, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
                 logger.warning(f"Failed to load cache {cache_file}: {e}")
@@ -143,13 +144,22 @@ class FinancialGraphBuilder:
 
         cache_file = self.cache_dir / f"{cache_key}.pkl"
         try:
-            # Convert GPU arrays to CPU for caching
-            if GPU_AVAILABLE:
-                if 'correlation_matrix' in data and hasattr(data['correlation_matrix'], 'get'):
-                    data['correlation_matrix'] = data['correlation_matrix'].get()
+            # Make a light-weight copy for caching
+            data_to_save = dict(data)
+            # Convert GPU arrays to CPU if present
+            if GPU_AVAILABLE and 'correlation_matrix' in data_to_save:
+                try:
+                    cm = data_to_save.get('correlation_matrix')
+                    if hasattr(cm, 'get'):
+                        cm = cm.get()
+                    # Drop correlation matrix to keep cache small (recomputed if needed)
+                    data_to_save.pop('correlation_matrix', None)
+                except Exception:
+                    data_to_save.pop('correlation_matrix', None)
 
-            with open(cache_file, 'wb') as f:
-                pickle.dump(data, f)
+            # Compressed pickle
+            with gzip.open(cache_file, 'wb', compresslevel=3) as f:
+                pickle.dump(data_to_save, f, protocol=pickle.HIGHEST_PROTOCOL)
             logger.debug(f"Saved graph cache: {cache_file}")
         except Exception as e:
             logger.warning(f"Failed to save cache {cache_file}: {e}")
