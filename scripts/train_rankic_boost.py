@@ -74,7 +74,12 @@ def main():
         sanity_script = project_root / "scripts/ci/dataset_sanity.py"
         if sanity_script.exists():
             logger.info("[preflight] Running dataset sanity checks (scripts/ci/dataset_sanity.py)")
-            subprocess.run([sys.executable, str(sanity_script)], check=False)
+            # Set DATASET_PATH to point to the correct ML dataset, not event_raw_statements
+            ml_dataset = project_root / "output/ml_dataset_latest_full.parquet"
+            env_sanity = os.environ.copy()
+            if ml_dataset.exists():
+                env_sanity["DATASET_PATH"] = str(ml_dataset)
+            subprocess.run([sys.executable, str(sanity_script)], env=env_sanity, check=False)
         else:
             logger.info("[preflight] dataset_sanity.py not found; skipping")
     except Exception as e:

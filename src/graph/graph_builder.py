@@ -4,8 +4,8 @@ Minimal implementation for training compatibility
 """
 
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import List, Sequence, Tuple
 
 import torch
 
@@ -22,6 +22,10 @@ class GBConfig:
     cache_dir: str | None = "graph_cache"
     ewm_halflife: int = 20
     k: int = 10
+    # New safeguards for training stability
+    min_k: int = 5  # ensure at least this many neighbors per node (per direction)
+    add_self_loops: bool = True  # add i->i edges; many GAT variants expect this
+    min_edges: int = 0  # global lower bound on total edges (0 = disabled)
     log_mktcap_col: str | None = None
     lookback: int = 60
     method: str = "ewm_demean"
@@ -111,7 +115,9 @@ class GraphBuilder:
 
         return edge_index, edge_attr
 
-    def build_correlation_edges(self, features: torch.Tensor, window: int = 20, k: int = 10) -> tuple[torch.Tensor, torch.Tensor]:
+    def build_correlation_edges(
+        self, features: torch.Tensor, window: int = 20, k: int = 10
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Build edges based on returns correlation (A+ approach).
 
@@ -124,8 +130,8 @@ class GraphBuilder:
             edge_index: Edge indices
             edge_attr: Edge attributes (correlation values)
         """
-        n_nodes = features.shape[0]
-        k = min(k, n_nodes - 1)
+        n_nodes = int(features.shape[0])
+        k = int(min(k, max(1, n_nodes - 1)))
 
         # Extract returns (assuming first feature channel is returns)
         if features.shape[1] >= window:
@@ -148,28 +154,95 @@ class GraphBuilder:
         # Get top-k correlations for each node
         values, indices = torch.topk(corr_matrix, k=k, dim=1)
 
-        edge_list = []
-        edge_attr_list = []
+        # Build directed edge set with threshold, then densify to min_k if needed
+        edge_set: set[Tuple[int, int]] = set()
+        edge_attr_map: dict[Tuple[int, int], float] = {}
+
+        thr = float(self.config.edge_threshold)
 
         for i in range(n_nodes):
+            keep_for_i: List[Tuple[int, float]] = []
             for j_idx, corr_val in zip(indices[i], values[i], strict=False):
-                if corr_val > self.config.edge_threshold and not torch.isinf(corr_val):
-                    edge_list.append([i, j_idx.item()])
-                    # Normalize correlation to [0, 1] range
-                    edge_attr_list.append((corr_val.item() + 1.0) / 2.0)
+                j = int(j_idx.item())
+                c = float(corr_val.item())
+                if not torch.isinf(corr_val) and c > thr:
+                    keep_for_i.append((j, c))
+            # If below min_k, backfill with best neighbors regardless of threshold
+            if len(keep_for_i) < int(self.config.min_k):
+                needed = int(self.config.min_k) - len(keep_for_i)
+                # candidates sorted by raw correlation (already sorted by topk)
+                for j_idx, corr_val in zip(indices[i], values[i], strict=False):
+                    if needed <= 0:
+                        break
+                    j = int(j_idx.item())
+                    if j == i:
+                        continue
+                    # avoid duplicates
+                    if all(j != jj for jj, _ in keep_for_i):
+                        keep_for_i.append((j, float(corr_val.item())))
+                        needed -= 1
+            # Insert directed edges (i -> j)
+            for j, c in keep_for_i:
+                edge_set.add((i, j))
+                # Normalize correlation to [0, 1]
+                edge_attr_map[(i, j)] = (c + 1.0) / 2.0
 
-        if len(edge_list) == 0:
-            # Fallback: create minimal connectivity
-            logger.warning("No edges found with correlation threshold, creating minimal graph")
-            for i in range(n_nodes - 1):
-                edge_list.append([i, i + 1])
-                edge_list.append([i + 1, i])
-                edge_attr_list.extend([0.5, 0.5])
+        # Enforce symmetry if configured
+        if bool(self.config.symmetric):
+            symm_pairs = list(edge_set)
+            for i, j in symm_pairs:
+                if (j, i) not in edge_set:
+                    edge_set.add((j, i))
+                    edge_attr_map[(j, i)] = edge_attr_map[(i, j)]
 
-        edge_index = torch.tensor(edge_list, dtype=torch.long).t()
-        edge_attr = torch.tensor(edge_attr_list, dtype=torch.float32).unsqueeze(-1)
+        # Add self-loops if requested
+        if bool(self.config.add_self_loops):
+            for i in range(n_nodes):
+                if (i, i) not in edge_set:
+                    edge_set.add((i, i))
+                    edge_attr_map[(i, i)] = 1.0
 
-        logger.info(f"Built correlation graph: {n_nodes} nodes, {edge_index.shape[1]} edges")
+        # Global minimum edges safeguard
+        if int(self.config.min_edges) > 0 and len(edge_set) < int(self.config.min_edges):
+            # Densify by adding additional top-k neighbors per node cyclically
+            needed_extra = int(self.config.min_edges) - len(edge_set)
+            if needed_extra > 0:
+                for i in range(n_nodes):
+                    if needed_extra <= 0:
+                        break
+                    for j_idx, corr_val in zip(indices[i], values[i], strict=False):
+                        if needed_extra <= 0:
+                            break
+                        j = int(j_idx.item())
+                        if (i, j) not in edge_set:
+                            edge_set.add((i, j))
+                            edge_attr_map[(i, j)] = (float(corr_val.item()) + 1.0) / 2.0
+                            needed_extra -= 1
+
+        if not edge_set:
+            # Last-resort minimal connectivity
+            logger.warning("No edges after safeguards; creating chain connectivity")
+            for i in range(max(1, n_nodes - 1)):
+                edge_set.add((i, (i + 1) % n_nodes))
+                edge_set.add(((i + 1) % n_nodes, i))
+                edge_attr_map[(i, (i + 1) % n_nodes)] = 0.5
+                edge_attr_map[((i + 1) % n_nodes, i)] = 0.5
+
+        # Materialize tensors
+        edge_list: List[Tuple[int, int]] = list(edge_set)
+        edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
+        edge_attr_vals: List[float] = [edge_attr_map[e] for e in edge_list]
+        edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32).unsqueeze(-1)
+
+        # Diagnostics
+        with torch.no_grad():
+            deg = torch.bincount(edge_index[0], minlength=n_nodes).float()
+            avg_deg = float(deg.mean().item()) if deg.numel() > 0 else 0.0
+            min_deg = float(deg.min().item()) if deg.numel() > 0 else 0.0
+        logger.info(
+            f"Built correlation graph: nodes={n_nodes}, edges={int(edge_index.shape[1])}, "
+            f"avg_deg={avg_deg:.2f}, min_deg={min_deg:.0f}, thr={thr}, k={k}, min_k={self.config.min_k}, self_loops={self.config.add_self_loops}"
+        )
 
         return edge_index, edge_attr
 

@@ -6395,7 +6395,13 @@ def train(config: DictConfig) -> None:
                             cache_key = f"{feats_full.size(0)}_{thr}"
                             if cache_key not in sys.modules[__name__]._graph_builder_cache:
                                 _gb_local = _GBL(
-                                    _GBC(max_nodes=int(feats_full.size(0)), edge_threshold=float(thr))
+                                    _GBC(
+                                        max_nodes=int(feats_full.size(0)),
+                                        edge_threshold=float(thr),
+                                        min_k=int(os.getenv("GRAPH_MIN_K", "5")),
+                                        add_self_loops=os.getenv("GRAPH_ADD_SELF_LOOPS", "1") == "1",
+                                        min_edges=int(os.getenv("GRAPH_MIN_EDGES", "0")),
+                                    )
                                 )
                                 sys.modules[__name__]._graph_builder_cache[cache_key] = _gb_local
                             else:
@@ -6764,6 +6770,9 @@ def train(config: DictConfig) -> None:
                                         _GBC2(
                                             max_nodes=int(features.size(0)),
                                             edge_threshold=float(thr),
+                                            min_k=int(os.getenv("GRAPH_MIN_K", "5")),
+                                            add_self_loops=os.getenv("GRAPH_ADD_SELF_LOOPS", "1") == "1",
+                                            min_edges=int(os.getenv("GRAPH_MIN_EDGES", "0")),
                                         )
                                     )
                                     win = int(min(features.size(1), 20))
@@ -7519,7 +7528,13 @@ def train(config: DictConfig) -> None:
                                     except Exception:
                                         thr = 0.0
                                     _gb_local2 = _GBL2(
-                                        _GBC2(max_nodes=int(features.size(0)), edge_threshold=float(thr))
+                                        _GBC2(
+                                            max_nodes=int(features.size(0)),
+                                            edge_threshold=float(thr),
+                                            min_k=int(os.getenv("GRAPH_MIN_K", "5")),
+                                            add_self_loops=os.getenv("GRAPH_ADD_SELF_LOOPS", "1") == "1",
+                                            min_edges=int(os.getenv("GRAPH_MIN_EDGES", "0")),
+                                        )
                                     )
                                     win = int(min(features.size(1), 20))
                                     ei, ea = _gb_local2.build_correlation_edges(

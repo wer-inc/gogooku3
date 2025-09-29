@@ -255,7 +255,8 @@ class FinancialGraphBuilder:
         try:
             if GPU_AVAILABLE:
                 # Transfer to GPU
-                return_matrix_gpu = cp.asarray(return_matrix)
+                # Use float32 to halve memory footprint during correlation
+                return_matrix_gpu = cp.asarray(return_matrix, dtype=cp.float32)
 
                 if self.correlation_method == 'pearson':
                     # GPU Pearson correlation (100x faster)
@@ -271,7 +272,8 @@ class FinancialGraphBuilder:
 
                 elif self.correlation_method == 'ewm_demean':
                     # EWM correlation on GPU
-                    X = return_matrix_gpu.astype(cp.float64)
+                    # EWM on float32 to reduce memory, promote when needed
+                    X = return_matrix_gpu.astype(cp.float32, copy=False)
                     N, T = X.shape
                     lam = cp.log(2.0) / float(self.ewm_halflife)
                     t_idx = cp.arange(T)
@@ -298,6 +300,11 @@ class FinancialGraphBuilder:
                 else:
                     raise ValueError(f"Unsupported correlation method: {self.correlation_method}")
 
+                # Proactively release CuPy pool blocks to avoid fragmentation
+                try:
+                    cp.get_default_memory_pool().free_all_blocks()
+                except Exception:
+                    pass
             else:
                 # Fallback to CPU computation (original code)
                 if self.correlation_method == 'pearson':
