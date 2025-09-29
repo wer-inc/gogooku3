@@ -6871,3 +6871,66 @@ EXTRA_FLAGS="--graph-mode edges --graph-topk 10 --graph-window 60 \
 
 この方針なら、**GATの旨味（銘柄間の情報伝播）を保ったまま**、生成のボトルネックを外せます。
 差分の書き起こしや `run_full_dataset.py` への具体的パッチが必要なら、最小変更で落とし込みます。
+
+
+-----
+
+> 対応内容（完了）
+
+  - cuGraph 導入（GPUグラフ指標をGPU実装へ）
+      - インストール: cugraph-cu12 24.8.0（CUDA12 / cuDF 24.08と整合）
+      - 動作確認: GPU認識済み（A100 80GB）
+  - 速度/機能修正
+      - scripts/pipelines/run_pipeline_v4_optimized.py
+          - raw配下の探索をglob→rglobに変更（trades_spec_*, weekly_margin_*, topix_history_*）
+          - 取得済みstatements_by_dateをparquet保存＋安定symlink（再実行を短縮）
+      - src/pipeline/full_dataset.py
+          - スキーマ厳密化時にgraph_*/peer_*列を保持（従来はドロップされていた）
+      - グラフ計算のGPU最適化＆安定化
+          - src/data/utils/graph_builder_gpu.py / src/gogooku3/features/graph_features_gpu.py
+              - 日付dtype不一致（date vs datetime）を吸収
+              - join前にDateをpl.Dateへキャスト
+          - src/data/utils/graph_builder.py
+              - CPU版でも日付dtype正規化
+  - 検証（抜粋）
+      - ベース（9,019,339行）から直近約120営業日のスライスでGPUグラフ付与
+      - 出力: output/datasets/ml_dataset_20250403_20250926_20250929_043314_full.parquet
+      - 追加列: graph_degree等を含む18列（最終日 非Null 3,794行）
+      - 所要: 約272秒（相関=GPU、グラフ指標=cuGraph）
+
+  高速化のポイント（このマシン向け）
+
+  - グラフ計算をGPUに統一
+      - 既にCuPy/ cuDF/ cuGraphが揃ったので、make dataset-full-gpu ...で自動的にGPU経路を使用
+      - 推奨パラメータ（メモリと性能のバランス）
+          - --graph-window 60（既定）/ --graph-threshold 0.4 / --graph-max-k 8
+          - --graph-cache-dir output/graph_cache（2回目以降を短縮）
+  - 再実行短縮（API律速を回避）
+      - statements_by_dateのparquet化＋symlink、raw探索の再帰化でAPI無し再実行が可能
+  - GPUメモリ
+      - 80GBでも日によっては相関行列が大きくなるため、閾値やmax_kでエッジ数を抑制（OOM回避）
+      - 既にRMMプール70GBを使用（Makefile）。必要ならRMM_POOL_SIZE調整可
+
+  使い方（例）
+
+  - フル実行（GPU-ETL＋GPUグラフ）
+      - make dataset-full-gpu START=2015-09-27 END=2025-09-26
+  - グラフだけ再付与（検証用・高速）
+      - 既存parquetをスライスして--enable-graph-featuresでenrich_and_save呼び出し（実装済）
+
+  ボトルネックの現状と効果
+
+  - API側最大はstatements_by_date（~954秒/10年）で、計算側最適化が有効領域
+  - 計算側はグラフが最重だったが、相関＋グラフ指標をGPU化し大幅短縮
+      - スライス検証では数分→数分弱に短縮（全期間でも相対的に短縮見込み）
+  - 既存の価格・テクニカル等はPolarsで十分高速、調整余地は限定的
+
+  変更ファイル
+
+  - scripts/pipelines/run_pipeline_v4_optimized.py
+  - src/pipeline/full_dataset.py
+  - src/data/utils/graph_builder.py
+  - src/data/utils/graph_builder_gpu.py
+  - src/gogooku3/features/graph_features_gpu.py
+
+  このまま全期間での本番実行（GPUグラフON）に進めます。続けて走らせて、完了後に新しいパフォーマンスレポート（成分別時間・行数）を共有しましょうか？
