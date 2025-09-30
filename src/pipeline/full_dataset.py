@@ -220,7 +220,7 @@ async def enrich_and_save(
     enable_graph_features: bool = False,
     graph_window: int = 60,
     graph_threshold: float = 0.3,
-    graph_max_k: int = 10,
+    graph_max_k: int = 4,
     graph_cache_dir: str | None = None,
     # Special days handling
     disable_halt_mask: bool = False,

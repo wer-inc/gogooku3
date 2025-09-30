@@ -30,7 +30,7 @@ def add_graph_features(
     window: int = 60,
     min_obs: int = 40,
     threshold: float = 0.3,
-    max_k: int = 10,
+    max_k: int = 4,
     method: str = "pearson",
     cache_dir: str | None = None,
 ) -> pl.DataFrame:

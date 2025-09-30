@@ -674,8 +674,15 @@ class JQuantsPipelineV4Optimized:
             price_df = await self.fetcher.fetch_daily_quotes_optimized(
                 session, business_days, target_codes
             )
-            
-            logger.info(f"✅ Price data: {len(price_df)} records, {price_df['Code'].n_unique()} stocks")
+
+            # カラム名の正規化: code -> Code (JQuants APIは小文字を返す場合がある)
+            if not price_df.is_empty():
+                if "code" in price_df.columns and "Code" not in price_df.columns:
+                    price_df = price_df.rename({"code": "Code"})
+                code_col = "Code" if "Code" in price_df.columns else price_df.columns[0]
+                logger.info(f"✅ Price data: {len(price_df)} records, {price_df[code_col].n_unique()} stocks")
+            else:
+                logger.warning("⚠️ Price data is empty")
 
             # Step 4: 財務諸表（date軸）
             logger.info("Step 4: Fetching statements (date axis)...")
@@ -701,10 +708,25 @@ class JQuantsPipelineV4Optimized:
             else:
                 logger.warning("No trades_spec fetched via API; will rely on offline fallback if available")
 
-            # Adjustment列の処理
+            # Adjustment列の処理とカラム名の正規化
             if not price_df.is_empty():
                 columns_to_rename = {}
-                
+
+                # JQuants APIのカラム名正規化 (小文字 -> 大文字)
+                if "code" in price_df.columns and "Code" not in price_df.columns:
+                    columns_to_rename["code"] = "Code"
+                if "date" in price_df.columns and "Date" not in price_df.columns:
+                    columns_to_rename["date"] = "Date"
+
+                # 価格カラムの正規化
+                price_cols_map = {
+                    "open": "Open", "high": "High", "low": "Low",
+                    "close": "Close", "volume": "Volume"
+                }
+                for lower_col, upper_col in price_cols_map.items():
+                    if lower_col in price_df.columns and upper_col not in price_df.columns:
+                        columns_to_rename[lower_col] = upper_col
+
                 if "AdjustmentClose" in price_df.columns:
                     columns_to_rename["AdjustmentClose"] = "Close"
                     if "Close" in price_df.columns:
@@ -1053,7 +1075,14 @@ class JQuantsPipelineV4Optimized:
             except Exception:
                 trades_spec_df = pl.DataFrame()
 
-        logger.info(f"Data loaded: {len(price_df)} rows, {price_df['Code'].n_unique()} stocks")
+        # カラム名の正規化 (再確認)
+        if not price_df.is_empty():
+            if "code" in price_df.columns and "Code" not in price_df.columns:
+                price_df = price_df.rename({"code": "Code"})
+            code_col = "Code" if "Code" in price_df.columns else price_df.columns[0]
+            logger.info(f"Data loaded: {len(price_df)} rows, {price_df[code_col].n_unique()} stocks")
+        else:
+            logger.warning("Data loaded: empty price_df")
 
         # Step 2: Process pipeline
         logger.info("\nStep 2: Processing ML features...")

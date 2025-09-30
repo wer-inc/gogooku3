@@ -268,8 +268,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--graph-max-k",
         type=int,
-        default=10,
-        help="Max edges per node (default: 10)",
+        default=4,
+        help="Max edges per node (default: 4)",
     )
     parser.add_argument(
         "--graph-cache-dir",
@@ -432,10 +432,11 @@ async def main() -> int:
         try:
             from src.utils.gpu_etl import init_rmm  # type: ignore
 
-            pool = os.getenv("RMM_POOL_SIZE", "70GB")
+            pool = os.getenv("RMM_POOL_SIZE", "0")
             ok = init_rmm(pool)
             if ok:
-                logger.info(f"RMM initialized with pool={pool}")
+                allocator = os.getenv("RMM_ALLOCATOR", "pool")
+                logger.info(f"RMM initialized (allocator={allocator}, pool_size={pool})")
             else:
                 logger.info("RMM initialization skipped or failed (continuing)")
         except Exception:
@@ -465,7 +466,7 @@ async def main() -> int:
                     args.graph_window = int(g.get("window"))
                 if getattr(args, "graph_threshold", None) in (None, 0.3) and isinstance(g.get("threshold"), (float, int)):
                     args.graph_threshold = float(g.get("threshold"))
-                if getattr(args, "graph_max_k", None) in (None, 10) and isinstance(g.get("max_k"), int):
+                if getattr(args, "graph_max_k", None) in (None, 4) and isinstance(g.get("max_k"), int):
                     args.graph_max_k = int(g.get("max_k"))
                 if getattr(args, "graph_cache_dir", None) in (None,) and g.get("cache_dir"):
                     args.graph_cache_dir = Path(str(g.get("cache_dir")))
@@ -1051,7 +1052,7 @@ async def main() -> int:
         enable_graph_features=args.enable_graph_features,
         graph_window=getattr(args, "graph_window", 60),
         graph_threshold=getattr(args, "graph_threshold", 0.3),
-        graph_max_k=getattr(args, "graph_max_k", 10),
+        graph_max_k=getattr(args, "graph_max_k", 4),
         graph_cache_dir=str(args.graph_cache_dir) if args.graph_cache_dir else None,
         disable_halt_mask=getattr(args, "disable_halt_mask", False),
     )

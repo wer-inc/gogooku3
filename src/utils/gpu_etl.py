@@ -53,7 +53,7 @@ def _attach_cupy_allocator(cp, rmm, logger: logging.Logger) -> bool:  # type: ig
         return False
 
 
-def init_rmm(initial_pool_size: str | None = None) -> bool:
+def init_rmm_legacy(initial_pool_size: str | None = None) -> bool:
     """Initialize RMM memory pool (best-effort).
 
     Args:
@@ -68,31 +68,48 @@ def init_rmm(initial_pool_size: str | None = None) -> bool:
         import rmm  # type: ignore
         import cupy as cp  # type: ignore
 
+        # Check RMM_ALLOCATOR environment variable (cuda_async vs pool)
+        allocator_mode = os.getenv("RMM_ALLOCATOR", "pool").lower()
         size_str = initial_pool_size or os.getenv("RMM_POOL_SIZE", "")
-        kwargs: dict = {"pool_allocator": True}
 
-        if size_str:
-            # Convert human-readable size to bytes
-            size_bytes = None
-            size_str = size_str.upper().strip()
+        # Determine whether to use pool allocator
+        # Use dynamic allocation (no pool) if:
+        # 1. RMM_ALLOCATOR=cuda_async explicitly set
+        # 2. RMM_POOL_SIZE=0 explicitly set
+        use_pool = allocator_mode != "cuda_async" and size_str != "0"
 
-            if size_str.endswith("GB"):
-                size_bytes = int(float(size_str[:-2]) * 1024 ** 3)
-            elif size_str.endswith("G"):
-                size_bytes = int(float(size_str[:-1]) * 1024 ** 3)
-            elif size_str.endswith("MB"):
-                size_bytes = int(float(size_str[:-2]) * 1024 ** 2)
-            elif size_str.endswith("M"):
-                size_bytes = int(float(size_str[:-1]) * 1024 ** 2)
-            else:
-                # Assume it's already in bytes or a plain number
-                try:
-                    size_bytes = int(size_str)
-                except ValueError:
-                    pass
+        kwargs: dict = {}
 
-            if size_bytes:
-                kwargs["initial_pool_size"] = size_bytes
+        if use_pool:
+            kwargs["pool_allocator"] = True
+
+            if size_str:
+                # Convert human-readable size to bytes
+                size_bytes = None
+                size_str_upper = size_str.upper().strip()
+
+                if size_str_upper.endswith("GB"):
+                    size_bytes = int(float(size_str_upper[:-2]) * 1024 ** 3)
+                elif size_str_upper.endswith("G"):
+                    size_bytes = int(float(size_str_upper[:-1]) * 1024 ** 3)
+                elif size_str_upper.endswith("MB"):
+                    size_bytes = int(float(size_str_upper[:-2]) * 1024 ** 2)
+                elif size_str_upper.endswith("M"):
+                    size_bytes = int(float(size_str_upper[:-1]) * 1024 ** 2)
+                else:
+                    # Assume it's already in bytes or a plain number
+                    try:
+                        size_bytes = int(size_str)
+                    except ValueError:
+                        pass
+
+                if size_bytes and size_bytes > 0:
+                    kwargs["initial_pool_size"] = size_bytes
+                    logger.info(f"RMM initialized with pool allocator, initial size={size_str}")
+        else:
+            # Dynamic allocation mode (cuda_async or pool_size=0)
+            kwargs["pool_allocator"] = False
+            logger.info(f"RMM initialized with dynamic allocation (allocator={allocator_mode}, no pool)")
 
         # Managed memory can be problematic on some systems, make it optional
         if os.getenv("RMM_MANAGED_MEMORY", "0") == "1":
@@ -231,6 +248,72 @@ def cs_rank_and_z(
             ]
         )
     return out
+
+
+def init_rmm(initial_pool_size: str | None = None) -> bool:
+    """Modern RMM initialization that explicitly supports cuda_async.
+
+    Behavior:
+    - If RMM_ALLOCATOR=cuda_async → use CudaAsyncMemoryResource. When RMM_POOL_SIZE>0,
+      wrap with PoolMemoryResource using the requested initial pool size.
+    - Otherwise falls back to legacy reinitialize semantics (via init_rmm_legacy).
+    """
+    logger = logging.getLogger(__name__)
+
+    def _parse_bytes(txt: str | None) -> int | None:
+        if not txt:
+            return None
+        s = txt.strip().upper()
+        try:
+            if s.endswith("GB"):
+                return int(float(s[:-2]) * (1024**3))
+            if s.endswith("G"):
+                return int(float(s[:-1]) * (1024**3))
+            if s.endswith("MB"):
+                return int(float(s[:-2]) * (1024**2))
+            if s.endswith("M"):
+                return int(float(s[:-1]) * (1024**2))
+            if s.endswith("KB"):
+                return int(float(s[:-2]) * 1024)
+            if s.endswith("K"):
+                return int(float(s[:-1]) * 1024)
+            return int(float(s))
+        except Exception:
+            return None
+
+    try:
+        import rmm  # type: ignore
+        import cupy as cp  # type: ignore
+
+        allocator_mode = os.getenv("RMM_ALLOCATOR", "pool").lower().strip()
+        size_str = (initial_pool_size if initial_pool_size is not None else os.getenv("RMM_POOL_SIZE", "")).strip()
+        size_bytes = _parse_bytes(size_str)
+
+        if allocator_mode == "cuda_async":
+            try:
+                import rmm.mr as mr  # type: ignore
+
+                base = mr.CudaAsyncMemoryResource()
+                use_pool = bool(size_bytes) and size_bytes > 0
+                resource = mr.PoolMemoryResource(base, initial_pool_size=size_bytes) if use_pool else base
+                mr.set_current_device_resource(resource)
+
+                attached = _attach_cupy_allocator(cp, rmm, logger)
+                if attached:
+                    logger.info(
+                        f"RMM cuda_async configured (pool={'on' if use_pool else 'off'}, size={size_str or '0'})"
+                    )
+                else:
+                    logger.warning("RMM cuda_async set, but CuPy allocator attachment failed; CuPy will use default allocator")
+                return True
+            except Exception as exc:
+                logger.warning(f"cuda_async MR init failed, using legacy path: {exc}")
+
+        # Non-cuda_async or error path → legacy behavior
+        return init_rmm_legacy(initial_pool_size)
+    except Exception as e:
+        logger.warning(f"RMM modern init failed: {e}")
+        return init_rmm_legacy(initial_pool_size)
 
 
 __all__ = [
