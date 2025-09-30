@@ -1,4 +1,4 @@
-.PHONY: help setup test run clean docker-up docker-down
+.PHONY: help setup test clean docker-up docker-down docker-logs
 
 # Use bash for all recipes to support pipefail
 SHELL := /bin/bash
@@ -9,15 +9,16 @@ help:
 	@echo "make setup        - Setup Python environment and dependencies"
 	@echo "make docker-up    - Start all services (MinIO, ClickHouse, etc.)"
 	@echo "make docker-down  - Stop all services"
-	@echo "make test         - Run tests"
-	@echo "make run          - Start Dagster UI"
+	@echo "make test         - Run fast tests (pytest -m 'not slow')"
 	@echo "make clean        - Clean up environment"
 	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset (395 features)"
 	@echo "make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD - Build dataset with GPU-ETL (all 395 features enabled by default)"
 	@echo "make dataset-full-prod START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/full_dataset.yaml"
 	@echo "make dataset-full-research START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/research_full_indices.yaml"
 	@echo "make clean-dataset-artifacts           - Remove dataset artifacts under output/ (keeps raw/, caches)"
-	@echo "make rebuild-dataset [START=YYYY-MM-DD END=YYYY-MM-DD] - Clean artifacts then run dataset-full-gpu (defaults: 2015-09-27..2025-09-26)"
+	@echo "make rebuild-dataset [START=YYYY-MM-DD END=YYYY-MM-DD] - Clean artifacts then run dataset-full-gpu (defaults: last ~5 years, UTC)"
+	@echo "make dataset     - Build dataset with defaults (safe GPU settings)"
+	@echo "make train       - Train stable model with defaults"
 	@echo "make check-indices  DATASET=output/ml_dataset_latest_full.parquet - Validate indices features"
 	@echo "make fetch-all    START=YYYY-MM-DD END=YYYY-MM-DD - Fetch prices/topix/trades_spec/statements"
 	@echo "make clean-deprecated                 - Remove deprecated shim scripts (use --apply via VAR APPLY=1)"
@@ -98,17 +99,14 @@ docker-logs:
 
 # Testing
 test:
-	./venv/bin/pytest batch/tests/ -v --cov=batch
+	pytest -m "not slow"
 
 test-unit:
-	./venv/bin/pytest batch/tests/unit/ -v
+	pytest -m unit
 
 test-integration:
-	./venv/bin/pytest batch/tests/integration/ -v
+	pytest -m integration
 
-# Run Dagster
-run:
-	./venv/bin/dagster dev -f batch/dagster/repository.py
 
 # Development
 dev: setup docker-up
@@ -144,15 +142,18 @@ GRAPH_THRESHOLD ?= 0.5
 GRAPH_MAX_K ?= 4
 CACHE_DIR ?= output/graph_cache
 
+# Common safe GPU env (async allocator + spill)
+SAFE_GPU_ENV ?= REQUIRE_GPU=1 USE_GPU_ETL=1 \
+	RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=0 CUDF_SPILL=1 \
+	CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src
+
 dataset-full-gpu:
 	@echo "🚀 Running dataset generation with GPU-ETL enabled (395 features)"
 	@echo "✅ Graph: cuGraph/CuPy with safer memory config (cuda_async + spill)"
 	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
 	  echo "Usage: make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD"; exit 1; }
 	@# Prefer async allocator + spill to avoid pool OOM. Allow overriding via env if needed.
-	@export REQUIRE_GPU=1 USE_GPU_ETL=1 \
-	  RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=0 CUDF_SPILL=1 \
-	  CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src && \
+	@env $(SAFE_GPU_ENV) \
 	python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $${START} --end-date $${END} \
 	  --gpu-etl --enable-graph-features \
@@ -219,17 +220,15 @@ dataset-full-gpu-bg:
 	@ts=$$(date +%Y%m%d_%H%M%S); \
 	log=_logs/background/dataset_full_gpu_$$ts.log; \
 	echo "🚀 Launching dataset-full-gpu in background (log: $$log)"; \
-	nohup bash -lc 'export REQUIRE_GPU=1 USE_GPU_ETL=1 \
-	  RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=0 CUDF_SPILL=1 \
-	  CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src; \
+	nohup env $(SAFE_GPU_ENV) \
 	  python scripts/pipelines/run_full_dataset.py \
-	    --jquants --start-date '"$$START"' --end-date '"$$END"' \
+	    --jquants --start-date "$$START" --end-date "$$END" \
 	    --gpu-etl --enable-graph-features \
-	    --graph-cache-dir '"$(CACHE_DIR)"' \
-	    --graph-threshold '"$(GRAPH_THRESHOLD)"' --graph-max-k '"$(GRAPH_MAX_K)"' \
+	    --graph-cache-dir "$(CACHE_DIR)" \
+	    --graph-threshold "$(GRAPH_THRESHOLD)" --graph-max-k "$(GRAPH_MAX_K)" \
 	    --futures-continuous \
 	    --attach-nk225-option-market \
-	    --sector-onehot33' \
+	    --sector-onehot33 \
 	  > $$log 2>&1 & \
 	echo "Started PID $$! (log: $$log)"
 
@@ -300,10 +299,6 @@ research-all: research-baseline research-lags
 REPORT ?= reports/research_report.md
 FACTORS ?= returns_5d,ret_1d_vs_sec,rank_ret_1d,macd_hist_slope,graph_degree
 RHORIZONS ?= 1,5,10,20
-# Defaults for splits reference (reuse baseline defaults)
-NSPLITS ?= 5
-EMBARGO ?= 20
-SPLITS_JSON ?= output/eval_splits_$(NSPLITS)fold_$(EMBARGO)d.json
 research-report:
 	@echo "📝 Generating research report: $(REPORT)"
 	python scripts/tools/research_report.py --dataset $(DATASET) --factors $(FACTORS) --horizons $(RHORIZONS) --out $(REPORT) --csv $(REPORT:.md=.csv) --splits-json $(SPLITS_JSON)
