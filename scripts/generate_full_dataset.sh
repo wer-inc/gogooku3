@@ -11,7 +11,9 @@ echo "=================================================="
 # Set environment variables for GPU and features
 export REQUIRE_GPU=1
 export USE_GPU_ETL=1
-export RMM_POOL_SIZE=70GB
+export RMM_ALLOCATOR=cuda_async
+export RMM_POOL_SIZE=0
+export CUDF_SPILL=1
 export CUDA_VISIBLE_DEVICES=0
 export PYTHONPATH=src:scripts
 

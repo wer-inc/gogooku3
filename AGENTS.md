@@ -1,7 +1,5 @@
 # Repository Guidelines
 
-This file is a concise contributor guide for gogooku3. It applies repo‑wide; nested AGENTS.md files may override locally.
-
 ## Project Structure & Module Organization
 - Code: `src/gogooku3/` (CLI, utils, features, models, training, graph, compat)
 - Pipelines: `scripts/` (e.g., `run_safe_training.py`, `train_atft.py`, `pipelines/`)
@@ -11,7 +9,7 @@ This file is a concise contributor guide for gogooku3. It applies repo‑wide; n
 - Ops: `dagster_repo/`, `docker-compose*.yml`
 
 ## Build, Test, and Development Commands
-- Setup: `pip install -e ".[dev]"` or `make setup` (editable install + dev deps).
+- Setup: `pip install -e ".[dev]"` or `make setup` — editable install + dev deps.
 - Train: `gogooku3 train --config configs/atft/train/production.yaml`.
 - Safe CV: `python scripts/run_safe_training.py --n-splits 2 --memory-limit 6`.
 - Tests (fast): `pytest -m "not slow"`.
@@ -26,9 +24,8 @@ This file is a concise contributor guide for gogooku3. It applies repo‑wide; n
 
 ## Testing Guidelines
 - Framework: `pytest`; markers: `unit`, `integration`, `slow`, `smoke`, `requires_api`.
-- Name tests like `tests/test_<module>.py::TestClass::test_case`.
 - Deterministic: no network in unit tests; gate external calls with `@pytest.mark.requires_api`.
-- Run fast suite: `pytest -m "not slow"`; add coverage with the command above.
+- Run fast suite: `pytest -m "not slow"`; add coverage as above.
 - Use shared data from `tests/fixtures/`.
 
 ## Commit & Pull Request Guidelines

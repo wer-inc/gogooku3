@@ -6,7 +6,7 @@ gpu_etl:
 
   # RMM (RAPIDS Memory Manager) 設定
   rmm:
-    pool_size: "70GB"  # GPUメモリプールサイズ
+    pool_size: "0"  # 動的割り当て（cuda_async推奨）
     managed_memory: false  # 管理メモリモード（問題がある場合はfalse）
 
   # CUDA設定
@@ -35,6 +35,8 @@ gpu_etl:
 environment:
   REQUIRE_GPU: "1"
   USE_GPU_ETL: "1"
-  RMM_POOL_SIZE: "70GB"
+  RMM_ALLOCATOR: "cuda_async"
+  RMM_POOL_SIZE: "0"
+  CUDF_SPILL: "1"
   CUDA_VISIBLE_DEVICES: "0"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"

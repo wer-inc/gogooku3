@@ -1,5 +1,8 @@
 .PHONY: help setup test run clean docker-up docker-down
 
+# Use bash for all recipes to support pipefail
+SHELL := /bin/bash
+
 help:
 	@echo "gogooku3 batch processing"
 	@echo "========================"
@@ -136,9 +139,9 @@ dataset-full:
 # Now includes GPU-accelerated graph features (100x faster correlation computation)
 .PHONY: dataset-full-gpu
 # Tunables (can be overridden on the command line):
-#   GRAPH_THRESHOLD=0.5 GRAPH_MAX_K=6 CACHE_DIR=output/graph_cache
+#   GRAPH_THRESHOLD=0.5 GRAPH_MAX_K=4 CACHE_DIR=output/graph_cache
 GRAPH_THRESHOLD ?= 0.5
-GRAPH_MAX_K ?= 6
+GRAPH_MAX_K ?= 4
 CACHE_DIR ?= output/graph_cache
 
 dataset-full-gpu:
@@ -180,9 +183,10 @@ clean-dataset-artifacts:
 	done; \
 	echo "✅ Cleanup complete."
 
-# Defaults for rebuild (overridable):
-DEFAULT_START ?= 2015-09-27
-DEFAULT_END   ?= 2025-09-26
+# Defaults for rebuild (overridable, computed dynamically):
+# End = yesterday (UTC), Start ≈ End - 5y + 1d
+DEFAULT_END   ?= $(shell date -u -d "yesterday" +%F)
+DEFAULT_START ?= $(shell date -u -d "yesterday -5 years +1 day" +%F)
 
 # Clean artifacts then run GPU-ETL dataset build.
 # Usage:
@@ -196,6 +200,14 @@ rebuild-dataset:
 	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
 	echo "🚀 Rebuilding dataset with START=$$START_VAL END=$$END_VAL"; \
 	$(MAKE) dataset-full-gpu START=$$START_VAL END=$$END_VAL
+
+# Simple aliases for minimal manual
+.PHONY: dataset train
+dataset:
+	@$(MAKE) rebuild-dataset
+
+train:
+	@$(MAKE) train-stable
 
 .PHONY: dataset-full-gpu-bg
 dataset-full-gpu-bg:

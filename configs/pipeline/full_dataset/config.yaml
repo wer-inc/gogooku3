@@ -73,7 +73,7 @@ pipeline:
   enable_graph_features: false
   graph_window: 60
   graph_threshold: 0.3
-  graph_max_k: 10
+  graph_max_k: 4
   graph_cache_dir: null
 
   # Special days
