@@ -4081,6 +4081,25 @@ def fix_seed(seed: int = 42, deterministic: bool = False):
 def train(config: DictConfig) -> None:
     """メイン学習関数"""
     logger.info("Starting production training...")
+
+    # ============================================================================
+    # A100 GPU Optimizations
+    # ============================================================================
+    if torch.cuda.is_available():
+        # Enable TF32 for faster matmul on A100 (Ampere and newer)
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        # Enable cuDNN benchmark for faster convolutions (safe for fixed input sizes)
+        torch.backends.cudnn.benchmark = True
+        # Disable cuDNN deterministic for better performance
+        torch.backends.cudnn.deterministic = False
+        logger.info("🚀 A100 optimizations enabled: TF32=True, cudnn_benchmark=True")
+
+        # Log GPU info
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
+        logger.info(f"🎮 GPU: {gpu_name} ({gpu_mem:.1f}GB)")
+
     # Optional MLflow setup (enable with MLFLOW=1)
     mlf_enabled = os.getenv("MLFLOW", "0") == "1"
     mlf = None
@@ -5564,10 +5583,21 @@ def train(config: DictConfig) -> None:
                 model = model.to(memory_format=torch.channels_last)
             # Disable compile by default for stability unless explicitly enabled
             try:
-                if getattr(final_config.model.optimization, "compile", False) is True:
-                    model = torch.compile(model, mode="default", dynamic=False)
-            except Exception:
-                pass
+                compile_cfg = getattr(final_config.model.optimization, "compile", None)
+                if compile_cfg and getattr(compile_cfg, "enabled", False) is True:
+                    compile_mode = getattr(compile_cfg, "mode", "default")
+                    compile_dynamic = getattr(compile_cfg, "dynamic", False)
+                    compile_fullgraph = getattr(compile_cfg, "fullgraph", False)
+                    logger.info(f"🔧 torch.compile enabled: mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}")
+                    model = torch.compile(
+                        model,
+                        mode=compile_mode,
+                        dynamic=compile_dynamic,
+                        fullgraph=compile_fullgraph
+                    )
+                    logger.info("✅ torch.compile applied successfully")
+            except Exception as e:
+                logger.warning(f"⚠️ torch.compile failed: {e}")
             logger.info(
                 f"ATFT-GAT-FAN model parameters: {sum(p.numel() for p in model.parameters()):,}"
             )

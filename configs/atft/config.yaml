@@ -8,7 +8,7 @@ data:
     lookback: 60
     method: ewm_demean
     min_obs: 40
-    use_in_training: true
+    use_in_training: false  # OPTIMIZATION: Disable graph rebuild during validation (GPU bottleneck fix)
     return_cols:
     - return_1d
     - feat_ret_1d

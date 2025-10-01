@@ -94,9 +94,9 @@ optimization:
     channels_last: true
   compile:
     enabled: true  # Enabled for torch.compile optimization
-    mode: default
-    fullgraph: false
-    dynamic: false
+    mode: reduce-overhead  # FIX: max-autotune causes CUDA misaligned address errors on A100
+    fullgraph: false  # Keep false for safety with dynamic graphs
+    dynamic: false  # Static shapes for better optimization
   inference:
     use_torch_script: false
     use_onnx: false
