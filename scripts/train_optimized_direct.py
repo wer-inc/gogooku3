@@ -19,12 +19,12 @@ def main():
     # Set up environment
     env = os.environ.copy()
 
-    # Critical optimizations from PDF (with safer worker settings)
+    # Critical optimizations from PDF (OPTIMIZED for A100)
     env.update({
         "ALLOW_UNSAFE_DATALOADER": "1",
-        "NUM_WORKERS": "2",  # Reduced from 8 to avoid crashes
-        "PERSISTENT_WORKERS": "0",  # Disable to avoid worker issues
-        "PREFETCH_FACTOR": "2",  # Reduced from 4
+        "NUM_WORKERS": "8",  # OPTIMIZATION: Optimal for A100 GPU
+        "PERSISTENT_WORKERS": "1",  # OPTIMIZATION: Reuse workers for efficiency
+        "PREFETCH_FACTOR": "4",  # OPTIMIZATION: Optimal ratio with num_workers
         "PIN_MEMORY": "1",
         "USE_RANKIC": "1",
         "RANKIC_WEIGHT": "0.2",
@@ -33,11 +33,12 @@ def main():
         "SHARPE_WEIGHT": "0.3",
         "MODEL_HIDDEN_SIZE": "256",
         "ENABLE_TORCH_COMPILE": "1",
-        "TORCH_COMPILE_MODE": "max-autotune",
+        "TORCH_COMPILE_MODE": "reduce-overhead",  # FIX: max-autotune causes CUDA misaligned address errors
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_BACKENDS_CUDNN_BENCHMARK": "1",
         "TF32_ENABLED": "1",
         "CUDA_LAUNCH_BLOCKING": "0",
+        "OUTPUT_BASE": str(PROJECT_ROOT / "output"),  # FIX: Required by config interpolation
     })
 
     # Check if ATFT data exists
@@ -53,14 +54,15 @@ def main():
         sys.executable,
         str(PROJECT_ROOT / "scripts/train_atft.py"),
         "--config-path", str(PROJECT_ROOT / "configs/atft"),
-        "--config-name", "config_production",  # Use working config
+        "--config-name", "config_production_optimized",  # OPTIMIZATION: Use fully optimized config
         # Add overrides AFTER config arguments
         f"data.source.data_dir={atft_data_path}",
         "model.hidden_size=256",
         "improvements.compile_model=true",
-        "train.batch.train_batch_size=2048",  # Correct path
+        # Removed: batch_size override (using config default: batch_size=2048 × accumulate_grad_batches=2 = effective 4096)
         "train.optimizer.lr=5e-4",
         "train.trainer.max_epochs=120",
+        "data.graph_builder.use_in_training=false",  # OPTIMIZATION: Disable validation graph rebuild (GPU bottleneck fix)
     ]
 
     print("=" * 60)

@@ -177,7 +177,7 @@ performance:
   # PyTorch 2.x compilation
   compile:
     enabled: true
-    mode: max-autotune  # Maximum optimization
+    mode: reduce-overhead  # FIX: max-autotune causes CUDA misaligned address errors
     fullgraph: false
     dynamic: false
 

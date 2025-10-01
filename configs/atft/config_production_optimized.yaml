@@ -28,7 +28,7 @@ hydra:
 improvements:
   # torch.compile有効化 (PDFの提案通り)
   compile_model: true  # Changed from false
-  compile_mode: "max-autotune"  # Options: "default", "reduce-overhead", "max-autotune"
+  compile_mode: "reduce-overhead"  # FIX: max-autotune causes CUDA misaligned address errors
   compile_fullgraph: false
   compile_dynamic: false
 
@@ -247,7 +247,7 @@ data:
     lookback: 60
     method: ewm_demean
     min_obs: 40
-    use_in_training: true
+    use_in_training: false  # OPTIMIZATION: Disable graph rebuild during validation to eliminate CPU bottleneck
     return_cols:
     - return_1d
     - feat_ret_1d

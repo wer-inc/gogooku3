@@ -2,14 +2,14 @@ name: production
 
 # Batch configuration optimized for A100 GPU with stability
 batch:
-  train_batch_size: 4096
+  train_batch_size: 4096  # Optimized for A100 80GB
   val_batch_size: 6144
   test_batch_size: 6144
-  num_workers: 16
-  prefetch_factor: 8
-  persistent_workers: true
-  pin_memory: true
-  gradient_accumulation_steps: 1
+  num_workers: 8  # OPTIMIZATION: Reduced from 16 to prevent CPU bottleneck and memory leaks
+  prefetch_factor: 4  # OPTIMIZATION: Reduced from 8 to match optimal num_workers ratio
+  persistent_workers: true  # Reuse workers across epochs
+  pin_memory: true  # Fast GPU transfer
+  gradient_accumulation_steps: 2  # OPTIMIZATION: Effective batch = 8192
 
 # Optimizer configuration optimized for financial ML
 optimizer:
@@ -47,7 +47,7 @@ trainer:
   detect_anomaly: false
   benchmark: true
   deterministic: false
-  precision: 16-mixed
+  precision: bf16-mixed  # OPTIMIZATION: BF16 is faster and more stable on A100 than FP16
   accelerator: gpu
   devices: 1
 
