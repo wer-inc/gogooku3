@@ -513,6 +513,446 @@ async def enrich_and_save(
     except Exception as e:
         logger.warning(f"Sector cross-sectional features attach skipped: {e}")
 
+    # Sector aggregation features (Phase 2.5): sector equal-weighted returns, momentum, volatility
+    # CRITICAL: Error stops pipeline to ensure root cause resolution
+    from src.gogooku3.features.sector_aggregation import add_sector_aggregation_features
+    df = add_sector_aggregation_features(df, min_members=3)
+    logger.info("✅ Sector aggregation features attached (sec_ret_eq, sec_mom, sec_vol, rel_to_sec, beta_to_sec) +30 columns")
+
+    # Sector One-Hot encoding (17 industry sectors)
+    # CRITICAL: Error stops pipeline to ensure root cause resolution
+    if "sector17_id" in df.columns:
+        # Generate dummy variables for sector17_id
+        onehot_df = df.select(["Code", "Date", "sector17_id"]).with_columns([
+            pl.col("sector17_id").cast(pl.Utf8)
+        ]).to_dummies(columns=["sector17_id"], separator="_")
+
+        # Rename columns to have sec17_onehot prefix
+        rename_map = {c: c.replace("sector17_id_", "sec17_onehot_") for c in onehot_df.columns if c.startswith("sector17_id_")}
+        if rename_map:
+            onehot_df = onehot_df.rename(rename_map)
+
+        # Join back to main dataframe
+        onehot_cols = [c for c in onehot_df.columns if c.startswith("sec17_onehot_")]
+        df = df.join(onehot_df.select(["Code", "Date"] + onehot_cols), on=["Code", "Date"], how="left")
+        logger.info(f"✅ Sector One-Hot encoding attached: +{len(onehot_cols)} columns (sec17_onehot_*)")
+    else:
+        logger.warning("sector17_id not found, skipping One-Hot encoding")
+
+    # Window maturity validity flags (Phase 2.6): dataset_new.md Section 10
+    # Indicates when rolling window features have enough historical data to be valid
+    # CRITICAL: Error stops pipeline to ensure root cause resolution
+    # Add row index within each stock's time series
+    df = df.with_columns([
+        pl.col("Date").cum_count().over("Code").alias("_row_idx")
+    ])
+
+    # Window maturity flags based on minimum required periods
+    validity_flags = []
+
+    # RSI2: requires at least 5 periods
+    if "rsi_2" in df.columns or "rsi2" in df.columns:
+        validity_flags.append((pl.col("_row_idx") >= 5).cast(pl.Int8).alias("is_rsi2_valid"))
+
+    # EMA validity flags
+    if any(c in df.columns for c in ["ema_5", "ma_5", "ema5"]):
+        validity_flags.append((pl.col("_row_idx") >= 15).cast(pl.Int8).alias("is_ema5_valid"))
+
+    if any(c in df.columns for c in ["ema_10", "ma_10", "ema10"]):
+        validity_flags.append((pl.col("_row_idx") >= 30).cast(pl.Int8).alias("is_ema10_valid"))
+
+    if any(c in df.columns for c in ["ema_20", "ma_20", "ema20"]):
+        validity_flags.append((pl.col("_row_idx") >= 60).cast(pl.Int8).alias("is_ema20_valid"))
+
+    if any(c in df.columns for c in ["ema_200", "ma_200", "ema200"]):
+        validity_flags.append((pl.col("_row_idx") >= 200).cast(pl.Int8).alias("is_ema200_valid"))
+
+    # Market Z-score: requires 252 trading days (1 year)
+    if any(c in df.columns for c in ["mkt_z_20d", "mkt_vol_20d_z"]):
+        validity_flags.append((pl.col("_row_idx") >= 252).cast(pl.Int8).alias("is_mkt_z_valid"))
+
+    # Sector validity: based on member count
+    if "sec_member_cnt" in df.columns:
+        validity_flags.append((pl.col("sec_member_cnt") >= 3).cast(pl.Int8).alias("is_sec_valid"))
+
+    # General MA validity: at least 60 periods for stable moving averages
+    validity_flags.append((pl.col("_row_idx") >= 60).cast(pl.Int8).alias("is_valid_ma"))
+
+    # Add all validity flags at once
+    if validity_flags:
+        df = df.with_columns(validity_flags)
+        logger.info(f"✅ Window maturity validity flags attached: +{len(validity_flags)} columns (is_*_valid)")
+
+    # Clean up temporary row index column
+    df = df.drop("_row_idx")
+
+    # Additional interaction and derived features (Phase 2.7)
+    # Capture important relationships between existing features for enhanced predictive power
+    # CRITICAL: Error stops pipeline to ensure root cause resolution
+    try:
+        interaction_features = []
+
+        # Volume-price interactions
+        if "volume_ratio_20d" in df.columns and "returns_1d" in df.columns:
+            interaction_features.append(
+                (pl.col("volume_ratio_20d") * pl.col("returns_1d")).alias("vol_ret_interaction")
+            )
+
+        if "turnover_ratio_20d" in df.columns and "volatility_20d" in df.columns:
+            interaction_features.append(
+                (pl.col("turnover_ratio_20d") * pl.col("volatility_20d")).alias("turnover_vol_interaction")
+            )
+
+        # Momentum-volatility interactions
+        if "returns_20d" in df.columns and "volatility_20d" in df.columns:
+            interaction_features.append(
+                (pl.col("returns_20d") / (pl.col("volatility_20d") + 1e-12)).alias("risk_adjusted_momentum_20d")
+            )
+
+        if "returns_5d" in df.columns and "volatility_20d" in df.columns:
+            interaction_features.append(
+                (pl.col("returns_5d") / (pl.col("volatility_20d") + 1e-12)).alias("risk_adjusted_momentum_5d")
+            )
+
+        # Market-relative interactions
+        if "beta_60d" in df.columns and "volatility_20d" in df.columns:
+            interaction_features.append(
+                (pl.col("beta_60d") * pl.col("volatility_20d")).alias("systematic_risk")
+            )
+
+        if "alpha_1d" in df.columns and "volume_ratio_20d" in df.columns:
+            interaction_features.append(
+                (pl.col("alpha_1d") * pl.col("volume_ratio_20d")).alias("alpha_volume_signal")
+            )
+
+        # Sector-relative interactions
+        if "rel_to_sec_5d" in df.columns and "sec_vol_20" in df.columns:
+            interaction_features.append(
+                (pl.col("rel_to_sec_5d") / (pl.col("sec_vol_20") + 1e-12)).alias("sec_risk_adjusted_rel_5d")
+            )
+
+        if "beta_to_sec_60" in df.columns and "sec_mom_20" in df.columns:
+            interaction_features.append(
+                (pl.col("beta_to_sec_60") * pl.col("sec_mom_20")).alias("sec_beta_momentum")
+            )
+
+        # Technical indicator combinations
+        if "rsi_14" in df.columns and "returns_5d" in df.columns:
+            interaction_features.append(
+                (pl.col("rsi_14") / 50.0 - 1.0) * pl.col("returns_5d").alias("rsi_momentum_signal")
+            )
+
+        if "ma_gap_5_20" in df.columns and "volatility_20d" in df.columns:
+            interaction_features.append(
+                (pl.col("ma_gap_5_20") / (pl.col("volatility_20d") + 1e-12)).alias("ma_gap_volatility_ratio")
+            )
+
+        # Liquidity-momentum interactions
+        if "adv_ratio_1d_20d" in df.columns and "returns_5d" in df.columns:
+            interaction_features.append(
+                (pl.col("adv_ratio_1d_20d") * pl.col("returns_5d")).alias("liquidity_momentum_signal")
+            )
+
+        # Cross-sectional rank-based features
+        if "returns_20d" in df.columns:
+            interaction_features.append(
+                pl.col("returns_20d").rank(method="average").over("Date").alias("cs_rank_returns_20d")
+            )
+
+        if "volume_ratio_20d" in df.columns:
+            interaction_features.append(
+                pl.col("volume_ratio_20d").rank(method="average").over("Date").alias("cs_rank_volume_ratio")
+            )
+
+        if "volatility_20d" in df.columns:
+            interaction_features.append(
+                pl.col("volatility_20d").rank(method="average").over("Date").alias("cs_rank_volatility")
+            )
+
+        # Price level indicators
+        if "Close" in df.columns:
+            # Distance from 52-week high/low
+            interaction_features.append(
+                pl.col("Close").rolling_max(window_size=252).over("Code").alias("high_252d")
+            )
+            interaction_features.append(
+                pl.col("Close").rolling_min(window_size=252).over("Code").alias("low_252d")
+            )
+
+        if "Close" in df.columns and "high_252d" in [f.meta.output_name() for f in interaction_features if hasattr(f, 'meta')]:
+            # Will be computed in second pass after high_252d exists
+            pass
+
+        # Add all interaction features
+        if interaction_features:
+            df = df.with_columns(interaction_features)
+
+            # Second pass: features that depend on first pass
+            second_pass = []
+            if "high_252d" in df.columns and "low_252d" in df.columns and "Close" in df.columns:
+                second_pass.append(
+                    ((pl.col("Close") - pl.col("low_252d")) / (pl.col("high_252d") - pl.col("low_252d") + 1e-12))
+                    .alias("pct_from_52w_range")
+                )
+
+            if second_pass:
+                df = df.with_columns(second_pass)
+                interaction_features.extend(second_pass)
+
+            logger.info(f"✅ Interaction and derived features attached: +{len(interaction_features)} columns")
+    except Exception as e:
+        logger.error(f"CRITICAL ERROR in interaction features: {e}")
+        raise  # Stop pipeline to ensure root cause resolution
+
+    # Additional rolling statistics and quantile features (Phase 2.8)
+    # Extended time-series features for pattern recognition
+    # CRITICAL: Error stops pipeline to ensure root cause resolution
+    try:
+        rolling_features = []
+
+        # Extended momentum features
+        if "returns_1d" in df.columns:
+            # 3-day and 10-day momentum
+            rolling_features.append(
+                pl.col("returns_1d").rolling_sum(window_size=3).over("Code").alias("returns_3d")
+            )
+            rolling_features.append(
+                pl.col("returns_1d").rolling_sum(window_size=10).over("Code").alias("returns_10d")
+            )
+            rolling_features.append(
+                pl.col("returns_1d").rolling_sum(window_size=60).over("Code").alias("returns_60d")
+            )
+
+        # Extended volatility features
+        if "returns_1d" in df.columns:
+            rolling_features.append(
+                pl.col("returns_1d").rolling_std(window_size=5).over("Code").mul(252**0.5).alias("volatility_5d")
+            )
+            rolling_features.append(
+                pl.col("returns_1d").rolling_std(window_size=60).over("Code").mul(252**0.5).alias("volatility_60d")
+            )
+
+        # Rolling skewness and kurtosis indicators (simplified)
+        if "returns_1d" in df.columns:
+            # Positive/negative return ratios as proxy for skewness
+            rolling_features.append(
+                (pl.col("returns_1d") > 0).cast(pl.Float64).rolling_mean(window_size=20).over("Code")
+                .alias("positive_return_ratio_20d")
+            )
+            rolling_features.append(
+                (pl.col("returns_1d") > 0).cast(pl.Float64).rolling_mean(window_size=60).over("Code")
+                .alias("positive_return_ratio_60d")
+            )
+
+        # Volume trend features
+        if "Volume" in df.columns:
+            rolling_features.append(
+                pl.col("Volume").rolling_mean(window_size=5).over("Code").alias("volume_ma_5d")
+            )
+            rolling_features.append(
+                pl.col("Volume").rolling_mean(window_size=10).over("Code").alias("volume_ma_10d")
+            )
+            rolling_features.append(
+                pl.col("Volume").rolling_mean(window_size=60).over("Code").alias("volume_ma_60d")
+            )
+
+        # Volume acceleration (change in volume trend)
+        if "Volume" in df.columns:
+            # Will compute after volume_ma_5d exists
+            pass
+
+        # Price momentum consistency
+        if "returns_5d" in df.columns and "returns_20d" in df.columns:
+            rolling_features.append(
+                (pl.col("returns_5d").sign() == pl.col("returns_20d").sign()).cast(pl.Int8)
+                .alias("momentum_consistency_5_20")
+            )
+
+        # Cross-sectional quantile features
+        if "returns_1d" in df.columns:
+            rolling_features.append(
+                pl.col("returns_1d").rank(method="average").over("Date") / pl.count().over("Date")
+                .alias("cs_quantile_returns_1d")
+            )
+
+        if "returns_5d" in df.columns:
+            rolling_features.append(
+                pl.col("returns_5d").rank(method="average").over("Date") / pl.count().over("Date")
+                .alias("cs_quantile_returns_5d")
+            )
+
+        if "Volume" in df.columns:
+            rolling_features.append(
+                pl.col("Volume").rank(method="average").over("Date") / pl.count().over("Date")
+                .alias("cs_quantile_volume")
+            )
+
+        # Add first batch of rolling features
+        if rolling_features:
+            df = df.with_columns(rolling_features)
+
+            # Second pass: features that depend on first pass
+            second_pass_rolling = []
+
+            # Volume acceleration
+            if "volume_ma_5d" in df.columns and "volume_ma_20d" in df.columns:
+                second_pass_rolling.append(
+                    ((pl.col("volume_ma_5d") - pl.col("volume_ma_20d")) / (pl.col("volume_ma_20d") + 1e-12))
+                    .alias("volume_ma_acceleration")
+                )
+
+            # Volatility ratio (recent vs longer-term)
+            if "volatility_5d" in df.columns and "volatility_20d" in df.columns:
+                second_pass_rolling.append(
+                    (pl.col("volatility_5d") / (pl.col("volatility_20d") + 1e-12))
+                    .alias("volatility_ratio_5_20")
+                )
+
+            if second_pass_rolling:
+                df = df.with_columns(second_pass_rolling)
+                rolling_features.extend(second_pass_rolling)
+
+            logger.info(f"✅ Extended rolling statistics and quantile features attached: +{len(rolling_features)} columns")
+    except Exception as e:
+        logger.error(f"CRITICAL ERROR in rolling statistics features: {e}")
+        raise  # Stop pipeline to ensure root cause resolution
+
+    # Calendar and regime features (Phase 2.9)
+    # Time-based patterns and market regime indicators
+    # CRITICAL: Error stops pipeline to ensure root cause resolution
+    try:
+        calendar_features = []
+
+        # Calendar features from Date column
+        if "Date" in df.columns:
+            calendar_features.extend([
+                pl.col("Date").dt.month().alias("month"),
+                pl.col("Date").dt.quarter().alias("quarter"),
+                pl.col("Date").dt.weekday().alias("day_of_week"),
+                pl.col("Date").dt.day().alias("day_of_month"),
+            ])
+
+            # Month-end effect (last 3 trading days approximation)
+            calendar_features.append(
+                (pl.col("Date").dt.day() >= 27).cast(pl.Int8).alias("is_month_end")
+            )
+
+            # Quarter-end effect
+            calendar_features.append(
+                (pl.col("Date").dt.month().is_in([3, 6, 9, 12]) & (pl.col("Date").dt.day() >= 27)).cast(pl.Int8)
+                .alias("is_quarter_end")
+            )
+
+            # Year-end effect (December)
+            calendar_features.append(
+                (pl.col("Date").dt.month() == 12).cast(pl.Int8).alias("is_year_end_month")
+            )
+
+        # Gap features (open vs previous close)
+        if "Open" in df.columns and "Close" in df.columns:
+            calendar_features.append(
+                ((pl.col("Open") - pl.col("Close").shift(1).over("Code")) / (pl.col("Close").shift(1).over("Code") + 1e-12))
+                .alias("overnight_gap")
+            )
+
+            # Gap up/down flags
+            calendar_features.append(
+                (pl.col("Open") > pl.col("Close").shift(1).over("Code")).cast(pl.Int8).alias("gap_up")
+            )
+
+        # Intraday range features
+        if "High" in df.columns and "Low" in df.columns and "Close" in df.columns:
+            calendar_features.append(
+                ((pl.col("High") - pl.col("Low")) / (pl.col("Close") + 1e-12)).alias("intraday_range_pct")
+            )
+
+            # Close position within daily range
+            calendar_features.append(
+                ((pl.col("Close") - pl.col("Low")) / (pl.col("High") - pl.col("Low") + 1e-12))
+                .alias("close_position_in_range")
+            )
+
+        # Regime indicators based on market environment
+        if "mkt_ret_1d" in df.columns:
+            # Bull/bear regime based on recent market performance
+            calendar_features.append(
+                (pl.col("mkt_ret_1d").rolling_mean(window_size=20).over("Date") > 0).cast(pl.Int8)
+                .alias("mkt_bull_20d")
+            )
+
+            # High/low volatility regime
+            if "mkt_vol_20d" in df.columns:
+                calendar_features.append(
+                    (pl.col("mkt_vol_20d") > pl.col("mkt_vol_20d").rolling_mean(window_size=60).over("Date"))
+                    .cast(pl.Int8).alias("mkt_high_vol_regime")
+                )
+
+        # Consecutive up/down days
+        if "returns_1d" in df.columns:
+            calendar_features.append(
+                (pl.col("returns_1d") > 0).cast(pl.Int8).alias("up_day")
+            )
+
+            # Streak of positive/negative days (simplified)
+            calendar_features.append(
+                (pl.col("returns_1d") > 0).cast(pl.Int8).rolling_sum(window_size=5).over("Code")
+                .alias("up_days_in_5d")
+            )
+
+        # Price reversal indicators
+        if "returns_1d" in df.columns and "returns_5d" in df.columns:
+            # Recent reversal (1d vs 5d direction mismatch)
+            calendar_features.append(
+                (pl.col("returns_1d").sign() != pl.col("returns_5d").sign()).cast(pl.Int8)
+                .alias("potential_reversal_1d_5d")
+            )
+
+        # Distance from moving averages (additional windows)
+        if "Close" in df.columns:
+            for window in [10, 50, 100]:
+                calendar_features.append(
+                    pl.col("Close").rolling_mean(window_size=window).over("Code").alias(f"ma_{window}d")
+                )
+
+        # Add calendar features
+        if calendar_features:
+            df = df.with_columns(calendar_features)
+
+            # Second pass: MA gap features
+            second_pass_calendar = []
+            if "ma_10d" in df.columns and "Close" in df.columns:
+                second_pass_calendar.append(
+                    ((pl.col("Close") - pl.col("ma_10d")) / (pl.col("ma_10d") + 1e-12))
+                    .alias("ma_gap_10d")
+                )
+
+            if "ma_50d" in df.columns and "Close" in df.columns:
+                second_pass_calendar.append(
+                    ((pl.col("Close") - pl.col("ma_50d")) / (pl.col("ma_50d") + 1e-12))
+                    .alias("ma_gap_50d")
+                )
+
+            if "ma_100d" in df.columns and "Close" in df.columns:
+                second_pass_calendar.append(
+                    ((pl.col("Close") - pl.col("ma_100d")) / (pl.col("ma_100d") + 1e-12))
+                    .alias("ma_gap_100d")
+                )
+
+            # Golden cross / death cross indicators
+            if "ma_10d" in df.columns and "ma_50d" in df.columns:
+                second_pass_calendar.append(
+                    (pl.col("ma_10d") > pl.col("ma_50d")).cast(pl.Int8).alias("golden_cross_10_50")
+                )
+
+            if second_pass_calendar:
+                df = df.with_columns(second_pass_calendar)
+                calendar_features.extend(second_pass_calendar)
+
+            logger.info(f"✅ Calendar and regime features attached: +{len(calendar_features)} columns")
+    except Exception as e:
+        logger.error(f"CRITICAL ERROR in calendar and regime features: {e}")
+        raise  # Stop pipeline to ensure root cause resolution
+
     # Graph-structured features (Phase 3): degree, peer corr mean, peer count
     try:
         if enable_graph_features:

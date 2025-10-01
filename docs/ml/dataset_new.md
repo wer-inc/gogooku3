@@ -386,6 +386,52 @@ df = df.sort(['Code','Date']).join_asof(
 
 ---
 
+## 10) グラフ（相関ネットワーク）特徴（18列）
+
+相関に基づくピア・グラフを営業日ごとに構築し、各ノード（銘柄）にグラフ指標を付与します。実装は CPU/GPU の双方に対応しており、GPU 環境では cuGraph により大幅に高速化されます（リーク防止：当日 T までの過去窓のみ使用）。
+
+### 10.1 構築ルール（リーク防止）
+
+- 入力系列：`returns_1d`（別名 `feat_ret_1d` を自動検出）
+- 窓と選別：直近 `graph_window` 日（既定 60）、絶対相関 `|ρ| ≥ graph_threshold`（既定 0.3）
+- スパース化：ノード当たり最大 `graph_max_k` 本（既定 4）。負相関も許容、無向対称。
+- 日付ごとに独立に構築し、当日より未来情報は不使用（T+0 安全）。
+
+### 10.2 列一覧と定義（出力 18 列）
+
+- `peer_count`：選定ピア数（当日グラフの隣接ノード数のうち、相関条件を満たしたエッジ本数）
+- `peer_corr_mean`：選定ピアとの（絶対）相関の平均
+- `graph_degree`：次数（当日のエッジ本数）
+- `graph_degree_z`：日内 Z（同一日内での `graph_degree` 標準化）
+- `graph_comp_id`：連結成分 ID（同一日のラベル整数）
+- `graph_comp_size`：当該連結成分のサイズ
+- `graph_degree_in_comp`：成分内正規化次数（`degree/(size−1)`）
+- `graph_degree_z_in_comp`：成分内 Z（`graph_degree` を同一成分内で標準化）
+- `graph_pagerank`：PageRank（α=0.85）
+- `graph_pagerank_share_comp`：成分内 PageRank シェア（`pagerank / Σ_{同成分}`）
+- `graph_pagerank_z_in_comp`：成分内 PageRank の Z
+- `graph_clustering`：クラスタリング係数（局所三角比）
+- `graph_avg_neigh_deg`：平均隣接次数
+- `graph_core`：k-core 番号
+- `graph_degree_centrality`：次数中心性（NetworkX 正規化）
+- `graph_closeness`：近接中心性（GPU 環境では実装都合で近似的に媒介中心性にフォールバックする場合あり）
+- `graph_local_density`：局所密度（近傍間の実エッジ/最大エッジ）
+- `graph_isolated`：孤立フラグ（`degree==0` → 1）
+
+> 実装参照：`src/gogooku3/features/graph_features.py`（CPU）／`src/gogooku3/features/graph_features_gpu.py`（GPU）。
+
+### 10.3 結合と Null 規約
+
+- キー：`(Code, Date)` の左外部結合で元パネルに付与。
+- 欠損：該当しない日（グラフ未成立など）は `0` で安全にフィル（`graph_*`/`peer_*`）。
+
+### 10.4 パイプライン有効化・パラメータ
+
+- CLI：`python scripts/pipelines/run_full_dataset.py --enable-graph-features --graph-window 60 --graph-threshold 0.3 --graph-max-k 4`
+- パラメータ（YAML/CLI で上書き可）：`graph_window`, `graph_threshold`, `graph_max_k`, `graph_cache_dir`
+
+---
+
 ## 仕様追記（2025-09-19 更新）
 
 ### 2025-09-19 更新内容
@@ -423,6 +469,7 @@ df = df.sort(['Code','Date']).join_asof(
 - 有効フラグ: `is_ema_5_valid` → `is_ema5_valid`、`is_ema_10_valid` → `is_ema10_valid`、`is_rsi_2_valid` → `is_rsi2_valid`
 - ボリンジャー: `bb_bandwidth` → `bb_width`、`bb_pct_b` → `bb_position`
 - 旧名は原則出力しない。互換が必要な場合はビュー/別名で吸収する
+  - 追加（2025-10-01）：識別子 `SharesOutstanding` → `shares_outstanding`（スネークケースに統一）。
 
 ### 4) フロー特徴の表記について
 - 文書中の**プレフィクスの説明**は「`flow_*` グループ」として扱う（ワイルドカードは列集合の説明。個々の列名は代表列の定義を参照）
@@ -664,4 +711,3 @@ df = df.with_columns([
 ---
 
 このセットは、**価格×需給×イベント×レジーム**をそれぞれ単独で足すのではなく、**“条件が揃ったときだけ強調する”** ための掛け合わせです。まずは **高優先度10本** を入れて再学習→効果を見てから中優先度を段階追加、の順で進めるのが最短で効果的です。
-

@@ -67,6 +67,7 @@ class FinancialGraphBuilder:
         verbose: bool = True,
         sector_col: str | None = None,
         market_col: str | None = None,
+        gpu_corr_block_cols: int = 1024,
     ):
         """
         Args:
@@ -94,6 +95,14 @@ class FinancialGraphBuilder:
         self.verbose = verbose
         self.sector_col = sector_col
         self.market_col = market_col
+        # Streamed GPU correlation block size (columns per j-block)
+        # Env override (best-effort)
+        try:
+            import os as _os
+            env_b = int(_os.getenv("GOGOOKU3_GPU_CORR_BLOCK", str(gpu_corr_block_cols)))
+            self.gpu_corr_block_cols = int(max(128, env_b))
+        except Exception:
+            self.gpu_corr_block_cols = int(max(128, gpu_corr_block_cols))
 
         # キャッシュ設定
         if self.cache_dir:
@@ -254,49 +263,89 @@ class FinancialGraphBuilder:
 
         try:
             if GPU_AVAILABLE:
-                # Transfer to GPU
-                # Use float32 to halve memory footprint during correlation
-                return_matrix_gpu = cp.asarray(return_matrix, dtype=cp.float32)
+                # Transfer to GPU in float32 to reduce memory pressure
+                X = cp.asarray(return_matrix, dtype=cp.float32)
+                N, T = X.shape
 
                 if self.correlation_method == 'pearson':
-                    # GPU Pearson correlation (100x faster)
-                    corr_matrix = cp.corrcoef(return_matrix_gpu)
+                    try:
+                        # Streamed GPU Pearson correlation to avoid NxN device allocation
+                        # 1) Standardize (ddof=0 to match np.corrcoef default)
+                        mu = cp.mean(X, axis=1, keepdims=True)
+                        X = X - mu
+                        std = cp.std(X, axis=1, keepdims=True) + 1e-12
+                        X = X / std
+
+                        # 2) Allocate output on host and fill block-by-block
+                        corr_cpu = np.empty((N, N), dtype=np.float32)
+                        b = int(self.gpu_corr_block_cols) if hasattr(self, 'gpu_corr_block_cols') else 1024
+                        if b <= 0:
+                            b = 1024
+                        for j in range(0, N, b):
+                            jb = min(b, N - j)
+                            block = X @ X[j:j + jb].T  # [N, jb]
+                            block = block / float(T)
+                            corr_cpu[:, j:j + jb] = cp.asnumpy(block)
+                            # Free temporaries eagerly to curb fragmentation
+                            try:
+                                del block  # type: ignore[has-type]
+                                cp.get_default_memory_pool().free_all_blocks()
+                            except Exception:
+                                pass
+
+                        # Symmetrize, clip, and set diagonal
+                        corr_cpu = 0.5 * (corr_cpu + corr_cpu.T)
+                        np.fill_diagonal(corr_cpu, 1.0)
+                        corr_cpu = np.clip(corr_cpu, -1.0, 1.0)
+                        return corr_cpu
+                    except Exception as _gpu_e:
+                        # Hard fallback to CPU to avoid failures
+                        if self.verbose:
+                            logger.warning(f"GPU streamed correlation failed; falling back to CPU: {_gpu_e}")
+                        return np.corrcoef(return_matrix)
 
                 elif self.correlation_method == 'spearman':
-                    # GPU Spearman correlation
-                    # Note: CuPy doesn't have spearmanr, so we compute ranks manually
-                    ranks = cp.empty_like(return_matrix_gpu)
-                    for i in range(n_stocks):
-                        ranks[i] = cp.argsort(cp.argsort(return_matrix_gpu[i]))
-                    corr_matrix = cp.corrcoef(ranks)
+                    # Fall back to CPU to avoid GPU NxN allocations for large N
+                    from scipy.stats import spearmanr  # type: ignore
+                    corr_matrix, _ = spearmanr(cp.asnumpy(X), axis=1)
+                    if np.isscalar(corr_matrix):
+                        corr_matrix = np.array([[corr_matrix]], dtype=np.float32)
+                    return corr_matrix.astype(np.float32, copy=False)
 
                 elif self.correlation_method == 'ewm_demean':
-                    # EWM correlation on GPU
-                    # EWM on float32 to reduce memory, promote when needed
-                    X = return_matrix_gpu.astype(cp.float32, copy=False)
-                    N, T = X.shape
+                    # Streamed EWM correlation
                     lam = cp.log(2.0) / float(self.ewm_halflife)
-                    t_idx = cp.arange(T)
+                    t_idx = cp.arange(T, dtype=cp.float32)
                     w = cp.exp(-lam * (T - 1 - t_idx))
-                    w_sum = w.sum() + 1e-12
-                    w = w / w_sum
+                    w = w / (cp.sum(w) + 1e-12)
                     mu = X @ w
                     Xc = X - mu[:, None]
                     WX = Xc * w
-                    cov = WX @ Xc.T
-                    var = cp.diag(cov).copy()
-                    var[var <= 1e-12] = 1e-12
+                    var = cp.sum(WX * Xc, axis=1)
+                    var = cp.maximum(var, 1e-12)
                     std = cp.sqrt(var)
-                    denom = cp.outer(std, std)
-                    corr_matrix = cov / (denom + 1e-12)
-                    corr_matrix = cp.clip(corr_matrix, -1.0, 1.0)
-                    # Symmetrize
-                    corr_matrix = 0.5 * (corr_matrix + corr_matrix.T)
-                    cp.fill_diagonal(corr_matrix, 1.0)
-                    # Shrinkage
+
+                    corr_cpu = np.empty((N, N), dtype=np.float32)
+                    b = int(self.gpu_corr_block_cols) if hasattr(self, 'gpu_corr_block_cols') else 1024
+                    if b <= 0:
+                        b = 1024
+                    for j in range(0, N, b):
+                        jb = min(b, N - j)
+                        cov_block = WX @ Xc[j:j + jb].T  # [N, jb]
+                        denom = (std[:, None] * std[j:j + jb][None, :]) + 1e-12
+                        block = cov_block / denom
+                        corr_cpu[:, j:j + jb] = cp.asnumpy(cp.clip(block, -1.0, 1.0))
+                        try:
+                            del cov_block, block  # type: ignore[has-type]
+                            cp.get_default_memory_pool().free_all_blocks()
+                        except Exception:
+                            pass
+                    corr_cpu = 0.5 * (corr_cpu + corr_cpu.T)
+                    np.fill_diagonal(corr_cpu, 1.0)
                     if self.shrinkage_gamma > 0:
-                        off = ~cp.eye(N, dtype=bool)
-                        corr_matrix[off] = (1.0 - self.shrinkage_gamma) * corr_matrix[off]
+                        off = ~np.eye(N, dtype=bool)
+                        corr_cpu[off] = (1.0 - self.shrinkage_gamma) * corr_cpu[off]
+                    return corr_cpu
                 else:
                     raise ValueError(f"Unsupported correlation method: {self.correlation_method}")
 
