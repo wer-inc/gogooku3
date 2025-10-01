@@ -123,13 +123,21 @@ def add_graph_features(
 
                 if CUGRAPH_AVAILABLE and len(inv_map) > 100:  # Use GPU for larger graphs
                     # Create cuGraph graph
-                    edge_df = cudf.DataFrame({
-                        'src': ei[0],
-                        'dst': ei[1]
-                    })
+                    edge_df = cudf.DataFrame({'src': ei[0], 'dst': ei[1]})
+                    # Remove self-loops and duplicate edges to avoid multi-edge handling
+                    try:
+                        edge_df = edge_df[edge_df['src'] != edge_df['dst']]
+                        edge_df = edge_df.drop_duplicates()
+                    except Exception:
+                        pass
 
-                    G = cugraph.Graph()
-                    G.from_cudf_edgelist(edge_df, source='src', destination='dst')
+                    # Explicit undirected graph; avoid internal renumber/symmetrize multi-edge paths
+                    G = cugraph.Graph(directed=False)
+                    try:
+                        G.from_cudf_edgelist(edge_df, source='src', destination='dst', renumber=False)
+                    except TypeError:
+                        # Fallback for older RAPIDS that don't expose renumber kwarg
+                        G.from_cudf_edgelist(edge_df, source='src', destination='dst')
 
                     # GPU-accelerated degree computation
                     degree_df = G.degree()

@@ -6,4 +6,5 @@ make dataset
 
 # 2) Train a stable model
 make train
+make train-optimized
 ```

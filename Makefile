@@ -150,6 +150,7 @@ SAFE_GPU_ENV ?= REQUIRE_GPU=1 USE_GPU_ETL=1 \
 dataset-full-gpu:
 	@echo "🚀 Running dataset generation with GPU-ETL enabled (395 features)"
 	@echo "✅ Graph: cuGraph/CuPy with safer memory config (cuda_async + spill)"
+	@echo "✅ Sector cross-sectional and daily margin features enabled"
 	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
 	  echo "Usage: make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD"; exit 1; }
 	@# Prefer async allocator + spill to avoid pool OOM. Allow overriding via env if needed.
@@ -161,7 +162,9 @@ dataset-full-gpu:
 	  --graph-threshold $(GRAPH_THRESHOLD) --graph-max-k $(GRAPH_MAX_K) \
 	  --futures-continuous \
 	  --attach-nk225-option-market \
-	  --sector-onehot33
+	  --sector-onehot33 \
+	  --enable-sector-cs \
+	  --enable-daily-margin
 
 #
 # Convenience: one-liners for safe cleanup + rebuild
