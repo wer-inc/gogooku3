@@ -7131,3 +7131,188 @@ EXTRA_FLAGS="--graph-mode edges --graph-topk 10 --graph-window 60 \
   make train-gpu-latest
 
   問題は完全に解決しました！おめでとうございます！ 🎉
+
+  ----
+
+  │ GPU使用率改善プラン（根本原因：DayBatchSampler）                                                                        │ │
+│ │                                                                                                                         │ │
+│ │ 🔴 根本問題                                                                                                             │ │
+│ │                                                                                                                         │ │
+│ │ DayBatchSamplerが5サンプルしか返さない                                                                                  │ │
+│ │ - 設定: batch_size=256                                                                                                  │ │
+│ │ - 実際: 5サンプル（初期日付に5銘柄のみ）                                                                                │ │
+│ │ - 結果: GPU使用率1%（目標20-40%）                                                                                       │ │
+│ │                                                                                                                         │ │
+│ │ 副次的問題                                                                                                              │ │
+│ │ - Hydraオーバーライドが全て無視されている                                                                               │ │
+│ │ - torch.compileが意図せず有効                                                                                           │ │
+│ │ - GAT/FAN勾配がゼロ（凍結中）                                                                                           │ │
+│ │                                                                                                                         │ │
+│ │ ✅ 解決案（3つのアプローチ）                                                                                             │ │
+│ │                                                                                                                         │ │
+│ │ Option A: DayBatchSamplerを無効化（最速・最確実）                                                                       │ │
+│ │                                                                                                                         │ │
+│ │ # train_atft.py内でサンプラーを強制的に無効化                                                                           │ │
+│ │ use_day_batch_sampler = False                                                                                           │ │
+│ │ # → 通常のRandomSamplerに戻る                                                                                           │ │
+│ │ # → バッチサイズ256がそのまま適用される                                                                                 │ │
+│ │                                                                                                                         │ │
+│ │ メリット:                                                                                                               │ │
+│ │ - 確実にバッチサイズ256になる                                                                                           │ │
+│ │ - GPU使用率 → 20-40%に改善（予想）                                                                                      │ │
+│ │ - データの時系列順序は損なわれるが、学習には問題ない                                                                    │ │
+│ │                                                                                                                         │ │
+│ │ デメリット:                                                                                                             │ │
+│ │ - DayBatchSamplerの利点（日次グループ化）を失う                                                                         │ │
+│ │                                                                                                                         │ │
+│ │ Option B: 最小日付フィルター追加（データ品質重視）                                                                      │ │
+│ │                                                                                                                         │ │
+│ │ # データセットから初期の疎なデータを除外                                                                                │ │
+│ │ min_date = "2016-06-01"  # 十分なデータがある日付から開始                                                               │ │
+│ │ # → 初期の5サンプル問題を回避                                                                                           │ │
+│ │                                                                                                                         │ │
+│ │ メリット:                                                                                                               │ │
+│ │ - DayBatchSamplerを維持                                                                                                 │ │
+│ │ - データ品質向上（疎なデータ除外）                                                                                      │ │
+│ │                                                                                                                         │ │
+│ │ デメリット:                                                                                                             │ │
+│ │ - 依然として日によっては小バッチの可能性                                                                                │ │
+│ │ - 完全な解決にならない                                                                                                  │ │
+│ │                                                                                                                         │ │
+│ │ Option C: 複数日結合バッチ（完璧だが実装コスト大）                                                                      │ │
+│ │                                                                                                                         │ │
+│ │ # DayBatchSamplerを拡張                                                                                                 │ │
+│ │ # min_batch_size=256に達するまで複数日を結合                                                                            │ │
+│ │                                                                                                                         │ │
+│ │ メリット:                                                                                                               │ │
+│ │ - 日次グループ化を維持                                                                                                  │ │
+│ │ - 常に十分なバッチサイズ                                                                                                │ │
+│ │                                                                                                                         │ │
+│ │ デメリット:                                                                                                             │ │
+│ │ - 実装コスト大                                                                                                          │ │
+│ │ - テストが必要                                                                                                          │ │
+│ │                                                                                                                         │ │
+│ │ 🎯 推奨アプローチ                                                                                                       │ │
+│ │                                                                                                                         │ │
+│ │ Phase 1: Option A（DayBatchSampler無効化）                                                                              │ │
+│ │ 1. train_atft.py修正（1箇所のみ）                                                                                       │ │
+│ │ 2. 即座に効果確認可能                                                                                                   │ │
+│ │ 3. GPU使用率20-40%達成見込み                                                                                            │ │
+│ │                                                                                                                         │ │
+│ │ Phase 2: Hydraオーバーライド検証                                                                                        │ │
+│ │ 1. オーバーライドログ追加                                                                                               │ │
+│ │ 2. struct mode確認・修正                                                                                                │ │
+│ │                                                                                                                         │ │
+│ │ Phase 3: 更なる最適化                                                                                                   │ │
+│ │ 1. accumulate_grad_batches=4適用                                                                                        │ │
+│ │ 2. num_workers=4適用                                                                                                    │ │
+│ │ 3. GPU使用率40-60%目標                                                                                                  │ │
+│ │                                                                                                                         │ │
+│ │ 📊 期待される改善                                                                                                       │ │
+│ │                                                                                                                         │ │
+│ │ | 指標      | 現状   | Phase 1後 | Phase 2-3後 |                                                                        │ │
+│ │ |---------|------|----------|------------|                                                                              │ │
+│ │ | バッチサイズ  | 5    | 256      | 2048       |                                                                        │ │
+│ │ | GPU使用率  | 1%   | 20-40%   | 40-60%     |                                                                           │ │
+│ │ | ステップ速度  | 1.3秒 | 0.5-1秒   | 0.3-0.5秒   |                                                                     │ │
+│ │ | 120エポック | 3.5日 | 1.5日     | 1日以内       |                                                                     │ │
+│ │                                                                                                                         │ │
+│ │ 🔧 実装内容                                                                                                             │ │
+│ │                                                                                                                         │ │
+│ │ train_atft.py修正（1箇所）                                                                                              │ │
+│ │                                                                                                                         │ │
+│ │ # Line ~2800付近                                                                                                        │ │
+│ │ use_day_batch_sampler = False  # FIX: Disable to avoid small batches                                                    │ │
+│ │                                                                                                                         │ │
+│ │ このシンプルな1行変更で根本問題を解決できます。      
+
+● 📊 最新ログ分析結果 (Step 800時点)
+
+  🔴 現状：GPU使用率 0%（致命的）
+
+  GPU利用率: 0%
+  GPU Memory: 1685 MiB / 80GB (2%)
+  温度: 37°C (アイドル状態)
+  Step 800到達: val_loss=0.3507
+  速度: ~0.1秒/batch
+
+  🔍 根本原因の特定（3つの重大な問題）
+
+  問題1: DayBatchSampler（最重要・GPU使用率0%の直接原因）
+
+  証拠:
+  # train_atft.py:5013
+  use_day_batch = os.getenv("USE_DAY_BATCH", "1") == "1"  # デフォルトで有効！
+
+  影響:
+  - 全てのバッチで [edges-fallback] built correlation edges from batch: E=25
+  - E=25 = 5ノード × 5エッジ = わずか5サンプル/batch
+  - 2015-2016年の初期日付は株式数が5つしかない
+  - 設定上はbatch_size=256だが、実際には5サンプルしか来ない
+  - GPUが処理する仕事がほぼない → GPU使用率0%
+
+  問題2: フェーズベースト training（GAT/FAN無効化）
+
+  証拠:
+  # train_atft.py:3158-3191
+  Phase 0 (epochs 1-5):   use_gat=False, use_fan=False  # 現在ここ！
+  Phase 1 (epochs 6-15):  use_gat=False, use_fan=True
+  Phase 2 (epochs 16-23): use_gat=True, use_fan=True   # GPU集約的
+  Phase 3 (epochs 24-29): use_gat=True, use_fan=True
+
+  影響:
+  - 現在Epoch 1/120 = Phase 0
+  - GAT/FANモジュールが意図的に無効化されている
+  - GPU集約的な処理は Epoch 16から 開始
+  - ログ: [Grad@700] GAT gradients near zero: 0.00e+00 ← これが正常
+
+  問題3: Hydraオーバーライド無視
+
+  証拠:
+  [設定値] batch_size=2048, accumulate_grad_batches=4
+  [実際値] batch_size=256, accumulate_grad_batches=1
+
+  影響:
+  - train_optimized_direct.pyのオーバーライドが適用されていない
+  - DayBatchSamplerを無効化しても、本来の2048ではなく256になる
+
+  🎯 解決策の優先順位
+
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Ready to code?                                                                                                              │
+│                                                                                                                             │
+│ Here is Claude's plan:                                                                                                      │
+│ ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ GPU使用率0%問題の根本解決プラン                                                                                         │ │
+│ │                                                                                                                         │ │
+│ │ 📋 実施内容                                                                                                             │ │
+│ │                                                                                                                         │ │
+│ │ 1. DayBatchSamplerの無効化（最優先・10倍の影響）                                                                        │ │
+│ │ - scripts/train_optimized_direct.py に USE_DAY_BATCH=0 を追加                                                           │ │
+│ │ - 5サンプル/batchから256+サンプル/batchへ増加                                                                           │ │
+│ │ - GPU使用率: 0% → 20-40%へ改善見込み                                                                                    │ │
+│ │                                                                                                                         │ │
+│ │ 2. Phase 2へスキップまたはフェーズ無効化（高優先・5倍の影響）                                                           │ │
+│ │ - 環境変数でPhase 2（GAT有効）から開始                                                                                  │ │
+│ │ - または DISABLE_PHASED_TRAINING=1 でフェーズ機能を無効化                                                               │ │
+│ │ - GPU集約的なGATモジュールを即座に有効化                                                                                │ │
+│ │                                                                                                                         │ │
+│ │ 3. バッチサイズ設定の修正（中優先・2倍の影響）                                                                          │ │
+│ │ - Hydraオーバーライドが無視される原因を調査                                                                             │ │
+│ │ - config_production_optimized.yamlの直接編集も検討                                                                      │ │
+│ │                                                                                                                         │ │
+│ │ 4. グラフキャッシュの有効化（低優先・クリーンアップ）                                                                   │ │
+│ │ - data.graph_builder.use_in_training=true への変更を検討                                                                │ │
+│ │ - CPU graph construction時間の削減                                                                                      │ │
+│ │                                                                                                                         │ │
+│ │ ⚠️ 推奨アプローチ                                                                                                       │ │
+│ │                                                                                                                         │ │
+│ │ Phase 1実装: DayBatchSampler無効化のみ                                                                                  │ │
+│ │ - リスク: 低                                                                                                            │ │
+│ │ - 期待改善: GPU使用率 0% → 20-40%                                                                                       │ │
+│ │ - 実装: USE_DAY_BATCH=0 1行追加                                                                                         │ │
+│ │                                                                                                                         │ │
+│ │ Phase 2実装: Phase 2スキップ + DayBatchSampler無効化                                                                    │ │
+│ │ - リスク: 中（phase-based trainingの設計意図を迂回）                                                                    │ │
+│ │ - 期待改善: GPU使用率 0% → 40-60%                                                                                       │ │
+│ │ - 実装: 2つの環境変数追加                   
