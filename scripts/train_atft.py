@@ -2736,14 +2736,14 @@ def evaluate_model_metrics(
         r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
 
         # シャープレシオ（金融指標）
-        returns = pred - target
-        eps = 0.0
+        returns = pred - target + float(os.getenv("SHARPE_OFFSET", "0.0"))
         try:
-            eps = float(os.getenv("SHARPE_EPS", "0.0"))
+            eps = float(os.getenv("SHARPE_EPS", "1e-6"))
         except Exception:
-            eps = 0.0
-        sd = np.std(returns)
-        sharpe_ratio = (np.mean(returns) / (sd + eps)) if (sd + eps) > 0 else 0.0
+            eps = 1e-6
+        mean_ret = np.nanmean(returns) if returns.size else 0.0
+        sd = np.nanstd(returns) if returns.size else 0.0
+        sharpe_ratio = mean_ret / max(sd, eps)
 
         metrics["horizon_metrics"][horizon] = {
             "mse": mse,
@@ -2766,18 +2766,26 @@ def evaluate_model_metrics(
             metrics["horizon_metrics"][h][metric]
             for h in metrics["horizon_metrics"].keys()
         ]
-        avg_metrics[f"avg_{metric}"] = np.mean(values)
+        values = [v for v in values if np.isfinite(v)]
+        if values:
+            avg_metrics[f"avg_{metric}"] = float(np.nanmean(values))
+        else:
+            avg_metrics[f"avg_{metric}"] = float("nan")
 
     metrics["average_metrics"] = avg_metrics
 
-    # ログ出力
+    # ログ出力 (NaNガード)
     logger.info("Validation Metrics Summary:")
-    logger.info(f"  Average RMSE: {avg_metrics['avg_rmse']:.4f}")
-    logger.info(f"  Average R²: {avg_metrics['avg_r2']:.4f}")
-    logger.info(f"  Average Sharpe Ratio: {avg_metrics['avg_sharpe_ratio']:.4f}")
+    rmse_val = avg_metrics.get('avg_rmse', float('nan'))
+    r2_val = avg_metrics.get('avg_r2', float('nan'))
+    sharpe_val = avg_metrics.get('avg_sharpe_ratio', float('nan'))
+    logger.info(f"  Average RMSE: {rmse_val if np.isfinite(rmse_val) else float('nan'):.4f}")
+    logger.info(f"  Average R²: {r2_val if np.isfinite(r2_val) else float('nan'):.4f}")
+    logger.info(f"  Average Sharpe Ratio: {sharpe_val if np.isfinite(sharpe_val) else float('nan'):.4f}")
     # Parser-friendly single-line Sharpe for external pipelines
     try:
-        sharpe_line = f"Sharpe: {avg_metrics['avg_sharpe_ratio']:.4f}"
+        sharpe_val = avg_metrics.get('avg_sharpe_ratio', float('nan'))
+        sharpe_line = f"Sharpe: {sharpe_val:.4f}" if np.isfinite(sharpe_val) else 'Sharpe: nan'
         logger.info(sharpe_line)
     except Exception:
         pass

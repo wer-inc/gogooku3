@@ -4,6 +4,9 @@ architecture: atft_gat_fan
 
 # モデル全体設定（グループ直下にフラットに定義）
 hidden_size: 256  # Increased from 64 for better model capacity (~20M params)
+ema_teacher:
+  enabled: true
+  decay: 0.999
 input_projection:
   use_layer_norm: true
   dropout: 0.1
@@ -20,7 +23,7 @@ tft:
     dropout: 0.1
     bidirectional: false
   attention:
-    heads: 4
+    heads: 8
     dropout: 0.1
     use_scale: true
   variable_selection:
@@ -39,12 +42,12 @@ tft:
 adaptive_normalization:
   fan:
     enabled: true
-    window_sizes: [5, 10, 20]
+    window_sizes: [3, 7, 14, 30]
     aggregation: weighted_mean
     learn_weights: true
   san:
     enabled: true
-    num_slices: 3
+    num_slices: 4
     overlap: 0.5
     slice_aggregation: learned
 
@@ -55,7 +58,7 @@ gat:
     hidden_channels:
       - ${model.hidden_size}
       - ${model.hidden_size}
-    heads: [4, 2]
+    heads: [8, 4]
     concat: [true, false]
   layer_config:
     dropout: 0.2
@@ -77,11 +80,16 @@ prediction_head:
     activation: relu
     dropout: 0.2
     use_batch_norm: false
+  stochastic_depth:
+    rate: 0.1
   output:
     point_prediction: true
+    quantile_loss:
+      enforce_convexity: true
+      smoothing_temperature: 0.5
     quantile_prediction:
       enabled: true
-      quantiles: [0.1, 0.25, 0.5, 0.75, 0.9]
+      quantiles: [0.05, 0.25, 0.5, 0.75, 0.95]
     distribution_prediction:
       enabled: false
       type: normal

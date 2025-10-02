@@ -47,10 +47,10 @@ improvements:
 
   # フェーズ別ロス重み (段階的に金融メトリクス重視へ)
   phase_loss_weights:
-    phase_0: "huber=0.3,quantile=1.0,sharpe=0.1"
-    phase_1: "quantile=0.7,sharpe=0.3,rankic=0.1"
-    phase_2: "quantile=0.5,sharpe=0.4,rankic=0.2,t_nll=0.3"
-    phase_3: "quantile=0.3,sharpe=0.5,rankic=0.3,cs_ic=0.2"
+    phase_0: "huber=0.3,quantile=1.0,sharpe=0.0"
+    phase_1: "quantile=0.6,sharpe=0.4,rankic=0.1"
+    phase_2: "quantile=0.5,sharpe=0.6,rankic=0.2,t_nll=0.2"
+    phase_3: "quantile=0.3,sharpe=0.7,rankic=0.3,cs_ic=0.2"
 
 # ============================================================================
 # Feature grouping alignment (PDF指摘: 59想定 vs 189実列の齟齬解消)
@@ -184,13 +184,13 @@ model:
   fan:
     enabled: true
     per_group_normalization: true
-    window_sizes: [5, 10, 20, 60]
+    window_sizes: [3, 7, 14, 30]
 
   # Slice Adaptive Normalization (SAN) settings
   san:
     enabled: true
     num_slices: 4
-    overlap: 0.25
+    overlap: 0.5
 
 # ============================================================================
 # Training configuration
@@ -241,8 +241,9 @@ data:
   graph_builder:
     cache_dir: graph_cache
     ewm_halflife: 30
-    k: 15
-    edge_threshold: 0.25
+    k: 20
+    edge_threshold: 0.20
+    min_edges: 50
     log_mktcap_col: log_mktcap
     lookback: 60
     method: ewm_demean

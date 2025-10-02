@@ -27,13 +27,28 @@ def main():
         "PREFETCH_FACTOR": "2",  # FIX: Reduced to 2 to limit memory usage
         "PIN_MEMORY": "1",
         "USE_DAY_BATCH": "0",  # Disable day-batch sampling to keep GPU busy early
-        "BATCH_SIZE": "2048",  # Ensure train_atft picks large micro-batch via env fallback
+        "USE_GRAPH_IN_TRAINING": "1",  # Default: build correlation graphs during training
+        "VAL_BATCH_SIZE": "1024",  # Larger val micro-batch for stable metrics
+        "SHARPE_EPS": "1e-6",  # Avoid NaN Sharpe when std is tiny
+        "PHASE_TRAINING": "1",  # Keep phased training but allow overrides
+        "PHASE0_EPOCHS": "2",
+        "PHASE1_EPOCHS": "6",
+        "PHASE2_EPOCHS": "16",
+        "PHASE3_EPOCHS": "8",
+        "PHASE_WARMUP_EPOCHS": "4",
+        "PHASE_MAX_BATCHES": "0",
+        "FUSE_START_PHASE": "0",
+        "USE_ADV_GRAPH_TRAIN": "1",  # Enable training-time graph builder optimizations
+        "GRAPH_EDGE_THR": "0.20",  # Slightly denser graph for better context
+        "GRAPH_K_DEFAULT": "20",  # Increase neighbors for GAT context
+        "GRAPH_MIN_EDGES": "50",
+        "BATCH_SIZE": "512",  # Ensure train_atft picks large micro-batch via env fallback
         "OMP_NUM_THREADS": "4",  # CRITICAL FIX: Limit OpenMP threads (4 workers × 4 threads = 16 total)
         "USE_RANKIC": "1",
-        "RANKIC_WEIGHT": "0.2",
+        "RANKIC_WEIGHT": "0.1",
         "USE_CS_IC": "1",
         "CS_IC_WEIGHT": "0.15",
-        "SHARPE_WEIGHT": "0.3",
+        "SHARPE_WEIGHT": "0.5",
         "MODEL_HIDDEN_SIZE": "256",
         "FEATURE_CLIP_VALUE": "8",  # FIX: Clip features to ±8 for numerical stability
         "ENABLE_TORCH_COMPILE": "0",  # TEMPORARY: Disable to test GPU usage (torch.compile may cause CPU fallback)
@@ -43,6 +58,7 @@ def main():
         "TF32_ENABLED": "1",
         "CUDA_LAUNCH_BLOCKING": "0",  # Set to 1 for debugging CUDA errors
         "OUTPUT_BASE": str(PROJECT_ROOT / "output"),  # FIX: Required by config interpolation
+        "SCHEDULER": "warmup_cosine",
     })
 
     # Check if ATFT data exists
@@ -64,10 +80,11 @@ def main():
         "model.hidden_size=256",
         "model.optimization.compile.enabled=false",  # TEMPORARY: Disable torch.compile to test GPU usage
         # FIX: Conservative batch settings (Phase 1)
-        "+train.batch.train_batch_size=2048",
-        "+train.batch.gradient_accumulation_steps=4",  # FIX: Effective batch = 2048 × 4 = 8192 (conservative start)
+        "+train.batch.train_batch_size=512",
+        "+train.batch.gradient_accumulation_steps=16",  # FIX: Effective batch = 512 × 16 = 8192 (large effective but more frequent updates)
         # FIX: DataLoader settings aligned with environment variables
         "train.batch.num_workers=4",  # FIX: Match NUM_WORKERS=4 to prevent thread explosion
+        "+train.batch.val_batch_size=1024",
         "train.batch.prefetch_factor=2",  # FIX: Match PREFETCH_FACTOR=2
         "train.batch.persistent_workers=true",
         "train.batch.pin_memory=true",
@@ -75,9 +92,14 @@ def main():
         # "data.sampling.min_nodes_per_day=256",  # May need config schema update
         "train.optimizer.lr=5e-4",
         "train.trainer.max_epochs=120",
-        "data.graph_builder.use_in_training=false",  # OPTIMIZATION: Disable validation graph rebuild (GPU bottleneck fix)
         f"data.graph_builder.cache_dir={PROJECT_ROOT / 'graph_cache'}",  # OPTIMIZATION: Enable graph caching
     ]
+
+    use_graph_env = env.get("USE_GRAPH_IN_TRAINING", "1").strip().lower()
+    if use_graph_env in ("0", "false", "off"):
+        cmd.append("data.graph_builder.use_in_training=false")
+    else:
+        cmd.append("data.graph_builder.use_in_training=true")
 
     print("=" * 60)
     print("🚀 DIRECT OPTIMIZED TRAINING")
