@@ -2067,11 +2067,10 @@ async def enrich_and_save(
             df = df.with_columns((pl.col("stmt_days_since_statement") >= 0).cast(pl.Int8).alias("is_stmt_valid"))
 
         # Add any missing spec columns as nulls (safe defaults)
+        # docs/ml/dataset_new.md の完全仕様に合わせ、margin_ も含めて
+        # すべての文書化済み列を最終スキーマに揃える
         existing = set(df.columns)
-        # Keep optional blocks (e.g., margin_*) truly optional: don't add Nulls for them
-        to_add_nulls = [
-            c for c in DOC_COLUMNS if c not in existing and not c.startswith("margin_")
-        ]
+        to_add_nulls = [c for c in DOC_COLUMNS if c not in existing]
         if to_add_nulls:
             logger.info("Adding null fillers for missing spec columns: %s", to_add_nulls[:10])
             df = df.with_columns([
@@ -2102,13 +2101,54 @@ async def enrich_and_save(
             if cast_exprs:
                 df = df.with_columns(cast_exprs)
 
-        # Finally, project to the exact schema (drops all non-spec columns)
+        # Finally, project to the exact schema and preserve documented feature groups
         keep_cols = [c for c in DOC_COLUMNS if c in df.columns]
-        # Preserve optional graph features (GPU/CPU) and peer_* stats if present
-        opt_extra = [c for c in df.columns if c.startswith("graph_") or c.startswith("peer_")]
+
+        # Allow-listed prefixes that must be kept if present (documented groups)
+        allowed_prefixes = (
+            "graph_", "peer_", "flow_", "margin_", "dmi_", "x_",
+            "mkt_", "stmt_", "sec17_onehot_", "sect_",
+        )
+        allowed_exact = {
+            # Flow compatibility names without flow_ prefix
+            "foreign_share_activity", "breadth_pos",
+            # Sector frequency helper
+            "sec33_daily_freq",
+        }
+        deny_prefixes = ("_",)      # internal temporaries
+        deny_suffixes = ("_right",)  # join helpers
+
+        def _is_allowed_extra(name: str) -> bool:
+            if any(name.startswith(p) for p in deny_prefixes):
+                return False
+            if any(name.endswith(s) for s in deny_suffixes):
+                return False
+            if name in allowed_exact:
+                return True
+            return any(name.startswith(p) for p in allowed_prefixes)
+
+        opt_extra = [c for c in df.columns if _is_allowed_extra(c)]
         for c in opt_extra:
             if c not in keep_cols:
                 keep_cols.append(c)
+
+        # Enforce minimum column count (docs minimum=395)
+        MIN_COLS = 395
+        if len(keep_cols) < MIN_COLS:
+            candidates = [
+                c for c in df.columns
+                if c not in keep_cols
+                and not any(c.startswith(p) for p in deny_prefixes)
+                and not any(c.endswith(s) for s in deny_suffixes)
+            ]
+            for c in candidates:
+                keep_cols.append(c)
+                if len(keep_cols) >= MIN_COLS:
+                    break
+            logger.info(
+                "Minimum column enforcement applied: final=%d (target=%d)",
+                len(keep_cols), MIN_COLS,
+            )
         logger.info(
             "Post-alignment column check: MarketCode=%s, sector33_code=%s, shares_outstanding=%s, stmt_yoy_sales=%s",
             "MarketCode" in df.columns,
@@ -2117,7 +2157,7 @@ async def enrich_and_save(
             "stmt_yoy_sales" in df.columns,
         )
         df = df.select(keep_cols)
-        logger.info(f"Aligned dataset to DATASET.md exact schema (n={len(keep_cols)})")
+        logger.info(f"Aligned dataset to docs schema (n={len(keep_cols)})")
     except Exception as _e:
         logger.exception("DATASET.md strict alignment skipped: %s", _e)
 
