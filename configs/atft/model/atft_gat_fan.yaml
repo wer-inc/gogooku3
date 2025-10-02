@@ -12,9 +12,9 @@ input_projection:
   dropout: 0.1
 
 input_dims:
-  basic_features: 46
-  historical_features: 260
-  total_features: 306
+  basic_features: 182  # Align with auto-detected dynamic features in loader
+  historical_features: 0
+  total_features: 182
 
 tft:
   lstm:
@@ -53,6 +53,7 @@ adaptive_normalization:
 
 gat:
   enabled: true
+  alpha_min: 0.4
   architecture:
     num_layers: 2
     hidden_channels:

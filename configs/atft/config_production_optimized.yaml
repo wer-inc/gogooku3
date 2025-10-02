@@ -48,99 +48,15 @@ improvements:
   # フェーズ別ロス重み (段階的に金融メトリクス重視へ)
   phase_loss_weights:
     phase_0: "huber=0.3,quantile=1.0,sharpe=0.0"
-    phase_1: "quantile=0.6,sharpe=0.4,rankic=0.1"
-    phase_2: "quantile=0.5,sharpe=0.6,rankic=0.2,t_nll=0.2"
-    phase_3: "quantile=0.3,sharpe=0.7,rankic=0.3,cs_ic=0.2"
+    phase_1: "quantile=0.5,sharpe=0.4,rankic=0.1"
+    phase_2: "quantile=0.4,sharpe=0.6,rankic=0.2,t_nll=0.2"
+    phase_3: "quantile=0.3,sharpe=0.8,rankic=0.3,cs_ic=0.2"
 
 # ============================================================================
 # Feature grouping alignment (PDF指摘: 59想定 vs 189実列の齟齬解消)
 # ============================================================================
 
-feature_mapping:
-  # 基本特徴量 (46 features expected)
-  basic:
-    - "open"
-    - "high"
-    - "low"
-    - "close"
-    - "volume"
-    - "market_cap"
-    - "shares_outstanding"
-    - "pbr"
-    - "per"
-    - "psr"
-    - "pcfr"
-    - "dividend_yield"
-    - "roe"
-    - "roa"
-    - "equity_ratio"
-    - "beta"
-    - "volatility_1m"
-    - "volatility_3m"
-    # ... add remaining basic features
-
-  # テクニカル指標 (50+ features)
-  technical:
-    - "rsi_14"
-    - "macd"
-    - "macd_signal"
-    - "macd_hist"
-    - "bb_upper"
-    - "bb_middle"
-    - "bb_lower"
-    - "bb_width"
-    - "bb_percent"
-    - "atr_14"
-    - "adx_14"
-    - "cci_20"
-    - "stoch_k"
-    - "stoch_d"
-    - "williams_r"
-    - "mfi_14"
-    - "obv"
-    - "vwap"
-    # ... add remaining technical features
-
-  # 移動平均派生 (MA-derived features)
-  ma_derived:
-    - "sma_5"
-    - "sma_20"
-    - "sma_60"
-    - "ema_5"
-    - "ema_20"
-    - "ema_60"
-    - "price_sma5_ratio"
-    - "price_sma20_ratio"
-    - "price_sma60_ratio"
-    - "sma5_sma20_ratio"
-    - "sma20_sma60_ratio"
-    # ... add remaining MA features
-
-  # リターン系特徴量
-  returns:
-    - "returns_1d"
-    - "returns_5d"
-    - "returns_10d"
-    - "returns_20d"
-    - "returns_60d"
-    - "log_returns_1d"
-    - "log_returns_5d"
-    # ... add remaining return features
-
-  # 市場関連特徴量 (26 mkt_* features)
-  market:
-    - "mkt_beta"
-    - "mkt_correlation"
-    - "mkt_relative_volume"
-    - "mkt_spread"
-    # ... add remaining market features
-
-  # 機関投資家フロー (17 flow_* features)
-  flows:
-    - "flow_institutional"
-    - "flow_foreign"
-    - "flow_individual"
-    # ... add remaining flow features
+feature_mapping: null
 
 # ============================================================================
 # Model configuration (aligned with feature groups)

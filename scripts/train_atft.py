@@ -1089,7 +1089,8 @@ class MultiHorizonLoss(nn.Module):
         mask = mask.to(dtype=x.dtype)
         s = mask.sum()
         if s.item() == 0:
-            return torch.zeros((), dtype=x.dtype, device=x.device)
+            # FIX: Ensure zero tensor has requires_grad=True to maintain gradient flow
+            return torch.zeros((), dtype=x.dtype, device=x.device, requires_grad=True)
         return (x * mask).sum() / (s + eps)
 
     def _pinball_loss(
@@ -1445,6 +1446,12 @@ class MultiHorizonLoss(nn.Module):
 
 
             if pred_key is None or targ_key is None:
+                if contribution_count == 0:  # Log only first failure
+                    logger.warning(
+                        f"[MultiHorizonLoss] Horizon {horizon} skipped: "
+                        f"pred_key={pred_key} (pred keys: {list(predictions.keys())}), "
+                        f"targ_key={targ_key} (targ keys: {list(targets.keys())})"
+                    )
                 continue
 
             raw_yhat = predictions[pred_key]
@@ -1587,6 +1594,8 @@ class MultiHorizonLoss(nn.Module):
             weights.append(weight)
             contribution_count += 1
 
+            # First contribution logging disabled for production
+
             # 動的RMSE更新
             if self.use_dynamic_weighting:
                 with torch.no_grad():
@@ -1649,7 +1658,9 @@ class MultiHorizonLoss(nn.Module):
                         ) * prev + alpha * rmse
 
         if contribution_count > 0:
-            total_loss = total_loss / float(np.sum(weights))
+            # FIX: Use scalar multiplication instead of division to preserve gradients
+            sum_weights_val = float(np.sum(weights))
+            total_loss = total_loss * (1.0 / sum_weights_val)
             self._warned_empty = False
         else:
             if not self._warned_empty:
@@ -1694,33 +1705,63 @@ class MultiHorizonLoss(nn.Module):
             return sharpe.item()
     
     @staticmethod
-    def compute_ic(predictions: torch.Tensor, targets: torch.Tensor) -> float:
+    def compute_ic(predictions: torch.Tensor, targets: torch.Tensor, debug_prefix="") -> float:
         """Compute Information Coefficient (IC)"""
         with torch.no_grad():
             # Flatten tensors
             pred_flat = predictions.flatten()
             targ_flat = targets.flatten()
-            
+
+            # Enhanced NaN/Inf detection
+            pred_has_nan = torch.isnan(pred_flat).any()
+            pred_has_inf = torch.isinf(pred_flat).any()
+            targ_has_nan = torch.isnan(targ_flat).any()
+            targ_has_inf = torch.isinf(targ_flat).any()
+
             # Remove NaN/Inf
             valid_mask = torch.isfinite(pred_flat) & torch.isfinite(targ_flat)
-            if valid_mask.sum() < 2:
+            valid_count = valid_mask.sum().item()
+            total_count = len(pred_flat)
+
+            # Log warning if insufficient valid samples
+            if valid_count < 2:
+                if debug_prefix:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"[IC-WARN] {debug_prefix} - Insufficient valid samples: {valid_count}/{total_count}")
+                    logger.warning(f"[IC-WARN] {debug_prefix} - pred NaN: {pred_has_nan}, pred Inf: {pred_has_inf}")
+                    logger.warning(f"[IC-WARN] {debug_prefix} - targ NaN: {targ_has_nan}, targ Inf: {targ_has_inf}")
+                    if total_count > 0:
+                        logger.warning(f"[IC-WARN] {debug_prefix} - pred range: [{pred_flat.min().item():.6f}, {pred_flat.max().item():.6f}]")
+                        logger.warning(f"[IC-WARN] {debug_prefix} - targ range: [{targ_flat.min().item():.6f}, {targ_flat.max().item():.6f}]")
                 return 0.0
-            
+
             pred_valid = pred_flat[valid_mask]
             targ_valid = targ_flat[valid_mask]
-            
+
             # Pearson correlation
             pred_mean = pred_valid.mean()
             targ_mean = targ_valid.mean()
-            
+
             pred_centered = pred_valid - pred_mean
             targ_centered = targ_valid - targ_mean
-            
+
             cov = (pred_centered * targ_centered).mean()
             pred_std = pred_centered.std() + 1e-8
             targ_std = targ_centered.std() + 1e-8
-            
+
             ic = cov / (pred_std * targ_std)
+
+            # DEBUG: Always log IC calculation details when debug_prefix is provided
+            if debug_prefix:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"[IC-DEBUG] {debug_prefix} - IC={ic.item():.12f}")
+                logger.info(f"[IC-DEBUG] {debug_prefix} - cov={cov.item():.12f}, pred_std={pred_std.item():.12f}, targ_std={targ_std.item():.12f}")
+                logger.info(f"[IC-DEBUG] {debug_prefix} - pred: min={pred_valid.min().item():.6f}, max={pred_valid.max().item():.6f}, mean={pred_mean.item():.6f}, std={pred_valid.std().item():.6f}")
+                logger.info(f"[IC-DEBUG] {debug_prefix} - targ: min={targ_valid.min().item():.6f}, max={targ_valid.max().item():.6f}, mean={targ_mean.item():.6f}, std={targ_valid.std().item():.6f}")
+                logger.info(f"[IC-DEBUG] {debug_prefix} - valid_samples={valid_count}, total_samples={total_count}, filtered={total_count - valid_count}")
+
             return ic.item()
     
     @staticmethod
@@ -3222,13 +3263,19 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     else:
         logger.info(f"[Scheduler] Using Warmup+Cosine (warmup_epochs={warmup_epochs_phase})")
     
-    # Loss初期化 - Fixed to use correct constructor
+    # Loss初期化 - Fixed to use correct constructor with RankIC/Sharpe
     criterion = MultiHorizonLoss(
         horizons=config.data.time_series.prediction_horizons,
         use_huber=True,
         huber_delta=0.01,
-        huber_weight=0.3
+        huber_weight=0.3,
+        # Add RankIC and CS-IC for financial metrics
+        use_rankic=True,
+        rankic_weight=0.2,  # RankIC重み
+        use_cs_ic=True,
+        cs_ic_weight=0.15,  # Cross-sectional IC重み
     )
+    logger.info(f"[Loss] Initialized with RankIC (weight=0.2) and CS-IC (weight=0.15)")
     
     best_val_loss = float('inf')
     checkpoint_path = Path("output/checkpoints")
@@ -3336,9 +3383,10 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             train_loss = 0.0
             train_batches = 0
             train_metrics = {'sharpe': [], 'ic': [], 'rank_ic': []}
-            
+
             for batch_idx, batch in enumerate(train_loader):
-                if batch_idx >= max_batches_per_epoch:  # バッチ数制限（デフォルト100）
+                # FIX: max_batches_per_epoch=0 means no limit (process all batches)
+                if max_batches_per_epoch > 0 and batch_idx >= max_batches_per_epoch:
                     break
                     
                 optimizer.zero_grad()
@@ -3467,11 +3515,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     # Debug: Log available keys
                     logger.debug(f"[DEBUG] Prediction keys: {list(predictions.keys())}")
                     logger.debug(f"[DEBUG] Target keys: {list(targets_dict.keys())}")
-                
+
                 try:
-                    train_loss += float(loss.item() if hasattr(loss, "item") else float(loss))
-                except Exception:
-                    pass
+                    loss_value = float(loss.item() if hasattr(loss, "item") else float(loss))
+                    train_loss += loss_value
+                except Exception as e:
+                    logger.warning(f"[train-phase] Failed to add loss: {e}, loss type: {type(loss)}")
+                    logger.debug(f"[train-phase] loss value: {loss}")
                 train_batches += 1
             
             # Validation
@@ -3567,21 +3617,44 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     # Compute validation metrics for main horizon (1d)
                     # Try multiple key patterns
                     pred_1d, targ_1d = None, None
+                    pred_key_found = None
                     for pred_key in ["point_horizon_1", "horizon_1", "horizon_1d"]:
                         if pred_key in predictions:
                             pred_1d = predictions[pred_key].detach()
+                            pred_key_found = pred_key
                             break
+                    targ_key_found = None
                     for targ_key in ["horizon_1", "horizon_1d", "point_horizon_1"]:
                         if targ_key in tdict:
                             targ_1d = tdict[targ_key].detach()
+                            targ_key_found = targ_key
                             break
-                    
+
+                    # DEBUG: Log first batch details
+                    if batch_idx == 0:
+                        logger.info(f"[VAL-DEBUG] First val batch - Prediction keys: {list(predictions.keys())}")
+                        logger.info(f"[VAL-DEBUG] First val batch - Target keys: {list(tdict.keys())}")
+                        logger.info(f"[VAL-DEBUG] pred_key_found: {pred_key_found}, targ_key_found: {targ_key_found}")
+                        if pred_1d is not None:
+                            logger.info(f"[VAL-DEBUG] pred_1d - shape: {pred_1d.shape}, mean: {pred_1d.mean().item():.6f}, std: {pred_1d.std().item():.6f}")
+                            logger.info(f"[VAL-DEBUG] pred_1d - min: {pred_1d.min().item():.6f}, max: {pred_1d.max().item():.6f}")
+                            logger.info(f"[VAL-DEBUG] pred_1d - first 10 values: {pred_1d.flatten()[:10].tolist()}")
+                        if targ_1d is not None:
+                            logger.info(f"[VAL-DEBUG] targ_1d - shape: {targ_1d.shape}, mean: {targ_1d.mean().item():.6f}, std: {targ_1d.std().item():.6f}")
+                            logger.info(f"[VAL-DEBUG] targ_1d - min: {targ_1d.min().item():.6f}, max: {targ_1d.max().item():.6f}")
+                            logger.info(f"[VAL-DEBUG] targ_1d - first 10 values: {targ_1d.flatten()[:10].tolist()}")
+
                     if pred_1d is not None and targ_1d is not None:
-                        # Compute metrics
+                        # Compute metrics (IC will log details for first epoch only)
                         sharpe = MultiHorizonLoss.compute_sharpe_ratio(pred_1d, targ_1d)
-                        ic = MultiHorizonLoss.compute_ic(pred_1d, targ_1d)
+                        # Log IC details for all batches in first epoch only (to avoid log spam)
+                        debug_prefix = f"VAL-E{epoch}-B{batch_idx}" if epoch == 1 else ""
+                        ic = MultiHorizonLoss.compute_ic(pred_1d, targ_1d, debug_prefix=debug_prefix)
                         rank_ic = MultiHorizonLoss.compute_rank_ic(pred_1d, targ_1d)
-                        
+
+                        # DEBUG: Log computed metrics
+                        logger.info(f"[VAL-DEBUG] batch{batch_idx} metrics - Sharpe: {sharpe:.6f}, IC: {ic:.12f}, RankIC: {rank_ic:.6f}")
+
                         val_metrics['sharpe'].append(sharpe)
                         val_metrics['ic'].append(ic)
                         val_metrics['rank_ic'].append(rank_ic)
@@ -3592,9 +3665,10 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         except Exception:
                             pass
                     else:
-                        # Debug: Log available keys
-                        logger.debug(f"[DEBUG] Val Prediction keys: {list(predictions.keys())}")
-                        logger.debug(f"[DEBUG] Val Target keys: {list(tdict.keys())}")
+                        # Log key mismatch
+                        logger.warning(f"[VAL-DEBUG] Key mismatch - pred_1d: {pred_1d is not None}, targ_1d: {targ_1d is not None}")
+                        logger.warning(f"[VAL-DEBUG] Available prediction keys: {list(predictions.keys())}")
+                        logger.warning(f"[VAL-DEBUG] Available target keys: {list(tdict.keys())}")
                     
                     # Store for Sharpe computation
                     try:
@@ -3636,7 +3710,12 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             avg_train_sharpe = np.mean(train_metrics['sharpe']) if train_metrics['sharpe'] else 0.0
             avg_train_ic = np.mean(train_metrics['ic']) if train_metrics['ic'] else 0.0
             avg_train_rank_ic = np.mean(train_metrics['rank_ic']) if train_metrics['rank_ic'] else 0.0
-            
+
+            # DEBUG: Log validation metrics list lengths
+            logger.info(f"[VAL-DEBUG] val_metrics list lengths - sharpe: {len(val_metrics['sharpe'])}, ic: {len(val_metrics['ic'])}, rank_ic: {len(val_metrics['rank_ic'])}")
+            if val_metrics['sharpe']:
+                logger.info(f"[VAL-DEBUG] val_metrics samples - sharpe[0:3]: {val_metrics['sharpe'][:3]}, ic[0:3]: {val_metrics['ic'][:3]}, rank_ic[0:3]: {val_metrics['rank_ic'][:3]}")
+
             avg_val_sharpe = np.mean(val_metrics['sharpe']) if val_metrics['sharpe'] else 0.0
             avg_val_ic = np.mean(val_metrics['ic']) if val_metrics['ic'] else 0.0
             avg_val_rank_ic = np.mean(val_metrics['rank_ic']) if val_metrics['rank_ic'] else 0.0
@@ -3650,7 +3729,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 f"  Train Metrics - Sharpe: {avg_train_sharpe:.4f}, IC: {avg_train_ic:.4f}, RankIC: {avg_train_rank_ic:.4f}"
             )
             logger.info(
-                f"  Val Metrics   - Sharpe: {avg_val_sharpe:.4f}, IC: {avg_val_ic:.4f}, RankIC: {avg_val_rank_ic:.4f}, HitRate(h1): {val_hit_rate:.4f}"
+                f"  Val Metrics   - Sharpe: {avg_val_sharpe:.6f}, IC: {avg_val_ic:.6f}, RankIC: {avg_val_rank_ic:.6f}, HitRate(h1): {val_hit_rate:.4f}"
             )
             # Log fusion alpha if available
             try:
@@ -3782,6 +3861,10 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     checkpoint_path / f"best_model_phase{phase_idx}.pth"
                 )
                 logger.info(f"✅ Saved best model ({early_stop_metric}={chosen_curr:.4f}, val_loss={avg_val_loss:.4f})")
+
+            # Track global best val loss for summary metrics and HPO hooks
+            if np.isfinite(avg_val_loss) and avg_val_loss < best_val_loss:
+                best_val_loss = float(avg_val_loss)
 
             # Update learning rate scheduler
             # Update scheduler

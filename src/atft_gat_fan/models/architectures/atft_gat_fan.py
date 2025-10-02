@@ -108,36 +108,51 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 seen.add(name)
                 unique_feature_names.append(name)
 
-        self.n_current_features = len(unique_feature_names)
+        manual_dims = getattr(self.config.model, "input_dims", None)
+        total_override = None
+        historical_override = 0
+        if manual_dims is not None:
+            total_override = getattr(manual_dims, "total_features", None)
+            historical_override = int(getattr(manual_dims, "historical_features", 0) or 0)
 
-        # 履歴特徴量の計算
-        n_historical = 0
-        historical_cfg = getattr(data_config, 'historical', None)
-        if historical_cfg is not None:
-            try:
-                for hist_cfg in historical_cfg.values():
-                    rng = getattr(hist_cfg, 'range', None)
-                    if rng is not None and len(rng) == 2:
-                        n_historical += (rng[1] - rng[0] + 1)
-            except (AttributeError, TypeError):
-                n_historical = 0
+        if total_override:
+            # Respect manual override (e.g. dataset auto-detected 182 features)
+            self.n_current_features = int(total_override) - historical_override
+            if self.n_current_features <= 0:
+                self.n_current_features = int(total_override)
+            self.n_historical_features = historical_override
+            self.n_dynamic_features = int(total_override)
+        else:
+            self.n_current_features = len(unique_feature_names)
 
-        self.n_historical_features = n_historical
+            # 履歴特徴量の計算
+            n_historical = 0
+            historical_cfg = getattr(data_config, 'historical', None)
+            if historical_cfg is not None:
+                try:
+                    for hist_cfg in historical_cfg.values():
+                        rng = getattr(hist_cfg, 'range', None)
+                        if rng is not None and len(rng) == 2:
+                            n_historical += (rng[1] - rng[0] + 1)
+                except (AttributeError, TypeError):
+                    n_historical = 0
 
-        # 合計特徴量数
-        self.n_dynamic_features = self.n_current_features + self.n_historical_features
+            self.n_historical_features = n_historical
 
-        if self.n_dynamic_features <= 0:
-            try:
-                fallback_dim = int(getattr(getattr(self.config.data, "features", {}), "input_dim", 0))
-            except Exception:
-                fallback_dim = 0
-            if fallback_dim > 0:
-                logger.warning(
-                    "Dynamic feature dimension inferred as 0; falling back to config input_dim=%d",
-                    fallback_dim,
-                )
-                self.n_dynamic_features = fallback_dim
+            # 合計特徴量数
+            self.n_dynamic_features = self.n_current_features + self.n_historical_features
+
+            if self.n_dynamic_features <= 0:
+                try:
+                    fallback_dim = int(getattr(getattr(self.config.data, "features", {}), "input_dim", 0))
+                except Exception:
+                    fallback_dim = 0
+                if fallback_dim > 0:
+                    logger.warning(
+                        "Dynamic feature dimension inferred as 0; falling back to config input_dim=%d",
+                        fallback_dim,
+                    )
+                    self.n_dynamic_features = fallback_dim
 
         # 静的特徴量（market_code_nameのエンコーディング後の次元）
         self.n_static_features = 10  # 仮の値（実際はエンコーディング方法による）
@@ -156,10 +171,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
                    f"Historical: {self.n_historical_features}, Total: {self.n_dynamic_features}")
 
         # ML_DATASET_COLUMNS.md準拠チェック
-        expected_features = 59  # ML_DATASET_COLUMNS.mdより
-        if abs(self.n_current_features - expected_features) > 10:  # 許容誤差
-            logger.warning(f"Feature count mismatch! Expected ~{expected_features}, got {self.n_current_features}")
-            logger.warning("Please verify data configuration matches ML_DATASET_COLUMNS.md")
+        if total_override:
+            logger.info("Feature dimension override detected: using total=%d (historical=%d)", self.n_dynamic_features, self.n_historical_features)
+        else:
+            expected_features = 59  # Legacy expectation (for reference only)
+            if abs(self.n_current_features - expected_features) > 10:  # 許容誤差
+                logger.warning(f"Feature count mismatch! Expected ~{expected_features}, got {self.n_current_features}")
+                logger.warning("Please verify data configuration matches ML_DATASET_COLUMNS.md or provide model.input_dims override")
 
     def _build_model(self):
         """モデルアーキテクチャの構築"""
