@@ -190,6 +190,11 @@ class MultiHorizonLoss(nn.Module):
             target_key = next((k for k in target_candidates if k in targets), None)
 
             if pred_key is None or target_key is None:
+                logger.debug(
+                    f"Horizon {horizon} skipped: "
+                    f"pred_key={pred_key} (avail: {list(predictions.keys())}), "
+                    f"target_key={target_key} (avail: {list(targets.keys())})"
+                )
                 continue
 
             pred = predictions[pred_key]
@@ -237,6 +242,12 @@ class MultiHorizonLoss(nn.Module):
             total_loss = torch.stack(losses).sum()
         else:
             # 損失がない場合のフォールバック
+            logger.warning(
+                f"MultiHorizonLoss: No valid horizon losses computed! "
+                f"Predictions keys: {list(predictions.keys())}, "
+                f"Targets keys: {list(targets.keys())}, "
+                f"Expected horizons: {self.horizons}"
+            )
             total_loss = torch.tensor(0.0, device=device, requires_grad=True)
 
         loss_components['total_loss'] = total_loss.item()
@@ -376,17 +387,47 @@ class ComprehensiveLoss(nn.Module):
         total_loss += mh_loss
         loss_components.update(mh_components)
 
-        # RankIC損失（h1のみ）
-        if self.rankic_loss is not None and 'h1' in predictions and 'h1' in targets:
-            ric_loss = self.rankic_loss(predictions['h1'], targets['h1'])
-            total_loss += ric_loss
-            loss_components['rankic'] = ric_loss.item()
+        # RankIC損失（horizon_1を柔軟にマッチング）
+        if self.rankic_loss is not None:
+            pred_1, targ_1 = None, None
+            # 予測キー候補を優先順位順に探索
+            for key in ['horizon_1d', 'horizon_1', 'point_horizon_1', 'h1']:
+                if key in predictions:
+                    pred_1 = predictions[key]
+                    break
+            # ターゲットキー候補を優先順位順に探索
+            for key in ['horizon_1d', 'horizon_1', 'h1']:
+                if key in targets:
+                    targ_1 = targets[key]
+                    break
 
-        # Sharpe損失（h1のみ）
-        if self.sharpe_loss is not None and 'h1' in predictions and 'h1' in targets:
-            sharpe_loss = self.sharpe_loss(predictions['h1'], targets['h1'])
-            total_loss += sharpe_loss
-            loss_components['sharpe'] = sharpe_loss.item()
+            if pred_1 is not None and targ_1 is not None:
+                ric_loss = self.rankic_loss(pred_1, targ_1)
+                total_loss += ric_loss
+                loss_components['rankic'] = ric_loss.item()
+            else:
+                logger.debug(f"RankIC skipped: pred keys={list(predictions.keys())}, targ keys={list(targets.keys())}")
+
+        # Sharpe損失（horizon_1を柔軟にマッチング）
+        if self.sharpe_loss is not None:
+            pred_1, targ_1 = None, None
+            # 予測キー候補を優先順位順に探索
+            for key in ['horizon_1d', 'horizon_1', 'point_horizon_1', 'h1']:
+                if key in predictions:
+                    pred_1 = predictions[key]
+                    break
+            # ターゲットキー候補を優先順位順に探索
+            for key in ['horizon_1d', 'horizon_1', 'h1']:
+                if key in targets:
+                    targ_1 = targets[key]
+                    break
+
+            if pred_1 is not None and targ_1 is not None:
+                sharpe_loss = self.sharpe_loss(pred_1, targ_1)
+                total_loss += sharpe_loss
+                loss_components['sharpe'] = sharpe_loss.item()
+            else:
+                logger.debug(f"Sharpe skipped: pred keys={list(predictions.keys())}, targ keys={list(targets.keys())}")
 
         # L2正則化
         if self.l2_lambda > 0 and model is not None:
