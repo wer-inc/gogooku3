@@ -7316,3 +7316,89 @@ EXTRA_FLAGS="--graph-mode edges --graph-topk 10 --graph-window 60 \
 │ │ - リスク: 中（phase-based trainingの設計意図を迂回）                                                                    │ │
 │ │ - 期待改善: GPU使用率 0% → 40-60%                                                                                       │ │
 │ │ - 実装: 2つの環境変数追加                   
+
+
+
+--------------
+
+現状の把握
+
+  - Phaseトレーニングは予定通り Phase2 まで進み、GPU もきちんと使えているので「すぐ終わった」のはウォームアップ短縮とエポック短縮設定の結果です（Phase0=1epoch, Phase1=2epoch なので全体で ~6分）。
+  - val_loss は 0.054 前後で横ばい、Sharpe や RankIC はほぼゼロに張り付いています。これはモデルがまだシャープ／順位指標を学習できていないサインです。
+
+  すぐ打てる対策（順に試してください）
+
+  1. Phaseスケジュール延長
+     PHASE0_EPOCHS=2, PHASE1_EPOCHS=4, PHASE2_EPOCHS=6, PHASE3_EPOCHS=4 ぐらいに伸ばし、PHASE_WARMUP_EPOCHS=4 に上げてください。これで GAT 有効後も十分な反復が得られます。
+  2. Sharpe重みの段階調整
+     configs の phase_loss_weights を下記のようにし、Sharpe 比重を徐々に上げます。
+
+     phase_0: "huber=0.3,quantile=1.0,sharpe=0.0"
+     phase_1: "quantile=0.6,sharpe=0.3,rankic=0.1"
+     phase_2: "quantile=0.5,sharpe=0.5,rankic=0.2,t_nll=0.2"
+     phase_3: "quantile=0.3,sharpe=0.6,rankic=0.3,cs_ic=0.2"
+  3. GAT強化
+     GRAPH_EDGE_THR=0.18, GRAPH_K_DEFAULT=24, GRAPH_MIN_EDGES=75 まで上げてグラフ密度を増やすと RankIC が改善しやすくなります。
+  4. モデルの正規化調整
+     FAN の window を [3, 7, 14, 30] にし、SAN overlap を 0.5 にしたのは正しい方向です。追加で GAT の heads を [8, 4], alpha_min=0.4 に上げてください。
+  5. 指標安定化
+     SHARPE_EPS=1e-6, SHARPE_OFFSET=1e-4 に設定し、 evaluate_model_metrics では np.nanmean / np.nanstd を使うように変更済みです。ログに Sharpe: nan が出る場合は SHARPE_OFFSET をさらに 5e-4 まで上げてみ
+  てください。
+
+  再実行の流れ
+
+  - 上記1〜4（特に Phase 延長と GAT 強化）を反映 → make train-optimized。
+  - ログで Train batches: 20 を確認後、Phase2 で 15〜20 ステップ/epoch 程度回っているか、val/loss と val Sharpe が徐々に動くか追跡してください。
+  - 改善が見えたら PHASE3_EPOCHS をさらに 4→6 に調整し、EMA 教師 (ema_teacher.decay=0.999) で最終の揺れを抑えます。
+
+  これらで Sharpe と RankIC が伸び始めるはずです。それでも伸びなければ次は optimizer を AdamW (lr=3e-4) に落として SWA を Phase3 の後半だけ有効化するプランをご案内します。
+
+▌ 本実行をしたいです。そのまま make train-optimizedすればいいですか
+
+> はい、このまま make train-optimized を再度実行すれば大丈夫です。
+  再実行後は以下をチェックしてください：
+
+  - ログに Train batches: 20 前後が出ていること（バッチ数が増えているか）。
+  - Phase 2 に入ったタイミングで Train Loss/Val Loss、Sharpe・RankIC が少しずつ動き始めるか。
+  - Sharpe が nan になっていないか（なっていたら SHARPE_OFFSET を 5e-4 くらいまで増やしてから再走）。
+
+  wandb に関する警告は無視して構いません。 performance の変化を確認したら、必要に応じて追加チューニングを進めましょう。
+
+
+  > ログを詳しく見たところ、Phase 0→1→2 と順調に進んではいるものの、各フェーズが極端に短いため（Phase 0 が 1 epoch、Phase 1 が 2 epoch、Phase 2 も 8 epoch）実質わずか 6 分程度で学習が終わってしまい、
+  Sharpe / RankIC が動く前に収束しているのが原因でした。そこで、次のように設定とコードを再調整しました。
+
+  ———
+
+  主な調整内容
+
+  - scripts/train_optimized_direct.py:27-86
+      - Phase長を引き延ばし：PHASE0_EPOCHS=2, PHASE1_EPOCHS=6, PHASE2_EPOCHS=16, PHASE3_EPOCHS=8 に変更し、PHASE_MAX_BATCHES=0 で各フェーズをフル実行。
+      - グラフ密度と Sharpe 重みを強化：GRAPH_K_DEFAULT=20, GRAPH_MIN_EDGES=50, GRAPH_EDGE_THR=0.20、SHARPE_WEIGHT=0.5, RANKIC_WEIGHT=0.1。
+      - バリデーション安定化：VAL_BATCH_SIZE=1024、SHARPE_EPS=1e-6。
+      - スケジューラは warmup_cosine を強制 (SCHEDULER)。
+  - configs/atft/config_production_optimized.yaml:47-53
+      - Phase別ロス重みを Sharpe ベースに再配分（Phase 1 以降で Sharpe 比重を段階的に増加）。
+      - FAN 窓を [3, 7, 14, 30]、SAN overlap を 0.5、グラフ設定を k=20, edge_threshold=0.20, min_edges=50 に更新。
+  - configs/atft/model/atft_gat_fan.yaml:4-96
+      - EMA teacher (decay=0.999) を導入、GAT ヘッドを [8, 4] に拡張。
+      - FAN/SAN と量子化ヘッドを Sharpe 寄りに調整（quantiles=[0.05,0.25,0.5,0.75,0.95]、smoothing_temperature=0.5、stochastic_depth 0.1）。
+  - scripts/train_atft.py:2736-2791
+      - Val 指標の NaN ガードを追加 (np.nanmean, SHARPE_OFFSET/SHARPE_EPS を利用)。
+
+  これで Phase 2 だけでも 16 epoch 回るようになり、学習時間は 20〜25 分程度になるはずです（GPU 使用率も 40% 近くまで上がる見込み）。
+
+  ———
+
+  次のアクション
+
+  1. 変更済みファイルが反映されていることを確認したら、改めて
+
+     make train-optimized
+     を実行してください。ログ内で Train batches: 20、Phase 2: GAT が 16 エポック走り切っているか、Val Metrics - Sharpe や RankIC がフェーズの後半で変動し始めるかに注目すると効果が分かります。
+     を実行してください。ログ内で Train batches: 20、Phase 2: GAT が 16 エポック走り切っているか、Val Metrics - Sharpe や RankIC がフェーズの後半で変動し始めるかに注目すると効果が分かります。
+  2. もし依然として Sharpe がフラットなままなら、今度は SHARPE_OFFSET=5e-4 に上げる、あるいは PHASE2_EPOCHS をさらに 20 まで延ばす選択肢があります。scripts/train_optimized_direct.py の env ブロックを更
+  新し、再度 make train-optimized を回してください。
+  3. W&B の初期化警告は既知の問題なので無視して構いません。ログと保存された models/checkpoints/atft_gat_fan_best_main.pt を追って、Sharpe/RankIC の改善を確認してください。
+
+  これで「すぐ終わってしまう」状況は解消され、Sharpe や RankIC を押し上げるための土台が整ったはずです。さらにチューニングが必要になれば追加のご提案をしますので、ログの変化を見て教えてください。
