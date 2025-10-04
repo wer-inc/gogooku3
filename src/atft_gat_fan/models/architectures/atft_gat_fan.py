@@ -3,6 +3,7 @@ ATFT-GAT-FAN アーキテクチャ実装
 Adaptive Temporal Fusion Transformer with Graph Attention and Frequency Adaptive Normalization
 """
 import logging
+import re
 
 import pytorch_lightning as pl
 import torch
@@ -37,6 +38,15 @@ class ATFT_GAT_FAN(pl.LightningModule):
     - Slice Adaptive Normalization (SAN): スライス適応正規化
     """
 
+    _TARGET_KEY_PATTERNS = [
+        re.compile(r"^(?:return|returns|ret|target|targets|tgt|y)_(\d+)(?:d)?$", re.IGNORECASE),
+        re.compile(r"^label_ret_(\d+)_bps$", re.IGNORECASE),
+        re.compile(r"^horizon_(\d+)(?:d)?$", re.IGNORECASE),
+        re.compile(r"^point_horizon_(\d+)$", re.IGNORECASE),
+        re.compile(r"^h(\d+)$", re.IGNORECASE),
+        re.compile(r"^(\d+)(?:d)?$", re.IGNORECASE),
+    ]
+
     def __init__(self, config: DictConfig):
         super().__init__()
         self.config = config
@@ -57,127 +67,97 @@ class ATFT_GAT_FAN(pl.LightningModule):
         self.curriculum_scheduler = self._build_curriculum()
         self.curriculum_horizon_weights: dict[int, float] | None = None
         self.curriculum_active_horizons: set[str] | None = None
+        self._target_warning_logged = False
+
+    def _canonicalize_target_key(self, key: object) -> str | None:
+        """Map various target key aliases to the canonical 'horizon_{n}d' string."""
+        if isinstance(key, int):
+            return f"horizon_{int(key)}d"
+        if isinstance(key, str):
+            stripped = key.strip()
+            for pattern in self._TARGET_KEY_PATTERNS:
+                match = pattern.match(stripped)
+                if match:
+                    return f"horizon_{int(match.group(1))}d"
+        return None
+
+    def _extract_targets(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """Collect target tensors keyed by canonical horizon name from the batch."""
+
+        targets_map: dict[str, torch.Tensor] = {}
+        if not isinstance(batch, dict):
+            return targets_map
+
+        raw_targets = batch.get("targets")
+        if isinstance(raw_targets, dict):
+            for key, value in raw_targets.items():
+                if not torch.is_tensor(value):
+                    continue
+                canonical = self._canonicalize_target_key(key)
+                if canonical is not None:
+                    targets_map[canonical] = value
+
+        # Some collate pipelines may already place horizon keys at the top level
+        for key, value in batch.items():
+            if key == "targets" or not torch.is_tensor(value):
+                continue
+            canonical = self._canonicalize_target_key(key)
+            if canonical is not None:
+                targets_map.setdefault(canonical, value)
+
+        return targets_map
+
+    def _fetch_target_tensor(
+        self,
+        targets_map: dict[str, torch.Tensor],
+        horizon_key: str,
+        reference: torch.Tensor,
+    ) -> torch.Tensor | None:
+        """Get a target tensor aligned with the prediction tensor device/dtype."""
+
+        target = targets_map.get(horizon_key)
+        if target is None and horizon_key.endswith("d"):
+            # Allow lookup without the trailing 'd' if present in the map
+            alt_key = horizon_key[:-1]
+            target = targets_map.get(alt_key)
+        if target is None:
+            return None
+
+        target_tensor = target.to(reference.device, dtype=reference.dtype)
+        if target_tensor.dim() > 1:
+            target_tensor = target_tensor.squeeze(-1)
+        return target_tensor
 
     def _calculate_feature_dims(self):
-        """特徴量次元の計算（ML_DATASET_COLUMNS.md準拠）"""
-        data_config = self.config.data.features
-
-        from omegaconf import DictConfig, ListConfig
-
-        def _collect_feature_names(node):
-            names = []
-            if node is None:
-                return names
-            if isinstance(node, (list, tuple, set, ListConfig)):
-                for item in node:
-                    if isinstance(item, str):
-                        names.append(item)
-                    else:
-                        names.extend(_collect_feature_names(item))
-            elif isinstance(node, (dict, DictConfig)):
-                for value in node.values():
-                    names.extend(_collect_feature_names(value))
-            return names
-
-        basic_features = _collect_feature_names(getattr(data_config, 'basic', None))
-        technical_features = _collect_feature_names(getattr(data_config, 'technical', None))
-        ma_features = _collect_feature_names(getattr(data_config, 'ma_derived', None))
-        interaction_features = _collect_feature_names(getattr(data_config, 'returns_ma_interaction', None))
-        flow_features = _collect_feature_names(getattr(data_config, 'flow', None))
-
-        returns_cfg = getattr(data_config, 'returns', None)
-        if returns_cfg is not None and hasattr(returns_cfg, 'columns'):
-            return_features = list(returns_cfg.columns)
-        else:
-            return_features = []
-
-        current_feature_names = (
-            basic_features
-            + technical_features
-            + ma_features
-            + interaction_features
-            + flow_features
-            + return_features
-        )
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_feature_names = []
-        for name in current_feature_names:
-            if name not in seen:
-                seen.add(name)
-                unique_feature_names.append(name)
-
+        """特徴量次元の計算（シンプル版：カテゴリ分割なし）"""
+        # カテゴリ分割を完全に無効化し、total_featuresのみを使用
         manual_dims = getattr(self.config.model, "input_dims", None)
-        total_override = None
-        historical_override = 0
-        if manual_dims is not None:
-            total_override = getattr(manual_dims, "total_features", None)
+
+        if manual_dims is not None and hasattr(manual_dims, "total_features"):
+            total_features = int(manual_dims.total_features)
             historical_override = int(getattr(manual_dims, "historical_features", 0) or 0)
 
-        if total_override:
-            # Respect manual override (e.g. dataset auto-detected 182 features)
-            self.n_current_features = int(total_override) - historical_override
+            self.n_current_features = total_features - historical_override
             if self.n_current_features <= 0:
-                self.n_current_features = int(total_override)
+                self.n_current_features = total_features
+
             self.n_historical_features = historical_override
-            self.n_dynamic_features = int(total_override)
+            self.n_dynamic_features = total_features
+
+            logger.info(
+                "✅ Using simplified feature dimensions (category split DISABLED): "
+                f"total={total_features}, current={self.n_current_features}, "
+                f"historical={self.n_historical_features}"
+            )
         else:
-            self.n_current_features = len(unique_feature_names)
-
-            # 履歴特徴量の計算
-            n_historical = 0
-            historical_cfg = getattr(data_config, 'historical', None)
-            if historical_cfg is not None:
-                try:
-                    for hist_cfg in historical_cfg.values():
-                        rng = getattr(hist_cfg, 'range', None)
-                        if rng is not None and len(rng) == 2:
-                            n_historical += (rng[1] - rng[0] + 1)
-                except (AttributeError, TypeError):
-                    n_historical = 0
-
-            self.n_historical_features = n_historical
-
-            # 合計特徴量数
-            self.n_dynamic_features = self.n_current_features + self.n_historical_features
-
-            if self.n_dynamic_features <= 0:
-                try:
-                    fallback_dim = int(getattr(getattr(self.config.data, "features", {}), "input_dim", 0))
-                except Exception:
-                    fallback_dim = 0
-                if fallback_dim > 0:
-                    logger.warning(
-                        "Dynamic feature dimension inferred as 0; falling back to config input_dim=%d",
-                        fallback_dim,
-                    )
-                    self.n_dynamic_features = fallback_dim
+            # Fallback: 設定がない場合はエラー
+            raise ValueError(
+                "model.input_dims.total_features must be specified in config. "
+                "Feature category auto-detection has been disabled."
+            )
 
         # 静的特徴量（market_code_nameのエンコーディング後の次元）
         self.n_static_features = 10  # 仮の値（実際はエンコーディング方法による）
-
-        logger.info(
-            "Feature dimensions - Basic: %d, Technical: %d, MA-derived: %d, "
-            "Interaction: %d, Flow: %d, Returns: %d",
-            len(basic_features),
-            len(technical_features),
-            len(ma_features),
-            len(interaction_features),
-            len(flow_features),
-            len(return_features),
-        )
-        logger.info(f"Total current features: {self.n_current_features}, "
-                   f"Historical: {self.n_historical_features}, Total: {self.n_dynamic_features}")
-
-        # ML_DATASET_COLUMNS.md準拠チェック
-        if total_override:
-            logger.info("Feature dimension override detected: using total=%d (historical=%d)", self.n_dynamic_features, self.n_historical_features)
-        else:
-            expected_features = 59  # Legacy expectation (for reference only)
-            if abs(self.n_current_features - expected_features) > 10:  # 許容誤差
-                logger.warning(f"Feature count mismatch! Expected ~{expected_features}, got {self.n_current_features}")
-                logger.warning("Please verify data configuration matches ML_DATASET_COLUMNS.md or provide model.input_dims override")
 
     def _build_model(self):
         """モデルアーキテクチャの構築"""
@@ -694,6 +674,10 @@ class ATFT_GAT_FAN(pl.LightningModule):
         outputs = self.forward(batch)
         predictions = outputs['predictions']
         output_type = outputs['output_type']
+        targets_map = self._extract_targets(batch)
+        if not targets_map and not self._target_warning_logged:
+            logger.warning("No target tensors were found in batch; training loss will be zero.")
+            self._target_warning_logged = True
 
         total_loss = 0.0
         horizon_losses = {}
@@ -717,18 +701,12 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 if self.curriculum_active_horizons and horizon_key not in self.curriculum_active_horizons:
                     continue
 
-                # Extract corresponding target for this horizon
-                if horizon_key in batch:
-                    target = batch[horizon_key]
-                elif 'targets' in batch:
-                    # Fallback to single target (assume it matches the prediction format)
-                    target = batch['targets']
-                else:
-                    # Skip if no matching target
+                target_tensor = self._fetch_target_tensor(targets_map, horizon_key, pred)
+                if target_tensor is None:
                     continue
 
                 # Horizon-specific loss
-                horizon_loss = self.quantile_loss(pred, target)
+                horizon_loss = self.quantile_loss(pred, target_tensor)
 
                 # Apply horizon weighting (emphasize short-term)
                 weight = horizon_weights.get(horizon_key, 0.5)
@@ -742,8 +720,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
         else:
             # Single-horizon training (backward compatibility)
-            targets = batch['targets']
-            main_loss = self.quantile_loss(predictions['single'], targets)
+            target_tensor = next(iter(targets_map.values()), None)
+            if target_tensor is None:
+                raise RuntimeError("No target tensor available for single-horizon training")
+            target_tensor = target_tensor.to(predictions['single'].device, dtype=predictions['single'].dtype)
+            if target_tensor.dim() > 1:
+                target_tensor = target_tensor.squeeze(-1)
+            main_loss = self.quantile_loss(predictions['single'], target_tensor)
             total_loss = main_loss
             self.log('train_main_loss', main_loss, prog_bar=True)
 
@@ -751,35 +734,39 @@ class ATFT_GAT_FAN(pl.LightningModule):
         if hasattr(self, 'sharpe_loss') and output_type == 'multi_horizon':
             # Apply Sharpe loss to primary horizon (usually 1d or 5d)
             primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
-            if primary_horizon in predictions and primary_horizon in batch:
-                sharpe_loss = self.sharpe_loss(predictions[primary_horizon], batch[primary_horizon])
-                total_loss += sharpe_loss
-                self.log('train_sharpe_loss', sharpe_loss, prog_bar=False)
+            if primary_horizon in predictions:
+                target_tensor = self._fetch_target_tensor(targets_map, primary_horizon, predictions[primary_horizon])
+                if target_tensor is not None:
+                    sharpe_loss = self.sharpe_loss(predictions[primary_horizon], target_tensor)
+                    total_loss = total_loss + sharpe_loss
+                    self.log('train_sharpe_loss', sharpe_loss, prog_bar=False)
 
         # Rank損失（主ホライズンの中央値スコアでペアワイズ）
         if output_type == 'multi_horizon' and self.rank_loss is not None and self.rank_loss_weight > 0:
             primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
-            if primary_horizon in predictions and primary_horizon in batch:
-                pred_q = predictions[primary_horizon]  # [B, n_quantiles]
-                if pred_q.dim() == 2 and pred_q.size(1) > self._median_q_idx:
+            if primary_horizon in predictions:
+                pred_q = predictions[primary_horizon]
+                target_tensor = self._fetch_target_tensor(targets_map, primary_horizon, pred_q)
+                if target_tensor is not None and pred_q.dim() == 2 and pred_q.size(1) > self._median_q_idx:
                     z = pred_q[:, self._median_q_idx]
-                    y = batch[primary_horizon].view(-1)
-                    rk = self.rank_loss(z.view(-1), y.view(-1)) * self.rank_loss_weight
+                    y = target_tensor.view(-1)
+                    rk = self.rank_loss(z.view(-1), y) * self.rank_loss_weight
                     total_loss = total_loss + rk
                     self.log('train_rank_loss', rk.detach(), prog_bar=False)
 
         # 意思決定層ロス（主ホライズンの分位点）
         if output_type == 'multi_horizon' and self.decision_layer is not None:
             primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
-            if primary_horizon in predictions and primary_horizon in batch:
-                q = predictions[primary_horizon]  # [B, n_quantiles]
-                y = batch[primary_horizon].view(-1)
-                dl_total, comps = self.decision_layer(q, y)
-                total_loss = total_loss + dl_total
-                # 重要メトリクスをログ
-                self.log('train_decision_sharpe', comps['decision_sharpe'], prog_bar=False)
-                self.log('train_pos_l2', comps['decision_pos_l2'], prog_bar=False)
-                self.log('train_fee', comps['decision_fee'], prog_bar=False)
+            if primary_horizon in predictions:
+                q = predictions[primary_horizon]
+                target_tensor = self._fetch_target_tensor(targets_map, primary_horizon, q)
+                if target_tensor is not None:
+                    dl_total, comps = self.decision_layer(q, target_tensor.view(-1))
+                    total_loss = total_loss + dl_total
+                    # 重要メトリクスをログ
+                    self.log('train_decision_sharpe', comps['decision_sharpe'], prog_bar=False)
+                    self.log('train_pos_l2', comps['decision_pos_l2'], prog_bar=False)
+                    self.log('train_fee', comps['decision_fee'], prog_bar=False)
 
         # Variable selection sparsity正則化
         if isinstance(self._vsn_sparsity_loss, torch.Tensor) and self._vsn_sparsity_loss.numel() > 0:
@@ -826,6 +813,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
         outputs = self.forward(batch)
         predictions = outputs['predictions']
         output_type = outputs['output_type']
+        targets_map = self._extract_targets(batch)
 
         total_loss = 0.0
 
@@ -834,14 +822,11 @@ class ATFT_GAT_FAN(pl.LightningModule):
             for horizon_key, pred in predictions.items():
                 if self.curriculum_active_horizons and horizon_key not in self.curriculum_active_horizons:
                     continue
-                if horizon_key in batch:
-                    target = batch[horizon_key]
-                elif 'targets' in batch:
-                    target = batch['targets']
-                else:
+                target_tensor = self._fetch_target_tensor(targets_map, horizon_key, pred)
+                if target_tensor is None:
                     continue
 
-                val_loss = self.quantile_loss(pred, target)
+                val_loss = self.quantile_loss(pred, target_tensor)
                 total_loss += val_loss
 
                 # Log individual horizon validation losses
@@ -849,8 +834,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
         else:
             # Single-horizon validation
-            targets = batch['targets']
-            val_loss = self.quantile_loss(predictions['single'], targets)
+            target_tensor = next(iter(targets_map.values()), None)
+            if target_tensor is None:
+                raise RuntimeError("No target tensor available for single-horizon validation")
+            target_tensor = target_tensor.to(predictions['single'].device, dtype=predictions['single'].dtype)
+            if target_tensor.dim() > 1:
+                target_tensor = target_tensor.squeeze(-1)
+            val_loss = self.quantile_loss(predictions['single'], target_tensor)
             total_loss = val_loss
 
         self.log('val_loss', total_loss, prog_bar=True, sync_dist=True)

@@ -26,8 +26,9 @@ hydra:
 # ============================================================================
 
 improvements:
-  # torch.compile有効化 (PDFの提案通り)
-  compile_model: true  # Changed from false
+  # torch.compile一時無効化 (検証用 - 2025-10-04)
+  # 特徴次元修正の影響を確認するため一時的に無効化
+  compile_model: false  # Temporarily disabled for validation
   compile_mode: "reduce-overhead"  # FIX: max-autotune causes CUDA misaligned address errors
   compile_fullgraph: false
   compile_dynamic: false
@@ -53,10 +54,11 @@ improvements:
     phase_3: "quantile=0.3,sharpe=0.8,rankic=0.3,cs_ic=0.2"
 
 # ============================================================================
-# Feature grouping alignment (PDF指摘: 59想定 vs 189実列の齟齬解消)
+# Feature grouping alignment (Corrected: 192 actual features)
 # ============================================================================
 
-feature_mapping: null
+# Path to feature category mapping file (actual dataset features)
+feature_categories_config: configs/atft/feature_categories_actual.yaml
 
 # ============================================================================
 # Model configuration (aligned with feature groups)
@@ -66,47 +68,40 @@ model:
   name: ATFT_GAT_FAN
   hidden_size: 256  # Increased from 64
 
-  # Input dimensions aligned with actual dataset (189 features)
-  # Updated based on PDF analysis: actual dataset has 189 features
+  # Input dimensions aligned with DATA LOADER detection (200 features)
+  # NOTE: DataLoader auto-detects 200 features after excluding metadata
+  # Updated 2025-10-04: Was 182, but actual detection shows F=200
+  # CRITICAL: Model input_dim MUST match what DataLoader provides
   input_dims:
-    basic_features: 46
-    technical_features: 50
-    # Total will be auto-detected as 189 from dataset
-    ma_derived_features: 20
+    total_features: 200     # MUST match DataLoader detection (F=200)
+    historical_features: 0  # No historical features for now
+
+    # Feature group breakdown (NOT USED - category split disabled)
+    # Kept for documentation only
+    basic_features: 18
+    technical_features: 24
+    ma_derived_features: 16
     returns_features: 15
     market_features: 26
-    flows_features: 17
-    total_features: 189  # Adjusted to match actual ML dataset feature count
+    flows_features: 55
+    statements_features: 18
+    additional_features: 10
 
   # Variable Selection Networks (VSN) per feature group
+  # RE-ENABLED after prediction collapse diagnosis completed (2025-10-04)
   variable_selection:
-    enabled: true
-    per_feature_group: true
-    groups:
-      - name: basic
-        hidden_size: 64
-      - name: technical
-        hidden_size: 128
-      - name: ma_derived
-        hidden_size: 32
-      - name: returns
-        hidden_size: 32
-      - name: market
-        hidden_size: 64
-      - name: flows
-        hidden_size: 32
+    enabled: true  # Re-enabled for better feature selection
+    per_feature_group: false
 
   # Frequency Adaptive Normalization (FAN) settings
+  # RE-ENABLED after prediction collapse diagnosis completed (2025-10-04)
   fan:
-    enabled: true
-    per_group_normalization: true
-    window_sizes: [3, 7, 14, 30]
+    enabled: true  # Re-enabled for adaptive temporal normalization
 
   # Slice Adaptive Normalization (SAN) settings
+  # RE-ENABLED after prediction collapse diagnosis completed (2025-10-04)
   san:
-    enabled: true
-    num_slices: 4
-    overlap: 0.5
+    enabled: true  # Re-enabled for cross-sectional learning
 
 # ============================================================================
 # Training configuration
@@ -140,6 +135,19 @@ train:
     min_delta: 1e-4
 
 # ============================================================================
+# Normalization configuration (CRITICAL FIX 2025-10-03)
+# ============================================================================
+
+normalization:
+  # Enable online normalization using global statistics
+  online_normalization:
+    enabled: true  # CRITICAL: Enable to prevent prediction collapse
+
+  # Cross-sectional normalization (daily z-score)
+  cross_sectional:
+    enabled: false  # Using online normalization instead
+
+# ============================================================================
 # Data configuration
 # ============================================================================
 
@@ -154,12 +162,13 @@ data:
     feature_columns: null  # Auto-detect if null
 
   # Graph builder configuration (required)
+  # Updated 2025-10-04 based on TODO recommendations for improved RankIC
   graph_builder:
     cache_dir: graph_cache
     ewm_halflife: 30
-    k: 20
-    edge_threshold: 0.20
-    min_edges: 50
+    k: 24  # Increased from 20 (TODO recommendation)
+    edge_threshold: 0.18  # Reduced from 0.20 for denser graph (TODO recommendation)
+    min_edges: 75  # Increased from 50 (TODO recommendation)
     log_mktcap_col: log_mktcap
     lookback: 60
     method: ewm_demean

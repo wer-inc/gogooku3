@@ -2,9 +2,14 @@ name: jpx_large_scale
 
 # スキーマ設定 (required)
 schema:
-  date_column: date
-  code_column: code
+  date_column: Date  # Note: parquet files use capital 'D'
+  code_column: Code  # Note: parquet files use capital 'C'
   target_column: target
+  target_columns:  # Explicit target columns for multi-horizon prediction
+    - target_1d
+    - target_5d
+    - target_10d
+    - target_20d
   feature_columns: null  # Auto-detect if null
 
 # バッファー付きローダーを使用（ファイル境界を跨いだシーケンス生成）

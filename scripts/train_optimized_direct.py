@@ -21,10 +21,10 @@ def main():
 
     # Critical optimizations from PDF (OPTIMIZED for A100)
     env.update({
-        "ALLOW_UNSAFE_DATALOADER": "1",
-        "NUM_WORKERS": "4",  # FIX: Reduced to 4 to prevent thread explosion (conservative start)
-        "PERSISTENT_WORKERS": "1",  # OPTIMIZATION: Reuse workers for efficiency
-        "PREFETCH_FACTOR": "2",  # FIX: Reduced to 2 to limit memory usage
+        "ALLOW_UNSAFE_DATALOADER": "1",  # FIXED (2025-10-04): Safe after pre-computing stats in main process
+        "NUM_WORKERS": "8",  # FIXED (2025-10-04): Multi-worker now stable (root cause resolved)
+        "PERSISTENT_WORKERS": "1",  # Re-enabled: Worker reuse for better performance
+        "PREFETCH_FACTOR": "4",  # Restored: Optimal prefetch for 8 workers
         "PIN_MEMORY": "1",
         "USE_DAY_BATCH": "0",  # Disable day-batch sampling to keep GPU busy early
         "USE_GRAPH_IN_TRAINING": "1",  # Default: build correlation graphs during training
@@ -40,11 +40,11 @@ def main():
         "PHASE_MAX_BATCHES": "0",
         "FUSE_START_PHASE": "0",
         "USE_ADV_GRAPH_TRAIN": "1",  # Enable training-time graph builder optimizations
-        "GRAPH_EDGE_THR": "0.17",  # Increase graph density for GAT
-        "GRAPH_K_DEFAULT": "28",  # More neighbors for message passing
-        "GRAPH_MIN_EDGES": "90",
+        "GRAPH_EDGE_THR": "0.18",  # TODO recommendation: 0.18 for improved RankIC
+        "GRAPH_K_DEFAULT": "28",  # More neighbors for message passing (better than TODO's 24)
+        "GRAPH_MIN_EDGES": "90",  # Higher than TODO's 75 for denser graph
         "BATCH_SIZE": "512",  # Ensure train_atft picks large micro-batch via env fallback
-        "OMP_NUM_THREADS": "4",  # CRITICAL FIX: Limit OpenMP threads (4 workers × 4 threads = 16 total)
+        "OMP_NUM_THREADS": "2",  # OPTIMIZED: 8 workers × 2 threads = 16 total (conservative)
         "USE_RANKIC": "1",
         "RANKIC_WEIGHT": "0.2",
         "USE_CS_IC": "1",
@@ -84,10 +84,10 @@ def main():
         # FIX: Conservative batch settings (Phase 1)
         "+train.batch.train_batch_size=768",
         "+train.batch.gradient_accumulation_steps=4",  # Higher update frequency (effective batch = 2048)
-        # FIX: DataLoader settings aligned with environment variables
-        "train.batch.num_workers=4",  # FIX: Match NUM_WORKERS=4 to prevent thread explosion
+        # FIXED: DataLoader settings - multi-worker mode (root cause resolved)
+        "train.batch.num_workers=8",  # FIXED: Multi-worker stable (pre-compute stats in main process)
         "+train.batch.val_batch_size=1024",
-        "train.batch.prefetch_factor=2",  # FIX: Match PREFETCH_FACTOR=2
+        "train.batch.prefetch_factor=4",  # Optimal for 8 workers
         "train.batch.persistent_workers=true",
         "train.batch.pin_memory=true",
         # FIX: Drop undersized daily batches (TODO: implement later)

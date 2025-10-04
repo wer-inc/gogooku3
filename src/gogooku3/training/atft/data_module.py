@@ -271,6 +271,12 @@ class StreamingParquetDataset(Dataset):
                 "FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow"
             )
 
+        # CRITICAL FIX (2025-10-03): Global normalization statistics
+        # Compute median/MAD from training data for proper cross-sample normalization
+        self._global_median: np.ndarray | None = None
+        self._global_mad: np.ndarray | None = None
+        self._stats_computed = False
+
         sample_columns = self._detect_columns(cleaned_paths[0])
         self.code_column = self._resolve_column_name(code_column, sample_columns)
         self.date_column = self._resolve_column_name(date_column, sample_columns)
@@ -701,14 +707,124 @@ class StreamingParquetDataset(Dataset):
 
         return file_idx, relative_idx
 
+    def _canonical_target_key(self, col_name: str) -> str:
+        """
+        Convert target column names to canonical horizon_N format.
+
+        Converts:
+            target_1d -> horizon_1
+            target_5d -> horizon_5
+            feat_ret_1d -> horizon_1
+            feat_ret_20d -> horizon_20
+        """
+        import re
+
+        # Match target_Nd, feat_ret_Nd patterns
+        match = re.search(r'(?:target|feat_ret)_(\d+)d?', col_name)
+        if match:
+            horizon_num = match.group(1)
+            return f'horizon_{horizon_num}'
+
+        # Return original if no pattern matches
+        return col_name
+
+    def _compute_global_statistics(self, max_samples: int = 1000) -> None:
+        """
+        Compute global median/MAD from a subset of training data.
+
+        CRITICAL FIX (2025-10-03): Use global statistics instead of per-sample stats
+        to preserve cross-sample information.
+
+        Args:
+            max_samples: Maximum number of samples to use for statistics estimation
+        """
+        if self._stats_computed:
+            return
+
+        logger.info("Computing global normalization statistics from training data...")
+
+        # Sample features from multiple files
+        all_features = []
+        samples_per_file = max(1, max_samples // len(self.file_paths))
+
+        for file_path in self.file_paths[:5]:  # Use first 5 files for speed
+            try:
+                df = pl.scan_parquet(file_path).select(self.feature_columns).head(samples_per_file).collect(streaming=True)
+                features = df.to_numpy().astype(np.float64)
+                features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+                # Clip before computing statistics
+                np.clip(features, -1e8, 1e8, out=features)
+                all_features.append(features)
+
+                if sum(len(f) for f in all_features) >= max_samples:
+                    break
+            except Exception as exc:
+                logger.warning("Failed to load features from %s: %s", file_path, exc)
+                continue
+
+        if not all_features:
+            logger.warning("Failed to compute global statistics, falling back to per-sample normalization")
+            self._stats_computed = True
+            return
+
+        # Concatenate all features
+        combined = np.vstack(all_features)
+
+        # Compute robust statistics (per feature, across all samples)
+        self._global_median = np.median(combined, axis=0, keepdims=False)
+        mad = np.median(np.abs(combined - self._global_median), axis=0, keepdims=False)
+        self._global_mad = mad * 1.4826  # Convert MAD to std
+        self._global_mad = np.clip(self._global_mad, 1e-8, None)
+
+        self._stats_computed = True
+
+        logger.info(
+            "Global statistics computed from %d samples: median range [%.2e, %.2e], MAD range [%.2e, %.2e]",
+            len(combined),
+            self._global_median.min(),
+            self._global_median.max(),
+            self._global_mad.min(),
+            self._global_mad.max(),
+        )
+
     def _normalize(self, features: np.ndarray) -> np.ndarray:
-        """Apply online normalization."""
-        # Work in float64 to avoid overflow on large magnitudes, then return float32 for torch
+        """
+        Apply robust normalization to features using global statistics.
+
+        CRITICAL FIX (2025-10-03): Previous implementation used per-sample normalization,
+        which loses cross-sample information and causes prediction collapse.
+
+        New implementation:
+        1. Compute global median/MAD once from training data
+        2. Use global statistics to normalize all samples consistently
+        3. This preserves cross-sample relationships
+        """
+        # Compute global statistics on first call (lazy initialization)
+        if not self._stats_computed:
+            self._compute_global_statistics()
+
+        # Work in float64 to avoid overflow
         work_array = features.astype(np.float64, copy=False)
-        mean = work_array.mean(axis=0, keepdims=True)
-        std = work_array.std(axis=0, keepdims=True)
-        std = np.clip(std, 1e-8, None)
-        normalized = (work_array - mean) / std
+
+        # Clip extreme values
+        np.clip(work_array, -1e8, 1e8, out=work_array)
+
+        # Apply global normalization if statistics available
+        if self._global_median is not None and self._global_mad is not None:
+            # Broadcast global stats to (seq_len, n_features) shape
+            normalized = (work_array - self._global_median) / self._global_mad
+        else:
+            # Fallback to per-sample normalization (not ideal but better than nothing)
+            median = np.median(work_array, axis=0, keepdims=True)
+            mad = np.median(np.abs(work_array - median), axis=0, keepdims=True)
+            mad = mad * 1.4826
+            mad = np.clip(mad, 1e-8, None)
+            normalized = (work_array - median) / mad
+            logger.warning("Using fallback per-sample normalization (global stats not available)")
+
+        # Final clipping to ±5 sigma
+        np.clip(normalized, -5.0, 5.0, out=normalized)
+
         return normalized.astype(np.float32, copy=False)
 
 
@@ -886,6 +1002,26 @@ class ProductionDataModuleV2:
 
         logger.info(f"✅ Datasets created: train={len(self.train_dataset)} samples")
 
+        # CRITICAL FIX (2025-10-04): Pre-compute normalization stats in main process
+        # Root cause: Each DataLoader worker independently computes statistics (lazy init)
+        # This causes parallel file I/O from 8 workers → resource contention → crash
+        # Solution: Compute once in main process, share with all datasets
+        logger.info("Pre-computing global normalization statistics in main process...")
+        self.train_dataset._compute_global_statistics()
+
+        # Share train statistics with val/test datasets (train-only stats for data safety)
+        if hasattr(self, 'val_dataset') and self.val_dataset:
+            self.val_dataset._global_median = self.train_dataset._global_median
+            self.val_dataset._global_mad = self.train_dataset._global_mad
+            self.val_dataset._stats_computed = True
+
+        if hasattr(self, 'test_dataset') and self.test_dataset:
+            self.test_dataset._global_median = self.train_dataset._global_median
+            self.test_dataset._global_mad = self.train_dataset._global_mad
+            self.test_dataset._stats_computed = True
+
+        logger.info("✅ Global statistics computed and shared across datasets")
+
     def _get_feature_columns(self) -> list[str]:
         """Get feature column names."""
         if self.config.data.schema.feature_columns:
@@ -956,6 +1092,13 @@ class ProductionDataModuleV2:
 
     def _get_target_columns(self) -> list[str]:
         """Get target column names."""
+        # First, check if explicit target_columns are provided in config
+        if hasattr(self.config.data.schema, 'target_columns') and self.config.data.schema.target_columns:
+            target_cols = list(self.config.data.schema.target_columns)
+            logger.info(f"✅ Using explicit target columns from config: {target_cols}")
+            return target_cols
+
+        # Fallback: Generate from prediction_horizons
         horizons = self.config.data.time_series.prediction_horizons
         base_target = self.config.data.schema.target_column
 
@@ -964,6 +1107,7 @@ class ProductionDataModuleV2:
         for h in horizons:
             target_cols.append(f"{base_target}_{h}d")
 
+        logger.info(f"✅ Generated target columns from horizons: {target_cols}")
         return target_cols
 
     def train_dataloader(self) -> DataLoader:

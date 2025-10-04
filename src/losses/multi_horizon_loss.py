@@ -42,26 +42,33 @@ class HuberLoss(nn.Module):
 class QuantileLoss(nn.Module):
     """分位点損失（Quantile Loss）"""
 
-    def __init__(self, quantiles: list[float] = [0.1, 0.5, 0.9]):
+    def __init__(self, quantiles: list[float] | tuple[float, ...] = (0.1, 0.5, 0.9)):
         super().__init__()
-        self.quantiles = torch.tensor(quantiles)
+        q = torch.tensor(list(quantiles), dtype=torch.float32).view(1, -1)
+        # register as buffer so it automatically follows the module device/dtype moves
+        self.register_buffer("quantiles", q)
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
         Args:
             pred: 予測分位点 [batch, n_quantiles]
-            target: 目標値 [batch]
+            target: 目標値 [batch] または [batch, 1]
 
         Returns:
             分位点損失
         """
+        if target.dim() > 1:
+            target = target.squeeze(-1)
         target = target.unsqueeze(-1)  # [batch, 1]
+
+        # Broadcast-safe quantiles tensor on same device/dtype as predictions
+        quantiles = self.quantiles.to(pred.device, dtype=pred.dtype)
         diff = target - pred  # [batch, n_quantiles]
 
         # 分位点損失: ρ_τ(u) = u * (τ - I(u < 0))
         quantile_loss = torch.maximum(
-            self.quantiles * diff,
-            (self.quantiles - 1) * diff
+            quantiles * diff,
+            (quantiles - 1) * diff
         )
 
         return quantile_loss.mean()
