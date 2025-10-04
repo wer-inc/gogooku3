@@ -52,6 +52,7 @@ help:
 	@echo ""
 	@echo "Production Optimized (PDF Analysis Based):"
 	@echo "make train-optimized                  - Run with all PDF-recommended optimizations"
+	@echo "make train-optimized-quick            - Quick 3-epoch validation with all optimizations"
 	@echo "make train-optimized-report           - Show optimization report"
 	@echo "make train-optimized-dry              - Dry run to check configuration"
 	@echo "make train-rankic-boost               - Aggressive RankIC optimization (fastest improvement)"
@@ -522,7 +523,7 @@ train-improved-validate:
 	@./scripts/run_improved_training.sh --validate-only
 
 # Production optimized training (PDF analysis based)
-.PHONY: train-optimized train-optimized-report train-optimized-dry
+.PHONY: train-optimized train-optimized-quick train-optimized-report train-optimized-dry
 
 train-optimized:
 	@echo "🚀 Running production-optimized training (PDF analysis based)"
@@ -531,6 +532,24 @@ train-optimized:
 	@echo "   ✅ hidden_size=256, RankIC/Sharpe optimization"
 	@echo "   ✅ torch.compile enabled, feature grouping aligned"
 	@python scripts/train_optimized_direct.py
+
+train-optimized-quick:
+	@echo "⚡ Running quick validation (3 epochs)"
+	@echo "   ✅ All optimizations enabled (Phase延長、VSN/FAN/SAN有効化)"
+	@echo "   ✅ NUM_WORKERS=8 (root cause fixed: pre-compute stats in main process)"
+	@echo "   ✅ GRAPH: k=24, edge_threshold=0.18, min_edges=75"
+	@echo "   ✅ Log: /tmp/atft_quick_test.log"
+	@export OUTPUT_BASE=/home/ubuntu/gogooku3-standalone/output && \
+	 export ALLOW_UNSAFE_DATALOADER=1 && \
+	 export FEATURE_CLIP_VALUE=8.0 && \
+	 nohup python scripts/train_atft.py \
+	   --config-path ../configs/atft \
+	   --config-name config_production_optimized \
+	   data.source.data_dir=output/atft_data \
+	   train.trainer.max_epochs=3 \
+	   > /tmp/atft_quick_test.log 2>&1 & \
+	 echo "✅ Training started. PID: $$!" && \
+	 echo "📊 Monitor: tail -f /tmp/atft_quick_test.log"
 
 train-optimized-report:
 	@echo "📊 Generating optimization report"

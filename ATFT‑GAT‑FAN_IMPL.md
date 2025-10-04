@@ -1981,3 +1981,119 @@ def topk_margin_loss(scores, y_true, k=20, margin=0.1):
   Phase 学習で段階的に複雑化、WF + Purge/Embargo で評価、Sharpe/IR/MDD/勝率を主語にチューニング。
 
 
+
+
+----
+
+**結論（要約）**
+株価の時系列に「万能の最適解」はありません。とはいえ、近年の検証結果と実務での使いやすさを踏まえると、まずは **PatchTST（パッチ化＋チャンネル独立のTransformer）** か **N‑HiTS/N‑BEATS（MLP系の強力なベースライン）** を中核に、**ウォークフォワード／Purged‑CV** と **確率的（分位点）損失** を組み合わせるのが堅実です。多くの外生変数や将来既知のカレンダー要因まで使うなら **TFT（Temporal Fusion Transformer）**、超長系列や高頻度では **SSM系（Mamba）** や **TCN** が強い選択肢です。([arXiv][1])
+
+---
+
+## 用途別「最も良い手法」の選び方
+
+1. **単一〜少数の特徴量／複数銘柄・日次**
+   **PatchTST**：系列をパッチ化して長期依存を扱いやすくし、各銘柄（チャンネル）を独立に処理。LTSF系ベンチマークで大幅改善が報告。実装資産も豊富。([arXiv][1])
+
+2. **多変量・将来既知の特徴（営業日、イベント、需給など）／マルチホライズン**
+   **Temporal Fusion Transformer (TFT)**：ゲーティング＋アテンションで重要特徴を選択しつつ解釈性も確保。([arXiv][2])
+
+3. **超長系列・高頻度（分/秒・板情報）**
+   **State Space Model 系（Mamba）**：線形時間の計算量で長系列に強く、ハードウェア効率も高い設計。**TCN** もディレーテッド畳み込みで長期依存を安定に学習可能。([arXiv][3])
+
+4. **銘柄間の関係（業種、相関、供給網）を使いたい**
+   **グラフニューラルネット（GNN）** や GRU/CNNとのハイブリッドで、関係グラフ（相関・産業・ニュース由来エッジ等）を取り入れる。([arXiv][4])
+
+5. **データが少ない／素早く強いゼロショットの叩き台が欲しい**
+   **時系列ファンデーションモデル**（例：Google **TimesFM**、Amazon **Chronos**、Nixtla **TimeGPT**、**Lag‑Llama**）。巨大コーパスで事前学習済みのデコーダ型モデルで、ゼロ/少量学習のベースとして有用。([Google Research][5])
+
+> **補足（研究動向）**：Transformerは時系列で必ずしも最強ではないという指摘（DLinear/NLinear）と、その再反論（設定・正規化の見直しでTransformerも強い）という両論があります。実務では **MLP/線形系×Transformer系のアンサンブル** が結局安定です。([AAAI Publications][6])
+
+---
+
+## まず試して安定しやすい「実務レシピ」
+
+**タスク設計**
+
+* 目的：価格そのものではなく **対数リターン** の **1日/5日/20日先** の **分位点（q=0.1/0.5/0.9）** を予測（下振れ・中央値・上振れ）。
+* 入力：直近 **L=256–512** 時点の特徴（リターン、出来高、ローリングボラ、モメンタムZ、出来高比、業種ETF、金利/為替等の外生）。
+* 正規化：**銘柄×学習期間内** のみで Z‑score（将来情報の漏洩防止のため、各CV分割内でフィット）。
+
+**モデル**（例：PatchTST）
+
+* patch_len=16–32、stride=8–16、d_model=128–256、n_heads=8、layers=3–6、dropout=0.1–0.3。
+* 出力ヘッド：**マルチ分位点**。**Pinball（Quantile）Loss** を使用。([lokad.com][7])
+* 代替：多変量＆将来既知特徴が多ければ **TFT**（分位点損失）。([arXiv][2])
+
+**学習**
+
+* Optimizer: AdamW、lr=1e‑3 からCosine/OneCycleでウォームアップ、weight decay=0.01、勾配クリップ。
+* 早期終了：検証 **Weighted Quantile Loss / CRPS**。CRPSは確率予測の総合精度に有効。([AutoGluon][8])
+
+**検証（超重要）**
+
+* **ウォークフォワード** か **Purged K‑Fold / CPCV**（エンバーゴ付）でリークを抑制。実装は `skfolio` 等にもあり、金融に特化した枠組みは López de Prado によって整理。([skfolio][9])
+* 生成したシグナルの有用性は **取引コスト・スリッページ込み** のバックテストで評価し、統計的有意性は **Deflated Sharpe Ratio (DSR)** と **Probability of Backtest Overfitting (PBO)** でチェック。([SSRN][10])
+
+---
+
+## 代替アーキテクチャの使い分け
+
+* **N‑HiTS / N‑BEATS**：非自己回帰・多段補間ブロックにより長期予測が安定。単変量や少数特徴のベースラインとして強力。([arXiv][11])
+* **iTransformer**：時間と変量の軸を「反転」して、銘柄間の相関を素直に注意機構で学習。パネル型データで試す価値。([arXiv][12])
+* **TCN**：ディレーテッド畳み込み＋残差で勾配が安定、RNNより多くの系列課題で優位という報告。高頻度向き。([arXiv][13])
+* **SSM（Mamba）**：超長系列・低レイテンシ実装が強み。板情報・イベント駆動の長期依存に。([arXiv][3])
+* **Foundation Models**（**TimesFM / Chronos / TimeGPT / Lag‑Llama**）：データが薄い時のゼロショット、あるいは自前データでの軽い微調整の起点に。([Google Research][5])
+
+---
+
+## 評価指標（予測精度＋運用適合度）
+
+* **分位点損失（Pinball）**／**CRPS**：分布の鋭さと較正を両立して評価。([lokad.com][7])
+* **ポートフォリオ指標**：シャープ、ソルティノ、最大ドローダウン、**DSR**（多重検定補正済の有意性）、**PBO**（過剰最適化確率）。([SSRN][10])
+
+---
+
+## よくある落とし穴（回避のコツ）
+
+* **価格そのもの**の回帰 → **リターン** または **方向**／**分布** 予測に置き換える。
+* 特徴量やラベルの **先見情報リーク**（ローリング統計・スケーラは各CV分割内でfit）。
+* **分布の厚い尾**（外れ値）→ Huber/分位点損失やスチューデントt・分位点ヘッドで頑健化。
+* **評価の過度な最適化** → CPCV、DSR、PBO を併用。([Cross Validated][14])
+* **取引コスト無視**／**スリッページ** 無視 → 実運用指標で再評価。
+
+---
+
+## すぐ動かすための「最小構成」
+
+1. ターゲット：`y_t = log(P_t/P_{t-1})`、予測は {1,5,20}日先の分位点。
+2. 特徴量：`y` のラグ、ローリングσ、モメンタムZ、出来高Z、業種ETF、金利/為替。
+3. モデル：**PatchTST**（上記ハイパラ）＋ **分位点ヘッド（pinball loss）**。([arXiv][1])
+4. 検証：**ウォークフォワード＋Purged‑KFold**（embargo=予測ホライズン）。([Cross Validated][14])
+5. 指標：**WQL/CRPS** と **DSR/PBO**、コスト込みバックテスト。([AutoGluon][8])
+
+---
+
+### まとめ
+
+* **汎用の第一選択**：PatchTST か N‑HiTS/N‑BEATS をベースに、分位点学習＋厳密な時系列CV。([arXiv][1])
+* **多変量・将来既知要因**：TFT。([arXiv][2])
+* **超長系列・高頻度**：Mamba/TCN。([arXiv][3])
+* **データが薄い**：TimesFM／Chronos／TimeGPT／Lag‑Llama をゼロショットの叩き台に。([Google Research][5])
+
+もし、**予測したいホライズン（例：翌日 vs 1週間）**、**利用可能な特徴量**、**頻度（日次・分足・板）**、**評価軸（シャープ重視か、方向精度重視か）** が決まっていれば、その前提に最適化した具体的なモデル設計・ハイパラ・検証手順まで一気に作り込みます。
+
+[1]: https://arxiv.org/pdf/2211.14730?utm_source=chatgpt.com "Long-term Forecasting with Transformers"
+[2]: https://arxiv.org/abs/1912.09363?utm_source=chatgpt.com "Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting"
+[3]: https://arxiv.org/abs/2312.00752?utm_source=chatgpt.com "Linear-Time Sequence Modeling with Selective State Spaces"
+[4]: https://arxiv.org/abs/2005.04955?utm_source=chatgpt.com "Multi-Graph Convolutional Network for Relationship-Driven Stock Movement Prediction"
+[5]: https://research.google/blog/a-decoder-only-foundation-model-for-time-series-forecasting/?utm_source=chatgpt.com "A decoder-only foundation model for time-series forecasting"
+[6]: https://ojs.aaai.org/index.php/AAAI/article/view/26317/26089?utm_source=chatgpt.com "Are Transformers Effective for Time Series Forecasting?"
+[7]: https://www.lokad.com/pinball-loss-function-definition/?utm_source=chatgpt.com "Pinball Loss Function Definition"
+[8]: https://auto.gluon.ai/stable/tutorials/timeseries/forecasting-metrics.html?utm_source=chatgpt.com "Forecasting Time Series - Evaluation Metrics"
+[9]: https://skfolio.org/generated/skfolio.model_selection.CombinatorialPurgedCV.html?utm_source=chatgpt.com "skfolio.model_selection.CombinatorialPurgedCV"
+[10]: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551&utm_source=chatgpt.com "The Deflated Sharpe Ratio: Correcting for Selection Bias ..."
+[11]: https://arxiv.org/abs/2201.12886?utm_source=chatgpt.com "Neural Hierarchical Interpolation for Time Series Forecasting"
+[12]: https://arxiv.org/abs/2310.06625?utm_source=chatgpt.com "iTransformer: Inverted Transformers Are Effective for Time Series Forecasting"
+[13]: https://arxiv.org/pdf/1803.01271?utm_source=chatgpt.com "An Empirical Evaluation of Generic Convolutional and ..."
+[14]: https://stats.stackexchange.com/questions/443159/what-is-combinatorial-purged-cross-validation-for-time-series-data?utm_source=chatgpt.com "What is Combinatorial Purged Cross-Validation for time series ..."

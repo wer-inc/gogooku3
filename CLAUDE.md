@@ -342,3 +342,4 @@ n_splits=5, embargo_days=20, min_train_days=252
 - All `scripts/` still work
 - Use `gogooku3.compat` for gradual migration
 - No breaking changes for existing workflows
+- どんなタスクでもちゃんと分析し、熟考し上で正しい判断をしてから実行してください。

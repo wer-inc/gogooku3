@@ -36,6 +36,7 @@ import traceback
 import torch.multiprocessing as mp
 from functools import partial
 import random
+import math
 
 # Ensure a safe multiprocessing start method to avoid DataLoader deadlocks
 try:
@@ -131,6 +132,23 @@ def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
                 return f"horizon_{h}"
 
     return None
+
+
+def _canonicalize_horizon_dict(tensor_dict):
+    """Extract tensors keyed by canonical horizon_<n> strings."""
+    canonical: dict[str, torch.Tensor] = {}
+    if not isinstance(tensor_dict, dict):
+        return canonical
+
+    for key, tensor in tensor_dict.items():
+        if not torch.is_tensor(tensor):
+            continue
+        canon = _normalize_target_key(key)
+        if canon:
+            canonical[canon] = tensor
+
+    return canonical
+
 
 def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
     """Reshape tensors to [B] format, taking last timestep if needed."""
@@ -2097,6 +2115,11 @@ def train_epoch(
                     {k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()}
                 )
 
+                predictions_canon = _canonicalize_horizon_dict(
+                    predictions_fp32 if isinstance(predictions_fp32, dict) else {}
+                )
+                targets_canon = _canonicalize_horizon_dict(targets_fp32)
+
 
                 # Debug: Check for zero/invalid targets more frequently
                 if batch_idx < 100 and batch_idx % 10 == 0:  # Check every 10th batch for first 100 batches
@@ -2191,18 +2214,24 @@ def train_epoch(
                         pass
 
                 # Variance penalty to prevent collapse
-                variance_penalty = 0.0
-                for h in [1, 5, 10, 20]:
-                    key = f"point_horizon_{h}"
-                    if key in predictions_fp32:
-                        pred_std = predictions_fp32[key].std()
-                        # Penalize if std is too small (collapse)
-                        if pred_std.item() < 0.1:
-                            variance_penalty += (0.1 - pred_std) * 0.1
+                variance_threshold = float(os.getenv("PRED_STD_FLOOR", "0.1"))
+                variance_penalty_strength = float(os.getenv("PRED_STD_PENALTY", "0.1"))
+                variance_penalty_acc = 0.0
+                for h in criterion.horizons:
+                    canon_key = f"horizon_{h}"
+                    pred_tensor = predictions_canon.get(canon_key)
+                    if pred_tensor is None:
+                        continue
+                    pred_std_val = float(pred_tensor.std().item())
+                    if pred_std_val < variance_threshold:
+                        variance_penalty_acc += (
+                            (variance_threshold - pred_std_val)
+                            * variance_penalty_strength
+                        )
 
                 # Add penalty to loss
-                if variance_penalty > 0:
-                    loss = loss + variance_penalty
+                if variance_penalty_acc > 0.0:
+                    loss = loss + loss.new_tensor(variance_penalty_acc, dtype=loss.dtype)
 
                 # 予測値の統計チェック（最初のエポック）
                 if batch_idx == 0 and epoch <= 2:
@@ -6310,6 +6339,19 @@ def train(config: DictConfig) -> None:
                 grad_accum = int(
                     getattr(final_config.train.batch, "gradient_accumulation_steps", 1)
                 )
+                if hasattr(train_loader, "__len__"):
+                    try:
+                        steps_per_epoch = max(1, len(train_loader))
+                    except TypeError:
+                        steps_per_epoch = 0
+                else:
+                    steps_per_epoch = 0
+                if steps_per_epoch:
+                    effective_steps_per_epoch = max(
+                        1, math.ceil(steps_per_epoch / max(1, grad_accum))
+                    )
+                else:
+                    effective_steps_per_epoch = max(1, grad_accum)
 
                 def _supports_graph(mdl) -> bool:
                     try:
@@ -7111,8 +7153,22 @@ def train(config: DictConfig) -> None:
                                 logger.debug(f"Loss/grad logging failed: {e}")
 
                         # Degeneracy detection - ratio-based and consecutive with EMA
-                        warmup_steps = int(os.getenv("DEGENERACY_WARMUP_STEPS", "800"))
-                        check_every = int(os.getenv("DEGENERACY_CHECK_EVERY", "100"))
+                        warmup_env = int(os.getenv("DEGENERACY_WARMUP_STEPS", "800"))
+                        warmup_steps = max(
+                            20,
+                            min(
+                                warmup_env,
+                                effective_steps_per_epoch * 2,
+                            ),
+                        )
+                        check_every_env = int(os.getenv("DEGENERACY_CHECK_EVERY", "100"))
+                        check_every = max(
+                            10,
+                            min(
+                                check_every_env,
+                                effective_steps_per_epoch,
+                            ),
+                        )
                         use_guard = os.getenv("DEGENERACY_GUARD", "1") == "1"
                         abort_on_guard = (
                             os.getenv("DEGENERACY_ABORT", "0") == "1"
@@ -7130,29 +7186,40 @@ def train(config: DictConfig) -> None:
                         ema_beta = float(os.getenv("DEGENERACY_EMA_BETA", "0.9"))
 
                         # Skip checks during warmup or if not at check interval
-                        if (
+                        should_check = (
                             use_guard
                             and global_step >= warmup_steps
+                            and check_every > 0
                             and global_step % check_every == 0
-                        ):
+                        )
+                        if should_check:
                             with torch.no_grad():
-                                for h in criterion.horizons:
-                                    # Get prediction and target keys
-                                    pred_key = (
-                                        f"point_horizon_{h}"
-                                        if f"point_horizon_{h}" in outputs
-                                        else f"horizon_{h}"
+                                guard_predictions = (
+                                    predictions_canon
+                                    if predictions_canon
+                                    else _canonicalize_horizon_dict(
+                                        predictions_fp32
+                                        if isinstance(predictions_fp32, dict)
+                                        else {}
                                     )
-                                    tgt_key = f"horizon_{h}"
+                                )
+                                guard_targets = (
+                                    targets_canon
+                                    if targets_canon
+                                    else _canonicalize_horizon_dict(targets_fp32)
+                                )
+
+                                for h in criterion.horizons:
+                                    canon_key = f"horizon_{h}"
 
                                     if (
-                                        pred_key not in outputs
-                                        or tgt_key not in targets
+                                        canon_key not in guard_predictions
+                                        or canon_key not in guard_targets
                                     ):
                                         continue
 
-                                    yhat = outputs[pred_key].float()
-                                    y = targets[tgt_key].float()
+                                    yhat = guard_predictions[canon_key].float()
+                                    y = guard_targets[canon_key].float()
 
                                     # Use valid mask if available
                                     mask = None
