@@ -598,17 +598,29 @@ class ATFT_GAT_FAN(pl.LightningModule):
             gat_features = gat_emb.unsqueeze(1).expand(-1, tft_output.size(1), -1)
 
         # Combine temporal and graph context
+        # 🔧 FIX (2025-10-06): Always use consistent dimensions to prevent backbone_projection recreation
+        # When GAT is skipped, pad with zeros to maintain dimension=hidden_size+gat_output_dim
         if gat_features is not None:
             combined_features = torch.cat([tft_output, gat_features], dim=-1)
         else:
-            combined_features = tft_output
+            # GAT disabled or no edges: pad with zeros to match expected dimension
+            if self.gat is not None:
+                # GAT exists but not executed: use gat_output_dim for padding
+                zero_pad = torch.zeros(
+                    tft_output.size(0), tft_output.size(1), self.gat_output_dim,
+                    device=tft_output.device, dtype=tft_output.dtype
+                )
+                combined_features = torch.cat([tft_output, zero_pad], dim=-1)
+            else:
+                # GAT completely disabled: no padding needed
+                combined_features = tft_output
 
         # FreqDropout適用（オプション）
         if self.freq_dropout is not None and self.training:
             combined_features = self.freq_dropout(combined_features)
 
         # Project back to hidden size and apply adaptive normalization
-        self._ensure_backbone_projection(combined_features.size(-1), combined_features.device)
+        # 🔧 FIX (2025-10-06): No longer need dynamic dimension check - dimensions are now fixed
         combined_features = self.backbone_projection(combined_features)
         normalized_features = self.adaptive_norm(combined_features)
 

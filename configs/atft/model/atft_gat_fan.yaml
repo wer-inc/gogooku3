@@ -102,10 +102,10 @@ optimization:
     mixed_precision: true
     channels_last: true
   compile:
-    enabled: true  # Enabled for torch.compile optimization
+    enabled: false  # 🔧 DISABLED: dynamic=False incompatible with GAT's dynamic graphs (2025-10-06)
     mode: reduce-overhead  # FIX: max-autotune causes CUDA misaligned address errors on A100
     fullgraph: false  # Keep false for safety with dynamic graphs
-    dynamic: false  # Static shapes for better optimization
+    dynamic: false  # Static shapes for better optimization (but breaks GAT gradients!)
   inference:
     use_torch_script: false
     use_onnx: false
