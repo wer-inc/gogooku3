@@ -6941,6 +6941,12 @@ def train(config: DictConfig) -> None:
                                     model, features, edge_index, edge_attr
                                 )
 
+                            # 🔧 DEBUG (2025-10-06): Check if edge_index is being passed
+                            if global_step <= 5:
+                                edge_index_str = 'None' if edge_index is None else f'shape={edge_index.shape}'
+                                edge_attr_str = 'None' if edge_attr is None else (f'shape={edge_attr.shape}' if hasattr(edge_attr, 'shape') else str(type(edge_attr)))
+                                logger.info(f"[DEBUG-EDGE] step={global_step}, edge_index={edge_index_str}, edge_attr={edge_attr_str}")
+
                             # Debug logging to track key transformation
                             if global_step == 0:
                                 logger.info(f"[DEBUG-KEYS] Raw model output type: {type(outputs)}")
