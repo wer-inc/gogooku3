@@ -6456,9 +6456,12 @@ def train(config: DictConfig) -> None:
                     else:
                         batch = feats if isinstance(feats, dict) else {"features": feats}
 
-                    if ei is not None and ea is not None:
+                    # 🔧 FIX (2025-10-06): Pass edge_index even if edge_attr is None
+                    # GAT can work without edge attributes
+                    if ei is not None:
                         batch["edge_index"] = ei
-                        batch["edge_attr"] = ea
+                        if ea is not None:
+                            batch["edge_attr"] = ea
 
                     return mdl(batch)
 
@@ -7741,9 +7744,12 @@ def train(config: DictConfig) -> None:
                             else:
                                 batch = feats if isinstance(feats, dict) else {"features": feats}
 
-                            if ei is not None and ea is not None:
+                            # 🔧 FIX (2025-10-06): Pass edge_index even if edge_attr is None
+                            # GAT can work without edge attributes
+                            if ei is not None:
                                 batch["edge_index"] = ei
-                                batch["edge_attr"] = ea
+                                if ea is not None:
+                                    batch["edge_attr"] = ea
 
                             return mdl(batch)
 
