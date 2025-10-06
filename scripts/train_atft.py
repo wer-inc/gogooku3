@@ -5794,6 +5794,12 @@ def train(config: DictConfig) -> None:
                 f"ATFT-GAT-FAN model parameters: {sum(p.numel() for p in model.parameters()):,}"
             )
 
+            # 🔧 DEBUG (2025-10-06): Log GAT configuration values
+            logger.info(f"[CONFIG-DEBUG] model.gat_entropy_weight={getattr(model, 'gat_entropy_weight', 'N/A')}")
+            logger.info(f"[CONFIG-DEBUG] model.gat_edge_weight={getattr(model, 'gat_edge_weight', 'N/A')}")
+            logger.info(f"[CONFIG-DEBUG] model.gat is None: {getattr(model, 'gat', None) is None}")
+            logger.info(f"[CONFIG-DEBUG] model.gat_output_dim={getattr(model, 'gat_output_dim', 'N/A')}")
+
             # Apply runtime guards
             try:
                 from runtime_guards import apply_all_guards

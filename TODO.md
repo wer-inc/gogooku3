@@ -1,6 +1,6 @@
 # TODO.md - gogooku3-standalone
 
-**最終更新**: 2025-10-06 11:32
+**最終更新**: 2025-10-06 15:10
 **バックアップ**: `TODO.md.backup-*` (旧9,829行版を自動バックアップ済み)
 
 ---
@@ -9,40 +9,33 @@
 
 ### 🔄 進行中のタスク
 
-#### GAT勾配ゼロ問題の検証トレーニング
-- **状態**: Batch 8/20完了 (11:32時点)
-- **速度**: ~123s/batch
-- **ログ**: `/tmp/dimension_fix_verification.log`
-- **予定**:
-  - Batch 10到達: ~11:36 (残り2バッチ)
-  - Batch 20完了: ~11:57 (最終検証)
-
-**修正内容**:
-- GAT未実行時もゼロパディングで次元512に統一
-- `_ensure_backbone_projection()`呼び出し削除
-- 初期化パラメータのみ使用（Optimizer登録済み）
-
-**検証結果（重要）**:
-- ✅ モデル初期化成功（46M params）
-- ✅ **"Adjusting backbone projection"メッセージなし** → 修正成功の証拠
-- ⏳ Batch 0-8: GAT勾配ゼロ（Warmup期間中、正常範囲）
-- **🎯 Batch 10-20で勾配非ゼロ確認が必要**
+#### GAT勾配ゼロ問題 - 第5次Deep Reasoning実施中
+- **最終更新**: 2025-10-06 15:10
+- **状態**: 新たな根本原因候補を特定、診断ログ追加完了
+- **前回修正**: backbone_projection動的再作成を防止（第4次）
+- **結果**: ✅ 動的層作成は解決したが、GAT勾配はゼロのまま
+- **新発見**: GAT entropy/edge weight が 0 の可能性（第5次）
 
 ### ⏳ 次のタスク（優先順）
 
-1. **検証完了待ち**:
-   - [ ] Batch 10-20でGAT勾配が非ゼロになることを確認
-   - [ ] 期待結果: `grad_norm(gat) > 0.00e+00`
+1. **第5次調査 - 診断ログ分析**（最優先）:
+   - [x] 診断ログ追加完了
+   - [ ] 診断トレーニング実行完了待ち
+   - [ ] ログから以下を確認:
+     - [ ] `[GAT-INIT]` で entropy_weight/edge_weight の値
+     - [ ] `[CONFIG-DEBUG]` でモデルの設定値
+     - [ ] `[GAT-DEBUG]` で gat_features の状態
+     - [ ] `[GAT-LOSS]` で Loss 追加の有無
 
-2. **検証成功時**:
-   - [ ] `PHASE_MAX_BATCHES`制限解除
-   - [ ] 本番トレーニング開始（全エポック実行）
-   - [ ] TODO.mdに最終成功レポート追加
+2. **根本原因特定後の修正**:
+   - [ ] Case A: 設定読み込み修正
+   - [ ] Case B: 分岐ロジック修正
+   - [ ] Case C: Loss 計算修正
 
-3. **検証失敗時**:
-   - [ ] 第5次Deep Reasoning実施
-   - [ ] 別の根本原因を調査
-   - [ ] Parameter IDとOptimizer param_groupsの対応チェック
+3. **修正後の検証**:
+   - [ ] PHASE_MAX_BATCHES=2 で短期検証
+   - [ ] GAT勾配が非ゼロになることを確認
+   - [ ] 成功後、本番トレーニング開始
 
 ---
 
@@ -74,7 +67,7 @@
 - 検証: PHASE_MAX_BATCHES=10で実行
 - 結果: ❌ torch.compile無効でもGAT勾配ゼロ - torch.compileは原因ではない
 
-**第4次調査**: `backbone_projection`動的再作成 ✅ **真の原因**
+**第4次調査**: `backbone_projection`動的再作成 ✅ **部分的に解決**
 - 発見: `_ensure_backbone_projection()`がforward pass中に新しいLinear層を作成
 - メカニズム:
   1. `__init__`: GAT有効時 → `Linear(512, 256)`作成
@@ -82,8 +75,84 @@
   3. Forward pass: 次元変化検出 → 新しい`Linear(256, 256)`作成
   4. 新層のパラメータはOptimizer未登録 → 勾配計算されるが更新されない
 - 証拠: `/tmp/torch_compile_disabled_verification.log`に「Adjusting backbone projection from 512 to 256」「from 256 to 512」メッセージ
+- 修正実装: ゼロパディングで次元統一、動的層作成を防止
+- **結果**: ✅ 動的層作成は解決、❌ GAT勾配はゼロのまま
 
-#### 実装した修正
+**第5次調査**: GAT Loss Weight ゼロ仮説 🔍 **進行中**
+- **経緯**: 第4次修正後もGAT勾配ゼロが継続
+- **検証状況**:
+  - ✅ GAT層は実行されている（ログ確認済み: `[GAT-EXEC]`）
+  - ✅ edge_index は正しく渡されている（shape: [2, 2786]）
+  - ✅ GAT出力は生成されている（(256, 256) → (256, 20, 256)）
+  - ✅ backbone_projection 動的再作成は解決済み
+  - ❌ **GAT勾配は依然としてゼロ**
+
+- **新たな発見**（atft_gat_fan.py:577）:
+  ```python
+  return_attention = self.training and self.gat is not None and self.gat_entropy_weight > 0
+  ```
+  - この条件により、`gat_entropy_weight == 0` なら attention weights が返されない
+  - attention weights がないと、GAT entropy loss が計算されない
+  - 結果として GAT 出力が total loss に貢献しない可能性
+
+- **設定ファイル確認結果**:
+  - ✅ `configs/atft/model/atft_gat_fan.yaml` には設定あり:
+    ```yaml
+    regularization:
+      edge_weight_penalty: 0.01
+      attention_entropy_penalty: 0.001
+    ```
+  - ❓ **実際に読み込まれているかは未確認**
+
+- **現在の仮説**:
+  1. `gat_entropy_weight` が 0 に初期化されたまま
+  2. または設定ファイルの値が読み込まれていない
+  3. そのため `return_attention = False` となる
+  4. GAT entropy loss が計算されない
+  5. GAT edge regularization も weight が 0 の可能性
+  6. **結果**: GAT 出力が loss に貢献せず、勾配が発生しない
+
+- **実装した診断ログ** (2025-10-06 14:50):
+  1. **GAT初期化時** (atft_gat_fan.py:337):
+     ```python
+     logger.info(f"[GAT-INIT] gat_entropy_weight={self.gat_entropy_weight}, gat_edge_weight={self.gat_edge_weight}")
+     ```
+
+  2. **モデル初期化後** (train_atft.py:5798-5801):
+     ```python
+     logger.info(f"[CONFIG-DEBUG] model.gat_entropy_weight={model.gat_entropy_weight}")
+     logger.info(f"[CONFIG-DEBUG] model.gat_edge_weight={model.gat_edge_weight}")
+     logger.info(f"[CONFIG-DEBUG] model.gat is None: {model.gat is None}")
+     ```
+
+  3. **Forward pass時** (atft_gat_fan.py:606-608, 616-618):
+     ```python
+     logger.info(f"[GAT-DEBUG] gat_features is None: {gat_features is None}")
+     logger.info(f"[GAT-DEBUG] Checking concatenation: gat_features is not None = ...")
+     logger.info(f"[GAT-DEBUG] Using GAT features branch" / "Using zero-padding branch")
+     logger.info(f"[GAT-DEBUG] combined_features.requires_grad=...")
+     ```
+
+  4. **Loss計算時** (atft_gat_fan.py:821, 828):
+     ```python
+     logger.info(f"[GAT-LOSS] Adding edge_reg={edge_reg.item():.6f}")
+     logger.info(f"[GAT-LOSS] Adding entropy_reg={entropy_reg.item():.6f}")
+     ```
+
+- **次のステップ**:
+  1. ⏳ 診断ログ付き検証トレーニング実行中
+  2. 📊 ログ分析で以下を確認:
+     - `gat_entropy_weight` の実際の値
+     - `gat_features` が None かどうか
+     - GAT loss が total_loss に追加されているか
+  3. 🔧 原因特定後、以下のいずれかを実施:
+     - **Case A**: weight が 0 → 設定読み込みロジック修正
+     - **Case B**: gat_features が None → 分岐ロジック修正
+     - **Case C**: Loss 計算漏れ → Loss 集計ロジック修正
+
+- **状態**: 🟡 診断ログ実装完了、検証トレーニング実行中
+
+#### 実装した修正（第4次）
 
 **修正ファイル**: `src/atft_gat_fan/models/architectures/atft_gat_fan.py` (Line 600-624)
 
@@ -176,12 +245,17 @@ combined_features = self.backbone_projection(combined_features)
 
 ### 🔍 進行中の課題
 
-#### 1. GAT勾配ゼロ問題 (2025-10-06)
-- **状態**: 修正実装完了、検証トレーニング実行中（Batch 8/20）
-- **背景**: Optimizer初期化後に`backbone_projection`が動的に再作成されていた
-- **根本原因**: Forward pass中の層再作成がOptimizer未登録パラメータを生成
-- **修正内容**: ゼロパディングで次元統一、動的層作成を防止
-- **次のステップ**: Batch 10-20でGAT勾配非ゼロ確認
+#### 1. GAT勾配ゼロ問題 (2025-10-06) - 第5次調査中
+- **状態**: 第5次Deep Reasoning実施中、新たな仮説を検証
+- **進捗**:
+  - ✅ 第1次: edge_index 渡し修正
+  - ✅ 第2次: .detach() 削除
+  - ✅ 第3次: torch.compile 無効化
+  - ✅ 第4次: backbone_projection 動的再作成防止
+  - 🔍 第5次: GAT Loss Weight ゼロ仮説（進行中）
+- **最新仮説**: `gat_entropy_weight=0` により GAT loss が計算されていない
+- **診断**: 詳細ログ追加完了、検証トレーニング実行中
+- **次のステップ**: ログ分析 → 根本原因特定 → 修正実装
 
 ### ⚠️ 未解決の課題
 
@@ -283,11 +357,24 @@ src/gogooku3/features/sector_aggregation.py      # セクター機能
 ## 📝 履歴・変更ログ
 
 ### 2025-10-06
+
+**午前（~12:00）**:
 - GAT勾配ゼロ問題の4回目のDeep Reasoning完了
 - backbone_projection動的再作成が根本原因と特定
 - ゼロパディングによる次元固定修正を実装
 - 検証トレーニング開始（PHASE_MAX_BATCHES=20）
 - TODO.md大幅整理（9,829行→約350行、92%削減）
+
+**午後（14:50~15:10）**:
+- 第4次修正後もGAT勾配ゼロが継続することを確認
+- 第5次Deep Reasoning開始：GAT Loss Weight ゼロ仮説
+- 新たな発見：`return_attention` 条件で `gat_entropy_weight > 0` が必要
+- 4種類の診断ログ追加実装:
+  - `[GAT-INIT]`: 初期化時の weight 値
+  - `[CONFIG-DEBUG]`: モデル設定確認
+  - `[GAT-DEBUG]`: Forward pass 状態
+  - `[GAT-LOSS]`: Loss 計算追跡
+- TODO.md更新：第5次調査の詳細を記録
 
 ### 2025-10-01
 - 395列データセット実装完了（392列達成、99.2%）
