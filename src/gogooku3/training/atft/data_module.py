@@ -15,6 +15,7 @@ import polars as pl
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset, Sampler
+import pandas as pd
 
 try:  # pragma: no cover - optional acceleration path
     import pyarrow.parquet as pq
@@ -219,6 +220,7 @@ class StreamingParquetDataset(Dataset):
         sequence_length: int = 60,
         normalize_online: bool = True,
         cache_size: int = 10000,
+        reader_engine: str | None = None,
         exposure_columns: list[str] | None = None,
     ):
         """
@@ -261,6 +263,18 @@ class StreamingParquetDataset(Dataset):
         self.sequence_length = sequence_length
         self.normalize_online = normalize_online
         self.cache_size = cache_size
+        # Engine selection: default to pyarrow for multi-worker safety if unspecified
+        self.reader_engine = (reader_engine or os.getenv("PARQUET_READER_ENGINE") or "").strip().lower()
+        if not self.reader_engine:
+            # Heuristic: prefer pyarrow in multi-worker scenarios for stability
+            try:
+                _nw = int(os.getenv("NUM_WORKERS", "0"))
+            except Exception:
+                _nw = 0
+            self.reader_engine = "pyarrow" if _nw > 0 else "polars"
+        if self.reader_engine not in ("polars", "pyarrow"):
+            logger.warning("Unknown reader_engine=%s; falling back to 'polars'", self.reader_engine)
+            self.reader_engine = "polars"
         try:
             self.feature_clip_value = float(os.getenv("FEATURE_CLIP_VALUE", "0"))
         except Exception:
@@ -293,6 +307,9 @@ class StreamingParquetDataset(Dataset):
         # Initialize cache (int -> sample dict)
         self._cache: dict[int, dict[str, Any]] = {}
         self._cache_indices: list[int] = []
+
+        # Lazy cache for pyarrow row-group metadata per file (file_idx -> (offsets, lengths))
+        self._rg_meta: dict[int, tuple[list[int], list[int]]] = {}
 
         # Phase 2: 露出中立・回転率・整合性ロスのための拡張フィールド
         self.use_exposure_features = os.getenv("USE_EXPOSURE_FEATURES", "0") == "1"
@@ -564,12 +581,16 @@ class StreamingParquetDataset(Dataset):
         file_idx, relative_idx = self._resolve_sample_location(idx)
         file_path = self.file_paths[file_idx]
 
-        window = (
-            pl.scan_parquet(file_path)
-            .slice(relative_idx, self.sequence_length)
-            .select(self._columns_needed)
-            .collect(streaming=True)
-        )
+        # Select reader path
+        if self.reader_engine == "pyarrow" and _HAS_PQ:
+            window = self._load_window_pyarrow(file_idx, file_path, relative_idx)
+        else:
+            window = (
+                pl.scan_parquet(file_path)
+                .slice(relative_idx, self.sequence_length)
+                .select(self._columns_needed)
+                .collect(streaming=True)
+            )
 
         if window.height < self.sequence_length:
             raise IndexError(
@@ -680,6 +701,73 @@ class StreamingParquetDataset(Dataset):
                 sample["exposures"] = torch.zeros(1, dtype=torch.float32)
 
         return sample
+
+    # -----------------------
+    # PyArrow reader backend
+    # -----------------------
+    def _ensure_rg_meta(self, file_idx: int, file_path: Path) -> tuple[list[int], list[int]]:
+        """Build (offsets, lengths) for row-groups of a parquet file lazily."""
+        if file_idx in self._rg_meta:
+            return self._rg_meta[file_idx]
+        if not _HAS_PQ:
+            raise RuntimeError("PyArrow is not available but reader_engine='pyarrow' was selected")
+        pf = pq.ParquetFile(file_path)
+        md = pf.metadata
+        rg_lens: list[int] = [md.row_group(i).num_rows for i in range(md.num_row_groups)]
+        offsets: list[int] = [0]
+        for n in rg_lens[:-1]:
+            offsets.append(offsets[-1] + n)
+        self._rg_meta[file_idx] = (offsets, rg_lens)
+        return self._rg_meta[file_idx]
+
+    def _load_window_pyarrow(self, file_idx: int, file_path: Path, relative_idx: int) -> pl.DataFrame:
+        """Read a [relative_idx : relative_idx+sequence_length) window via PyArrow.
+
+        Safety choices:
+        - use_threads=False (avoid internal parallelism in worker)
+        - memory_map=False (avoid OS mmaps across many processes)
+        """
+        offsets, lengths = self._ensure_rg_meta(file_idx, file_path)
+
+        # Locate covering row-groups
+        start = relative_idx
+        end = relative_idx + self.sequence_length  # exclusive
+
+        # Find start RG
+        rg_start = bisect_right(offsets, start) - 1
+        if rg_start < 0:
+            rg_start = 0
+        # Find end RG (inclusive)
+        # last start offset <= end-1
+        rg_end = bisect_right(offsets, end - 1) - 1
+        if rg_end < rg_start:
+            rg_end = rg_start
+
+        row_groups = list(range(rg_start, rg_end + 1))
+
+        # Read minimal set of row-groups
+        pf = pq.ParquetFile(file_path)
+        table = pf.read_row_groups(
+            row_groups,
+            columns=self._columns_needed,
+            use_threads=False,
+        )
+
+        # Slice inside the concatenated row-groups to the exact window
+        start_in_table = start - offsets[rg_start]
+        # If multiple RGs, the concatenated table starts at offsets[rg_start]
+        # Adjust for cumulative lengths
+        if rg_start != 0:
+            # We need cumulative length of preceding row-groups among selected ones
+            start_in_table = start - offsets[rg_start]
+        end_in_table = start_in_table + self.sequence_length
+
+        # Convert to pandas (cheap for small slices), then slice
+        pdf: pd.DataFrame = table.to_pandas(types_mapper=pd.ArrowDtype)
+        window_pdf = pdf.iloc[start_in_table:end_in_table]
+        # Convert to Polars for downstream uniformity
+        window_pl = pl.from_pandas(window_pdf.reset_index(drop=True))
+        return window_pl
 
     def _resolve_sample_location(self, idx: int) -> tuple[int, int]:
         """Map a global sample index to (file_index, offset within file)."""
@@ -964,6 +1052,21 @@ class ProductionDataModuleV2:
             exposure_cols_env = os.getenv("EXPOSURE_COLUMNS", "market_cap,beta,sector_code")
             exposure_columns = exposure_cols_env.split(",")
 
+        # CRITICAL FIX (2025-10-04): Resolve cache_size based on num_workers
+        # Root cause: cache_size=10000 × num_workers × prefetch_factor = memory explosion
+        # Solution: Small cache (256) for multi-worker, large cache (10000) for single-worker
+        cache_size = self._resolve_cache_size()
+
+        # Decide parquet reader engine (stability first)
+        reader_engine = os.getenv("PARQUET_READER_ENGINE", "").strip().lower()
+        try:
+            _nw_req = int(self.config.train.batch.get("num_workers", 0))
+        except Exception:
+            _nw_req = 0
+        if not reader_engine:
+            reader_engine = "pyarrow" if _nw_req > 0 else "polars"
+        logger.info("Parquet reader engine: %s", reader_engine)
+
         # Create datasets
         self.train_dataset = StreamingParquetDataset(
             file_paths=train_files,
@@ -974,6 +1077,8 @@ class ProductionDataModuleV2:
             sequence_length=self.config.data.time_series.sequence_length,
             normalize_online=self.config.normalization.online_normalization.enabled,
             exposure_columns=exposure_columns,
+            cache_size=cache_size,
+            reader_engine=reader_engine,
         )
 
         if val_files:
@@ -986,6 +1091,8 @@ class ProductionDataModuleV2:
                 sequence_length=self.config.data.time_series.sequence_length,
                 normalize_online=self.config.normalization.online_normalization.enabled,
                 exposure_columns=exposure_columns,
+                cache_size=cache_size,
+                reader_engine=reader_engine,
             )
 
         if test_files:
@@ -998,6 +1105,8 @@ class ProductionDataModuleV2:
                 sequence_length=self.config.data.time_series.sequence_length,
                 normalize_online=self.config.normalization.online_normalization.enabled,
                 exposure_columns=exposure_columns,
+                cache_size=cache_size,
+                reader_engine=reader_engine,
             )
 
         logger.info(f"✅ Datasets created: train={len(self.train_dataset)} samples")
@@ -1021,6 +1130,42 @@ class ProductionDataModuleV2:
             self.test_dataset._stats_computed = True
 
         logger.info("✅ Global statistics computed and shared across datasets")
+
+    def _resolve_cache_size(self) -> int:
+        """
+        Resolve cache_size based on num_workers configuration.
+
+        Memory calculation:
+        - Single sample: ~73KB (60 × 306 features × 4 bytes)
+        - Multi-worker (8 workers × 10000 cache): ~5.8GB → Memory explosion → Crash
+        - Multi-worker (4 workers × 256 cache): ~72MB → Safe
+        - Single-worker (1 process × 10000 cache): ~0.7GB → Safe
+
+        Returns:
+            int: Resolved cache size
+        """
+        # Get num_workers from config
+        batch_cfg = self.config.train.batch
+        num_workers = batch_cfg.get('num_workers', 0)
+
+        # Get dataset config if available
+        dataset_cfg = batch_cfg.get('dataset', {})
+
+        if num_workers == 0:
+            # Single worker: Large cache is safe in main process
+            cache_size = dataset_cfg.get('cache_size_single_worker', 10000)
+            logger.info(f"🔧 Single-worker mode: cache_size={cache_size}")
+        else:
+            # Multi-worker: Small cache to avoid memory explosion
+            # Memory: num_workers × cache_size × 73KB/sample
+            cache_size = dataset_cfg.get('cache_size', 256)
+            total_memory_mb = num_workers * cache_size * 73 / 1024
+            logger.info(
+                f"🔧 Multi-worker mode (workers={num_workers}): "
+                f"cache_size={cache_size} (est. {total_memory_mb:.1f}MB total)"
+            )
+
+        return cache_size
 
     def _get_feature_columns(self) -> list[str]:
         """Get feature column names."""

@@ -53,6 +53,15 @@ sys.path.append(str(project_root))
 # Import required data module class explicitly
 from src.gogooku3.training.atft.data_module import ProductionDataModuleV2
 
+# ---- Graph edge cache for GRAPH_REBUILD_INTERVAL --------------------------
+# Global cache to reuse correlation edges across batches
+_graph_edge_cache = {
+    "edge_index": None,
+    "edge_attr": None,
+    "cache_key": None,
+    "batch_idx": -1
+}
+
 # Helper functions for stabilizing training
 def _finite_or_nan_fix_tensor(tensor):
     """Fix non-finite values in tensor using clamp and nan_to_num."""
@@ -817,17 +826,26 @@ def _resolve_dl_params(final_config: DictConfig) -> dict:
     except Exception:
         pw_cfg = None
 
+    # CRITICAL FIX (2025-10-04): multiprocessing_context for Polars/Rust safety
+    # Read from performance.dataloader.multiprocessing_context
+    try:
+        mp_ctx = final_config.performance.dataloader.multiprocessing_context
+    except Exception:
+        mp_ctx = None
+
     # Env fallbacks
     nw_env = int(os.getenv("NUM_WORKERS", "0"))
     pf_env = int(os.getenv("PREFETCH_FACTOR", "2"))
     pm_env = os.getenv("PIN_MEMORY", "0").lower() in ("1", "true", "yes")
     pw_env = os.getenv("PERSISTENT_WORKERS", "0").lower() in ("1", "true", "yes")
+    mp_ctx_env = os.getenv("MULTIPROCESSING_CONTEXT", "spawn")  # Default to spawn for safety
 
     params = {
         "num_workers": int(nw_cfg) if nw_cfg is not None else nw_env,
         "prefetch_factor": int(pf_cfg) if pf_cfg is not None else pf_env,
         "pin_memory": bool(pm_cfg) if isinstance(pm_cfg, bool) else pm_env,
         "persistent_workers": bool(pw_cfg) if isinstance(pw_cfg, bool) else pw_env,
+        "multiprocessing_context": str(mp_ctx) if mp_ctx is not None else mp_ctx_env,
     }
 
     # Sanitize for single-process
@@ -836,6 +854,8 @@ def _resolve_dl_params(final_config: DictConfig) -> dict:
         params["persistent_workers"] = False
         # prefetch_factor is only valid when num_workers > 0
         params["prefetch_factor"] = None
+        # multiprocessing_context only applies when num_workers > 0
+        params["multiprocessing_context"] = None
 
     return params
 
@@ -2338,9 +2358,29 @@ def train_epoch(
 
 
 def first_batch_probe(model, dataloader, device, n=3):
-    """First batch validation to catch early failures"""
+    """First batch validation to catch early failures.
+
+    Use a temporary single-worker DataLoader for the probe to avoid
+    stressing multi-process workers during initialization.
+    """
     model.eval()
     logger.info("Running first-batch probe...")
+
+    # Build a safe single-worker probe loader if possible
+    probe_loader = dataloader
+    try:
+        from torch.utils.data import DataLoader as _DL
+        bs = getattr(dataloader, "batch_size", 64) or 64
+        bs = min(int(bs), 64)
+        probe_loader = _DL(
+            dataloader.dataset,
+            batch_size=bs,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=False,
+        )
+    except Exception as _e_probe:
+        logger.debug(f"probe loader fallback to main dataloader due to: {_e_probe}")
 
     # AMP local config
     use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
@@ -2354,7 +2394,7 @@ def first_batch_probe(model, dataloader, device, n=3):
     _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
 
     with torch.no_grad():
-        for i, batch in enumerate(dataloader):
+        for i, batch in enumerate(probe_loader):
             if i >= n:
                 break
 
@@ -2422,7 +2462,7 @@ def first_batch_probe(model, dataloader, device, n=3):
     if os.getenv("DEBUG_PREDICTIONS", "0") == "1":
         model.eval()
         with torch.no_grad():
-            for i, batch in enumerate(dataloader):
+            for i, batch in enumerate(probe_loader):
                 if i > 0:
                     break
                 features = batch["features"].to(device)
@@ -5109,17 +5149,21 @@ def train(config: DictConfig) -> None:
                         "[loader] train_loader is disabled (eval_only or empty train set)."
                     )
                 else:
-                    train_loader = _safe_loader(
-                        train_ds,
-                        batch_size=final_config.train.batch.train_batch_size,
-                        shuffle=True,
-                        num_workers=dlp["num_workers"],
-                        pin_memory=dlp["pin_memory"],
-                        drop_last=True,
-                        prefetch_factor=dlp["prefetch_factor"],
-                        persistent_workers=dlp["persistent_workers"],
-                        collate_fn=collate_day,
-                    )
+                    # CRITICAL FIX (2025-10-04): Add multiprocessing_context for Polars/Rust safety
+                    train_loader_kwargs = {
+                        "batch_size": final_config.train.batch.train_batch_size,
+                        "shuffle": True,
+                        "num_workers": dlp["num_workers"],
+                        "pin_memory": dlp["pin_memory"],
+                        "drop_last": True,
+                        "prefetch_factor": dlp["prefetch_factor"],
+                        "persistent_workers": dlp["persistent_workers"],
+                        "collate_fn": collate_day,
+                    }
+                    if dlp["multiprocessing_context"] is not None:
+                        train_loader_kwargs["multiprocessing_context"] = dlp["multiprocessing_context"]
+
+                    train_loader = _safe_loader(train_ds, **train_loader_kwargs)
 
                 # 検証データローダーはDataModuleから取得（特徴量整合はDataModuleで保証）
                 val_loader = data_module.val_dataloader()
@@ -5338,8 +5382,21 @@ def train(config: DictConfig) -> None:
             norm_validator = NormalizationValidator()
             logger.info("Validating label normalization...")
 
-            # Get a sample batch
-            sample_batch = next(iter(train_loader))
+            # Safer probe: use a temporary single-worker loader to avoid
+            # stressing multi-process workers during initial warmup.
+            try:
+                from torch.utils.data import DataLoader as _DL
+                probe_bs = min(int(final_config.train.batch.train_batch_size), 64)
+                probe_loader = _DL(
+                    data_module.train_dataset,  # type: ignore[attr-defined]
+                    batch_size=probe_bs,
+                    shuffle=False,
+                    num_workers=0,
+                )
+                sample_batch = next(iter(probe_loader))
+            except Exception:
+                # Fallback to main train_loader if probe creation fails
+                sample_batch = next(iter(train_loader))
             if "targets" in sample_batch:
                 targets = sample_batch["targets"]
 
@@ -5670,6 +5727,21 @@ def train(config: DictConfig) -> None:
             model = SimpleTestModel(final_config).to(device)
         elif ATFT_GAT_FAN is not None:
             model = ATFT_GAT_FAN(final_config).to(device)
+
+            # 🔧 FIX: GAT/FAN勾配ゼロ問題対策 - backbone_projection初期化調整
+            # GAT特徴がbackbone_projection通過後も保持されるよう、GAT部分の重みを強化
+            if hasattr(model, 'gat') and model.gat is not None and hasattr(model, 'backbone_projection'):
+                with torch.no_grad():
+                    # backbone_projection: [combined_dim, hidden_size]
+                    # combined_dim = hidden_size + gat_output_dim
+                    gat_start_idx = model.hidden_size
+                    gat_scale = float(os.getenv("GAT_INIT_SCALE", "2.0"))
+
+                    # GAT部分の重みをスケーリング（勾配フロー保証）
+                    model.backbone_projection.weight.data[:, gat_start_idx:] *= gat_scale
+
+                    logger.info(f"✅ [GAT-FIX] backbone_projection GAT部分の重みを{gat_scale}倍にスケーリング")
+
             # Sanity: ensure PE length >= sequence_length if model exposes config
             try:
                 seq_len = int(
@@ -6069,6 +6141,19 @@ def train(config: DictConfig) -> None:
         eval_every_steps = int(os.getenv("EVAL_EVERY_STEPS", "100"))
         heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "30"))  # seconds
 
+        # Training batch cap: PHASE_MAX_BATCHES
+        # 0 or negative → no cap; positive → stop epoch after N batches
+        try:
+            max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "0"))
+        except Exception:
+            max_batches_per_epoch = 0
+
+        # Optional: rebuild graph every N batches (N=1 → every batch)
+        try:
+            graph_rebuild_interval = int(os.getenv("GRAPH_REBUILD_INTERVAL", "1"))
+        except Exception:
+            graph_rebuild_interval = 1
+
         start_time = time.time()
         last_heartbeat = time.time()
         global_step = 0
@@ -6365,13 +6450,19 @@ def train(config: DictConfig) -> None:
                         return False
 
                 def _forward_with_optional_graph(mdl, feats, ei, ea):
-                    try:
-                        if ei is not None and ea is not None and _supports_graph(mdl):
-                            return mdl(feats, edge_index=ei, edge_attr=ea)
-                        return mdl(feats)
-                    except TypeError:
-                        return mdl(feats)
+                    """Forward with optional graph - edge_index/edge_attr in batch dict"""
+                    if torch.is_tensor(feats):
+                        batch = {"features": feats}
+                    else:
+                        batch = feats if isinstance(feats, dict) else {"features": feats}
 
+                    if ei is not None and ea is not None:
+                        batch["edge_index"] = ei
+                        batch["edge_attr"] = ea
+
+                    return mdl(batch)
+
+                # PHASE_MAX_BATCHES enforcement uses batch_idx (day-batch count)
                 for batch_idx, batch in enumerate(pbar):
                     # Check time budget
                     current_time = time.time()
@@ -6380,6 +6471,13 @@ def train(config: DictConfig) -> None:
                         time_exceeded = True
                         logger.info(
                             f"Time budget exceeded at epoch {epoch}, batch {batch_idx}"
+                        )
+                        break
+
+                    # Enforce PHASE_MAX_BATCHES if set (>0) - count day-batches, not micro-batches
+                    if max_batches_per_epoch > 0 and batch_idx >= max_batches_per_epoch:
+                        logger.info(
+                            f"[Control] Reached PHASE_MAX_BATCHES={max_batches_per_epoch} at day-batch {batch_idx}; breaking epoch."
                         )
                         break
 
@@ -6509,16 +6607,65 @@ def train(config: DictConfig) -> None:
                         and feats_full.dim() == 3
                     ):
                         try:
-                            # Resolve per-sample codes (full day-batch) for enrichment
-                            codes_list = None
-                            try:
-                                codes_list = batch.get("codes") if "codes" in batch else batch.get("code")
-                                if hasattr(codes_list, "tolist"):
-                                    codes_list = codes_list.tolist()
-                                if codes_list is not None:
-                                    codes_list = [str(c) for c in codes_list]
-                            except Exception:
+                            # Reuse previously built edges if GRAPH_REBUILD_INTERVAL>1 and context compatible
+                            if graph_rebuild_interval > 1:
+                                try:
+                                    # Extract date (best-effort) for reuse guard
+                                    cur_date = None
+                                    if "date" in batch:
+                                        if torch.is_tensor(batch["date"]):
+                                            cur_date = batch["date"][0].item()
+                                        else:
+                                            cur_date = batch["date"][0]
+                                except Exception:
+                                    cur_date = None
+
+                                last_ei = getattr(sys.modules[__name__], "_graph_last_ei", None)
+                                last_ea = getattr(sys.modules[__name__], "_graph_last_ea", None)
+                                last_n = getattr(sys.modules[__name__], "_graph_last_n", None)
+                                last_date = getattr(sys.modules[__name__], "_graph_last_date", None)
+
+                                if (
+                                    (batch_idx % graph_rebuild_interval) != 0
+                                    and isinstance(last_ei, torch.Tensor)
+                                    and feats_full.size(0) == int(last_n or -1)
+                                    and ((cur_date is None) or (last_date is None) or (cur_date == last_date))
+                                ):
+                                    edge_index = last_ei.to(device, non_blocking=True)
+                                    edge_attr = (
+                                        last_ea.to(device, non_blocking=True)
+                                        if isinstance(last_ea, torch.Tensor)
+                                        else None
+                                    )
+                                    logger.info(
+                                        f"[edges-reuse] Using cached edges (interval={graph_rebuild_interval}) N={feats_full.size(0)}"
+                                    )
+                                    # Skip rebuild path entirely
+                                    pass
+                            # Short-circuit: GRAPH_MODE=stub/off/identity → use self-loop edges only
+                            _graph_mode = os.getenv("GRAPH_MODE", "").strip().lower()
+                            if _graph_mode in ("off", "stub", "identity"):
+                                _n = feats_full.size(0)
+                                if _n > 0:
+                                    _ei = torch.arange(_n, device=device, dtype=torch.long)
+                                    edge_index = torch.stack([_ei, _ei], dim=0)
+                                    edge_attr = None
+                                    logger.info(
+                                        f"[edges-stub] using identity edges: N={_n}, E={_n}"
+                                    )
+                                else:
+                                    edge_index, edge_attr = None, None
+                            else:
+                                # Resolve per-sample codes (full day-batch) for enrichment
                                 codes_list = None
+                                try:
+                                    codes_list = batch.get("codes") if "codes" in batch else batch.get("code")
+                                    if hasattr(codes_list, "tolist"):
+                                        codes_list = codes_list.tolist()
+                                    if codes_list is not None:
+                                        codes_list = [str(c) for c in codes_list]
+                                except Exception:
+                                    codes_list = None
                             markets_list = None
                             sectors_list = None
                             try:
@@ -6614,7 +6761,7 @@ def train(config: DictConfig) -> None:
                                         for k in keys_to_remove:
                                             del sys.modules[__name__]._graph_results_cache[k]
                                     sys.modules[__name__]._graph_results_cache[graph_cache_key] = (ei, ea)
-                            if isinstance(ei, torch.Tensor) and ei.numel() > 0:
+                            if edge_index is None and isinstance(ei, torch.Tensor) and ei.numel() > 0:
                                 edge_index = ei.to(device, non_blocking=True)
                                 # Enrich with market/sector similarity if available
                                 edge_attr = (
@@ -6628,9 +6775,29 @@ def train(config: DictConfig) -> None:
                                     if isinstance(ea, torch.Tensor)
                                     else None
                                 )
-                                logger.info(
-                                    f"[edges-fallback] built correlation edges from batch: E={edge_index.size(1)}"
-                                )
+                                if os.getenv("GRAPH_MODE", "").strip().lower() not in ("off", "stub", "identity"):
+                                    logger.info(
+                                        f"[edges-fallback] built correlation edges from batch: E={edge_index.size(1)}"
+                                    )
+                                # Persist for interval-based reuse
+                                if graph_rebuild_interval > 1:
+                                    try:
+                                        setattr(sys.modules[__name__], "_graph_last_ei", edge_index.clone())
+                                        setattr(sys.modules[__name__], "_graph_last_ea", edge_attr.clone() if isinstance(edge_attr, torch.Tensor) else None)
+                                        setattr(sys.modules[__name__], "_graph_last_n", int(feats_full.size(0)))
+                                        # store date if available
+                                        try:
+                                            _d = None
+                                            if "date" in batch:
+                                                if torch.is_tensor(batch["date"]):
+                                                    _d = batch["date"][0].item()
+                                                else:
+                                                    _d = batch["date"][0]
+                                        except Exception:
+                                            _d = None
+                                        setattr(sys.modules[__name__], "_graph_last_date", _d)
+                                    except Exception:
+                                        pass
                         except Exception as _e:
                             logger.warning(
                                 f"[edges-fallback] failed to build correlation edges: {_e}"
@@ -6929,7 +7096,17 @@ def train(config: DictConfig) -> None:
                                             thr = float(os.getenv("GRAPH_EDGE_THR", "0.3"))
                                     except Exception:
                                         thr = 0.3
-                                    _gb_local2 = _GBL2(
+                                    # Optional stub mode for validation: skip correlation build
+                                    _graph_mode_val = os.getenv("GRAPH_MODE", "").strip().lower()
+                                    if _graph_mode_val in ("off", "stub", "identity"):
+                                        _n = features.size(0)
+                                        if _n > 0:
+                                            _ei = torch.arange(_n, device=device, dtype=torch.long)
+                                            edge_index = torch.stack([_ei, _ei], dim=0)
+                                            edge_attr = None
+                                            logger.info(f"[edges-stub/val] using identity edges: N={_n}, E={_n}")
+                                    else:
+                                        _gb_local2 = _GBL2(
                                         _GBC2(
                                             max_nodes=int(features.size(0)),
                                             edge_threshold=float(thr),
@@ -6938,17 +7115,17 @@ def train(config: DictConfig) -> None:
                                             min_edges=int(os.getenv("GRAPH_MIN_EDGES", "0")),
                                         )
                                     )
-                                    win = int(min(features.size(1), 20))
-                                    ei, ea = _gb_local2.build_correlation_edges(
-                                        features, window=win, k=int(max(1, k_try))
-                                    )
-                                    if isinstance(ei, torch.Tensor) and ei.numel() > 0:
-                                        edge_index = ei.to(device, non_blocking=True)
-                                        edge_attr = (
-                                            ea.to(device, non_blocking=True)
-                                            if isinstance(ea, torch.Tensor)
-                                            else None
+                                        win = int(min(features.size(1), 20))
+                                        ei, ea = _gb_local2.build_correlation_edges(
+                                            features, window=win, k=int(max(1, k_try))
                                         )
+                                        if isinstance(ei, torch.Tensor) and ei.numel() > 0:
+                                            edge_index = ei.to(device, non_blocking=True)
+                                            edge_attr = (
+                                                ea.to(device, non_blocking=True)
+                                                if isinstance(ea, torch.Tensor)
+                                                else None
+                                            )
                                 except Exception as _e:
                                     logger.warning(
                                         f"[edges-fallback/val] failed to build correlation edges: {_e}"
@@ -7194,20 +7371,12 @@ def train(config: DictConfig) -> None:
                         )
                         if should_check:
                             with torch.no_grad():
-                                guard_predictions = (
-                                    predictions_canon
-                                    if predictions_canon
-                                    else _canonicalize_horizon_dict(
-                                        predictions_fp32
-                                        if isinstance(predictions_fp32, dict)
-                                        else {}
-                                    )
+                                guard_predictions = _canonicalize_horizon_dict(
+                                    predictions_fp32
+                                    if isinstance(predictions_fp32, dict)
+                                    else {}
                                 )
-                                guard_targets = (
-                                    targets_canon
-                                    if targets_canon
-                                    else _canonicalize_horizon_dict(targets_fp32)
-                                )
+                                guard_targets = _canonicalize_horizon_dict(targets_fp32)
 
                                 for h in criterion.horizons:
                                     canon_key = f"horizon_{h}"
@@ -7566,16 +7735,17 @@ def train(config: DictConfig) -> None:
                                 return False
 
                         def _forward_with_optional_graph(mdl, feats, ei, ea):
-                            try:
-                                if (
-                                    ei is not None
-                                    and ea is not None
-                                    and _supports_graph(mdl)
-                                ):
-                                    return mdl(feats, edge_index=ei, edge_attr=ea)
-                                return mdl(feats)
-                            except TypeError:
-                                return mdl(feats)
+                            """Forward with optional graph - edge_index/edge_attr in batch dict"""
+                            if torch.is_tensor(feats):
+                                batch = {"features": feats}
+                            else:
+                                batch = feats if isinstance(feats, dict) else {"features": feats}
+
+                            if ei is not None and ea is not None:
+                                batch["edge_index"] = ei
+                                batch["edge_attr"] = ea
+
+                            return mdl(batch)
 
                         for vb in tqdm(val_loader, desc="Validation"):
                             features = vb["features"].to(device)

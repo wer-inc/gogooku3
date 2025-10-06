@@ -1,0 +1,40 @@
+# @package train
+# Multi-worker stable configuration with cache control
+# Optimized for DataLoader multi-processing with memory safety
+
+defaults:
+  - production_improved
+
+# DataLoader configuration with cache control
+batch:
+  # Multi-worker settings (start conservative, scale up)
+  num_workers: 4  # Start with 4, can test 2/8
+  prefetch_factor: 2  # Reduced from 4 for memory safety
+  persistent_workers: false  # Disable to avoid memory accumulation
+  pin_memory: true  # Keep for GPU transfer efficiency
+
+  # Dataset-specific settings (NEW)
+  dataset:
+    # Cache size based on num_workers
+    # Multi-worker: 256 samples × 73KB/sample × 4 workers ≈ 72MB
+    # Single-worker: 10000 samples × 73KB ≈ 0.7GB (safe for main process)
+    cache_size: 256  # For num_workers > 0
+    cache_size_single_worker: 10000  # For num_workers = 0
+
+# Performance optimizations
+performance:
+  compile:
+    enabled: true
+    mode: reduce-overhead  # Stable mode (max-autotune causes CUDA errors)
+    fullgraph: false
+    dynamic: false
+
+  dataloader:
+    multiprocessing_context: spawn  # Required for Polars/Rust thread pool safety
+    worker_init_fn: seed_worker
+
+# Monitoring for memory profiling (optional)
+debug:
+  log_gpu_memory: true
+  track_grad_norm: true
+  profiler: false  # Enable for detailed profiling if needed
