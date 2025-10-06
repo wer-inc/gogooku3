@@ -103,6 +103,15 @@ model:
   san:
     enabled: true  # Re-enabled for cross-sectional learning
 
+  # 🔧 CRITICAL FIX: torch.compile無効化 (2025-10-06)
+  # GAT勾配ゼロ問題の根本原因: dynamic=False設定が動的グラフと非互換
+  optimization:
+    compile:
+      enabled: false  # DISABLED to fix GAT gradient zero issue
+      mode: "reduce-overhead"
+      dynamic: false
+      fullgraph: false
+
 # ============================================================================
 # Training configuration
 # ============================================================================
