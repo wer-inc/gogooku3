@@ -103,6 +103,24 @@ model:
   san:
     enabled: true  # Re-enabled for cross-sectional learning
 
+  # 🔧 GAT configuration (2025-10-07)
+  # CRITICAL FIX: Add regularization weights to enable GAT loss calculation
+  gat:
+    enabled: true
+    architecture:
+      hidden_channels: [256]  # Match model hidden_size
+      heads: [4]
+      concat: [true]
+      num_layers: 1
+    layer_config:
+      dropout: 0.2
+      edge_dropout: 0.1
+    edge_features:
+      edge_dim: 0  # No edge features
+    regularization:
+      edge_weight_penalty: 0.01        # 🔧 FIX: Enable edge regularization loss
+      attention_entropy_penalty: 0.001  # 🔧 FIX: Enable attention entropy loss
+
   # 🔧 CRITICAL FIX: torch.compile無効化 (2025-10-06)
   # GAT勾配ゼロ問題の根本原因: dynamic=False設定が動的グラフと非互換
   optimization:
@@ -182,7 +200,7 @@ data:
     lookback: 60
     method: ewm_demean
     min_obs: 40
-    use_in_training: false  # OPTIMIZATION: Disable graph rebuild during validation to eliminate CPU bottleneck
+    use_in_training: true  # FIX (2025-10-07): Enable graph builder to fix GAT gradient zero problem
     return_cols:
     - return_1d
     - feat_ret_1d
