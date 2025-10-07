@@ -1,6 +1,6 @@
 # TODO.md - gogooku3-standalone
 
-**最終更新**: 2025-10-07 15:20
+**最終更新**: 2025-10-07 15:50 (Phase 7-1完了)
 **前バージョン**: `TODO.md.backup-20251007-before-cleanup`
 
 ---
@@ -31,21 +31,24 @@ model:
 
 ## ⏳ 次のタスク（優先順）
 
-### 1. 本番トレーニング実行 🚀
+### 1. 本番トレーニング実行 🚀 (Phase 7-2)
 - [ ] 完全トレーニング実行 (120 epochs)
 - [ ] GAT loss metricsの監視
 - [ ] TensorBoard/W&Bでの可視化
 - [ ] チェックポイント保存とモデル評価
 
-### 2. GAT効果の定量評価 📊
+### 2. GAT効果の定量評価 📊 (Phase 7-4 - LOW priority)
 - [ ] RankIC改善度の測定 (GAT有効 vs 無効)
 - [ ] Sharpe比改善度の測定
 - [ ] Attention weights分析（どの銘柄ペアが相関学習されているか）
 - [ ] Edge importance分析
 
-### 3. コードクリーンアップ 🧹
-- [ ] 診断ログを`DEBUG`レベルに移動または削除
-  - `[GAT-INIT]`, `[GAT-DEBUG]`, `[RETURN-ATT]`, `[GAT-LOSS]`
+### 3. コードクリーンアップ 🧹 (Phase 7-1 ✅ 完了)
+- [x] **Phase 7-1 完了 (2025-10-07)**: 診断ログを`DEBUG`レベルに変換 ✅
+  - 18個のlogger.info()をlogger.debug()に変換完了
+  - [GAT-INIT]のみINFOレベルで保持（初期化時1回のみ）
+  - 本番ログ54.9M → 1エントリに削減（99.9998%減）
+  - 詳細: `/tmp/phase7_1_summary.md`
 - [ ] Phase 1-5の修正コードレビュー
 - [ ] 不要なコメントの削除
 - [ ] コードドキュメント更新
@@ -157,6 +160,35 @@ ATFT-GAT-FANモデルのトレーニング中、GATレイヤーのパラメー�
 3. **scripts/train_atft.py**:
    - edge_index渡し修正（Phase 1）
    - `.detach()`削除（Phase 2）
+
+---
+
+## 🔄 Phase 7: 本番トレーニング準備 (2025-10-07)
+
+### Phase 7-1: 診断ログDEBUG化 ✅ 完了 (2025-10-07 15:50)
+
+**目的**: 本番トレーニング時のログスパムを防止
+
+**問題**:
+- 19個の診断ログが`logger.info()`レベルで実装
+- 本番トレーニング: 25,448 batches/epoch × 120 epochs × 18 logs/batch = 54.9M log entries
+- 数GB規模のログファイル生成 + I/Oオーバーヘッド
+
+**実施内容**: `src/atft_gat_fan/models/architectures/atft_gat_fan.py`
+- ✅ 18個の診断ログを`logger.debug()`に変換
+  - Line 582: `[RETURN-ATT]` return_attention決定
+  - Line 596, 616: `[GAT-EXEC]` GAT実行
+  - Line 600, 609, 611: `[RETURN-ATT]` GAT loss metrics
+  - Line 618, 620, 628, 630, 633, 655: `[GAT-DEBUG]` 詳細デバッグ情報
+  - Line 823, 824, 832, 834, 842, 844: `[GAT-LOSS]` GAT loss計算
+- ✅ 初期化ログのみINFOレベルで保持（Line 337: `[GAT-INIT]`）
+
+**結果**:
+- 本番ログ出力: 54.9M → 1エントリ (99.9998%削減)
+- デバッグモード時は依然として全ログ取得可能
+- 詳細レポート: `/tmp/phase7_1_summary.md`
+
+**次のステップ**: Phase 7-2（本番トレーニング実行）
 
 ---
 

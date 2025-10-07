@@ -579,7 +579,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
         # 🔧 DEBUG (2025-10-07): Log return_attention decision
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"[RETURN-ATT] self.training={self.training}, gat_is_not_none={self.gat is not None}, entropy_weight={self.gat_entropy_weight} → return_attention={return_attention}")
+        logger.debug(f"[RETURN-ATT] self.training={self.training}, gat_is_not_none={self.gat is not None}, entropy_weight={self.gat_entropy_weight} → return_attention={return_attention}")
 
         tft_output, attn_weights = self.tft(
             projected,
@@ -593,11 +593,11 @@ class ATFT_GAT_FAN(pl.LightningModule):
         self._gat_edge_reg_value = None
         if self.gat is not None and edge_index is not None:
             # 🔧 DEBUG (2025-10-06): Log GAT execution
-            logger.info(f"[GAT-EXEC] GAT layer executing with edge_index.shape={edge_index.shape}")
+            logger.debug(f"[GAT-EXEC] GAT layer executing with edge_index.shape={edge_index.shape}")
 
             last_step = tft_output[:, -1, :]  # [batch, hidden]
             if return_attention:
-                logger.info(f"[RETURN-ATT] Taking return_attention=True branch - computing GAT loss metrics")
+                logger.debug(f"[RETURN-ATT] Taking return_attention=True branch - computing GAT loss metrics")
                 gat_emb, attention_weights = self.gat(
                     last_step, edge_index, edge_attr, return_attention_weights=True
                 )
@@ -606,18 +606,18 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 _, att_tensor = attention_weights[-1]
                 self._gat_edge_reg_value = att_tensor.pow(2).mean()
                 self._last_attention_weights = attention_weights
-                logger.info(f"[RETURN-ATT] Set _gat_attention_entropy={self._gat_attention_entropy.item():.6f}, _gat_edge_reg_value={self._gat_edge_reg_value.item():.6f}")
+                logger.debug(f"[RETURN-ATT] Set _gat_attention_entropy={self._gat_attention_entropy.item():.6f}, _gat_edge_reg_value={self._gat_edge_reg_value.item():.6f}")
             else:
-                logger.info(f"[RETURN-ATT] Taking return_attention=False branch - GAT loss metrics will be None")
+                logger.debug(f"[RETURN-ATT] Taking return_attention=False branch - GAT loss metrics will be None")
                 gat_emb = self.gat(last_step, edge_index, edge_attr)
                 self._last_attention_weights = None
 
             gat_features = gat_emb.unsqueeze(1).expand(-1, tft_output.size(1), -1)
-            logger.info(f"[GAT-EXEC] GAT output shape={gat_emb.shape}, expanded={gat_features.shape}")
+            logger.debug(f"[GAT-EXEC] GAT output shape={gat_emb.shape}, expanded={gat_features.shape}")
             # 🔧 DEBUG (2025-10-06): Verify gat_features status
-            logger.info(f"[GAT-DEBUG] gat_features is None: {gat_features is None}")
+            logger.debug(f"[GAT-DEBUG] gat_features is None: {gat_features is None}")
             if gat_features is not None:
-                logger.info(f"[GAT-DEBUG] gat_features.shape={gat_features.shape}, requires_grad={gat_features.requires_grad}")
+                logger.debug(f"[GAT-DEBUG] gat_features.shape={gat_features.shape}, requires_grad={gat_features.requires_grad}")
 
         # Combine temporal and graph context
         # 🔧 FIX (2025-10-06): Always use consistent dimensions to prevent backbone_projection recreation
@@ -625,12 +625,12 @@ class ATFT_GAT_FAN(pl.LightningModule):
         # 🔧 DEBUG (2025-10-06): Log which branch is taken
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"[GAT-DEBUG] Checking concatenation: gat_features is not None = {gat_features is not None}")
+        logger.debug(f"[GAT-DEBUG] Checking concatenation: gat_features is not None = {gat_features is not None}")
         if gat_features is not None:
-            logger.info(f"[GAT-DEBUG] Using GAT features branch, combined shape will be {tft_output.size()[-1] + gat_features.size()[-1]}")
+            logger.debug(f"[GAT-DEBUG] Using GAT features branch, combined shape will be {tft_output.size()[-1] + gat_features.size()[-1]}")
             combined_features = torch.cat([tft_output, gat_features], dim=-1)
         else:
-            logger.info(f"[GAT-DEBUG] Using zero-padding branch")
+            logger.debug(f"[GAT-DEBUG] Using zero-padding branch")
             # GAT disabled or no edges: pad with zeros to match expected dimension
             if self.gat is not None:
                 # GAT exists but not executed: use gat_output_dim for padding
@@ -652,7 +652,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
         combined_features = self.backbone_projection(combined_features)
         normalized_features = self.adaptive_norm(combined_features)
         # 🔧 DEBUG (2025-10-06): Check gradient flow
-        logger.info(f"[GAT-DEBUG] combined_features.requires_grad={combined_features.requires_grad}, normalized.requires_grad={normalized_features.requires_grad}")
+        logger.debug(f"[GAT-DEBUG] combined_features.requires_grad={combined_features.requires_grad}, normalized.requires_grad={normalized_features.requires_grad}")
 
         # 予測（Multi-horizon対応 + レジーム特徴量対応）
         if hasattr(self.prediction_head, 'forward') and 'regime_features' in self.prediction_head.forward.__code__.co_varnames:
@@ -820,8 +820,8 @@ class ATFT_GAT_FAN(pl.LightningModule):
             # 🔧 DEBUG (2025-10-07): Log condition checks
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"[GAT-LOSS-CHECK] edge_reg_value is None: {self._gat_edge_reg_value is None}, is Tensor: {isinstance(self._gat_edge_reg_value, torch.Tensor) if self._gat_edge_reg_value is not None else 'N/A'}, weight > 0: {self.gat_edge_weight > 0}")
-            logger.info(f"[GAT-LOSS-CHECK] attention_entropy is None: {self._gat_attention_entropy is None}, is Tensor: {isinstance(self._gat_attention_entropy, torch.Tensor) if self._gat_attention_entropy is not None else 'N/A'}, weight > 0: {self.gat_entropy_weight > 0}")
+            logger.debug(f"[GAT-LOSS-CHECK] edge_reg_value is None: {self._gat_edge_reg_value is None}, is Tensor: {isinstance(self._gat_edge_reg_value, torch.Tensor) if self._gat_edge_reg_value is not None else 'N/A'}, weight > 0: {self.gat_edge_weight > 0}")
+            logger.debug(f"[GAT-LOSS-CHECK] attention_entropy is None: {self._gat_attention_entropy is None}, is Tensor: {isinstance(self._gat_attention_entropy, torch.Tensor) if self._gat_attention_entropy is not None else 'N/A'}, weight > 0: {self.gat_entropy_weight > 0}")
 
             if (self._gat_edge_reg_value is not None and isinstance(self._gat_edge_reg_value, torch.Tensor)
                     and self.gat_edge_weight > 0):
@@ -829,9 +829,9 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 total_loss = total_loss + edge_reg
                 self.log('train_gat_edge_penalty', self._gat_edge_reg_value.detach(), prog_bar=False)
                 # 🔧 DEBUG (2025-10-06): Log GAT edge regularization
-                logger.info(f"[GAT-LOSS] Adding edge_reg={edge_reg.item():.6f} (weight={self.gat_edge_weight})")
+                logger.debug(f"[GAT-LOSS] Adding edge_reg={edge_reg.item():.6f} (weight={self.gat_edge_weight})")
             else:
-                logger.info(f"[GAT-LOSS] Skipping edge_reg (condition not met)")
+                logger.debug(f"[GAT-LOSS] Skipping edge_reg (condition not met)")
 
             if (self._gat_attention_entropy is not None and isinstance(self._gat_attention_entropy, torch.Tensor)
                     and self.gat_entropy_weight > 0):
@@ -839,9 +839,9 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 total_loss = total_loss + entropy_reg
                 self.log('train_gat_entropy', self._gat_attention_entropy.detach(), prog_bar=False)
                 # 🔧 DEBUG (2025-10-06): Log GAT entropy regularization
-                logger.info(f"[GAT-LOSS] Adding entropy_reg={entropy_reg.item():.6f} (weight={self.gat_entropy_weight})")
+                logger.debug(f"[GAT-LOSS] Adding entropy_reg={entropy_reg.item():.6f} (weight={self.gat_entropy_weight})")
             else:
-                logger.info(f"[GAT-LOSS] Skipping entropy_reg (condition not met)")
+                logger.debug(f"[GAT-LOSS] Skipping entropy_reg (condition not met)")
 
         # ログ記録
         self.log('train_loss', total_loss, prog_bar=True)
