@@ -493,3 +493,72 @@ Closes #GAT-GRADIENT-ZERO
 - `TODO.md.backup-20251007-before-cleanup` (整理前の完全版)
 - `TODO.md.backup-20251006-*` (Phase 6調査前)
 - Git commit history
+
+
+----
+
+トレーニングプロセスは正常に実行中です。現在マルチワーカーDataLoaderの初期化中です。監視方法をまとめます。
+
+🎯 本番トレーニング開始完了
+
+✅ 確認済み事項
+
+プロセス状態:
+- PID: 6172 (train_atft.py)
+- CPU: 7.8%, Memory: 0.5%
+- ステータス: DataLoader初期化中
+
+設定確認:
+- ✅ GPU: NVIDIA A100 80GB PCIe検出
+- ✅ hidden_size: 256
+- ✅ Multi-worker mode: 8 workers
+- ✅ Feature dimensions: 182
+- ✅ Targets: 4 horizons (1d, 5d, 10d, 20d)
+- ✅ Feature clipping: ±8.00
+- ✅ Max epochs: 120
+
+データ:
+- Train batches: 20 (10,612 samples)
+- Val batches: 3 (2,166 samples)
+- Test: 2,171 samples
+
+📊 監視方法
+
+リアルタイムログ監視:
+# 最新のログを監視
+tail -f /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+
+# GAT関連のログのみフィルタ
+tail -f /home/ubuntu/gogooku3-standalone/logs/ml_training.log | grep -E "GAT|gat_"
+
+# エポック進捗監視
+tail -f /home/ubuntu/gogooku3-standalone/logs/ml_training.log | grep -E "Epoch|RankIC|Sharpe"
+
+GPU使用状況監視:
+watch -n 5 nvidia-smi
+
+プロセス状態確認:
+ps aux | grep train_atft.py | grep -v grep
+
+ログファイル:
+- メインログ: /home/ubuntu/gogooku3-standalone/logs/train_optimized_20251008_142111.log
+- MLトレーニングログ: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
+- PIDファイル: /home/ubuntu/gogooku3-standalone/logs/train_optimized_latest.pid
+
+⏰ 予想実行時間
+
+- torch.compile無効: 8-12時間
+- 完了予定: 2025-10-09 02:00-06:00頃
+
+🔍 次のステップ
+
+トレーニングは120 epochs実行されます。数分後にモデル初期化とGAT設定のログが出力されます。
+
+重要なマイルストーン:
+1. モデル初期化完了 - GAT設定確認（数分後）
+2. 最初のepoch完了 - GAT loss metrics確認（30-60分後）
+3. Phase 0完了 (2 epochs) - 初期トレーニング検証
+4. Phase 1-3 - フェーズごとの性能改善確認
+5. トレーニング完了 (120 epochs) - 最終モデル評価
+
+トレーニングが正常に開始されました！継続的な監視が必要な場合は、上記のコマンドをご利用ください。
