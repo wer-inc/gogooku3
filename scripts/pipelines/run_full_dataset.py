@@ -68,6 +68,62 @@ DEFAULT_LOOKBACK_DAYS = 1826  # ~5 years
 FLOW_SUPPORT_LOOKBACK_DAYS = 420  # ensure >52w history for flow z-scores
 
 
+def _mask_email(value: str) -> str:
+    """Return a masked representation of the J-Quants account email."""
+    if "@" not in value:
+        return value[:2] + "***" if value else ""
+    local, domain = value.split("@", 1)
+    masked_local = local[:2] + "***" if len(local) > 2 else "***"
+    return f"{masked_local}@{domain}"
+
+
+def _check_jquants_credentials(*, strict: bool = False) -> bool:
+    """Verify that J-Quants credentials are present for API-backed runs."""
+    email = os.getenv("JQUANTS_AUTH_EMAIL", "").strip()
+    password = os.getenv("JQUANTS_AUTH_PASSWORD", "").strip()
+    if email and password:
+        logger.info("J-Quants credentials detected (email=%s)", _mask_email(email))
+        return True
+
+    message = (
+        "J-Quants credentials missing. Set JQUANTS_AUTH_EMAIL and "
+        "JQUANTS_AUTH_PASSWORD in your environment or .env file."
+    )
+    if strict:
+        logger.error(message)
+    else:
+        logger.warning(message)
+    return False
+
+
+def _check_gpu_graph_support(*, strict: bool = False) -> bool:
+    """Inspect whether cuGraph/CuPy GPU dependencies are ready."""
+    try:
+        import cupy as cp  # type: ignore
+        import cugraph  # type: ignore
+
+        device_count = cp.cuda.runtime.getDeviceCount()  # type: ignore[attr-defined]
+        if device_count <= 0:
+            raise RuntimeError("CuPy reports no CUDA devices")
+        logger.info(
+            "GPU graph dependencies detected (cuGraph %s, CuPy %s, CUDA devices=%d)",
+            getattr(cugraph, "__version__", "?"),
+            getattr(cp, "__version__", "?"),
+            device_count,
+        )
+        return True
+    except Exception as exc:  # pragma: no cover - defensive logging only
+        level = logger.error if strict else logger.warning
+        level(
+            "GPU graph dependencies unavailable (cuGraph/CuPy). "
+            "Falling back to CPU graph features will significantly slow the build.%s",
+            f" Details: {exc}" if strict else "",
+        )
+        logger.debug("GPU graph dependency check failed", exc_info=exc)
+        return False
+
+
+
 def _find_latest(glob: str) -> Path | None:
     """Return the latest matching file anywhere under `output/`.
 
@@ -407,6 +463,16 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show planned steps and exit",
     )
+    parser.add_argument(
+        "--check-env-only",
+        action="store_true",
+        help="Run preflight checks (J-Quants credentials, GPU graph dependencies) and exit",
+    )
+    parser.add_argument(
+        "--require-gpu-graph",
+        action="store_true",
+        help="Abort if cuGraph/CuPy GPU graph path is unavailable instead of falling back to CPU",
+    )
     return parser.parse_args()
 
 
@@ -419,6 +485,24 @@ async def main() -> int:
     Follows the documented 3-step flow and persists artifacts under `output/`.
     """
     args = _parse_args()
+
+    creds_ok = True
+    if args.jquants:
+        creds_ok = _check_jquants_credentials(strict=args.check_env_only)
+    gpu_ready = _check_gpu_graph_support(
+        strict=args.require_gpu_graph or args.check_env_only
+    )
+
+    if args.check_env_only:
+        if creds_ok and gpu_ready:
+            logger.info("✅ Preflight checks passed")
+            return 0
+        return 1
+
+    if args.jquants and not creds_ok:
+        return 1
+    if args.require_gpu_graph and not gpu_ready:
+        return 1
 
     # GPU-ETLのデフォルト設定：環境変数またはコマンドライン引数から判定
     # 優先順位: コマンドライン引数 > 環境変数 > デフォルト(True)
