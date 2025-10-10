@@ -1,4 +1,4 @@
-.PHONY: help setup test clean docker-up docker-down docker-logs
+.PHONY: help setup test clean docker-up docker-down docker-logs check-dataset-full-gpu-env
 
 # Use bash for all recipes to support pipefail
 SHELL := /bin/bash
@@ -15,6 +15,7 @@ help:
 	@echo "make clean            - Clean up environment"
 	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset (395 features)"
 	@echo "make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD - Build dataset with GPU-ETL (all 395 features enabled by default)"
+	@echo "make check-dataset-full-gpu-env    - Preflight check for dataset-full-gpu (credentials + GPU graph)"
 	@echo "make dataset-full-prod START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/full_dataset.yaml"
 	@echo "make dataset-full-research START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/research_full_indices.yaml"
 	@echo "make clean-dataset-artifacts           - Remove dataset artifacts under output/ (keeps raw/, caches)"
@@ -164,6 +165,12 @@ CACHE_DIR ?= output/graph_cache
 SAFE_GPU_ENV ?= REQUIRE_GPU=1 USE_GPU_ETL=1 \
 	RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=0 CUDF_SPILL=1 \
 	CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src
+
+.PHONY: check-dataset-full-gpu-env
+check-dataset-full-gpu-env:
+	@echo "🩺 Running preflight for dataset-full-gpu (J-Quants credentials + GPU graph path)"
+	@env $(SAFE_GPU_ENV) \
+	python scripts/pipelines/run_full_dataset.py --jquants --check-env-only --require-gpu-graph
 
 dataset-full-gpu:
 	@echo "🚀 Running dataset generation with GPU-ETL enabled (395 features)"
