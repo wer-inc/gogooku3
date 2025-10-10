@@ -18,6 +18,16 @@ import os
 
 import polars as pl
 
+# Workaround for cuDF 24.12 + numba-cuda 0.0.17+ compatibility issue
+# Must be done before any cuDF imports
+try:
+    import pynvjitlink.patch
+    def _noop_patch(*args, **kwargs):  # type: ignore
+        pass
+    pynvjitlink.patch.patch_numba_linker = _noop_patch
+except Exception:
+    pass
+
 
 def _has_cuda() -> bool:
     try:
