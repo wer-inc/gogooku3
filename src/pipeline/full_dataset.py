@@ -2024,8 +2024,8 @@ async def enrich_and_save(
 
         # ADX(14) (simplified Wilder smoothing using EWM span)
         if "adx_14" not in df.columns and all(c in df.columns for c in ["High","Low","Close"]):
-            up_move = (pl.col("High") - pl.col("High").shift(1).over("Code")).clip_min(0)
-            down_move = (pl.col("Low").shift(1).over("Code") - pl.col("Low")).clip_min(0)
+            up_move = (pl.col("High") - pl.col("High").shift(1).over("Code")).clip(lower_bound=0)
+            down_move = (pl.col("Low").shift(1).over("Code") - pl.col("Low")).clip(lower_bound=0)
             plus_dm = pl.when((up_move > down_move) & (up_move > 0)).then(up_move).otherwise(0.0)
             minus_dm = pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
             tr2 = pl.max_horizontal([

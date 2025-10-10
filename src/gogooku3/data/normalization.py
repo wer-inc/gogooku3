@@ -54,7 +54,7 @@ class CrossSectionalNormalizer:
             df.lazy()
             .join(self._stats.lazy(), on=self.date_col, how="left")
             .with_columns([
-                pl.col(f"{f}__sigma").abs().clip_min(1e-6).alias(f"{f}__sigma_safe")
+                pl.col(f"{f}__sigma").abs().clip(lower_bound=1e-6).alias(f"{f}__sigma_safe")
                 for f in self.features
             ])
             .with_columns([

@@ -137,7 +137,7 @@ def build_index_option_features(opt_df: pl.DataFrame) -> pl.DataFrame:
     # Time-to-maturity and moneyness
     df = df.with_columns(
         [
-            (pl.col("LastTradingDay") - pl.col("Date")).dt.days().clip_min(0).alias("tau_d"),
+            (pl.col("LastTradingDay") - pl.col("Date")).dt.days().clip(lower_bound=0).alias("tau_d"),
             ((pl.col("SpecialQuotationDay") - pl.col("Date")).dt.days()).alias("days_to_sq"),
         ]
     )
