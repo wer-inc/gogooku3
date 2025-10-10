@@ -1245,7 +1245,9 @@ async def enrich_and_save(
             if ss_path and ss_path.exists():
                 try:
                     short_df = pl.read_parquet(ss_path)
-                    short_df = _ensure_code_utf8(short_df, source="short_selling") or short_df
+                    result = _ensure_code_utf8(short_df, source="short_selling")
+                    if result is not None:
+                        short_df = result
                     logger.info(f"Loaded short selling data from: {ss_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load short selling data: {e}")
@@ -1253,7 +1255,9 @@ async def enrich_and_save(
             if pos_path and pos_path.exists():
                 try:
                     positions_df = pl.read_parquet(pos_path)
-                    positions_df = _ensure_code_utf8(positions_df, source="short_positions") or positions_df
+                    result = _ensure_code_utf8(positions_df, source="short_positions")
+                    if result is not None:
+                        positions_df = result
                     logger.info(f"Loaded short positions data from: {pos_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load short positions data: {e}")
@@ -1322,7 +1326,9 @@ async def enrich_and_save(
                 # Import and apply short selling features
                 from src.gogooku3.features.short_selling import add_short_selling_block
 
-                df = _ensure_code_utf8(df, source="quotes_for_short_selling") or df
+                result = _ensure_code_utf8(df, source="quotes_for_short_selling")
+                if result is not None:
+                    df = result
                 df = add_short_selling_block(
                     quotes=df,
                     short_df=short_df,

@@ -1345,8 +1345,8 @@ class MLDatasetBuilder:
                 ])
                 .sort([id_col, "fold", "Date"])
                 .with_columns([
-                    pl.col("sum_f").cumsum().over([id_col, "fold"]).alias("cum_sum_f"),
-                    pl.col("cnt_f").cumsum().over([id_col, "fold"]).alias("cum_cnt_f"),
+                    pl.col("sum_f").cum_sum().over([id_col, "fold"]).alias("cum_sum_f"),
+                    pl.col("cnt_f").cum_sum().over([id_col, "fold"]).alias("cum_cnt_f"),
                     (pl.col(id_col).cast(pl.Utf8) + pl.lit("_") + pl.col("fold").cast(pl.Utf8)).alias("pair"),
                 ])
             )
@@ -1358,8 +1358,8 @@ class MLDatasetBuilder:
                     pl.len().alias("cnt_all"),
                 ])
                 .sort([id_col, "Date"]).with_columns([
-                    pl.col("sum_all").cumsum().over([id_col]).alias("cum_sum_all"),
-                    pl.col("cnt_all").cumsum().over([id_col]).alias("cum_cnt_all"),
+                    pl.col("sum_all").cum_sum().over([id_col]).alias("cum_sum_all"),
+                    pl.col("cnt_all").cum_sum().over([id_col]).alias("cum_cnt_all"),
                 ])
             )
 
@@ -1370,8 +1370,8 @@ class MLDatasetBuilder:
                     pl.len().alias("cnt_glob"),
                 ])
                 .sort(["Date"]).with_columns([
-                    pl.col("sum_glob").cumsum().alias("cum_sum_glob"),
-                    pl.col("cnt_glob").cumsum().alias("cum_cnt_glob"),
+                    pl.col("sum_glob").cum_sum().alias("cum_sum_glob"),
+                    pl.col("cnt_glob").cum_sum().alias("cum_cnt_glob"),
                 ])
             )
 
@@ -1383,8 +1383,8 @@ class MLDatasetBuilder:
                 ])
                 .sort(["fold", "Date"])
                 .with_columns([
-                    pl.col("sum_gf").cumsum().over(["fold"]).alias("cum_sum_gf"),
-                    pl.col("cnt_gf").cumsum().over(["fold"]).alias("cum_cnt_gf"),
+                    pl.col("sum_gf").cum_sum().over(["fold"]).alias("cum_sum_gf"),
+                    pl.col("cnt_gf").cum_sum().over(["fold"]).alias("cum_cnt_gf"),
                 ])
             )
 
@@ -1495,8 +1495,8 @@ class MLDatasetBuilder:
                     pl.len().alias("cnt_s"),
                 ])
                 .sort([id_col, "Date"]).with_columns([
-                    pl.col("sum_s").cumsum().over([id_col]).alias("cum_sum_s"),
-                    pl.col("cnt_s").cumsum().over([id_col]).alias("cum_cnt_s"),
+                    pl.col("sum_s").cum_sum().over([id_col]).alias("cum_sum_s"),
+                    pl.col("cnt_s").cum_sum().over([id_col]).alias("cum_cnt_s"),
                 ])
             )
 
@@ -1506,8 +1506,8 @@ class MLDatasetBuilder:
                     pl.len().alias("cnt_g"),
                 ])
                 .sort(["Date"]).with_columns([
-                    pl.col("sum_g").cumsum().alias("cum_sum_g"),
-                    pl.col("cnt_g").cumsum().alias("cum_cnt_g"),
+                    pl.col("sum_g").cum_sum().alias("cum_sum_g"),
+                    pl.col("cnt_g").cum_sum().alias("cum_cnt_g"),
                 ])
             )
 
