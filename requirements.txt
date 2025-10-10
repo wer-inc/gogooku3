@@ -23,7 +23,8 @@ lightgbm>=4.0.0             # GBMベースライン学習
 # rmm-cu12==24.12.*           # GPU memory management (optimized for A100 80GB)
 
 # ============= TECHNICAL ANALYSIS =============
-pandas-ta>=0.3.14b0         # テクニカル分析指標
+# pandas-ta requires GitHub installation: pip install git+https://github.com/twopirllc/pandas-ta.git
+# pandas-ta>=0.3.14b0         # テクニカル分析指標
 PyWavelets>=1.4.0           # PyWavelets（時系列変換）
 
 # ============= DATA SOURCES & APIs =============
