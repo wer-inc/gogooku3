@@ -86,7 +86,7 @@ class MLDatasetBuilder:
             df = df.sort(["Code", "Date"])  # type: ignore[arg-type]
 
         if "row_idx" not in df.columns and "Code" in df.columns:
-            df = df.with_columns(pl.cum_count().over("Code").alias("row_idx"))
+            df = df.with_columns(pl.col("Date").cum_count().over("Code").alias("row_idx"))
 
         if "Close" not in df.columns or "Code" not in df.columns:
             return df
@@ -347,8 +347,8 @@ class MLDatasetBuilder:
                 (pl.col("Low").shift(1).over("Code") - pl.col("Low")).alias("_down_move_raw"),
             ])
             df = df.with_columns([
-                pl.col("_up_move_raw").clip_min(0.0).alias("_up_move"),
-                pl.col("_down_move_raw").clip_min(0.0).alias("_down_move"),
+                pl.col("_up_move_raw").clip(lower_bound=0.0).alias("_up_move"),
+                pl.col("_down_move_raw").clip(lower_bound=0.0).alias("_down_move"),
             ])
             df = df.with_columns([
                 pl.when((pl.col("_up_move") > pl.col("_down_move")) & (pl.col("_up_move") > 0)).then(pl.col("_up_move")).otherwise(0.0).alias("_plus_dm"),
@@ -834,10 +834,10 @@ class MLDatasetBuilder:
             return all(c in df.columns for c in cols)
 
         def hinge_pos(col: str) -> pl.Expr:
-            return pl.col(col).clip_min(0.0)
+            return pl.col(col).clip(lower_bound=0.0)
 
         def hinge_neg(col: str) -> pl.Expr:
-            return (-pl.col(col)).clip_min(0.0)
+            return (-pl.col(col)).clip(lower_bound=0.0)
 
         # 1) Market × individual trend alignment
         if has("ma_gap_5_20", "mkt_gap_5_20") and "x_trend_intensity" not in df.columns:

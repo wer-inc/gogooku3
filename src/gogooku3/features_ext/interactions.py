@@ -4,11 +4,11 @@ import polars as pl
 
 
 def _hinge_pos(col: str) -> pl.Expr:
-    return pl.col(col).clip_min(0.0)
+    return pl.col(col).clip(lower_bound=0.0)
 
 
 def _hinge_neg(col: str) -> pl.Expr:
-    return (-pl.col(col)).clip_min(0.0)
+    return (-pl.col(col)).clip(lower_bound=0.0)
 
 
 def add_interactions(df: pl.DataFrame) -> pl.DataFrame:

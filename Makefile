@@ -6,11 +6,13 @@ SHELL := /bin/bash
 help:
 	@echo "gogooku3 batch processing"
 	@echo "========================"
-	@echo "make setup        - Setup Python environment and dependencies"
-	@echo "make docker-up    - Start all services (MinIO, ClickHouse, etc.)"
-	@echo "make docker-down  - Stop all services"
-	@echo "make test         - Run fast tests (pytest -m 'not slow')"
-	@echo "make clean        - Clean up environment"
+	@echo "make setup            - Setup Python environment and dependencies"
+	@echo "make rapids-install   - Install RAPIDS 24.12 for GPU-accelerated data processing"
+	@echo "make rapids-verify    - Verify RAPIDS installation and GPU-ETL pipeline"
+	@echo "make docker-up        - Start all services (MinIO, ClickHouse, etc.)"
+	@echo "make docker-down      - Stop all services"
+	@echo "make test             - Run fast tests (pytest -m 'not slow')"
+	@echo "make clean            - Clean up environment"
 	@echo "make dataset-full START=YYYY-MM-DD END=YYYY-MM-DD - Build full enriched dataset (395 features)"
 	@echo "make dataset-full-gpu START=YYYY-MM-DD END=YYYY-MM-DD - Build dataset with GPU-ETL (all 395 features enabled by default)"
 	@echo "make dataset-full-prod START=YYYY-MM-DD END=YYYY-MM-DD - Build using configs/pipeline/full_dataset.yaml"
@@ -82,6 +84,21 @@ setup:
 	@echo "✅ Python environment ready"
 	@echo "📝 Copy .env.example to .env and configure your settings"
 	cp -n .env.example .env || true
+
+# RAPIDS GPU-accelerated data processing
+rapids-install:
+	@echo "🚀 Installing RAPIDS 24.12 for CUDA 12.x..."
+	pip install --extra-index-url=https://pypi.nvidia.com \
+		cudf-cu12==24.12.* \
+		cugraph-cu12==24.12.* \
+		rmm-cu12==24.12.*
+	@echo "✅ RAPIDS installed successfully"
+	@echo "💡 Verify: python -c 'import cudf; import cugraph; import rmm; print(\"✅ RAPIDS ready\")'"
+
+rapids-verify:
+	@echo "🔍 Verifying RAPIDS installation..."
+	@python -c "import cudf; import cugraph; import rmm; print(f'✅ cuDF {cudf.__version__}, cuGraph {cugraph.__version__}, RMM {rmm.__version__}')"
+	@python -c "from src.utils.gpu_etl import init_rmm, to_cudf, to_polars; import polars as pl; df = pl.DataFrame({'x': [1,2,3]}); to_polars(to_cudf(df)); print('✅ GPU-ETL pipeline functional')"
 
 # Docker services
 docker-up:

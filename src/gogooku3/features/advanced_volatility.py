@@ -65,7 +65,7 @@ def add_advanced_vol_block(
         var_d = pl.col("yz_d").rolling_var(win).over("Code")
         var_c = pl.col("yz_c").rolling_var(win).over("Code")
         yz_var = var_u + k * var_c + (1 - k) * var_d
-        yz_vol = (yz_var.clip_min(0.0)).sqrt().alias(f"yz_vol_{win}")
+        yz_vol = (yz_var.clip(lower_bound=0.0)).sqrt().alias(f"yz_vol_{win}")
         # Volatility-of-Volatility as rolling std of yz_vol over the same window
         vov = pl.col(f"yz_vol_{win}").rolling_std(win).over("Code").alias(f"vov_{win}")
         cols_to_attach.append(yz_vol)

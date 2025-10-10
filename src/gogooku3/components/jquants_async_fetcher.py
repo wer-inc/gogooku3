@@ -405,7 +405,7 @@ class JQuantsAsyncFetcher:
         if numeric_columns:
             df = df.with_columns(
                 [
-                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip_chars().is_in(sentinel))
                     .then(None)
                     .otherwise(pl.col(c))
                     .alias(c)
@@ -495,7 +495,7 @@ class JQuantsAsyncFetcher:
         if numeric_cols:
             df = df.with_columns(
                 [
-                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip_chars().is_in(sentinel))
                     .then(None)
                     .otherwise(pl.col(c))
                     .alias(c)
@@ -1596,7 +1596,7 @@ class JQuantsAsyncFetcher:
         if numeric_cols:
             df = df.with_columns(
                 [
-                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip_chars().is_in(sentinel))
                     .then(None)
                     .otherwise(pl.col(c))
                     .alias(c)
@@ -1713,7 +1713,7 @@ class JQuantsAsyncFetcher:
         if numeric_cols:
             df = df.with_columns(
                 [
-                    pl.when(pl.col(c).cast(pl.Utf8).str.strip().is_in(sentinel))
+                    pl.when(pl.col(c).cast(pl.Utf8).str.strip_chars().is_in(sentinel))
                     .then(None)
                     .otherwise(pl.col(c))
                     .alias(c)
