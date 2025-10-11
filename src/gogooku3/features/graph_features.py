@@ -72,8 +72,8 @@ def add_graph_features(
             res = builder.build_graph(pdf, codes, date_end=str(dt.date()))
         except Exception:
             continue
-        # Peer-level stats per code
-        peer_map = builder.get_peer_features_for_codes(list(codes), str(dt.date()))
+        # Peer-level stats per code (from build_graph result, not instance state)
+        peer_map = res.get('peer_features', {})
         # Degree, clustering, avg neighbor degree, core number, centralities, components, local density
         deg_map: dict[str, int] = {}
         clus_map: dict[str, float] = {}
