@@ -1,5 +1,22 @@
 # 先物機能統合完了レポート 🚀
 
+---
+
+⚠️ **重要: このドキュメントは過去の統合時点（2025年9月頃）の記録です**
+
+**現在の状況（2025年10月以降）:**
+- J-Quants `/derivatives/futures` API の利用制限により、**先物機能は完全に無効化されています**
+- `run_full_dataset.py` lines 665, 775, 879-882 で `if False:` により無効化
+- 88-92列の先物特徴量が欠落（ON 20列 + EOD 68列 + continuous 4列）
+- 再有効化にはオフラインparquetデータが必要（実験的）
+
+**最新情報:**
+- 詳細な無効化状況: `docs/ml/dataset_new.md` Section 13.1
+- 実装コード: `src/gogooku3/features/futures_features.py` (保持されているが未使用)
+- メインドキュメント: `CLAUDE.md` の「Futures features (currently disabled)」セクション
+
+---
+
 ## ✅ 完了した機能
 
 ### 1. CLIオプションの統合

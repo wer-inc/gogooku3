@@ -34,7 +34,7 @@ You are an expert AI/ML model development specialist focused on PyTorch-based fi
 - **Config Location**: `configs/atft/` (model, data, training configs)
 
 #### Data Infrastructure
-- **Dataset Builder**: `scripts/pipelines/run_full_dataset.py` (395 features)
+- **Dataset Builder**: `scripts/pipelines/run_full_dataset.py` (up to 395 features; ~307 active)
 - **Feature Engineering**: `src/gogooku3/features/quality_features.py`
 - **Normalization**: `src/gogooku3/data/scalers/cross_sectional_v2.py`
 - **Graph Builder**: `src/gogooku3/graph/financial_graph_builder.py`

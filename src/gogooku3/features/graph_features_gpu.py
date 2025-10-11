@@ -51,9 +51,48 @@ def add_graph_features(
 
     This function is a drop-in replacement for the CPU version,
     providing 100x speedup through GPU acceleration.
+
+    Optional: Set MAX_GRAPH_STOCKS environment variable to limit stock universe
+    for memory-constrained environments (e.g., MAX_GRAPH_STOCKS=2000)
     """
     if df.is_empty() or return_col not in df.columns:
         return df
+
+    # Optional stock limit for OOM prevention
+    import os
+    max_stocks = os.getenv("MAX_GRAPH_STOCKS")
+    original_df = df  # Keep reference for final join
+
+    if max_stocks:
+        try:
+            max_stocks_int = int(max_stocks)
+            unique_codes = df.select("Code").unique().height
+
+            if unique_codes > max_stocks_int:
+                # Filter to top N stocks by trading activity (volume * price)
+                # This ensures we keep the most liquid/important stocks
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(
+                    f"Limiting graph features to top {max_stocks_int} stocks "
+                    f"(out of {unique_codes}) for OOM prevention"
+                )
+
+                # Calculate average trading value per stock
+                stock_rank = (
+                    df.select(["Code", "Volume", "Close"])
+                    .with_columns((pl.col("Volume") * pl.col("Close")).alias("trade_value"))
+                    .group_by("Code")
+                    .agg(pl.col("trade_value").mean().alias("avg_trade_value"))
+                    .sort("avg_trade_value", descending=True)
+                    .head(max_stocks_int)
+                )
+
+                top_codes = stock_rank.select("Code").to_series().to_list()
+                df = df.filter(pl.col("Code").is_in(top_codes))
+                logger.info(f"Filtered to {len(top_codes)} stocks for graph computation")
+        except (ValueError, TypeError):
+            pass  # Invalid MAX_GRAPH_STOCKS value - proceed without limit
 
     # Prepare pandas view with required columns
     pdf = df.select(["Code", "Date", return_col]).rename({
@@ -76,7 +115,7 @@ def add_graph_features(
         include_negative_correlation=True,
         symmetric=True,
         cache_dir=cache_dir,
-        verbose=False,
+        verbose=True,  # Enable cache hit/miss logging
     )
 
     dates = list(pdf["date"].sort_values().unique())
@@ -395,11 +434,13 @@ def add_graph_features(
                 pass
 
         # Merge back with original dataframe (single join for all dates)
-        df = df.join(graph_df, on=["Code", "Date"], how="left")
+        # Use original_df if stock filtering was applied
+        target_df = original_df if max_stocks and original_df is not df else df
+        target_df = target_df.join(graph_df, on=["Code", "Date"], how="left")
 
         # Fill nulls with 0
-        graph_cols = [col for col in df.columns if col.startswith("graph_") or col.startswith("peer_")]
-        df = df.with_columns([
+        graph_cols = [col for col in target_df.columns if col.startswith("graph_") or col.startswith("peer_")]
+        target_df = target_df.with_columns([
             pl.col(col).fill_null(0) for col in graph_cols
         ])
 
@@ -409,5 +450,7 @@ def add_graph_features(
             cp.get_default_memory_pool().free_all_blocks()
         except Exception:
             pass
+
+        return target_df
 
     return df

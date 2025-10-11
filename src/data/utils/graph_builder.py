@@ -11,6 +11,7 @@ Graph Builder for Financial Time Series Correlation
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import pickle
 from datetime import date, datetime, timedelta
@@ -101,9 +102,34 @@ class FinancialGraphBuilder:
             )
 
     def _get_cache_key(self, date: date, codes: list[str]) -> str:
-        """キャッシュキーを生成"""
-        code_hash = hash(tuple(sorted(codes))) % 10000
-        return f"graph_{date}_{code_hash}_{self.correlation_window}_{self.correlation_method}"
+        """キャッシュキーを生成（決定的ハッシュで衝突を回避）"""
+        # 決定的なダイジェスト（プロセス間で再現可能）
+        codes_str = "|".join(sorted(codes))
+        code_digest = hashlib.blake2s(
+            codes_str.encode('utf-8'),
+            digest_size=8
+        ).hexdigest()
+
+        # 閾値は2桁精度で表現（例: 0.3 -> 030）
+        try:
+            thr100 = int(round(float(self.correlation_threshold) * 100))
+        except Exception:
+            thr100 = 0
+
+        # 主要パラメータをキーに含める（GPU版と一貫性を保つ）
+        parts = [
+            "graph",
+            str(date),
+            code_digest,  # 決定的なハッシュ
+            f"w{int(self.correlation_window)}",
+            f"t{thr100:03d}",
+            f"k{int(self.max_edges_per_node)}",
+            f"m{str(self.correlation_method)}",
+            f"freq-{getattr(self, 'update_frequency', 'daily')}",
+            f"neg-{int(bool(getattr(self, 'include_negative_correlation', True)))}",
+            f"sym-{int(bool(getattr(self, 'symmetric', True)))}",
+        ]
+        return "_".join(parts)
 
     def _load_from_cache(self, cache_key: str) -> dict[str, Any] | None:
         """キャッシュから読み込み"""
@@ -114,7 +140,10 @@ class FinancialGraphBuilder:
         if cache_file.exists():
             try:
                 with gzip.open(cache_file, 'rb') as f:
-                    return pickle.load(f)
+                    data = pickle.load(f)
+                if self.verbose:
+                    logger.info(f"✅ Cache HIT: {cache_file.name}")
+                return data
             except Exception as e:
                 logger.warning(f"Failed to load cache {cache_file}: {e}")
         return None
@@ -134,7 +163,8 @@ class FinancialGraphBuilder:
             # Compressed pickle (~3-10x smaller depending on payload)
             with gzip.open(cache_file, 'wb', compresslevel=3) as f:
                 pickle.dump(data_to_save, f, protocol=pickle.HIGHEST_PROTOCOL)
-            logger.debug(f"Saved graph cache: {cache_file}")
+            if self.verbose:
+                logger.info(f"💾 Cache SAVE: {cache_file.name}")
         except Exception as e:
             logger.warning(f"Failed to save cache {cache_file}: {e}")
 

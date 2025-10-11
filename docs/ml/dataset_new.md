@@ -319,12 +319,82 @@
 * ターゲット：**\~12**（multi-horizon targets and binary versions）
 * その他の特徴：**\~146**（earnings events, short selling, options, cross-features等）
 
-**実装済み合計：** **395 列**
+**実装コード上の合計：** **395 列**
+**現在生成される列数：** **約 303-307 列**
 
 ※ 仕様の225列を大幅に超え、実際の実装では拡張された特徴量が追加されています。主な拡張：
 - フロー特徴の詳細化（18→37列）
 - マージン特徴の分離（週次45列＋日次41列）
 - その他の追加特徴（earnings, short selling, options, cross-features等）
+
+⚠️ **先物機能（88-92列）が J-Quants API の利用制限により無効化されているため、実際の生成列数は約303-307列となります。** その他、日次マージン（dmi_*）や空売りなど一部の特徴量はデータ存在に依存するため、実際の列数は環境により若干変動します。
+
+---
+
+## 13.1) 先物特徴量の無効化状態
+
+現在、J-Quants `/derivatives/futures` APIの利用制限により、先物関連特徴量（88-92列）は無効化されています。
+
+### 欠落している先物特徴量
+
+#### ON (T+0) 特徴: 5列 × 4カテゴリ = 20列
+- `fut_on_ret`: 夜間セッション収益率
+- `fut_on_range`: 夜間レンジ（log(High/Low)）
+- `fut_on_z`: ON収益率の Z-score (60日窓)
+- `is_fut_on_valid`: ON特徴の有効性フラグ
+- `fut_emergency_flag`: 緊急証拠金フラグ
+
+#### EOD (T+1) 特徴: 17列 × 4カテゴリ = 68列
+価格・ベーシス関連:
+- `fut_day_ret`, `fut_whole_ret`: 日中・全日収益率
+- `basis_close`, `basis_close_z252`: ベーシス（先物−現物）と Z-score
+- `carry_per_day`: 日次キャリー（ベーシス/残存日数）
+- `ttm_days`: SQまでの残存日数
+
+建玉・出来高関連:
+- `fut_oi`, `fut_oi_delta`: 建玉とその変化
+- `fut_vol`: 出来高
+- `fut_oi_z252`, `fut_vol_z252`: 建玉・出来高の Z-score (252日窓)
+
+価格×建玉クロス:
+- `price_up_oi_up`, `price_up_oi_dn`: 上昇×建玉増減
+- `price_dn_oi_up`, `price_dn_oi_dn`: 下落×建玉増減
+- `is_fut_eod_valid_*`: EOD特徴の有効性フラグ (カテゴリ毎)
+
+#### 連続系列 (オプショナル): 1列 × 4カテゴリ = 4列
+- `fut_whole_ret_cont_*`: 比率連動の連続先物リターン系列
+  - `--futures-continuous` フラグ有効時のみ生成
+
+### デフォルトカテゴリ
+- **TOPIXF**: TOPIX先物
+- **NK225F**: 日経225先物
+- **JN400F**: JPX日経400先物
+- **REITF**: REIT指数先物
+
+### コード上の無効化箇所
+- `scripts/pipelines/run_full_dataset.py:665` - API fetch block: `if False:`
+- `scripts/pipelines/run_full_dataset.py:775` - Offline fallback: `if False:`
+- `scripts/pipelines/run_full_dataset.py:879-882` - enrich_and_save 呼び出し:
+  ```python
+  enable_futures=False,
+  futures_parquet=None,
+  futures_categories=[],
+  futures_continuous=False,
+  ```
+
+### 再有効化方法（実験的）
+オフラインparquetデータ経由で再有効化可能:
+```bash
+python scripts/pipelines/run_full_dataset.py \
+  --futures-parquet output/futures_daily_YYYYMMDD_YYYYMMDD.parquet \
+  --futures-categories "TOPIXF,NK225F,JN400F,REITF" \
+  --futures-continuous  # 連続系列も有効化する場合
+```
+
+### 実装参照
+- 特徴量定義: `src/gogooku3/features/futures_features.py`
+- 統合ロジック: `src/pipeline/full_dataset.py` の `enrich_and_save()`
+- 過去の統合記録: `FUTURES_INTEGRATION_COMPLETE.md`
 
 ---
 

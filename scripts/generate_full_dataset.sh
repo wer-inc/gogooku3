@@ -1,11 +1,13 @@
 #!/bin/bash
 #
-# Generate a complete dataset with all 395 features enabled
+# Generate a complete dataset with all enabled features
+# (up to 395 theoretical max; currently ~307 with futures disabled)
 #
 
 set -e  # Exit on error
 
-echo "🚀 Starting full dataset generation with all features enabled"
+echo "🚀 Starting full dataset generation with all enabled features"
+echo "   (up to 395 theoretical max; ~307 with futures disabled)"
 echo "=================================================="
 
 # Set environment variables for GPU and features

@@ -92,7 +92,7 @@ All agents are configured with:
 - **gogooku3-standalone** project structure
 - **ATFT-GAT-FAN** architecture details
 - **Training infrastructure** (Hydra configs, make commands)
-- **Data pipeline** (395 features, JQuants API, GPU-ETL)
+- **Data pipeline** (up to 395 features, ~307 active; JQuants API, GPU-ETL)
 - **Safety mechanisms** (Walk-Forward validation, cross-sectional normalization)
 
 ## Best Practices

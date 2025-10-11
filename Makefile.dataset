@@ -1,0 +1,319 @@
+# ============================================================================
+# Dataset Generation Makefile
+# Specialized for Japanese Stock ML Dataset Generation
+# ============================================================================
+
+# This file is included by the main Makefile
+# For standalone usage: make -f Makefile.dataset <target>
+
+SHELL := /bin/bash
+
+# ============================================================================
+# Variables
+# ============================================================================
+
+# Date defaults (5 years of data)
+DEFAULT_END   ?= $(shell date -u -d "yesterday" +%F)
+DEFAULT_START ?= $(shell date -u -d "yesterday -5 years +1 day" +%F)
+
+# Graph feature parameters
+GRAPH_WINDOW    ?= 60
+GRAPH_THRESHOLD ?= 0.5
+GRAPH_MAX_K     ?= 4
+CACHE_TTL_DAYS  ?= 120
+
+# Cache directory (monthly sharding)
+CACHE_SHARD ?= $(shell date -u -d "$(END)" +%Y%m 2>/dev/null || date -u +%Y%m)
+CACHE_DIR   ?= output/graph_cache/$(CACHE_SHARD)/w$(GRAPH_WINDOW)-t$(GRAPH_THRESHOLD)-k$(GRAPH_MAX_K)
+
+# GPU environment (safe settings for dataset generation)
+SAFE_GPU_ENV ?= REQUIRE_GPU=1 USE_GPU_ETL=1 \
+	RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=40GB CUDF_SPILL=1 \
+	CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src
+
+# ============================================================================
+# Help
+# ============================================================================
+
+.PHONY: help-dataset
+help-dataset:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  📊 Dataset Generation Commands"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "🚀 Layer 1: User-Friendly (RECOMMENDED)"
+	@echo "  make dataset-bg     SSH-safe background build (5 years)"
+	@echo "  make go             Alias for dataset-bg"
+	@echo "  make dataset        Interactive all-in-one build"
+	@echo ""
+	@echo "⚙️  Layer 2: Detailed Control"
+	@echo "  make dataset-gpu START=... END=...    GPU-accelerated (requires dates)"
+	@echo "  make dataset-cpu START=... END=...    CPU fallback"
+	@echo "  make dataset-prod START=... END=...   Production config"
+	@echo "  make dataset-research START=... END=... Research features"
+	@echo ""
+	@echo "🛠️  Layer 3: Utilities"
+	@echo "  make dataset-check           Environment check (relaxed)"
+	@echo "  make dataset-check-strict    Environment check (strict GPU)"
+	@echo "  make dataset-clean           Clean artifacts (keep raw/cache)"
+	@echo "  make dataset-rebuild         Clean + rebuild with defaults"
+	@echo "  make cache-stats             Show cache statistics"
+	@echo "  make cache-prune             Prune old cache ($(CACHE_TTL_DAYS)d)"
+	@echo ""
+	@echo "📋 Defaults:"
+	@echo "  Period: $(DEFAULT_START) → $(DEFAULT_END)"
+	@echo "  Graph:  window=$(GRAPH_WINDOW) threshold=$(GRAPH_THRESHOLD) k=$(GRAPH_MAX_K)"
+	@echo "  Cache:  $(CACHE_DIR)"
+	@echo ""
+	@echo "💡 Examples:"
+	@echo "  make dataset-bg                    # Background, last 5 years"
+	@echo "  make dataset-gpu START=2020-01-01 END=2024-12-31"
+	@echo "  make dataset-rebuild               # Clean + rebuild defaults"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ============================================================================
+# Layer 1: User-Friendly Commands (RECOMMENDED)
+# ============================================================================
+
+.PHONY: dataset-bg go dataset
+
+# Background dataset builder (MOST RECOMMENDED)
+# - GPU-accelerated with safe settings
+# - Runs in background (SSH-safe)
+# - Includes: preflight → clean → build → stats
+# Usage: make dataset-bg [START=YYYY-MM-DD END=YYYY-MM-DD]
+dataset-bg:
+	@echo "╔══════════════════════════════════════════════════════════════════╗"
+	@echo "║  🚀 Background Dataset Builder (GPU + SSH-safe)                  ║"
+	@echo "╚══════════════════════════════════════════════════════════════════╝"
+	@mkdir -p _logs/dataset
+	@START_VAL="$(START)"; END_VAL="$(END)"; \
+	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
+	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
+	ts=$$(date +%Y%m%d_%H%M%S); \
+	log=_logs/dataset/dataset_bg_$$ts.log; \
+	pid_file=_logs/dataset/dataset_bg_$$ts.pid; \
+	pgid_file=_logs/dataset/dataset_bg_$$ts.pgid; \
+	echo "📅 Period: $$START_VAL → $$END_VAL"; \
+	echo "📝 Log: $$log"; \
+	echo ""; \
+	echo "🩺 Preflight: checking credentials and GPU (non-strict)..."; \
+	if ! $(MAKE) -f Makefile.dataset dataset-check; then \
+	  echo ""; \
+	  echo "❌ Preflight failed. Please fix your .env credentials and/or GPU setup."; \
+	  exit 1; \
+	fi; \
+	echo ""; \
+	if command -v setsid >/dev/null 2>&1; then \
+	  nohup setsid env $(SAFE_GPU_ENV) $(MAKE) -f Makefile.dataset dataset START="$$START_VAL" END="$$END_VAL" > "$$log" 2>&1 & \
+	else \
+	  nohup env $(SAFE_GPU_ENV) $(MAKE) -f Makefile.dataset dataset START="$$START_VAL" END="$$END_VAL" > "$$log" 2>&1 & \
+	fi; \
+	pid=$$!; \
+	pgid=$$(ps -o pgid= -p $$pid 2>/dev/null | tr -d ' ' || true); \
+	echo "$$pid" > "$$pid_file"; \
+	if [ -n "$$pgid" ]; then echo "$$pgid" > "$$pgid_file"; fi; \
+	echo "✅ Started in background (PID: $$pid$${pgid:+, PGID: $$pgid})"; \
+	echo "📊 Monitor: tail -f $$log"; \
+	echo "🛑 Stop (PID):   kill $$pid"; \
+	if [ -n "$$pgid" ]; then echo "🛑 Stop (group): kill -TERM -$$pgid"; fi; \
+	echo "🗂️  PID file:  $$pid_file"; \
+	if [ -n "$$pgid" ]; then echo "🗂️  PGID file: $$pgid_file"; fi
+
+# Ultra-simple alias - points to SSH-safe background builder
+go: dataset-bg
+
+# All-in-one dataset builder: preflight → clean → build → stats
+# Usage: make dataset [START=YYYY-MM-DD END=YYYY-MM-DD]
+# Default: Last ~5 years of data
+dataset:
+	@echo "╔══════════════════════════════════════════════════════════════════╗"
+	@echo "║  🚀 ALL-IN-ONE Dataset Builder (完全自動)                        ║"
+	@echo "╚══════════════════════════════════════════════════════════════════╝"
+	@echo ""
+	@echo "📋 Steps:"
+	@echo "  1️⃣  Preflight check (credentials + GPU/CPU detection)"
+	@echo "  2️⃣  Clean old artifacts (keep raw data + caches)"
+	@echo "  3️⃣  Build full dataset (up to 395 features, ~307 active, GPU-accelerated)"
+	@echo "  4️⃣  Show cache statistics"
+	@echo ""
+	@echo "⏱️  Estimated time:"
+	@echo "  • Initial run: 2-3 hours (CPU fallback) or 30-60 min (GPU)"
+	@echo "  • Subsequent runs: <3 seconds (cache hit)"
+	@echo ""
+	@$(MAKE) -f Makefile.dataset dataset-check || { \
+	  echo ""; \
+	  echo "❌ Preflight check failed. Please check credentials in .env"; \
+	  exit 1; \
+	}
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "🧹 Step 2/4: Cleaning old artifacts..."
+	@$(MAKE) -f Makefile.dataset dataset-clean
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "📊 Step 3/4: Building dataset..."
+	@START_VAL="$(START)"; END_VAL="$(END)"; \
+	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
+	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
+	echo "📅 Period: $$START_VAL → $$END_VAL"; \
+	echo ""; \
+	$(MAKE) -f Makefile.dataset dataset-gpu START=$$START_VAL END=$$END_VAL
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "📦 Step 4/4: Cache statistics..."
+	@$(MAKE) -f Makefile.dataset cache-stats
+	@echo ""
+	@echo "╔══════════════════════════════════════════════════════════════════╗"
+	@echo "║  ✅ Dataset build complete!                                      ║"
+	@echo "╚══════════════════════════════════════════════════════════════════╝"
+	@echo ""
+	@echo "📄 Output: output/ml_dataset_latest_full.parquet"
+	@echo "🔗 Symlink: output/datasets/ml_dataset_latest_full.parquet"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  • Train model: make train"
+	@echo "  • Quick test:  make smoke"
+	@echo "  • Research:    make research-plus"
+
+# ============================================================================
+# Layer 2: Detailed Control (Custom Parameters)
+# ============================================================================
+
+.PHONY: dataset-gpu dataset-cpu dataset-prod dataset-research dataset-fetch
+
+# GPU-accelerated dataset generation (requires START/END parameters)
+# Usage: make dataset-gpu START=YYYY-MM-DD END=YYYY-MM-DD
+dataset-gpu:
+	@echo "🚀 Running dataset generation with GPU-ETL enabled (up to 395 features; ~307 active)"
+	@echo "✅ Graph: cuGraph/CuPy with optimized memory config"
+	@echo "✅ Sector cross-sectional and daily margin features enabled"
+	@echo "⚠️  Note: Futures features (88-92 columns) disabled due to API unavailability"
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make dataset-gpu START=YYYY-MM-DD END=YYYY-MM-DD"; \
+	  exit 1; }
+	@env $(SAFE_GPU_ENV) \
+	python scripts/pipelines/run_full_dataset.py \
+	  --jquants --start-date $(START) --end-date $(END) \
+	  --gpu-etl --enable-graph-features \
+	  --graph-window $(GRAPH_WINDOW) \
+	  --graph-cache-dir $(CACHE_DIR) \
+	  --graph-threshold $(GRAPH_THRESHOLD) --graph-max-k $(GRAPH_MAX_K) \
+	  --futures-continuous \
+	  --attach-nk225-option-market \
+	  --sector-onehot33 \
+	  --enable-sector-cs \
+	  --enable-daily-margin
+
+# CPU-only dataset generation (fallback)
+dataset-cpu:
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make dataset-cpu START=YYYY-MM-DD END=YYYY-MM-DD"; \
+	  exit 1; }
+	@echo "🖥️  Running CPU-only dataset generation"
+	python scripts/pipelines/run_full_dataset.py \
+	  --jquants --start-date $(START) --end-date $(END)
+
+# Production dataset with custom config
+dataset-prod:
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make dataset-prod START=YYYY-MM-DD END=YYYY-MM-DD"; \
+	  exit 1; }
+	@echo "🏭 Running production dataset generation"
+	python scripts/pipelines/run_full_dataset.py \
+	  --jquants --start-date $(START) --end-date $(END) \
+	  --config configs/pipeline/full_dataset.yaml
+
+# Research dataset with indices features
+dataset-research:
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make dataset-research START=YYYY-MM-DD END=YYYY-MM-DD"; \
+	  exit 1; }
+	@echo "🔬 Running research dataset generation"
+	python scripts/pipelines/run_full_dataset.py \
+	  --jquants --start-date $(START) --end-date $(END) \
+	  --config configs/pipeline/research_full_indices.yaml
+
+# Fetch all raw components (no ML dataset build)
+dataset-fetch:
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make dataset-fetch START=YYYY-MM-DD END=YYYY-MM-DD"; \
+	  exit 1; }
+	@echo "📥 Fetching raw data only (no dataset build)"
+	python scripts/data/fetch_jquants_history.py \
+	  --jquants --all --start-date $(START) --end-date $(END)
+
+# ============================================================================
+# Layer 3: Utilities
+# ============================================================================
+
+.PHONY: dataset-check dataset-check-strict dataset-clean dataset-rebuild
+.PHONY: cache-stats cache-prune
+
+# Preflight check (relaxed, allows CPU fallback)
+dataset-check:
+	@echo "🩺 Running preflight check (credentials + basic GPU)"
+	@echo "   (GPU fallback to CPU allowed)"
+	@env $(SAFE_GPU_ENV) \
+	python scripts/pipelines/run_full_dataset.py --jquants --check-env-only
+
+# Strict check: requires fully functional GPU graph features
+dataset-check-strict:
+	@echo "🩺 Running STRICT preflight check (GPU graph required)"
+	@echo "   (This check will fail if cuDF/cuGraph cannot be imported)"
+	@env $(SAFE_GPU_ENV) \
+	python scripts/pipelines/run_full_dataset.py \
+	  --jquants --check-env-only --require-gpu-graph
+
+# Clean dataset artifacts (keep raw data and caches)
+dataset-clean:
+	@echo "🧹 Removing dataset artifacts (keeping raw/* and caches)"
+	@set -e; \
+	rm -f output/ml_dataset_*.parquet output/ml_dataset_*_metadata.json 2>/dev/null || true; \
+	rm -f output/performance_report_*.json 2>/dev/null || true; \
+	rm -f output/datasets/ml_dataset_*_full.parquet output/datasets/ml_dataset_*_full_metadata.json 2>/dev/null || true; \
+	for link in \
+	  output/ml_dataset_latest_full.parquet \
+	  output/ml_dataset_latest_full_metadata.json \
+	  output/datasets/ml_dataset_latest_full.parquet \
+	  output/datasets/ml_dataset_latest_full_metadata.json; do \
+	  [ -L "$$link" ] && unlink "$$link" || true; \
+	done; \
+	echo "✅ Cleanup complete."
+
+# Clean + rebuild with default date range
+dataset-rebuild:
+	@set -euo pipefail; \
+	$(MAKE) -f Makefile.dataset dataset-clean; \
+	START_VAL="$(START)"; END_VAL="$(END)"; \
+	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
+	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
+	echo "🚀 Rebuilding dataset with START=$$START_VAL END=$$END_VAL"; \
+	$(MAKE) -f Makefile.dataset dataset-gpu START=$$START_VAL END=$$END_VAL
+
+# Show graph cache statistics
+cache-stats:
+	@echo "📦 Graph cache layout under output/graph_cache";
+	@if [ -d output/graph_cache ]; then \
+	  find output/graph_cache -maxdepth 2 -type d -print | sort; \
+	  echo ""; \
+	  echo "Total files:"; find output/graph_cache -type f -name '*.pkl' | wc -l; \
+	  echo "Total size:"; du -sh output/graph_cache 2>/dev/null || true; \
+	else \
+	  echo "(no cache yet)"; \
+	fi
+
+# Prune old cache files (default: 120 days)
+cache-prune:
+	@echo "🧹 Pruning graph cache older than $(CACHE_TTL_DAYS) days";
+	@if [ -d output/graph_cache ]; then \
+	  find output/graph_cache -type f -name '*.pkl' -mtime +$(CACHE_TTL_DAYS) -print -delete; \
+	  echo "After prune size:"; du -sh output/graph_cache 2>/dev/null || true; \
+	else \
+	  echo "output/graph_cache not found"; \
+	fi
