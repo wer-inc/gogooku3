@@ -959,19 +959,18 @@ async def enrich_and_save(
             # Try to use GPU-accelerated version first
             use_gpu_graph = False
             try:
-                import cugraph
-                import cupy as cp
+                import cupy as cp  # CuPy のみで GPU 動作可能
                 if cp.cuda.runtime.getDeviceCount() > 0:
                     from src.gogooku3.features.graph_features_gpu import add_graph_features
                     use_gpu_graph = True
-                    logger.info("✅ Using GPU-accelerated graph computation (cuGraph detected)")
+                    logger.info("✅ Using GPU-accelerated graph computation (CuPy detected)")
             except ImportError:
                 pass
 
             # Fallback to CPU version if GPU not available
             if not use_gpu_graph:
                 from src.gogooku3.features.graph_features import add_graph_features
-                logger.info("📊 Using CPU graph computation (cuGraph not available)")
+                logger.info("📊 Using CPU graph computation (CuPy not available)")
 
             df = add_graph_features(
                 df,

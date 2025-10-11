@@ -97,17 +97,16 @@ def _check_jquants_credentials(*, strict: bool = False) -> bool:
 
 
 def _check_gpu_graph_support(*, strict: bool = False) -> bool:
-    """Inspect whether cuGraph/CuPy GPU dependencies are ready."""
+    """Inspect whether CuPy GPU dependencies are ready (cuGraph not required)."""
     try:
         import cupy as cp  # type: ignore
-        import cugraph  # type: ignore
+        # cuGraph は不要（graph_builder_gpu.py が CuPy のみで動作）
 
         device_count = cp.cuda.runtime.getDeviceCount()  # type: ignore[attr-defined]
         if device_count <= 0:
             raise RuntimeError("CuPy reports no CUDA devices")
         logger.info(
-            "GPU graph dependencies detected (cuGraph %s, CuPy %s, CUDA devices=%d)",
-            getattr(cugraph, "__version__", "?"),
+            "GPU graph dependencies detected (CuPy %s, CUDA devices=%d)",
             getattr(cp, "__version__", "?"),
             device_count,
         )
@@ -115,7 +114,7 @@ def _check_gpu_graph_support(*, strict: bool = False) -> bool:
     except Exception as exc:  # pragma: no cover - defensive logging only
         level = logger.error if strict else logger.warning
         level(
-            "GPU graph dependencies unavailable (cuGraph/CuPy). "
+            "GPU graph dependencies unavailable (CuPy). "
             "Falling back to CPU graph features will significantly slow the build.%s",
             f" Details: {exc}" if strict else "",
         )
