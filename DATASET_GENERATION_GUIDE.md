@@ -77,14 +77,29 @@
 
 ## 完全なデータセット生成コマンド
 
-### オプション1: Makefileを使用（推奨）
+### オプション1: バックグラウンド実行（最も推奨）
 
 ```bash
-# GPUを使用して全機能を有効化
+# SSH切断にも安全。ログ/ PID / PGID を保存します。
+make dataset-bg
+
+# モニタ
+tail -f _logs/dataset/*.log
+
+# 停止
+kill <PID>
+# またはプロセスグループごとに停止
+kill -TERM -<PGID>
+```
+
+### オプション2: Makefileを使用（インタラクティブ）
+
+```bash
+# GPUを使用して全機能を有効化（期間指定）
 make dataset-full-gpu START=2020-01-01 END=2024-12-31
 ```
 
-### オプション2: 直接Pythonスクリプトを実行
+### オプション3: 直接Pythonスクリプトを実行
 
 ```bash
 export REQUIRE_GPU=1 USE_GPU_ETL=1 RMM_POOL_SIZE=70GB CUDA_VISIBLE_DEVICES=0
@@ -108,7 +123,7 @@ python scripts/pipelines/run_full_dataset.py \
   --enable-futures
 ```
 
-### オプション3: 生成スクリプトを使用
+### オプション4: 生成スクリプトを使用
 
 ```bash
 ./scripts/generate_full_dataset.sh

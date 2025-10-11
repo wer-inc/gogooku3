@@ -489,15 +489,31 @@ async def main() -> int:
     creds_ok = True
     if args.jquants:
         creds_ok = _check_jquants_credentials(strict=args.check_env_only)
+    # GPU graph check: only strict if --require-gpu-graph is explicitly set
     gpu_ready = _check_gpu_graph_support(
-        strict=args.require_gpu_graph or args.check_env_only
+        strict=args.require_gpu_graph
     )
 
     if args.check_env_only:
-        if creds_ok and gpu_ready:
-            logger.info("✅ Preflight checks passed")
-            return 0
-        return 1
+        # Relaxed mode: only fail if credentials are missing
+        # GPU fallback is allowed unless --require-gpu-graph is set
+        if args.require_gpu_graph:
+            # Strict mode: both credentials and GPU required
+            if creds_ok and gpu_ready:
+                logger.info("✅ Preflight checks passed (strict mode)")
+                return 0
+            logger.error("❌ Preflight checks failed (strict mode)")
+            return 1
+        else:
+            # Relaxed mode: only credentials required
+            if creds_ok:
+                if gpu_ready:
+                    logger.info("✅ Preflight checks passed (GPU accelerated)")
+                else:
+                    logger.info("✅ Preflight checks passed (CPU fallback)")
+                return 0
+            logger.error("❌ Preflight checks failed (credentials missing)")
+            return 1
 
     if args.jquants and not creds_ok:
         return 1

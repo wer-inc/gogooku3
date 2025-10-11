@@ -43,6 +43,20 @@ make dataset-full-gpu START=2025-03-19 END=2025-09-19
 make dataset-full START=2025-03-19 END=2025-09-19
 ```
 
+### 5. バックグラウンド実行（推奨）
+```bash
+# SSH切断にも安全。ログ/ PID / PGID を保存します。
+make dataset-bg
+
+# モニタ
+tail -f _logs/dataset/*.log
+
+# 停止
+kill <PID>
+# またはプロセスグループごとに停止
+kill -TERM -<PGID>
+```
+
 ## 設定ファイル
 
 ### .env ファイル
