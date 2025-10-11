@@ -27,12 +27,17 @@ import torch
 # GPU libraries
 try:
     import cupy as cp
-    import cudf
-    from cupyx.scipy import stats as cu_stats
     GPU_AVAILABLE = True
 except ImportError:
     GPU_AVAILABLE = False
     cp = np  # Fallback to NumPy if CuPy not available
+
+# Optional imports (not critical for functionality)
+try:
+    import cudf
+    from cupyx.scipy import stats as cu_stats
+except ImportError:
+    pass  # cudf/cupyx are optional
 
 logger = logging.getLogger(__name__)
 
