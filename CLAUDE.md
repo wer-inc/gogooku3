@@ -45,18 +45,33 @@ make train-gpu-latest              # Use latest dataset with GPU
 ```
 
 ### Data Pipeline
+
+**Note**: Dataset commands are now organized in `Makefile.dataset` with a clean 3-layer structure.
+
 ```bash
-# GPU-accelerated dataset generation (RECOMMENDED - all 395 features enabled by default)
-make dataset-full-gpu START=2015-09-27 END=2025-09-26      # GPU-ETL with RAPIDS/cuDF
-make dataset-full-gpu-bg START=2015-09-27 END=2025-09-26   # Background execution
+# Layer 1: User-Friendly (RECOMMENDED)
+make dataset-bg                    # SSH-safe background build (5 years, GPU)
+make go                            # Alias for dataset-bg
+make dataset                       # Interactive all-in-one build
 
-# Standard dataset generation
-make dataset-full START=2020-09-06 END=2025-09-06          # CPU-only processing
+# Layer 2: Detailed Control
+make dataset-gpu START=2015-09-27 END=2025-09-26  # GPU-ETL with RAPIDS/cuDF
+make dataset-cpu START=2020-09-06 END=2025-09-06  # CPU-only fallback
+make dataset-prod START=2020-09-06 END=2025-09-06 # Production config
+make dataset-research START=2020-09-06 END=2025-09-06  # Research features
 
-# Alternative dataset commands
-make dataset-full-research START=2020-09-06 END=2025-09-06  # With research features
-make fetch-all START=2020-09-06 END=2025-09-06             # Raw data only
-python scripts/data/ml_dataset_builder.py                   # Build from existing
+# Layer 3: Utilities
+make dataset-check                 # Environment check (relaxed)
+make dataset-check-strict          # Environment check (strict GPU)
+make dataset-clean                 # Clean artifacts (keep raw/cache)
+make dataset-rebuild               # Clean + rebuild with defaults
+make cache-stats                   # Show cache statistics
+make cache-prune                   # Prune old cache (120d)
+
+# Legacy commands (still supported)
+make dataset-full-gpu START=... END=...  # Direct GPU generation
+make fetch-all START=... END=...         # Raw data only
+python scripts/data/ml_dataset_builder.py  # Build from existing
 ```
 
 ### Testing & Validation
@@ -117,8 +132,9 @@ JQuants API → Raw Data → Feature Engineering → ML Dataset → Training Pip
 ### Core Components
 
 **`scripts/pipelines/run_full_dataset.py`** - Dataset generation orchestrator:
-- Coordinates complete 395-feature dataset creation
+- Coordinates dataset creation (up to 395 features with all data sources; currently ~303-307 features)
 - All feature modules enabled by default (GPU-ETL, graphs, options, etc.)
+- **Note**: Futures features (88-92 columns) disabled due to API unavailability
 - Manages JQuants API fetching with up to 75 concurrent requests
 - Integrates run_pipeline_v4_optimized.py for base data
 
@@ -143,7 +159,7 @@ JQuants API → Raw Data → Feature Engineering → ML Dataset → Training Pip
 
 **`src/gogooku3/`** - Modern package structure (v2.0.0):
 - `data/`: ProductionDatasetV3, CrossSectionalNormalizerV2, WalkForwardSplitterV2
-- `features/`: QualityFinancialFeaturesGenerator, 395 features total
+- `features/`: QualityFinancialFeaturesGenerator, up to 395 features (~307 active; 88-92 futures disabled)
 - `models/`: ATFT-GAT-FAN (~5.6M params), LightGBM baseline
 - `training/`: SafeTrainingPipeline (7-step validation)
 - `graph/`: FinancialGraphBuilder (correlation networks)
@@ -229,6 +245,34 @@ SHARPE_WEIGHT=0.3           # Sharpe ratio weight
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # GPU memory fragmentation fix
 ```
 
+### Makefile Organization
+
+The project uses a modular Makefile structure for better maintainability:
+
+**`Makefile`** (635 lines) - Main entry point:
+- General setup, testing, and training commands
+- Includes `Makefile.dataset` for all dataset operations
+- Simplified main `help` target
+
+**`Makefile.dataset`** (318 lines) - Dataset generation module:
+- **Layer 1 (User-Friendly)**: `dataset-bg`, `go`, `dataset`
+  - SSH-safe background execution
+  - Sensible defaults (last 5 years)
+  - Automatic preflight checks
+- **Layer 2 (Detailed Control)**: `dataset-gpu`, `dataset-cpu`, `dataset-prod`, `dataset-research`
+  - Explicit date range control
+  - GPU/CPU selection
+  - Production/research configurations
+- **Layer 3 (Utilities)**: `dataset-check`, `dataset-clean`, `cache-stats`, `cache-prune`
+  - Environment validation
+  - Cache management
+  - Cleanup and rebuild
+
+**Key Features**:
+- Updated `RMM_POOL_SIZE=40GB` (from 0) for OOM prevention
+- Monthly cache sharding: `output/graph_cache/YYYYMM/w{WINDOW}-t{THRESHOLD}-k{K}/`
+- All legacy commands (`dataset-full-gpu`, etc.) remain supported for backward compatibility
+
 ## Common Issues & Solutions
 
 ### Training Errors
@@ -249,8 +293,10 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 **No dataset found**:
 ```bash
-# Build dataset first
-make dataset-full START=2020-09-06 END=2025-09-06
+# Build dataset first (use new simplified commands)
+make dataset-bg                    # Background build (recommended)
+# Or with specific dates:
+make dataset-gpu START=2020-09-06 END=2025-09-06
 # Check symlink
 ls -la output/ml_dataset_latest_full.parquet
 ```
@@ -264,8 +310,9 @@ ls -la output/ml_dataset_latest_full.parquet
 
 **Feature mismatch warnings**:
 - Check `configs/atft/feature_categories.yaml`
-- Ensure 395 features properly categorized
+- Ensure all active features properly categorized (~307 features)
 - VSN/FAN/SAN require correct grouping
+- **Note**: Futures features (88-92 columns) are disabled by default
 
 **Graph builder warnings (normal for early dates)**:
 ```
@@ -284,6 +331,28 @@ RuntimeWarning: invalid value encountered in divide
 - **Cause**: Zero standard deviation (no price movement)
 - **Impact**: None - NaN values handled automatically
 - **Solution**: Normal behavior for inactive stocks
+
+**Futures features (currently disabled)**:
+- **Status**: Disabled due to JQuants `/derivatives/futures` API unavailability
+- **Missing features**: 88-92 columns
+  - ON (T+0): 20 columns (5 features × 4 categories: TOPIXF, NK225F, JN400F, REITF)
+  - EOD (T+1): 68 columns (17 features × 4 categories)
+  - Continuous (optional): 4 columns (with `--futures-continuous` flag)
+- **Impact**: "395 features" is theoretical maximum including futures; actual count ~303-307
+- **Code locations**:
+  - `run_full_dataset.py:665,775` - API fetch disabled with `if False`
+  - `run_full_dataset.py:879-882` - Force `enable_futures=False` in enrich_and_save
+- **Workaround**: Re-enable experimentally with offline parquet data:
+  ```bash
+  python scripts/pipelines/run_full_dataset.py \
+    --futures-parquet output/futures_daily.parquet \
+    --futures-categories "TOPIXF,NK225F"
+  ```
+- **Future columns reference**: `src/gogooku3/features/futures_features.py`
+- **Historical context**: See `FUTURES_INTEGRATION_COMPLETE.md` for past integration
+
+**Note on data-dependent features**:
+Daily margin (`dmi_*`), short selling, and sector short selling features are enabled by default but **depend on actual data availability**. If data cannot be fetched or does not exist for the date range, these columns may be NULL or not generated. This is why the actual column count can vary slightly (~303-307) even excluding futures.
 
 ## Performance Benchmarks
 

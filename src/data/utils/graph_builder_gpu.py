@@ -11,6 +11,7 @@ GPU高速化版: 系列相関に基づく金融グラフ構築器
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import pickle
 from datetime import date, datetime, timedelta
@@ -67,7 +68,7 @@ class FinancialGraphBuilder:
         verbose: bool = True,
         sector_col: str | None = None,
         market_col: str | None = None,
-        gpu_corr_block_cols: int = 1024,
+        gpu_corr_block_cols: int = 256,
     ):
         """
         Args:
@@ -96,6 +97,7 @@ class FinancialGraphBuilder:
         self.sector_col = sector_col
         self.market_col = market_col
         # Streamed GPU correlation block size (columns per j-block)
+        # Reduced default from 1024 to 256 to prevent OOM on large stock universes
         # Env override (best-effort)
         try:
             import os as _os
@@ -128,8 +130,14 @@ class FinancialGraphBuilder:
             )
 
     def _get_cache_key(self, date: date, codes: list[str]) -> str:
-        """キャッシュキーを生成（主要パラメータを含めて衝突を回避）"""
-        code_hash = hash(tuple(sorted(codes))) % 10000
+        """キャッシュキーを生成（決定的ハッシュで衝突を回避）"""
+        # 決定的なダイジェスト（プロセス間で再現可能）
+        codes_str = "|".join(sorted(codes))
+        code_digest = hashlib.blake2s(
+            codes_str.encode('utf-8'),
+            digest_size=8
+        ).hexdigest()
+
         # 閾値は2桁精度で表現（例: 0.3 -> 030）
         try:
             thr100 = int(round(float(self.correlation_threshold) * 100))
@@ -139,7 +147,7 @@ class FinancialGraphBuilder:
         parts = [
             "graph",
             str(date),
-            str(code_hash),
+            code_digest,  # 決定的なハッシュ
             f"w{int(self.correlation_window)}",
             f"t{thr100:03d}",
             f"k{int(self.max_edges_per_node)}",
@@ -159,7 +167,10 @@ class FinancialGraphBuilder:
         if cache_file.exists():
             try:
                 with gzip.open(cache_file, 'rb') as f:
-                    return pickle.load(f)
+                    data = pickle.load(f)
+                if self.verbose:
+                    logger.info(f"✅ Cache HIT: {cache_file.name}")
+                return data
             except Exception as e:
                 logger.warning(f"Failed to load cache {cache_file}: {e}")
         return None
@@ -187,7 +198,8 @@ class FinancialGraphBuilder:
             # Compressed pickle
             with gzip.open(cache_file, 'wb', compresslevel=3) as f:
                 pickle.dump(data_to_save, f, protocol=pickle.HIGHEST_PROTOCOL)
-            logger.debug(f"Saved graph cache: {cache_file}")
+            if self.verbose:
+                logger.info(f"💾 Cache SAVE: {cache_file.name}")
         except Exception as e:
             logger.warning(f"Failed to save cache {cache_file}: {e}")
 
@@ -296,41 +308,86 @@ class FinancialGraphBuilder:
                 N, T = X.shape
 
                 if self.correlation_method == 'pearson':
-                    try:
-                        # Streamed GPU Pearson correlation to avoid NxN device allocation
-                        # 1) Standardize (ddof=0 to match np.corrcoef default)
-                        mu = cp.mean(X, axis=1, keepdims=True)
-                        X = X - mu
-                        std = cp.std(X, axis=1, keepdims=True) + 1e-12
-                        X = X / std
+                    # OOM-aware retry with progressively smaller block sizes
+                    block_sizes_to_try = [
+                        int(self.gpu_corr_block_cols) if hasattr(self, 'gpu_corr_block_cols') else 256,
+                        128,
+                        64
+                    ]
 
-                        # 2) Allocate output on host and fill block-by-block
-                        corr_cpu = np.empty((N, N), dtype=np.float32)
-                        b = int(self.gpu_corr_block_cols) if hasattr(self, 'gpu_corr_block_cols') else 1024
-                        if b <= 0:
-                            b = 1024
-                        for j in range(0, N, b):
-                            jb = min(b, N - j)
-                            block = X @ X[j:j + jb].T  # [N, jb]
-                            block = block / float(T)
-                            corr_cpu[:, j:j + jb] = cp.asnumpy(block)
-                            # Free temporaries eagerly to curb fragmentation
+                    for attempt, b in enumerate(block_sizes_to_try):
+                        try:
+                            # Streamed GPU Pearson correlation to avoid NxN device allocation
+                            # 1) Standardize (ddof=0 to match np.corrcoef default)
+                            mu = cp.mean(X, axis=1, keepdims=True)
+                            X_norm = X - mu
+                            std = cp.std(X_norm, axis=1, keepdims=True) + 1e-12
+                            X_norm = X_norm / std
+
+                            # 2) Allocate output on host and fill block-by-block
+                            corr_cpu = np.empty((N, N), dtype=np.float32)
+                            if b <= 0:
+                                b = 64
+
+                            for j in range(0, N, b):
+                                jb = min(b, N - j)
+                                block = X_norm @ X_norm[j:j + jb].T  # [N, jb]
+                                block = block / float(T)
+                                corr_cpu[:, j:j + jb] = cp.asnumpy(block)
+                                # Free temporaries eagerly to curb fragmentation
+                                try:
+                                    del block  # type: ignore[has-type]
+                                    cp.get_default_memory_pool().free_all_blocks()
+                                except Exception:
+                                    pass
+
+                            # Symmetrize, clip, and set diagonal
+                            corr_cpu = 0.5 * (corr_cpu + corr_cpu.T)
+                            np.fill_diagonal(corr_cpu, 1.0)
+                            corr_cpu = np.clip(corr_cpu, -1.0, 1.0)
+
+                            # Success - clean up and return
                             try:
-                                del block  # type: ignore[has-type]
+                                del X_norm
                                 cp.get_default_memory_pool().free_all_blocks()
                             except Exception:
                                 pass
 
-                        # Symmetrize, clip, and set diagonal
-                        corr_cpu = 0.5 * (corr_cpu + corr_cpu.T)
-                        np.fill_diagonal(corr_cpu, 1.0)
-                        corr_cpu = np.clip(corr_cpu, -1.0, 1.0)
-                        return corr_cpu
-                    except Exception as _gpu_e:
-                        # Hard fallback to CPU to avoid failures
-                        if self.verbose:
-                            logger.warning(f"GPU streamed correlation failed; falling back to CPU: {_gpu_e}")
-                        return np.corrcoef(return_matrix)
+                            if attempt > 0 and self.verbose:
+                                logger.info(f"GPU correlation succeeded with block_size={b} after {attempt} retries")
+
+                            return corr_cpu
+
+                        except (cp.cuda.memory.OutOfMemoryError, MemoryError) as oom_e:
+                            # OOM detected - try smaller block size or fall back to CPU
+                            try:
+                                cp.get_default_memory_pool().free_all_blocks()
+                            except Exception:
+                                pass
+
+                            if attempt < len(block_sizes_to_try) - 1:
+                                next_b = block_sizes_to_try[attempt + 1]
+                                if self.verbose:
+                                    logger.warning(f"GPU OOM with block_size={b}, retrying with block_size={next_b}")
+                                continue
+                            else:
+                                # All block sizes failed - fall back to CPU
+                                if self.verbose:
+                                    logger.warning(f"GPU OOM after all retries; falling back to CPU: {oom_e}")
+                                return np.corrcoef(return_matrix)
+
+                        except Exception as _gpu_e:
+                            # Non-OOM error - fall back to CPU immediately
+                            try:
+                                cp.get_default_memory_pool().free_all_blocks()
+                            except Exception:
+                                pass
+                            if self.verbose:
+                                logger.warning(f"GPU correlation failed; falling back to CPU: {_gpu_e}")
+                            return np.corrcoef(return_matrix)
+
+                    # Should not reach here, but fall back to CPU just in case
+                    return np.corrcoef(return_matrix)
 
                 elif self.correlation_method == 'spearman':
                     # Fall back to CPU to avoid GPU NxN allocations for large N

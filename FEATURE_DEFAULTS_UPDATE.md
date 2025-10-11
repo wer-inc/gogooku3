@@ -1,6 +1,8 @@
 # Feature Defaults Update Summary
 
-## 🎉 Mission Accomplished: All 395 Features Now Enabled by Default!
+## 🎉 Mission Accomplished: All Enabled Features Now Default!
+
+⚠️ **Note (2025年10月更新)**: このドキュメントは過去の更新記録です。現在、先物機能（88-92列）が無効化されているため、実際の生成列数は約303-307列となります。詳細は `docs/ml/dataset_new.md` Section 13.1 を参照してください。
 
 ### Changes Made
 

@@ -237,7 +237,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-daily-margin",
         action="store_true",
-        default=True,  # Default enabled for complete 395 features
+        default=True,  # Default enabled (395 theoretical max; ~307 active with futures disabled)
         help="Enable daily margin interest features (default: enabled)",
     )
     # Futures options
@@ -267,7 +267,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-advanced-vol",
         action="store_true",
-        default=True,  # Default enabled for complete 395 features
+        default=True,  # Default enabled (395 theoretical max; ~307 active with futures disabled)
         help="Enable Yang–Zhang volatility and VoV features (default: enabled)",
     )
     parser.add_argument(
@@ -299,14 +299,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-advanced-features",
         action="store_true",
-        default=True,  # Default enabled for complete 395 features
+        default=True,  # Default enabled (395 theoretical max; ~307 active with futures disabled)
         help="Enable advanced T+0 features (RSI×Vol, momentum×volume, MACD slope, cross-sectional ranks, calendar) (default: enabled)",
     )
     # Graph-structured features (correlation graph)
     parser.add_argument(
         "--enable-graph-features",
         action="store_true",
-        default=True,  # Default enabled for complete 395 features
+        default=True,  # Default enabled (395 theoretical max; ~307 active with futures disabled)
         help="Enable graph-structured features (degree, peer corr mean, peer count) (default: enabled)",
     )
     parser.add_argument(
@@ -349,7 +349,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-sector-cs",
         action="store_true",
-        default=True,  # Default enabled for complete 395 features
+        default=True,  # Default enabled (395 theoretical max; ~307 active with futures disabled)
         help="Enable sector cross-sectional features (sector-relative deviations, ranks, z-scores) (default: enabled)",
     )
     parser.add_argument(

@@ -1,8 +1,10 @@
-# Dataset Generation Guide - Complete 395 Features
+# Dataset Generation Guide - Up to 395 Features (Currently ~307)
+
+⚠️ **Note (2025年10月更新)**: 先物機能（88-92列）が無効化されているため、実際の生成列数は約303-307列となります。詳細は `docs/ml/dataset_new.md` Section 13.1 を参照してください。
 
 ## Current Status
 
-現在のデータセット：**198特徴量** / 目標：**395特徴量**
+現在のデータセット：**198特徴量** / 理論的最大：**395特徴量** / 実際生成数：**約307特徴量**
 
 ### ✅ 既に実装されている特徴量（198）
 
@@ -29,22 +31,19 @@
 - 週次マージン: 17個
 - 財務諸表: 17個
 
-### ❌ 欠落している主要特徴量（197）
+### ❌ 欠落している主要特徴量
 
-#### 1. 日次マージン特徴量（dmi_*）: ~41個
-- `add_daily_margin_block` メソッドで追加可能
-- データファイルは存在（`output/raw/margin/daily_margin_interest_*.parquet`）
+#### 1. 先物特徴量（fut_*）: 88-92列 **（API制限により無効化）**
+- ON (T+0): 5列 × 4カテゴリ = 20列
+- EOD (T+1): 17列 × 4カテゴリ = 68列
+- Continuous: 1列 × 4カテゴリ = 4列（`--futures-continuous`）
+- **再有効化**: `--futures-parquet` でオフラインデータ指定が必要
 
-#### 2. セクター集約特徴量: ~40個
-- `add_sector_series` メソッドで追加可能
-- `sec_ret_*_eq`, `sec_mom_20`, `sec_vol_20` など
-
-#### 3. その他の高度な特徴量: ~116個
-- 先物特徴量（`add_futures_block`）
-- オプション特徴量（`add_option_sentiment_features`）
-- 空売り特徴量（`add_short_selling_block`）
-- 決算イベント特徴量（`add_earnings_features`）
-- 高度なボラティリティ特徴量
+#### 2. その他の特徴量（データ依存）
+- 日次マージン特徴量（dmi_*）: ~41個（データ利用可能時）
+- セクター集約特徴量: ~40個（実装済み）
+- オプション特徴量（未実装）
+- 高度なボラティリティ特徴量（実装済み）
 
 ## MLDatasetBuilderの全機能（24メソッド）
 
@@ -141,9 +140,10 @@ python scripts/pipelines/run_full_dataset.py \
 # データセット特徴量の検証
 python scripts/verify_dataset_features.py
 
-# 期待される出力：
-# ✅ Total Features: 395+
-# ✅ Daily Margin (dmi_*): 41 features
+# 期待される出力（先物無効化時）：
+# ✅ Total Features: 303-307 (理論最大: 395)
+# ⚠️  Futures (fut_*): 0 features (88-92 disabled)
+# ✅ Daily Margin (dmi_*): 41 features (データ依存)
 # ✅ Interaction Features: 22 features
 # ✅ Sector Aggregates: 40+ features
 ```
@@ -182,6 +182,6 @@ print(f"Added {len([c for c in df_with_dmi.columns if c.startswith('dmi_')])} DM
 
 1. ✅ 検証スクリプト作成済み
 2. ✅ 日次マージンデータ確認済み
-3. ⏳ 全機能有効化でのデータセット生成
-4. ⏳ 395特徴量の検証
+3. ✅ 全有効機能でのデータセット生成（~307特徴量）
+4. ⚠️  先物機能再有効化（オフラインデータが必要）
 5. ⏳ 学習パイプラインでのテスト
