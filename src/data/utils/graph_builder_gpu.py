@@ -567,6 +567,55 @@ class FinancialGraphBuilder:
 
         return edge_index, edge_attr
 
+    def _compute_peer_features(
+        self,
+        return_matrix: np.ndarray,
+        corr_matrix: np.ndarray,
+        codes: list[str]
+    ) -> dict[str, dict[str, float]]:
+        """peer特徴量を計算（GPU版）"""
+        peer_features = {}
+
+        for i, code in enumerate(codes):
+            # 現在の銘柄の相関をベースに近傍を決定
+            correlations = corr_matrix[i, :]
+
+            # 閾値を満たすpeerを特定
+            if self.include_negative_correlation:
+                peer_mask = (np.abs(correlations) >= self.correlation_threshold) & (np.arange(len(correlations)) != i)
+            else:
+                peer_mask = (correlations >= self.correlation_threshold) & (np.arange(len(correlations)) != i)
+
+            peer_indices = np.where(peer_mask)[0]
+
+            if len(peer_indices) == 0:
+                # peer がいない場合
+                peer_features[code] = {
+                    'peer_mean_return': 0.0,
+                    'peer_var_return': 1.0,
+                    'peer_count': 0,
+                    'peer_correlation_mean': 0.0
+                }
+                continue
+
+            # peer のリターン統計
+            peer_returns = return_matrix[peer_indices, :]  # shape: (n_peers, T)
+            peer_mean_return = np.mean(peer_returns.flatten())
+            peer_var_return = np.var(peer_returns.flatten())
+
+            # peer との平均相関
+            peer_correlations = correlations[peer_indices]
+            peer_correlation_mean = np.mean(np.abs(peer_correlations))
+
+            peer_features[code] = {
+                'peer_mean_return': float(peer_mean_return),
+                'peer_var_return': float(peer_var_return),
+                'peer_count': len(peer_indices),
+                'peer_correlation_mean': float(peer_correlation_mean)
+            }
+
+        return peer_features
+
     # The remaining methods (build_graph, get_peer_features_for_codes, etc.)
     # remain the same as the original implementation since they don't involve
     # heavy computation that benefits from GPU acceleration
@@ -628,6 +677,12 @@ class FinancialGraphBuilder:
         # GPU高速化された相関行列計算
         corr_matrix = self._compute_correlation_matrix(return_matrix)
 
+        # Convert correlation matrix to CPU if needed for further processing
+        if GPU_AVAILABLE and hasattr(corr_matrix, 'get'):
+            corr_matrix_cpu = corr_matrix.get()
+        else:
+            corr_matrix_cpu = corr_matrix
+
         # エッジを抽出
         edge_index, edge_attr = self._extract_edges(
             corr_matrix, valid_codes, None, None
@@ -636,25 +691,23 @@ class FinancialGraphBuilder:
         # Node mapping
         node_mapping = {code: idx for idx, code in enumerate(valid_codes)}
 
+        # peer特徴量を計算
+        peer_features = self._compute_peer_features(return_matrix, corr_matrix_cpu, valid_codes)
+
         # Store results (オプション: メモリ効率化のためデフォルトでスキップ)
         if self.keep_in_memory:
             self.correlation_matrices[date_key] = corr_matrix
             self.edge_indices[date_key] = edge_index
             self.edge_attributes[date_key] = edge_attr
             self.node_mappings[date_key] = node_mapping
-
-        # Convert correlation matrix to CPU for output if on GPU
-        if GPU_AVAILABLE and hasattr(corr_matrix, 'get'):
-            corr_matrix_output = corr_matrix.get()
-        else:
-            corr_matrix_output = corr_matrix
+            self.peer_features[date_key] = peer_features
 
         result = {
             'edge_index': edge_index,
             'edge_attr': edge_attr,
             'node_mapping': node_mapping,
-            'correlation_matrix': corr_matrix_output,
-            'peer_features': {},
+            'correlation_matrix': corr_matrix_cpu,
+            'peer_features': peer_features,
             'date': date_end,
             'n_nodes': len(valid_codes),
             'n_edges': edge_index.shape[1]
