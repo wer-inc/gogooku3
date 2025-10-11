@@ -132,8 +132,8 @@ def add_graph_features(
         except Exception:
             continue
 
-        # Peer-level stats per code
-        peer_map = builder.get_peer_features_for_codes(list(codes), str(dt.date()))
+        # Peer-level stats per code (from build_graph result, not instance state)
+        peer_map = res.get('peer_features', {})
 
         # Initialize feature maps
         deg_map: dict[str, int] = {}

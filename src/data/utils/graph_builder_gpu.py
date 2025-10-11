@@ -69,6 +69,7 @@ class FinancialGraphBuilder:
         sector_col: str | None = None,
         market_col: str | None = None,
         gpu_corr_block_cols: int = 256,
+        keep_in_memory: bool = False,  # メモリ効率化: デフォルトでFalse
     ):
         """
         Args:
@@ -81,6 +82,7 @@ class FinancialGraphBuilder:
             correlation_method: 相関計算方法（'pearson', 'spearman'）
             cache_dir: キャッシュディレクトリ
             verbose: 詳細ログ出力
+            keep_in_memory: 相関行列をメモリに保持（デフォルト: False、メモリ節約）
         """
         self.correlation_window = correlation_window
         self.min_observations = min_observations
@@ -94,6 +96,7 @@ class FinancialGraphBuilder:
         self.symmetric = bool(symmetric)
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.verbose = verbose
+        self.keep_in_memory = keep_in_memory  # メモリ効率化フラグ
         self.sector_col = sector_col
         self.market_col = market_col
         # Streamed GPU correlation block size (columns per j-block)
@@ -633,11 +636,12 @@ class FinancialGraphBuilder:
         # Node mapping
         node_mapping = {code: idx for idx, code in enumerate(valid_codes)}
 
-        # Store results
-        self.correlation_matrices[date_key] = corr_matrix
-        self.edge_indices[date_key] = edge_index
-        self.edge_attributes[date_key] = edge_attr
-        self.node_mappings[date_key] = node_mapping
+        # Store results (オプション: メモリ効率化のためデフォルトでスキップ)
+        if self.keep_in_memory:
+            self.correlation_matrices[date_key] = corr_matrix
+            self.edge_indices[date_key] = edge_index
+            self.edge_attributes[date_key] = edge_attr
+            self.node_mappings[date_key] = node_mapping
 
         # Convert correlation matrix to CPU for output if on GPU
         if GPU_AVAILABLE and hasattr(corr_matrix, 'get'):

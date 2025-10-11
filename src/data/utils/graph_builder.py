@@ -54,6 +54,7 @@ class FinancialGraphBuilder:
         verbose: bool = True,
         sector_col: str | None = None,
         market_col: str | None = None,
+        keep_in_memory: bool = False,  # メモリ効率化: デフォルトでFalse
     ):
         """
         Args:
@@ -66,6 +67,7 @@ class FinancialGraphBuilder:
             correlation_method: 相関計算方法（'pearson', 'spearman'）
             cache_dir: キャッシュディレクトリ
             verbose: 詳細ログ出力
+            keep_in_memory: 相関行列をメモリに保持（デフォルト: False、メモリ節約）
         """
         self.correlation_window = correlation_window
         self.min_observations = min_observations
@@ -79,6 +81,7 @@ class FinancialGraphBuilder:
         self.symmetric = bool(symmetric)
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.verbose = verbose
+        self.keep_in_memory = keep_in_memory  # メモリ効率化フラグ
         # Column preferences (best-effort; falls back to common aliases)
         self.sector_col = sector_col
         self.market_col = market_col
@@ -546,8 +549,12 @@ class FinancialGraphBuilder:
             if isinstance(sector_col, str) and sector_col:
                 candidate_sector_cols.append(sector_col.lower())
             candidate_sector_cols += ["sector33", "sectorcode", "sector", "meta_section", "section"]
-            # Convert to pandas for lookup simplicity
-            _df = data if isinstance(data, pd.DataFrame) else data.to_pandas()
+            # Convert to pandas only if needed (メモリ最適化)
+            if isinstance(data, pd.DataFrame):
+                _df = data
+            else:
+                # Polarsの場合: valid_codesのみを選択してからPandasに変換
+                _df = data.filter(pl.col('code').is_in(valid_codes)).to_pandas()
             try:
                 _df.columns = [str(c).lower() for c in _df.columns]
             except Exception:
@@ -599,12 +606,13 @@ class FinancialGraphBuilder:
         # キャッシュに保存
         self._save_to_cache(cache_key, result)
 
-        # 内部状態を更新
-        self.correlation_matrices[date_key] = corr_matrix
-        self.edge_indices[date_key] = edge_index
-        self.edge_attributes[date_key] = edge_attr
-        self.node_mappings[date_key] = node_mapping
-        self.peer_features[date_key] = peer_features
+        # 内部状態を更新（オプション: メモリ効率化のためデフォルトでスキップ）
+        if self.keep_in_memory:
+            self.correlation_matrices[date_key] = corr_matrix
+            self.edge_indices[date_key] = edge_index
+            self.edge_attributes[date_key] = edge_attr
+            self.node_mappings[date_key] = node_mapping
+            self.peer_features[date_key] = peer_features
 
         if self.verbose:
             logger.info(
