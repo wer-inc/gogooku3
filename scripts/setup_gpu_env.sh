@@ -77,7 +77,7 @@ fi
 echo ""
 
 # Step 1: Environment Check
-print_header "Step 1/6: Environment Check"
+print_header "Step 1/7: Environment Check"
 
 print_step "Checking Python version..."
 if python3 --version | grep -q "Python 3\.1[0-9]"; then
@@ -118,7 +118,7 @@ fi
 echo ""
 
 # Step 2: Clean conflicting packages
-print_header "Step 2/6: Remove Conflicting RAPIDS Packages"
+print_header "Step 2/7: Remove Conflicting RAPIDS Packages"
 
 print_step "Checking for RAPIDS packages..."
 RAPIDS_PKGS=$(pip list 2>/dev/null | grep -E "cudf|cugraph|rmm" | awk '{print $1}' || true)
@@ -141,7 +141,7 @@ fi
 echo ""
 
 # Step 3: Install/Update dependencies
-print_header "Step 3/6: Install GPU Dependencies"
+print_header "Step 3/7: Install GPU Dependencies"
 
 print_step "Installing CuPy for CUDA 12.x..."
 if python3 -c "import cupy; print(cupy.__version__)" &> /dev/null; then
@@ -169,7 +169,7 @@ fi
 echo ""
 
 # Step 4: Fix graph_builder_gpu.py
-print_header "Step 4/6: Fix graph_builder_gpu.py Import"
+print_header "Step 4/7: Fix graph_builder_gpu.py Import"
 
 GRAPH_BUILDER_GPU="src/data/utils/graph_builder_gpu.py"
 
@@ -213,8 +213,71 @@ fi
 
 echo ""
 
-# Step 5: Run tests
-print_header "Step 5/6: Verification Tests"
+# Step 5: Fix Pipeline cuGraph Dependencies
+print_header "Step 5/7: Fix Pipeline cuGraph Dependencies"
+
+RUN_FULL_DATASET="scripts/pipelines/run_full_dataset.py"
+FULL_DATASET_PY="src/pipeline/full_dataset.py"
+
+print_step "Fixing $RUN_FULL_DATASET preflight check..."
+if [ -f "$RUN_FULL_DATASET" ]; then
+    # Check if already fixed
+    if grep -q "# cuGraph は不要（graph_builder_gpu.py が CuPy のみで動作）" "$RUN_FULL_DATASET"; then
+        print_success "run_full_dataset.py preflight check already fixed"
+    else
+        print_warn "run_full_dataset.py needs preflight check fix"
+
+        if [ "$DRY_RUN" = false ]; then
+            # Backup
+            cp "$RUN_FULL_DATASET" "${RUN_FULL_DATASET}.backup"
+
+            # Fix preflight check: remove 'import cugraph' line
+            sed -i '/def _check_gpu_graph_support/,/return False/{
+                s/import cugraph  # type: ignore/# cuGraph は不要（graph_builder_gpu.py が CuPy のみで動作）/
+                s/"GPU graph dependencies detected (cuGraph %s, CuPy/"GPU graph dependencies detected (CuPy/
+                s/getattr(cugraph, "__version__", "?"),//
+                s/"GPU graph dependencies unavailable (cuGraph\/CuPy)/"GPU graph dependencies unavailable (CuPy)/
+            }' "$RUN_FULL_DATASET"
+
+            print_success "run_full_dataset.py preflight check fixed"
+        fi
+    fi
+else
+    print_error "$RUN_FULL_DATASET not found"
+    exit 1
+fi
+
+print_step "Fixing $FULL_DATASET_PY graph builder selection..."
+if [ -f "$FULL_DATASET_PY" ]; then
+    # Check if already fixed
+    if grep -q "# CuPy のみで GPU 動作可能" "$FULL_DATASET_PY"; then
+        print_success "full_dataset.py graph selection already fixed"
+    else
+        print_warn "full_dataset.py needs graph selection fix"
+
+        if [ "$DRY_RUN" = false ]; then
+            # Backup
+            cp "$FULL_DATASET_PY" "${FULL_DATASET_PY}.backup"
+
+            # Fix graph builder selection: remove 'import cugraph' line
+            sed -i '/use_gpu_graph = False/,/logger.info("📊 Using CPU graph computation/{
+                s/import cugraph/# CuPy のみで GPU 動作可能/
+                s/"✅ Using GPU-accelerated graph computation (cuGraph detected)"/"✅ Using GPU-accelerated graph computation (CuPy detected)"/
+                s/"📊 Using CPU graph computation (cuGraph not available)"/"📊 Using CPU graph computation (CuPy not available)"/
+            }' "$FULL_DATASET_PY"
+
+            print_success "full_dataset.py graph selection fixed"
+        fi
+    fi
+else
+    print_error "$FULL_DATASET_PY not found"
+    exit 1
+fi
+
+echo ""
+
+# Step 6: Run tests
+print_header "Step 6/7: Verification Tests"
 
 print_step "Testing PyTorch CUDA..."
 if python3 -c "
@@ -312,8 +375,8 @@ fi
 
 echo ""
 
-# Step 6: Summary
-print_header "Step 6/6: Setup Summary"
+# Step 7: Summary
+print_header "Step 7/7: Setup Summary"
 
 echo ""
 print_success "GPU Environment Setup Complete!"
