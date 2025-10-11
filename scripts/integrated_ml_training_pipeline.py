@@ -60,7 +60,7 @@ class CompleteATFTTrainingPipeline:
             "input_dim": 8,
             "sequence_length": 20,
             "prediction_horizons": [1, 5, 10, 20],
-            "batch_size": 4096,
+            "batch_size": 1024,  # A100 80GB向け安全デフォルト (旧: 4096)
             "learning_rate": 2e-4,
             "max_epochs": 75,
             "precision": "16-mixed",
@@ -513,6 +513,14 @@ class CompleteATFTTrainingPipeline:
             except Exception:
                 _optimized_pre = False
 
+            # CLI引数で提供されているキーを事前に収集（CLI優先のため）
+            cli_override_keys = set()
+            if self.extra_overrides:
+                for tok in self.extra_overrides:
+                    if "=" in tok and not tok.startswith("--"):
+                        key = tok.split("=")[0].lstrip("+~")
+                        cli_override_keys.add(key)
+
             cmd = [
                 "python",
                 "scripts/train_atft.py",
@@ -521,16 +529,21 @@ class CompleteATFTTrainingPipeline:
             ]
             if not _optimized_pre:
                 # data/model/train は既定のdefaultsで固定。必要な範囲のみ上書き。
-                cmd.extend(
-                    [
-                        f"train.batch.train_batch_size={self.atft_settings['batch_size']}",
-                        f"train.optimizer.lr={self.atft_settings['learning_rate']}",
-                        f"train.trainer.max_epochs={self.atft_settings['max_epochs']}",
-                        f"train.trainer.precision={self.atft_settings['precision']}",
-                        f"train.trainer.check_val_every_n_epoch={os.getenv('TRAIN_VAL_EVERY', '1')}",
-                        "train.trainer.enable_progress_bar=true",
-                    ]
-                )
+                # ただし、CLI引数で提供されている場合はスキップ（CLI優先）
+                overrides = []
+                if "train.batch.train_batch_size" not in cli_override_keys:
+                    overrides.append(f"train.batch.train_batch_size={self.atft_settings['batch_size']}")
+                if "train.optimizer.lr" not in cli_override_keys:
+                    overrides.append(f"train.optimizer.lr={self.atft_settings['learning_rate']}")
+                if "train.trainer.max_epochs" not in cli_override_keys:
+                    overrides.append(f"train.trainer.max_epochs={self.atft_settings['max_epochs']}")
+                if "train.trainer.precision" not in cli_override_keys:
+                    overrides.append(f"train.trainer.precision={self.atft_settings['precision']}")
+                if "train.trainer.check_val_every_n_epoch" not in cli_override_keys:
+                    overrides.append(f"train.trainer.check_val_every_n_epoch={os.getenv('TRAIN_VAL_EVERY', '1')}")
+                if "train.trainer.enable_progress_bar" not in cli_override_keys:
+                    overrides.append("train.trainer.enable_progress_bar=true")
+                cmd.extend(overrides)
 
             # 追加のHydraオーバーライド（HPOや詳細設定をパススルー）
             # ただし、既に上記で設定したものは除外する
@@ -561,16 +574,11 @@ class CompleteATFTTrainingPipeline:
                 def _is_hydra_override(tok: str) -> bool:
                     # Accept patterns like key=value, +key=value, ~key=value
                     if "=" in tok and not tok.startswith("--"):
-                        # Skip overrides that are already set above to avoid duplication
+                        # Skip only data_dir (always set programmatically)
+                        # Other params: CLI overrides are now handled by pre-check above
                         key = tok.split("=")[0].lstrip("+~")
                         skip_keys = [
-                            "data.source.data_dir",
-                            "train.batch.train_batch_size",
-                            "train.optimizer.lr",
-                            "train.trainer.max_epochs",
-                            "train.trainer.precision",
-                            "train.trainer.check_val_every_n_epoch",
-                            "train.trainer.enable_progress_bar",
+                            "data.source.data_dir",  # Always set programmatically
                         ]
                         if key in skip_keys:
                             logger.debug(f"Skipping duplicate override: {tok}")
