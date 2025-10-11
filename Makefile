@@ -52,6 +52,17 @@ rapids-verify:
 	@python -c "import cudf; import cugraph; import rmm; print(f'✅ cuDF {cudf.__version__}, cuGraph {cugraph.__version__}, RMM {rmm.__version__}')"
 	@python -c "from src.utils.gpu_etl import init_rmm, to_cudf, to_polars; import polars as pl; df = pl.DataFrame({'x': [1,2,3]}); to_polars(to_cudf(df)); print('✅ GPU-ETL pipeline functional')"
 
+# GPU Environment Setup (for dataset generation and training)
+.PHONY: setup-gpu check-gpu
+
+setup-gpu:
+	@echo "🚀 Setting up GPU environment for dataset generation and training..."
+	@bash scripts/setup_gpu_env.sh
+
+check-gpu:
+	@echo "🔍 Checking GPU environment..."
+	@bash scripts/setup_gpu_env.sh --dry-run
+
 # Docker services
 docker-up:
 	docker-compose up -d

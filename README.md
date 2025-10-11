@@ -48,6 +48,18 @@ ATFT-GAT-FANは、最新の深層学習技術を活用した高性能金融時�
 
 ## 🚀 クイックスタート
 
+### 0. GPU環境セットアップ（推奨・最初に実行）
+
+```bash
+# GPU環境の完全セットアップ（dataset生成 + training用）
+make setup-gpu
+
+# または確認のみ（dry-run）
+make check-gpu
+```
+
+📖 詳細: [GPU Setup Guide](docs/GPU_SETUP.md)
+
 ### 1. 環境構築
 
 ```bash
