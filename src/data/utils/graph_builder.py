@@ -178,6 +178,16 @@ class FinancialGraphBuilder:
             logger.warning(f"No data available for graph building on {date_end}")
             return np.array([]), []
 
+        # Early check: sufficient historical data available?
+        unique_dates = filtered_data.select('date').unique().height
+        if unique_dates < self.min_observations:
+            if self.verbose:
+                logger.debug(
+                    f"Skipping {date_end}: only {unique_dates} days available "
+                    f"(need {self.min_observations})"
+                )
+            return np.array([]), []
+
         # 銘柄×日付のリターン行列を構築
         return_matrix = []
         valid_codes = []

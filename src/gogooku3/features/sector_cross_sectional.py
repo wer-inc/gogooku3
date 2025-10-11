@@ -66,6 +66,8 @@ def add_sector_cross_sectional_features(
         out = out.with_columns([
             _sector_mean("returns_5d", "_sec_mean_ret5d"),
             _sector_std("returns_5d", "_sec_std_ret5d"),
+        ])
+        out = out.with_columns([
             (pl.col("returns_5d") - pl.col("_sec_mean_ret5d")).alias("ret_5d_vs_sec"),
             ((pl.col("returns_5d") - pl.col("_sec_mean_ret5d")) / (pl.col("_sec_std_ret5d") + 1e-12)).alias("ret_5d_in_sec_z"),
         ])
@@ -73,6 +75,8 @@ def add_sector_cross_sectional_features(
         out = out.with_columns([
             _sector_mean("returns_10d", "_sec_mean_ret10d"),
             _sector_std("returns_10d", "_sec_std_ret10d"),
+        ])
+        out = out.with_columns([
             (pl.col("returns_10d") - pl.col("_sec_mean_ret10d")).alias("ret_10d_vs_sec"),
             ((pl.col("returns_10d") - pl.col("_sec_mean_ret10d")) / (pl.col("_sec_std_ret10d") + 1e-12)).alias("ret_10d_in_sec_z"),
         ])

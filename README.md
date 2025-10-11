@@ -74,6 +74,21 @@ python scripts/validate_improvements.py --data output/ml_dataset_20250827_174908
 python scripts/monitoring_dashboard.py --start-tensorboard
 ```
 
+### 2.5. データセット生成（推奨：バックグラウンド）
+
+```bash
+# SSH切断にも安全。ログ/ PID / PGID を保存します。
+make dataset-bg
+
+# モニタ
+tail -f _logs/dataset/*.log
+
+# 停止
+kill <PID>
+# またはプロセスグループごとに停止
+kill -TERM -<PGID>
+```
+
 ### 3. モデルトレーニング
 
 ```bash

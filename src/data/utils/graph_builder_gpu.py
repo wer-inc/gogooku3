@@ -128,9 +128,27 @@ class FinancialGraphBuilder:
             )
 
     def _get_cache_key(self, date: date, codes: list[str]) -> str:
-        """キャッシュキーを生成"""
+        """キャッシュキーを生成（主要パラメータを含めて衝突を回避）"""
         code_hash = hash(tuple(sorted(codes))) % 10000
-        return f"graph_{date}_{code_hash}_{self.correlation_window}_{self.correlation_method}"
+        # 閾値は2桁精度で表現（例: 0.3 -> 030）
+        try:
+            thr100 = int(round(float(self.correlation_threshold) * 100))
+        except Exception:
+            thr100 = 0
+        # 主要パラメータをキーに含める（過去のキーとは互換性無し＝新規生成）
+        parts = [
+            "graph",
+            str(date),
+            str(code_hash),
+            f"w{int(self.correlation_window)}",
+            f"t{thr100:03d}",
+            f"k{int(self.max_edges_per_node)}",
+            f"m{str(self.correlation_method)}",
+            f"freq-{getattr(self, 'update_frequency', 'daily')}",
+            f"neg-{int(bool(getattr(self, 'include_negative_correlation', True)))}",
+            f"sym-{int(bool(getattr(self, 'symmetric', True)))}",
+        ]
+        return "_".join(parts)
 
     def _load_from_cache(self, cache_key: str) -> dict[str, Any] | None:
         """キャッシュから読み込み"""
@@ -211,6 +229,16 @@ class FinancialGraphBuilder:
 
         if filtered_data.is_empty():
             logger.warning(f"No data available for graph building on {date_end}")
+            return np.array([]), []
+
+        # Early check: sufficient historical data available?
+        unique_dates = filtered_data.select('date').unique().height
+        if unique_dates < self.min_observations:
+            if self.verbose:
+                logger.debug(
+                    f"Skipping {date_end}: only {unique_dates} days available "
+                    f"(need {self.min_observations})"
+                )
             return np.array([]), []
 
         # 銘柄×日付のリターン行列を構築

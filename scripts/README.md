@@ -18,6 +18,8 @@ scripts/
 
 ## Quick Start
 
+> Note: フルデータセットの生成は `make dataset-bg` が推奨です（SSH安全、ログとPID/PGID保存、モニタ: `tail -f _logs/dataset/*.log`、停止: `kill <PID>` または `kill -TERM -<PGID>`）。
+
 ### 1. フルパイプライン実行（One‑Shot Full Dataset）
 ```bash
 # サンプルデータで実行（最適化版）

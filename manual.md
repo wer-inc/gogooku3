@@ -1,8 +1,10 @@
 # Quick Start
 
 ```bash
-# 1) Build dataset (defaults: last ~5y, safe GPU settings)
-make dataset
+# 1) Build dataset in background (recommended; logs + PID/PGID saved)
+make dataset-bg
+# Monitor: tail -f _logs/dataset/*.log
+# Stop:    kill <PID>  or  kill -TERM -<PGID>
 
 # 2) Train a stable model
 make train
