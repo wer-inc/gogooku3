@@ -88,6 +88,7 @@ if [ "$RUN_SAFE_PIPELINE" == "--safe" ]; then
         train.trainer.val_check_interval=$VAL_INTERVAL \
         train.optimizer.lr=$LEARNING_RATE \
         train.trainer.max_epochs=$MAX_EPOCHS
+    TRAIN_EXIT_CODE=$?
 else
     echo -e "${BLUE}Running standard GPU training...${NC}"
     python scripts/integrated_ml_training_pipeline.py \
@@ -105,10 +106,11 @@ else
         train.trainer.val_check_interval=$VAL_INTERVAL \
         train.optimizer.lr=$LEARNING_RATE \
         train.trainer.max_epochs=$MAX_EPOCHS
+    TRAIN_EXIT_CODE=$?
 fi
 
 # Show success only if the previous command exited with 0
-if [ $? -eq 0 ]; then
+if [ $TRAIN_EXIT_CODE -eq 0 ]; then
     echo -e "${GREEN}✅ Training completed successfully${NC}"
 else
     echo -e "${YELLOW}⚠️ Training finished with errors (see logs)${NC}"
