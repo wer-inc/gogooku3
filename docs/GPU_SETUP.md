@@ -43,18 +43,24 @@ bash scripts/setup_gpu_env.sh --dry-run
 - ✅ typing_extensions 更新（pydantic互換性）
 - ✅ PyTorch CUDA サポート確認
 
-### Step 4: コード修正
+### Step 4: コード修正 - graph_builder_gpu.py
 - ✅ `src/data/utils/graph_builder_gpu.py` のimport文修正
   - cudf/cuGraphをオプショナルimportに変更
   - CuPyのみでGPU高速化を実現
 
-### Step 5: 動作確認テスト
+### Step 5: コード修正 - Pipeline cuGraph依存関係
+- ✅ `scripts/pipelines/run_full_dataset.py` のpreflight check修正
+  - `import cugraph` を削除（CuPyのみチェック）
+- ✅ `src/pipeline/full_dataset.py` のgraph builder選択修正
+  - `import cugraph` を削除（CuPyのみチェック）
+
+### Step 6: 動作確認テスト
 - ✅ PyTorch CUDA 動作確認
 - ✅ CuPy GPU 動作確認
 - ✅ graph_builder_gpu 動作確認
 - ✅ peer特徴量計算の確認
 
-### Step 6: サマリー表示
+### Step 7: サマリー表示
 - ✅ システム構成の表示
 - ✅ 次のステップの案内
 
