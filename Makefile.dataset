@@ -60,6 +60,9 @@ help-dataset:
 	@echo "  make dataset-rebuild         Clean + rebuild with defaults"
 	@echo "  make cache-stats             Show cache statistics"
 	@echo "  make cache-prune             Prune old cache ($(CACHE_TTL_DAYS)d)"
+	@echo "  make datasets-prune          Prune old ML datasets (keep latest 1)"
+	@echo "  make raw-prune               Prune duplicate raw data files"
+	@echo "  make output-clean            Full cleanup (datasets+raw+cache)"
 	@echo ""
 	@echo "🛡️  Memory-Safe Options (NEW)"
 	@echo "  make dataset-safe            Chunked generation with checkpointing"
@@ -146,6 +149,7 @@ dataset:
 	@echo "  2️⃣  Clean old artifacts (keep raw data + caches)"
 	@echo "  3️⃣  Build full dataset (up to 395 features, ~307 active, GPU-accelerated)"
 	@echo "  4️⃣  Show cache statistics"
+	@echo "  5️⃣  Prune old dataset generations (keep latest only)"
 	@echo ""
 	@echo "⏱️  Estimated time:"
 	@echo "  • Initial run: 2-3 hours (CPU fallback) or 30-60 min (GPU)"
@@ -171,8 +175,12 @@ dataset:
 	$(MAKE) -f Makefile.dataset dataset-gpu START=$$START_VAL END=$$END_VAL
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "📦 Step 4/4: Cache statistics..."
+	@echo "📦 Step 4/5: Cache statistics..."
 	@$(MAKE) -f Makefile.dataset cache-stats
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "🗑️  Step 5/5: Pruning old dataset generations..."
+	@$(MAKE) -f Makefile.dataset datasets-prune
 	@echo ""
 	@echo "╔══════════════════════════════════════════════════════════════════╗"
 	@echo "║  ✅ Dataset build complete!                                      ║"
@@ -205,6 +213,18 @@ dataset-gpu:
 	  echo "❌ Error: START and END dates required"; \
 	  echo "Usage: make dataset-gpu START=YYYY-MM-DD END=YYYY-MM-DD"; \
 	  exit 1; }
+	@echo ""
+	@echo "🔍 Verifying cache configuration..."
+	@if ! grep -q "^USE_CACHE=1" .env 2>/dev/null; then \
+	  echo "⚠️  WARNING: USE_CACHE not enabled in .env"; \
+	  echo "⚠️  This will cause multi-GB price data to be re-fetched every time (~45-60s waste)"; \
+	  echo "⚠️  Run 'make cache-verify' for more details"; \
+	  echo "⚠️  Continuing in 5 seconds (Ctrl+C to abort and fix)..."; \
+	  sleep 5; \
+	else \
+	  echo "✅ Cache enabled (USE_CACHE=1)"; \
+	fi
+	@echo ""
 	@env $(SAFE_GPU_ENV) \
 	python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END) \
@@ -246,6 +266,18 @@ dataset-cpu:
 	  echo "Usage: make dataset-cpu START=YYYY-MM-DD END=YYYY-MM-DD"; \
 	  exit 1; }
 	@echo "🖥️  Running CPU-only dataset generation"
+	@echo ""
+	@echo "🔍 Verifying cache configuration..."
+	@if ! grep -q "^USE_CACHE=1" .env 2>/dev/null; then \
+	  echo "⚠️  WARNING: USE_CACHE not enabled in .env"; \
+	  echo "⚠️  This will cause multi-GB price data to be re-fetched every time (~45-60s waste)"; \
+	  echo "⚠️  Run 'make cache-verify' for more details"; \
+	  echo "⚠️  Continuing in 5 seconds (Ctrl+C to abort and fix)..."; \
+	  sleep 5; \
+	else \
+	  echo "✅ Cache enabled (USE_CACHE=1)"; \
+	fi
+	@echo ""
 	python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END)
 
@@ -256,6 +288,18 @@ dataset-prod:
 	  echo "Usage: make dataset-prod START=YYYY-MM-DD END=YYYY-MM-DD"; \
 	  exit 1; }
 	@echo "🏭 Running production dataset generation"
+	@echo ""
+	@echo "🔍 Verifying cache configuration..."
+	@if ! grep -q "^USE_CACHE=1" .env 2>/dev/null; then \
+	  echo "⚠️  WARNING: USE_CACHE not enabled in .env"; \
+	  echo "⚠️  This will cause multi-GB price data to be re-fetched every time (~45-60s waste)"; \
+	  echo "⚠️  Run 'make cache-verify' for more details"; \
+	  echo "⚠️  Continuing in 5 seconds (Ctrl+C to abort and fix)..."; \
+	  sleep 5; \
+	else \
+	  echo "✅ Cache enabled (USE_CACHE=1)"; \
+	fi
+	@echo ""
 	python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END) \
 	  --config configs/pipeline/full_dataset.yaml
@@ -267,6 +311,18 @@ dataset-research:
 	  echo "Usage: make dataset-research START=YYYY-MM-DD END=YYYY-MM-DD"; \
 	  exit 1; }
 	@echo "🔬 Running research dataset generation"
+	@echo ""
+	@echo "🔍 Verifying cache configuration..."
+	@if ! grep -q "^USE_CACHE=1" .env 2>/dev/null; then \
+	  echo "⚠️  WARNING: USE_CACHE not enabled in .env"; \
+	  echo "⚠️  This will cause multi-GB price data to be re-fetched every time (~45-60s waste)"; \
+	  echo "⚠️  Run 'make cache-verify' for more details"; \
+	  echo "⚠️  Continuing in 5 seconds (Ctrl+C to abort and fix)..."; \
+	  sleep 5; \
+	else \
+	  echo "✅ Cache enabled (USE_CACHE=1)"; \
+	fi
+	@echo ""
 	python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END) \
 	  --config configs/pipeline/research_full_indices.yaml
@@ -286,7 +342,7 @@ dataset-fetch:
 # ============================================================================
 
 .PHONY: dataset-check dataset-check-strict dataset-clean dataset-rebuild
-.PHONY: cache-stats cache-prune
+.PHONY: cache-stats cache-prune datasets-prune raw-prune output-clean
 
 # Preflight check (relaxed, allows CPU fallback)
 dataset-check:
@@ -350,6 +406,40 @@ cache-prune:
 	else \
 	  echo "output/graph_cache not found"; \
 	fi
+
+# Prune old ML dataset generations (keep latest N)
+# Usage: make datasets-prune [DATASET_KEEP_GENERATIONS=1]
+datasets-prune:
+	@echo "🧹 Pruning old ML dataset generations"
+	@bash scripts/maintenance/cleanup_datasets.sh --force
+
+# Prune duplicate raw data files (keep widest date range)
+raw-prune:
+	@echo "🧹 Pruning duplicate raw data files"
+	@bash scripts/maintenance/cleanup_raw_data.sh --force
+
+# Full output directory cleanup (datasets + raw + cache)
+# Usage: make output-clean
+output-clean:
+	@echo "╔══════════════════════════════════════════════════════════════════╗"
+	@echo "║  🗑️  Full Output Directory Cleanup                              ║"
+	@echo "╚══════════════════════════════════════════════════════════════════╝"
+	@echo ""
+	@echo "This will:"
+	@echo "  1. Prune old ML dataset generations"
+	@echo "  2. Prune duplicate raw data files"
+	@echo "  3. Prune old graph cache ($(CACHE_TTL_DAYS)+ days)"
+	@echo ""
+	@$(MAKE) -f Makefile.dataset datasets-prune
+	@echo ""
+	@$(MAKE) -f Makefile.dataset raw-prune
+	@echo ""
+	@$(MAKE) -f Makefile.dataset cache-prune
+	@echo ""
+	@echo "╔══════════════════════════════════════════════════════════════════╗"
+	@echo "║  ✅ Full cleanup complete!                                       ║"
+	@echo "╚══════════════════════════════════════════════════════════════════╝"
+	@du -sh output/ 2>/dev/null || true
 
 # ============================================================================
 # Memory-Safe Dataset Generation (NEW)

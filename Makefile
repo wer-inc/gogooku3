@@ -270,6 +270,103 @@ gcs-sync-all:
 	@$(MAKE) gcs-sync-cache
 	@echo "✅ All data synced to GCS"
 
+# ============================================================================
+# Cache Management & Verification
+# ============================================================================
+
+.PHONY: cache-verify cache-status cache-clean cache-info
+
+cache-verify:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  🔍 Cache Configuration Verification"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "1️⃣  Checking USE_CACHE environment variable..."
+	@if grep -q "^USE_CACHE=1" .env 2>/dev/null; then \
+		echo "   ✅ USE_CACHE=1 found in .env"; \
+	else \
+		echo "   ❌ USE_CACHE=1 NOT found in .env"; \
+		echo "   ⚠️  Price data will NOT be cached!"; \
+		echo "   💡 Fix: Add 'USE_CACHE=1' to .env file"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "2️⃣  Checking cache directories..."
+	@if [ -d "output/raw/prices" ]; then \
+		echo "   ✅ output/raw/prices/ exists"; \
+		PRICE_SIZE=$$(du -sh output/raw/prices/ 2>/dev/null | cut -f1); \
+		echo "   📊 Size: $$PRICE_SIZE"; \
+	else \
+		echo "   ⚠️  output/raw/prices/ does not exist yet (will be created on first dataset build)"; \
+	fi
+	@if [ -d "output/raw/indices" ]; then \
+		echo "   ✅ output/raw/indices/ exists"; \
+		INDICES_SIZE=$$(du -sh output/raw/indices/ 2>/dev/null | cut -f1); \
+		echo "   📊 Size: $$INDICES_SIZE"; \
+	else \
+		echo "   ⚠️  output/raw/indices/ does not exist yet (will be created on first dataset build)"; \
+	fi
+	@echo ""
+	@echo "3️⃣  Checking cache files..."
+	@PRICE_COUNT=$$(find output/raw/prices -name "daily_quotes_*.parquet" 2>/dev/null | wc -l); \
+	if [ $$PRICE_COUNT -gt 0 ]; then \
+		echo "   ✅ Found $$PRICE_COUNT price cache file(s)"; \
+		find output/raw/prices -name "daily_quotes_*.parquet" -exec ls -lh {} \; 2>/dev/null | awk '{print "      -", $$9, "("$$5")"}'; \
+	else \
+		echo "   ⚠️  No price cache files found (expected after first dataset build)"; \
+	fi
+	@echo ""
+	@echo "✅ Cache verification complete"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+cache-status:
+	@echo "📊 Current cache status:"
+	@echo ""
+	@echo "USE_CACHE setting:"
+	@grep "^USE_CACHE" .env 2>/dev/null || echo "  ❌ Not set in .env"
+	@echo ""
+	@echo "Cache sizes:"
+	@du -sh output/raw/* 2>/dev/null || echo "  No raw cache directories"
+	@echo ""
+	@echo "Price cache files:"
+	@find output/raw/prices -name "*.parquet" 2>/dev/null | wc -l | awk '{print "  Count:", $$1}' || echo "  None"
+	@find output/raw/prices -name "*.parquet" -exec ls -lh {} \; 2>/dev/null | tail -3 || echo "  (empty)"
+
+cache-clean:
+	@echo "🗑️  Cleaning cache directories..."
+	@echo "This will delete:"
+	@echo "  - output/raw/prices/"
+	@echo "  - output/raw/indices/"
+	@echo ""
+	@read -p "Continue? (y/N) " -n 1 -r; echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		rm -rf output/raw/prices/ output/raw/indices/; \
+		echo "✅ Cache cleaned"; \
+	else \
+		echo "❌ Cancelled"; \
+	fi
+
+cache-info:
+	@echo "📚 Cache System Information"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "🎯 Purpose:"
+	@echo "  Price data (OHLCV) caching saves 95% of API fetch time"
+	@echo "  Expected speedup: 45-60s → 2-3s per dataset build"
+	@echo ""
+	@echo "📁 Cache locations:"
+	@echo "  - output/raw/prices/     : Daily price data (2-3GB for 10 years)"
+	@echo "  - output/raw/indices/    : TOPIX/indices data (5-10MB)"
+	@echo "  - output/raw/statements/ : Financial statements (10-20MB)"
+	@echo ""
+	@echo "⚙️  Configuration:"
+	@echo "  USE_CACHE=1              : Enable caching (CRITICAL)"
+	@echo "  CACHE_MAX_AGE_DAYS=7     : Cache validity period"
+	@echo ""
+	@echo "📖 Documentation:"
+	@echo "  See CACHE_FIX_DOCUMENTATION.md for details"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
 # Database operations
 db-init:
 	docker exec -i gogooku3-clickhouse clickhouse-client < docker/clickhouse-init.sql

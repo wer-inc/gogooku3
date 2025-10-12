@@ -851,8 +851,10 @@ class JQuantsPipelineV4Optimized:
     """最適化されたパイプライン V4"""
 
     def __init__(self, output_dir: Path = None):
-        self.output_dir = output_dir or Path("/home/ubuntu/gogooku3-standalone/output")
-        self.output_dir.mkdir(exist_ok=True)
+        if output_dir is None:
+            output_dir = Path(os.getenv("OUTPUT_DIR", "/home/ubuntu/gogooku3/output"))
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # パフォーマンストラッカー
         self.tracker = PerformanceTracker()

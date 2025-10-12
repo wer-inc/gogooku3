@@ -688,23 +688,42 @@ class SafeJoinerV2:
         if cast_exprs:
             s = s.with_columns(cast_exprs)
 
-        # 前年同期値を自己結合で取得
-        yoy_base = s.select([
-            pl.col("Code"),
-            pl.col("fiscal_year").alias("base_fy"),
-            pl.col("quarter").alias("base_q"),
-            pl.col("NetSales").alias("yoy_sales_base"),
-            pl.col("OperatingProfit").alias("yoy_op_base"),
-            pl.col("Profit").alias("yoy_np_base"),
-        ])
+        # 前年同期値を自己結合で取得（fiscal_yearが有効な場合のみ）
+        # Check if fiscal_year column exists and has non-null values
+        if "fiscal_year" in s.columns and s["fiscal_year"].is_not_null().any():
+            try:
+                yoy_base = s.select([
+                    pl.col("Code"),
+                    pl.col("fiscal_year").alias("base_fy"),
+                    pl.col("quarter").alias("base_q"),
+                    pl.col("NetSales").alias("yoy_sales_base"),
+                    pl.col("OperatingProfit").alias("yoy_op_base"),
+                    pl.col("Profit").alias("yoy_np_base"),
+                ])
 
-        s = s.with_columns((pl.col("fiscal_year") - 1).alias("prev_fy"))
-        s = s.join(
-            yoy_base,
-            left_on=["Code", "prev_fy", "quarter"],
-            right_on=["Code", "base_fy", "base_q"],
-            how="left",
-        ).drop(["base_fy", "base_q"])
+                s = s.with_columns((pl.col("fiscal_year") - 1).alias("prev_fy"))
+                s = s.join(
+                    yoy_base,
+                    left_on=["Code", "prev_fy", "quarter"],
+                    right_on=["Code", "base_fy", "base_q"],
+                    how="left",
+                ).drop(["base_fy", "base_q"])
+            except Exception as e:
+                logger.warning(f"YoY join failed (fiscal_year unavailable): {e}")
+                # Add null YoY base columns as fallback
+                s = s.with_columns([
+                    pl.lit(None, dtype=pl.Float64).alias("yoy_sales_base"),
+                    pl.lit(None, dtype=pl.Float64).alias("yoy_op_base"),
+                    pl.lit(None, dtype=pl.Float64).alias("yoy_np_base"),
+                ])
+        else:
+            logger.warning("Skipping YoY join: fiscal_year column missing or all null")
+            # Add null YoY base columns as fallback
+            s = s.with_columns([
+                pl.lit(None, dtype=pl.Float64).alias("yoy_sales_base"),
+                pl.lit(None, dtype=pl.Float64).alias("yoy_op_base"),
+                pl.lit(None, dtype=pl.Float64).alias("yoy_np_base"),
+            ])
 
         # 直近開示値
         s = s.with_columns([
