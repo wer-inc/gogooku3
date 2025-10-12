@@ -83,12 +83,15 @@ def add_sector_cross_sectional_features(
 
     # Z-scores within sector (Volume, realized_vol_20 if present)
     if "Volume" in out.columns:
+        # First create temp columns
         out = out.with_columns([
             _sector_mean("Volume", "_sec_mean_vol"),
             _sector_std("Volume", "_sec_std_vol"),
-            ((pl.col("Volume") - pl.col("_sec_mean_vol")) / (pl.col("_sec_std_vol") + 1e-12)).alias("volume_in_sec_z"),
-            # Sector percentile rank for volume
             pl.col("Volume").rank(method="average").over(keys).alias("_vol_rank"),
+        ])
+        # Then use them in calculations
+        out = out.with_columns([
+            ((pl.col("Volume") - pl.col("_sec_mean_vol")) / (pl.col("_sec_std_vol") + 1e-12)).alias("volume_in_sec_z"),
         ])
         cnt_v = pl.count().over(keys)
         rk_v = pl.col("_vol_rank")

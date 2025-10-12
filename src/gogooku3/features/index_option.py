@@ -137,8 +137,8 @@ def build_index_option_features(opt_df: pl.DataFrame) -> pl.DataFrame:
     # Time-to-maturity and moneyness
     df = df.with_columns(
         [
-            (pl.col("LastTradingDay") - pl.col("Date")).dt.days().clip(lower_bound=0).alias("tau_d"),
-            ((pl.col("SpecialQuotationDay") - pl.col("Date")).dt.days()).alias("days_to_sq"),
+            (pl.col("LastTradingDay") - pl.col("Date")).dt.total_days().clip(lower_bound=0).alias("tau_d"),
+            ((pl.col("SpecialQuotationDay") - pl.col("Date")).dt.total_days()).alias("days_to_sq"),
         ]
     )
     df = df.with_columns([(pl.col("tau_d") / 365.0).alias("tau_y")])
@@ -248,9 +248,9 @@ def build_index_option_features(opt_df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns((((pl.col("dom") - 1) // 7) + 1).alias("wom"))
     df = df.with_columns(
         [
-            (pl.col("LastTradingDay") - pl.col("Date")).dt.days().alias("days_to_last_trading_day"),
+            (pl.col("LastTradingDay") - pl.col("Date")).dt.total_days().alias("days_to_last_trading_day"),
             (pl.col("LastTradingDay") == pl.col("Date")).cast(pl.Int8).alias("is_expiry_day"),
-            ((pl.col("LastTradingDay") - pl.col("Date")).dt.days() <= 5).cast(pl.Int8).alias("is_expiry_week"),
+            ((pl.col("LastTradingDay") - pl.col("Date")).dt.total_days() <= 5).cast(pl.Int8).alias("is_expiry_week"),
             (pl.col("EmergencyMarginTriggerDivision") == "001").cast(pl.Int8).alias("is_emergency_margin"),
             (pl.col("Date") >= pl.lit(_date(2011, 2, 14))).cast(pl.Int8).alias("post_2011_session_flag"),
             (pl.col("Date") >= pl.lit(_date(2016, 7, 19))).cast(pl.Int8).alias("data_after_2016_07_19_flag"),

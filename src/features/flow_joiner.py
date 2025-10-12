@@ -322,7 +322,7 @@ def expand_flow_daily(
             (pl.col("Date") == pl.col("effective_start")).cast(pl.Int8).alias("flow_impulse"),
 
             # フロー公表からの経過日数
-            (pl.col("Date") - pl.col("effective_start")).dt.days().alias("days_since_flow")
+            (pl.col("Date") - pl.col("effective_start")).dt.total_days().alias("days_since_flow")
         ]).with_columns([
             # 仕様名のエイリアス
             pl.col("days_since_flow").alias("flow_days_since")

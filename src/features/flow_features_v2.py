@@ -291,13 +291,13 @@ class FlowFeaturesGeneratorV2:
         if "PublishedDate" in df.columns:
             df = df.with_columns([
                 # 公表日から3営業日以内なら1
-                ((pl.col("Date") - pl.col("PublishedDate")).dt.days() <= 3)
+                ((pl.col("Date") - pl.col("PublishedDate")).dt.total_days() <= 3)
                     .cast(pl.Int8)
                     .alias("flow_impulse"),
 
                 # 経過日数（営業日ベース）
                 (pl.col("Date") - pl.col("PublishedDate"))
-                    .dt.days()
+                    .dt.total_days()
                     .alias("days_since_flow")
             ])
         else:
