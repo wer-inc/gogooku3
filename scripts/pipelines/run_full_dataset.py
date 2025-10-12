@@ -133,6 +133,36 @@ def _find_latest(glob: str) -> Path | None:
     return cands[-1] if cands else None
 
 
+def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
+    """Check if cached file exists and is not stale.
+
+    Args:
+        file_path: Path to cached file
+        max_age_days: Maximum age in days before considering stale
+
+    Returns:
+        True if file exists and is fresh enough, False otherwise
+    """
+    if file_path is None or not file_path.exists():
+        return False
+
+    try:
+        import time
+        file_age_seconds = time.time() - file_path.stat().st_mtime
+        file_age_days = file_age_seconds / (24 * 3600)
+        is_valid = file_age_days <= max_age_days
+
+        if is_valid:
+            logger.info(f"✅ Cache valid: {file_path.name} (age: {file_age_days:.1f} days, limit: {max_age_days} days)")
+        else:
+            logger.info(f"⏰ Cache stale: {file_path.name} (age: {file_age_days:.1f} days, limit: {max_age_days} days)")
+
+        return is_valid
+    except Exception as e:
+        logger.warning(f"Failed to check cache validity for {file_path}: {e}")
+        return False
+
+
 def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments for building the full enriched dataset."""
     parser = argparse.ArgumentParser(
@@ -472,6 +502,17 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Abort if cuGraph/CuPy GPU graph path is unavailable instead of falling back to CPU",
     )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Force refresh from API even when local cached data exists (default: use cache when available)",
+    )
+    parser.add_argument(
+        "--max-cache-age-days",
+        type=int,
+        default=7,
+        help="Maximum age of cached data in days before forcing refresh (default: 7)",
+    )
     return parser.parse_args()
 
 
@@ -680,7 +721,35 @@ async def main() -> int:
     futures_path: Path | None = None
     short_selling_path: Path | None = None
     short_positions_path: Path | None = None
-    if args.jquants:
+
+    # Smart reuse: Check for cached data first (unless --force-refresh)
+    use_cached = False
+    if args.jquants and not args.force_refresh:
+        logger.info("🔍 Checking for cached data (use --force-refresh to skip cache)")
+        max_age = args.max_cache_age_days
+
+        # Check for cached data files
+        cached_trades = _find_latest("trades_spec_history_*.parquet")
+        cached_listed_info = _find_latest("listed_info_history_*.parquet")
+        cached_weekly_margin = _find_latest("weekly_margin_interest_*.parquet")
+        cached_daily_margin = _find_latest("daily_margin_interest_*.parquet")
+
+        # Verify cache validity
+        trades_valid = _is_cache_valid(cached_trades, max_age)
+        listed_valid = _is_cache_valid(cached_listed_info, max_age)
+        weekly_margin_valid = _is_cache_valid(cached_weekly_margin, max_age)
+        daily_margin_valid = _is_cache_valid(cached_daily_margin, max_age)
+
+        # Use cache if all required files are valid
+        if trades_valid and listed_valid:
+            logger.info("✅ All cached data is valid, using cached files (skip API fetch)")
+            use_cached = True
+            trades_spec_path = cached_trades
+            listed_info_path = cached_listed_info
+        else:
+            logger.info("⚠️  Some cached data is missing or stale, will fetch from API")
+
+    if args.jquants and not use_cached:
         # Fetch trade-spec and save to Parquet
         email = os.getenv("JQUANTS_AUTH_EMAIL", "")
         password = os.getenv("JQUANTS_AUTH_PASSWORD", "")

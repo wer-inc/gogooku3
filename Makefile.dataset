@@ -47,10 +47,11 @@ help-dataset:
 	@echo "  make dataset        Interactive all-in-one build"
 	@echo ""
 	@echo "⚙️  Layer 2: Detailed Control"
-	@echo "  make dataset-gpu START=... END=...    GPU-accelerated (requires dates)"
-	@echo "  make dataset-cpu START=... END=...    CPU fallback"
-	@echo "  make dataset-prod START=... END=...   Production config"
-	@echo "  make dataset-research START=... END=... Research features"
+	@echo "  make dataset-gpu START=... END=...         GPU-accelerated (auto-reuses cache)"
+	@echo "  make dataset-gpu-refresh START=... END=... Force fresh API fetch (ignore cache)"
+	@echo "  make dataset-cpu START=... END=...         CPU fallback"
+	@echo "  make dataset-prod START=... END=...        Production config"
+	@echo "  make dataset-research START=... END=...    Research features"
 	@echo ""
 	@echo "🛠️  Layer 3: Utilities"
 	@echo "  make dataset-check           Environment check (relaxed)"
@@ -60,15 +61,24 @@ help-dataset:
 	@echo "  make cache-stats             Show cache statistics"
 	@echo "  make cache-prune             Prune old cache ($(CACHE_TTL_DAYS)d)"
 	@echo ""
+	@echo "🛡️  Memory-Safe Options (NEW)"
+	@echo "  make dataset-safe            Chunked generation with checkpointing"
+	@echo "  make dataset-safe-resume     Resume from checkpoint"
+	@echo "  make dataset-monitored       Generation with memory monitoring"
+	@echo "  make cache-cleanup           Interactive cache cleanup"
+	@echo "  make cache-monitor           Detailed cache statistics"
+	@echo "  make memory-monitor PID=...  Monitor process memory"
+	@echo ""
 	@echo "📋 Defaults:"
 	@echo "  Period: $(DEFAULT_START) → $(DEFAULT_END)"
 	@echo "  Graph:  window=$(GRAPH_WINDOW) threshold=$(GRAPH_THRESHOLD) k=$(GRAPH_MAX_K)"
 	@echo "  Cache:  $(CACHE_DIR)"
 	@echo ""
 	@echo "💡 Examples:"
-	@echo "  make dataset-bg                    # Background, last 5 years"
-	@echo "  make dataset-gpu START=2020-01-01 END=2024-12-31"
-	@echo "  make dataset-rebuild               # Clean + rebuild defaults"
+	@echo "  make dataset-bg                                   # Background, last 5 years"
+	@echo "  make dataset-gpu START=2020-01-01 END=2024-12-31  # With smart cache"
+	@echo "  make dataset-gpu-refresh START=... END=...        # Force API refresh"
+	@echo "  make dataset-rebuild                              # Clean + rebuild defaults"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ============================================================================
@@ -184,10 +194,12 @@ dataset:
 
 # GPU-accelerated dataset generation (requires START/END parameters)
 # Usage: make dataset-gpu START=YYYY-MM-DD END=YYYY-MM-DD
+# Note: Automatically reuses cached data from previous runs (within 7 days)
 dataset-gpu:
 	@echo "🚀 Running dataset generation with GPU-ETL enabled (up to 395 features; ~307 active)"
 	@echo "✅ Graph: cuGraph/CuPy with optimized memory config"
 	@echo "✅ Sector cross-sectional and daily margin features enabled"
+	@echo "✅ Smart cache: Reuses local data if available (use dataset-gpu-refresh to force API fetch)"
 	@echo "⚠️  Note: Futures features (88-92 columns) disabled due to API unavailability"
 	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
 	  echo "❌ Error: START and END dates required"; \
@@ -196,6 +208,27 @@ dataset-gpu:
 	@env $(SAFE_GPU_ENV) \
 	python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END) \
+	  --gpu-etl --enable-graph-features \
+	  --graph-window $(GRAPH_WINDOW) \
+	  --graph-cache-dir $(CACHE_DIR) \
+	  --graph-threshold $(GRAPH_THRESHOLD) --graph-max-k $(GRAPH_MAX_K) \
+	  --futures-continuous \
+	  --attach-nk225-option-market \
+	  --sector-onehot33 \
+	  --enable-sector-cs \
+	  --enable-daily-margin
+
+# Force refresh from API (ignore cache)
+# Usage: make dataset-gpu-refresh START=YYYY-MM-DD END=YYYY-MM-DD
+dataset-gpu-refresh:
+	@echo "🔄 Forcing fresh data fetch from API (ignoring cache)"
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make dataset-gpu-refresh START=YYYY-MM-DD END=YYYY-MM-DD"; \
+	  exit 1; }
+	@env $(SAFE_GPU_ENV) \
+	python scripts/pipelines/run_full_dataset.py \
+	  --jquants --force-refresh --start-date $(START) --end-date $(END) \
 	  --gpu-etl --enable-graph-features \
 	  --graph-window $(GRAPH_WINDOW) \
 	  --graph-cache-dir $(CACHE_DIR) \
@@ -317,3 +350,73 @@ cache-prune:
 	else \
 	  echo "output/graph_cache not found"; \
 	fi
+
+# ============================================================================
+# Memory-Safe Dataset Generation (NEW)
+# ============================================================================
+
+.PHONY: dataset-safe dataset-safe-resume dataset-monitored
+.PHONY: cache-cleanup cache-monitor memory-monitor
+
+# Memory-safe dataset generation with chunking and checkpointing
+# Usage: make dataset-safe [START=YYYY-MM-DD END=YYYY-MM-DD] [CHUNK_YEARS=1]
+dataset-safe:
+	@echo "╔══════════════════════════════════════════════════════════════════╗"
+	@echo "║  🛡️  Memory-Safe Dataset Generator                              ║"
+	@echo "║  • Chunked processing (1 year per chunk by default)             ║"
+	@echo "║  • Automatic checkpointing                                       ║"
+	@echo "║  • Resume from interruptions                                     ║"
+	@echo "╚══════════════════════════════════════════════════════════════════╝"
+	@START_VAL="$(START)"; END_VAL="$(END)"; \
+	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
+	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
+	CHUNK_YEARS=$${CHUNK_YEARS:-1}; \
+	echo "📅 Period: $$START_VAL → $$END_VAL"; \
+	echo "📦 Chunk size: $$CHUNK_YEARS year(s)"; \
+	echo ""; \
+	python scripts/data/dataset_generator_safe.py \
+	  --start-date "$$START_VAL" \
+	  --end-date "$$END_VAL" \
+	  --chunk-years $$CHUNK_YEARS
+
+# Resume interrupted dataset generation from checkpoint
+dataset-safe-resume:
+	@echo "🔄 Resuming from checkpoint..."
+	@START_VAL="$(START)"; END_VAL="$(END)"; \
+	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
+	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
+	python scripts/data/dataset_generator_safe.py \
+	  --start-date "$$START_VAL" \
+	  --end-date "$$END_VAL" \
+	  --resume
+
+# Dataset generation with real-time memory monitoring
+# Automatically terminates if memory exceeds threshold
+dataset-monitored:
+	@echo "🎯 Starting dataset generation with memory monitoring..."
+	@START_VAL="$(START)"; END_VAL="$(END)"; \
+	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
+	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
+	bash scripts/monitoring/watch_dataset.sh \
+	  $(MAKE) -f Makefile.dataset dataset-gpu START="$$START_VAL" END="$$END_VAL"
+
+# Clean up old cache with confirmation
+cache-cleanup:
+	@echo "🗑️  Cache cleanup utility"
+	@bash scripts/maintenance/cleanup_cache.sh
+
+# Show detailed cache statistics and recommendations
+cache-monitor:
+	@echo "📊 Cache monitoring report"
+	@python scripts/maintenance/cache_monitor.py --verbose
+
+# Monitor memory usage of a running process
+# Usage: make memory-monitor PID=<process_id>
+memory-monitor:
+	@if [ -z "$(PID)" ]; then \
+	  echo "❌ Error: PID required"; \
+	  echo "Usage: make memory-monitor PID=<process_id>"; \
+	  exit 1; \
+	fi
+	@echo "👁️  Monitoring process $(PID)..."
+	@python scripts/monitoring/memory_monitor.py --pid $(PID) --gpu
