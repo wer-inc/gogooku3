@@ -33,13 +33,76 @@ help:
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Python environment setup
+.PHONY: setup
 setup:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  🚀 gogooku3 Environment Setup"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "📦 Step 1/7: Creating Python virtual environment..."
 	python3 -m venv venv
 	./venv/bin/pip install --upgrade pip
+	@echo "✅ Python venv ready"
+	@echo ""
+	@echo "📦 Step 2/7: Installing Python dependencies..."
 	./venv/bin/pip install -r requirements.txt
-	@echo "✅ Python environment ready"
-	@echo "📝 Copy .env.example to .env and configure your settings"
-	cp -n .env.example .env || true
+	@echo "✅ Python dependencies installed"
+	@echo ""
+	@echo "🔧 Step 3/7: Installing development tools..."
+	./venv/bin/pip install -e .
+	@echo "✅ Package installed in editable mode"
+	@echo ""
+	@echo "🎨 Step 4/7: Setting up pre-commit hooks..."
+	./venv/bin/pre-commit install || echo "⚠️  pre-commit install failed (non-critical)"
+	./venv/bin/pre-commit install -t commit-msg || echo "⚠️  commit-msg hook failed (non-critical)"
+	@echo "✅ Pre-commit hooks installed"
+	@echo ""
+	@echo "📝 Step 5/7: Creating .env from template..."
+	@if [ ! -f .env ]; then \
+		cp .env.example .env && echo "✅ .env created from template (please edit with your credentials)"; \
+	else \
+		echo "✅ .env already exists (skipping)"; \
+	fi
+	@echo ""
+	@echo "🎮 Step 6/7: Checking GPU availability..."
+	@if command -v nvidia-smi >/dev/null 2>&1; then \
+		echo "✅ GPU detected: $$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"; \
+		echo "   Installing GPU packages..."; \
+		./venv/bin/pip install cupy-cuda12x --quiet || echo "⚠️  CuPy install failed (optional)"; \
+		echo "   Installing RAPIDS (this may take a few minutes)..."; \
+		./venv/bin/pip install --extra-index-url=https://pypi.nvidia.com \
+			cudf-cu12==24.12.* \
+			cugraph-cu12==24.12.* \
+			rmm-cu12==24.12.* --quiet || echo "⚠️  RAPIDS install failed (optional)"; \
+		echo "   Running GPU environment fixes..."; \
+		bash scripts/setup_gpu_env.sh || echo "⚠️  GPU setup script failed (optional)"; \
+		echo "✅ GPU setup complete"; \
+	else \
+		echo "ℹ️  No GPU detected (CPU-only mode)"; \
+	fi
+	@echo ""
+	@echo "✅ Step 7/7: Verifying installation..."
+	@./venv/bin/python -c "import gogooku3; print(f'✅ gogooku3 v{gogooku3.__version__} ready')" || echo "⚠️  Package verification failed"
+	@./venv/bin/python -c "import torch; print(f'✅ PyTorch {torch.__version__}' + (' (CUDA available)' if torch.cuda.is_available() else ' (CPU only)'))" || echo "⚠️  PyTorch check failed"
+	@./venv/bin/python -c "import polars; print(f'✅ Polars {polars.__version__}')" || echo "⚠️  Polars check failed"
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  ✅ Setup Complete!"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Edit .env file with your credentials:"
+	@echo "     nano .env"
+	@echo ""
+	@echo "  2. Activate virtual environment:"
+	@echo "     source venv/bin/activate"
+	@echo ""
+	@echo "  3. Run verification:"
+	@echo "     python scripts/smoke_test.py"
+	@echo ""
+	@echo "  4. Generate dataset:"
+	@echo "     make dataset-bg"
+	@echo ""
 
 # RAPIDS GPU-accelerated data processing
 rapids-install:
