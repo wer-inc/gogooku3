@@ -780,10 +780,11 @@ class JQuantsPipelineV4Optimized:
                 statements_df = result if result is not None and not result.is_empty() else statements_df
                 # Save a reusable parquet for future runs (caching)
                 try:
-                    outdir = self.output_dir
+                    from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+                    outdir = self.output_dir / "raw" / "statements"
                     outdir.mkdir(parents=True, exist_ok=True)
                     out_path = outdir / f"event_raw_statements_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                    statements_df.write_parquet(out_path)
+                    save_parquet_with_gcs(statements_df, out_path)
                     # Maintain a stable symlink for fallback loaders
                     try:
                         link = outdir / "event_raw_statements.parquet"
@@ -1023,21 +1024,21 @@ class JQuantsPipelineV4Optimized:
                 membership_df = self.event_detector.generate_market_membership()
                 if not membership_df.is_empty():
                     logger.info(f"Generated market membership: {len(membership_df)} records")
-                    
+
                     # 保存
+                    from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
                     membership_path = self.output_dir / "market_membership.parquet"
-                    membership_df.write_parquet(membership_path)
-                    logger.info(f"Saved to {membership_path}")
+                    save_parquet_with_gcs(membership_df, membership_path)
                 
                 # securities_events生成
                 events_df = self.event_detector.generate_securities_events_table()
                 if not events_df.is_empty():
                     logger.info(f"Generated securities events: {len(events_df)} records")
-                    
+
                     # 保存
+                    from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
                     events_path = self.output_dir / "securities_events.parquet"
-                    events_df.write_parquet(events_path)
-                    logger.info(f"Saved to {events_path}")
+                    save_parquet_with_gcs(events_df, events_path)
         else:
             logger.info("Creating sample data...")
             # Use stable facade import (avoids package path issues)

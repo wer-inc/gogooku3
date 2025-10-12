@@ -25,6 +25,10 @@ help:
 	@echo "  make test           Run tests"
 	@echo "  make clean          Cleanup"
 	@echo ""
+	@echo "☁️  Cloud Storage:"
+	@echo "  make gcs-status     Check GCS configuration"
+	@echo "  make gcs-sync       Sync datasets to GCS"
+	@echo ""
 	@echo "📖 Full help: make help-dataset    (dataset commands)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -99,6 +103,109 @@ clean:
 	rm -rf venv __pycache__ .pytest_cache
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
+
+# ============================================================================
+# Cloud Storage (GCS) Operations
+# ============================================================================
+
+.PHONY: gcs-sync gcs-upload gcs-download gcs-list gcs-status
+
+GCS_PREFIX ?= datasets/
+GCS_LOCAL_DIR ?= output/datasets/
+
+gcs-sync:
+	@echo "☁️  Syncing output to GCS bucket"
+	@if [ "$${GCS_ENABLED}" != "1" ]; then \
+		echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env"; \
+		exit 1; \
+	fi
+	@python -c "from src.gogooku3.utils.gcs_storage import sync_directory_to_gcs; \
+		uploaded, skipped = sync_directory_to_gcs('$(GCS_LOCAL_DIR)', '$(GCS_PREFIX)'); \
+		print(f'✅ Uploaded: {uploaded}, Skipped: {skipped}')"
+
+gcs-upload:
+	@echo "☁️  Uploading file to GCS"
+	@if [ -z "$(FILE)" ]; then \
+		echo "❌ Usage: make gcs-upload FILE=path/to/file.parquet"; \
+		exit 1; \
+	fi
+	@if [ "$${GCS_ENABLED}" != "1" ]; then \
+		echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env"; \
+		exit 1; \
+	fi
+	@python -c "from src.gogooku3.utils.gcs_storage import upload_to_gcs; \
+		success = upload_to_gcs('$(FILE)'); \
+		exit(0 if success else 1)"
+
+gcs-download:
+	@echo "☁️  Downloading file from GCS"
+	@if [ -z "$(GCS_PATH)" ]; then \
+		echo "❌ Usage: make gcs-download GCS_PATH=datasets/file.parquet [LOCAL_PATH=output/file.parquet]"; \
+		exit 1; \
+	fi
+	@if [ "$${GCS_ENABLED}" != "1" ]; then \
+		echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env"; \
+		exit 1; \
+	fi
+	@python -c "from src.gogooku3.utils.gcs_storage import download_from_gcs; \
+		path = download_from_gcs('$(GCS_PATH)', $(if $(LOCAL_PATH),'$(LOCAL_PATH)',None)); \
+		print(f'✅ Downloaded to: {path}') if path else exit(1)"
+
+gcs-list:
+	@echo "☁️  Listing files in GCS bucket"
+	@if [ "$${GCS_ENABLED}" != "1" ]; then \
+		echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env"; \
+		exit 1; \
+	fi
+	@python -c "from src.gogooku3.utils.gcs_storage import list_gcs_files; \
+		files = list_gcs_files('$(GCS_PREFIX)'); \
+		print('\\n'.join(files)) if files else print('No files found')"
+
+gcs-status:
+	@echo "☁️  GCS Configuration Status"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@if [ "$${GCS_ENABLED}" = "1" ]; then \
+		echo "✅ GCS Enabled"; \
+		echo "📦 Bucket: $${GCS_BUCKET:-gogooku-ml-data}"; \
+		echo "🔄 Auto-sync after save: $${GCS_SYNC_AFTER_SAVE:-0}"; \
+		echo "📁 Local cache: $${LOCAL_CACHE_DIR:-/home/ubuntu/gogooku3/output}"; \
+	else \
+		echo "❌ GCS Disabled (local storage only)"; \
+		echo "💡 To enable: Set GCS_ENABLED=1 in .env"; \
+	fi
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+gcs-sync-raw:
+	@echo "☁️  Syncing raw data to GCS"
+	@python -c "from dotenv import load_dotenv; import os; load_dotenv(); \
+		from src.gogooku3.utils.gcs_storage import sync_directory_to_gcs, is_gcs_enabled; \
+		exit(1) if not is_gcs_enabled() else None; \
+		uploaded, skipped = sync_directory_to_gcs('output/raw', 'raw/'); \
+		print(f'✅ Raw data sync complete: {uploaded} uploaded, {skipped} skipped')" || \
+		(echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env" && exit 1)
+
+gcs-sync-cache:
+	@echo "☁️  Syncing graph cache to GCS"
+	@python -c "from dotenv import load_dotenv; import os; load_dotenv(); \
+		from src.gogooku3.utils.gcs_storage import sync_directory_to_gcs, is_gcs_enabled; \
+		exit(1) if not is_gcs_enabled() else None; \
+		uploaded, skipped = sync_directory_to_gcs('output/graph_cache', 'graph_cache/'); \
+		print(f'✅ Graph cache sync complete: {uploaded} uploaded, {skipped} skipped')" || \
+		(echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env" && exit 1)
+
+gcs-sync-all:
+	@echo "☁️  Syncing all output data to GCS"
+	@python -c "from dotenv import load_dotenv; load_dotenv(); \
+		from src.gogooku3.utils.gcs_storage import is_gcs_enabled; \
+		exit(0 if is_gcs_enabled() else 1)" || \
+		(echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env" && exit 1)
+	@echo "Syncing datasets..."
+	@$(MAKE) gcs-sync GCS_LOCAL_DIR=output/datasets/ GCS_PREFIX=datasets/
+	@echo "Syncing raw data..."
+	@$(MAKE) gcs-sync-raw
+	@echo "Syncing graph cache..."
+	@$(MAKE) gcs-sync-cache
+	@echo "✅ All data synced to GCS"
 
 # Database operations
 db-init:
