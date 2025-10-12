@@ -133,6 +133,55 @@ def _find_latest(glob: str) -> Path | None:
     return cands[-1] if cands else None
 
 
+def _find_latest_with_date_range(
+    glob: str, req_start: str, req_end: str
+) -> Path | None:
+    """Find cached file that covers the requested date range.
+
+    Args:
+        glob: Glob pattern to match files (e.g., "daily_quotes_*.parquet")
+        req_start: Requested start date (YYYY-MM-DD)
+        req_end: Requested end date (YYYY-MM-DD)
+
+    Returns:
+        Path to the cached file if found and valid, None otherwise
+
+    Example:
+        File: daily_quotes_20200906_20250906.parquet
+        Request: 2020-10-01 to 2025-08-01
+        Result: Returns the file (covers the range)
+    """
+    import re
+
+    req_start_dt = datetime.strptime(req_start, "%Y-%m-%d")
+    req_end_dt = datetime.strptime(req_end, "%Y-%m-%d")
+
+    # Find all matching files
+    candidates = sorted(Path("output").rglob(glob))
+
+    for cand in reversed(candidates):  # Try newest first
+        # Extract date range from filename: *_YYYYMMDD_YYYYMMDD.parquet
+        match = re.search(r"_(\d{8})_(\d{8})\.parquet$", cand.name)
+        if match:
+            file_start = datetime.strptime(match.group(1), "%Y%m%d")
+            file_end = datetime.strptime(match.group(2), "%Y%m%d")
+
+            # Check if file covers the requested range
+            if file_start <= req_start_dt and file_end >= req_end_dt:
+                logger.debug(
+                    f"✅ Cache found: {cand.name} covers {req_start} to {req_end}"
+                )
+                return cand
+            else:
+                logger.debug(
+                    f"⏩ Cache skip: {cand.name} "
+                    f"(file: {file_start.strftime('%Y-%m-%d')} to {file_end.strftime('%Y-%m-%d')}, "
+                    f"need: {req_start} to {req_end})"
+                )
+
+    return None
+
+
 def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
     """Check if cached file exists and is not stale.
 

@@ -48,29 +48,28 @@ ATFT-GAT-FANは、最新の深層学習技術を活用した高性能金融時�
 
 ## 🚀 クイックスタート
 
-### 0. GPU環境セットアップ（推奨・最初に実行）
+### 1. 環境セットアップ（これだけでOK！）
 
 ```bash
-# GPU環境の完全セットアップ（dataset生成 + training用）
-make setup-gpu
-
-# または確認のみ（dry-run）
-make check-gpu
+# 全自動セットアップ - これ一つで完了
+make setup
 ```
 
-📖 詳細: [GPU Setup Guide](docs/GPU_SETUP.md)
+**自動的に実行される内容**:
+- ✅ Python仮想環境作成
+- ✅ 全依存パッケージインストール
+- ✅ pre-commitフック設定
+- ✅ .env設定ファイル作成
+- ✅ GPU環境自動検出＆セットアップ（利用可能な場合）
+- ✅ インストール検証
 
-### 1. 環境構築
-
+**セットアップ後の手動作業（1分）**:
 ```bash
-# リポジトリ移動
-cd /home/ubuntu/gogooku3-standalone
+# 1. 認証情報を編集
+nano .env
 
-# 依存関係インストール
-pip install -r requirements.txt
-
-# 監視システムセットアップ（推奨）
-python scripts/setup_monitoring.py --install-deps --create-config --create-alerts
+# 2. 仮想環境を有効化
+source venv/bin/activate
 ```
 
 ### 2. システム検証
@@ -86,22 +85,17 @@ python scripts/validate_improvements.py --data output/ml_dataset_20250827_174908
 python scripts/monitoring_dashboard.py --start-tensorboard
 ```
 
-### 2.5. データセット生成（推奨：バックグラウンド）
+### 3. データセット生成
 
 ```bash
-# SSH切断にも安全。ログ/ PID / PGID を保存します。
+# SSH切断にも安全なバックグラウンド実行
 make dataset-bg
 
 # モニタ
 tail -f _logs/dataset/*.log
-
-# 停止
-kill <PID>
-# またはプロセスグループごとに停止
-kill -TERM -<PGID>
 ```
 
-### 3. モデルトレーニング
+### 4. モデルトレーニング
 
 ```bash
 # 🔥 推奨: 本番設定でのトレーニング
