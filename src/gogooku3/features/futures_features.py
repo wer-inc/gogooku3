@@ -173,7 +173,7 @@ def build_eod_features(
                 (pl.col("WholeDayClose") - pl.col("WholeDayClose").shift(1).over("cat"))
                 / (pl.col("WholeDayClose").shift(1).over("cat") + EPS)
             ).alias("fut_whole_ret"),
-            (pl.col("SQ") - pl.col("Date")).dt.days().alias("ttm_days"),
+            (pl.col("SQ") - pl.col("Date")).dt.total_days().alias("ttm_days"),
         ]
     )
 

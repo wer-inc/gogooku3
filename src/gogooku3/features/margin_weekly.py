@@ -218,7 +218,7 @@ def asof_attach_to_daily(quotes: pl.DataFrame, wk: pl.DataFrame) -> pl.DataFrame
             (pl.col("Date") == pl.col("effective_start")).cast(pl.Int8).alias(
                 "margin_impulse"
             ),
-            (pl.col("Date") - pl.col("effective_start")).dt.days().alias(
+            (pl.col("Date") - pl.col("effective_start")).dt.total_days().alias(
                 "margin_days_since"
             ),
             pl.when(pl.col("effective_start").is_null())

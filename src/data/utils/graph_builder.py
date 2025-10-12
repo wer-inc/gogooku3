@@ -242,7 +242,7 @@ class FinancialGraphBuilder:
             valid_codes.append(code)
 
         if not return_matrix:
-            logger.warning(f"No valid codes for graph building on {date_end}")
+            logger.debug(f"No valid codes for graph building on {date_end}")
             return np.array([]), []
 
         # 行列を統一長に調整（最短長に合わせる）
