@@ -902,39 +902,38 @@ async def main() -> int:
         if trades_df is None or trades_df.is_empty():
             logger.warning("No trade-spec data fetched; will try local fallback for flow features")
         else:
+            from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
             output_dir = Path("output/raw/flow"); output_dir.mkdir(parents=True, exist_ok=True)
             trades_spec_path = output_dir / f"trades_spec_history_{flow_start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-            trades_df.write_parquet(trades_spec_path)
-            logger.info(f"Saved trade-spec: {trades_spec_path}")
+            save_parquet_with_gcs(trades_df, trades_spec_path)
         # Save listed_info if fetched (even if trade-spec failed)
         if listed_info_path is None:
             # Name by end date for reproducibility
             listed_info_path = (Path("output/raw/jquants") / f"listed_info_history_{end_dt.strftime('%Y%m%d')}.parquet")
         if info_df is not None and not info_df.is_empty():
             try:
-                listed_info_path.parent.mkdir(parents=True, exist_ok=True)
-                info_df.write_parquet(listed_info_path)
-                logger.info(f"Saved listed_info: {listed_info_path}")
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+                save_parquet_with_gcs(info_df, listed_info_path)
             except Exception as e:
                 logger.warning(f"Failed to save listed_info parquet: {e}")
         # Save weekly margin interest if fetched
         wmi_path: Path | None = None
         if wmi_df is not None and not wmi_df.is_empty():
             try:
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
                 outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
                 wmi_path = outdir / f"weekly_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                wmi_df.write_parquet(wmi_path)
-                logger.info(f"Saved weekly margin interest: {wmi_path}")
+                save_parquet_with_gcs(wmi_df, wmi_path)
             except Exception as e:
                 logger.warning(f"Failed to save weekly margin parquet: {e}")
         # Save daily margin interest if fetched
         dmi_path: Path | None = None
         if dmi_df is not None and not dmi_df.is_empty():
             try:
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
                 outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
                 dmi_path = outdir / f"daily_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                dmi_df.write_parquet(dmi_path)
-                logger.info(f"Saved daily margin interest: {dmi_path}")
+                save_parquet_with_gcs(dmi_df, dmi_path)
             except Exception as e:
                 logger.warning(f"Failed to save daily margin parquet: {e}")
 
@@ -1028,28 +1027,28 @@ async def main() -> int:
                             if result is None or result.is_empty():
                                 logger.warning("No short selling data retrieved from API")
                             else:
-                                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+                                outdir = Path("output/raw/short_selling"); outdir.mkdir(parents=True, exist_ok=True)
                                 short_selling_path = outdir / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                                result.write_parquet(short_selling_path)
-                                logger.info(f"Saved short selling data: {short_selling_path}")
+                                save_parquet_with_gcs(result, short_selling_path)
 
                         elif key == "short_positions":
                             if result is None or result.is_empty():
                                 logger.warning("No short selling positions data retrieved from API")
                             else:
-                                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+                                outdir = Path("output/raw/short_selling"); outdir.mkdir(parents=True, exist_ok=True)
                                 short_positions_path = outdir / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                                result.write_parquet(short_positions_path)
-                                logger.info(f"Saved short selling positions data: {short_positions_path}")
+                                save_parquet_with_gcs(result, short_positions_path)
 
                         elif key == "sector_short":
                             if result is None or result.is_empty():
                                 logger.warning("No sector short selling data retrieved from API")
                             else:
-                                outdir = Path("output"); outdir.mkdir(parents=True, exist_ok=True)
+                                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+                                outdir = Path("output/raw/short_selling"); outdir.mkdir(parents=True, exist_ok=True)
                                 sector_short_path = outdir / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                                result.write_parquet(sector_short_path)
-                                logger.info(f"Saved sector short selling data: {sector_short_path}")
+                                save_parquet_with_gcs(result, sector_short_path)
         except Exception as e:
             logger.warning(f"Aux session for futures/short features failed: {e}")
     else:
@@ -1240,9 +1239,9 @@ async def main() -> int:
                 .agg([pl.all().first()])
                 .sort("Date")
             )
+            from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
             out_topix = output_dir / f"topix_market_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-            topix_daily.write_parquet(out_topix)
-            logger.info(f"Saved TOPIX market features: {out_topix}")
+            save_parquet_with_gcs(topix_daily, out_topix)
         else:
             logger.warning("No mkt_* columns found in saved dataset; TOPIX market artifact not written")
     except Exception as e:
@@ -1280,10 +1279,10 @@ async def main() -> int:
                 try:
                     from src.gogooku3.features.index_option import build_index_option_features
 
+                    from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
                     opt_feats = build_index_option_features(opt_raw)
                     out = output_dir / f"nk225_index_option_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                    opt_feats.write_parquet(out)
-                    logger.info(f"Saved Nikkei225 option features: {out}")
+                    save_parquet_with_gcs(opt_feats, out)
                 except Exception as e:
                     logger.warning(f"Failed to build/save option features: {e}")
             else:

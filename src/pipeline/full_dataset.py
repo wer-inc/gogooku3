@@ -132,6 +132,16 @@ def save_with_symlinks(
                 pass
             link.symlink_to(target)
 
+    # GCS sync: automatically upload to cloud storage if enabled
+    if os.getenv("GCS_SYNC_AFTER_SAVE") == "1":
+        try:
+            from src.gogooku3.utils.gcs_storage import upload_to_gcs
+            logger.info("GCS sync enabled, uploading dataset and metadata...")
+            upload_to_gcs(parquet_path)
+            upload_to_gcs(meta_path)
+        except Exception as e:
+            logger.warning(f"GCS sync failed (non-blocking): {e}")
+
     return parquet_path, meta_path
 
 
@@ -1223,18 +1233,14 @@ async def enrich_and_save(
         if short_selling_parquet and Path(short_selling_parquet).exists():
             ss_path = short_selling_parquet
         else:
-            # Auto-discover under output/
-            cands = sorted(output_dir.glob("short_selling_*.parquet"))
-            if cands:
-                ss_path = cands[-1]
+            # Auto-discover recursively under output/
+            ss_path = _find_latest("short_selling_*.parquet")
 
         if short_positions_parquet and Path(short_positions_parquet).exists():
             pos_path = short_positions_parquet
         else:
-            # Auto-discover under output/
-            cands = sorted(output_dir.glob("short_positions_*.parquet"))
-            if cands:
-                pos_path = cands[-1]
+            # Auto-discover recursively under output/
+            pos_path = _find_latest("short_positions_*.parquet")
 
         if enable_short_selling or (ss_path and ss_path.exists()):
             # Load short selling data
@@ -1354,10 +1360,8 @@ async def enrich_and_save(
         if earnings_announcements_parquet and Path(earnings_announcements_parquet).exists():
             earnings_path = earnings_announcements_parquet
         else:
-            # Auto-discover under output/
-            cands = sorted(output_dir.glob("earnings_announcements_*.parquet"))
-            if cands:
-                earnings_path = cands[-1]
+            # Auto-discover recursively under output/
+            earnings_path = _find_latest("earnings_announcements_*.parquet")
 
         if enable_earnings_events or (earnings_path and earnings_path.exists()):
             # Load earnings announcement data
@@ -1450,10 +1454,8 @@ async def enrich_and_save(
         if sector_short_selling_parquet and Path(sector_short_selling_parquet).exists():
             sector_short_path = sector_short_selling_parquet
         else:
-            # Auto-discover under output/
-            cands = sorted(output_dir.glob("sector_short_selling_*.parquet"))
-            if cands:
-                sector_short_path = cands[-1]
+            # Auto-discover recursively under output/
+            sector_short_path = _find_latest("sector_short_selling_*.parquet")
 
         if enable_sector_short_selling or (sector_short_path and sector_short_path.exists()):
             # Load sector short selling data
