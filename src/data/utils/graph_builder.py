@@ -208,7 +208,7 @@ class FinancialGraphBuilder:
         ).sort(['code', 'date'])
 
         if filtered_data.is_empty():
-            logger.warning(f"No data available for graph building on {date_end}")
+            logger.debug(f"No data available for graph building on {date_end}")
             return np.array([]), []
 
         # Early check: sufficient historical data available?
@@ -520,7 +520,7 @@ class FinancialGraphBuilder:
         )
 
         if len(valid_codes) < 2:
-            logger.warning(f"Insufficient codes ({len(valid_codes)}) for graph building")
+            logger.debug(f"Insufficient codes ({len(valid_codes)}) for graph building")
             empty_result = {
                 'edge_index': torch.empty((2, 0), dtype=torch.long),
                 'edge_attr': torch.empty(0, dtype=torch.float),

@@ -115,6 +115,35 @@ mypy src/gogooku3             # Type checking
 pre-commit run --all-files     # Full quality check
 ```
 
+### Cache Management
+```bash
+# Verify cache configuration and integrity
+make cache-verify              # Comprehensive 3-step verification
+                              # 1. Check USE_CACHE=1 in .env
+                              # 2. Verify cache directories exist
+                              # 3. List cache files with sizes
+
+# Quick cache overview
+make cache-status              # Show cache state summary
+
+# Clean cache files
+make cache-clean               # Interactive cache cleanup (with confirmation)
+
+# View cache documentation
+make cache-info                # Display cache help and documentation
+
+# Expected cache structure after first dataset build:
+# output/raw/prices/          (~2-3GB for 5-10 years of OHLCV data)
+# output/raw/indices/          (~5-10MB for TOPIX index data)
+# output/raw/statements/       (~50-200MB for financial statements)
+# output/graph_cache/          (~500MB-1GB for correlation graphs)
+
+# Cache performance impact:
+# - Daily Quotes Fetch: 45-60s → 2-3s (95% faster)
+# - API Calls (10 years): ~2,520 → 0 (100% saved)
+# - Total Build Time: 10-15 min → 5-8 min (40% faster)
+```
+
 ## High-Level Architecture
 
 ### Training Pipeline Flow
@@ -227,6 +256,13 @@ MAX_PARALLEL_WORKERS=20       # CPU parallel processing
 USE_GPU_ETL=1                # GPU-accelerated ETL (RAPIDS/cuDF)
 RMM_POOL_SIZE=70GB           # GPU memory pool for A100 80GB
 CUDA_VISIBLE_DEVICES=0       # GPU device selection
+
+# Cache optimization (REQUIRED - major performance impact)
+USE_CACHE=1                  # Enable price data caching (default: 1)
+                            # CRITICAL: Without this, multi-GB price data
+                            # is re-fetched from API every time (45-60s waste)
+CACHE_MAX_AGE_DAYS=7        # Maximum cache age in days (default: 7)
+GCS_SYNC_AFTER_SAVE=1       # Sync cache to GCS after save (default: 1)
 
 # Training optimization
 ALLOW_UNSAFE_DATALOADER=1    # Enable multi-worker DataLoader
@@ -353,6 +389,62 @@ RuntimeWarning: invalid value encountered in divide
 
 **Note on data-dependent features**:
 Daily margin (`dmi_*`), short selling, and sector short selling features are enabled by default but **depend on actual data availability**. If data cannot be fetched or does not exist for the date range, these columns may be NULL or not generated. This is why the actual column count can vary slightly (~303-307) even excluding futures.
+
+### Cache Issues
+
+**Cache not being used (always seeing "CACHE MISS")**:
+```bash
+# 1. Verify USE_CACHE is set in .env
+grep USE_CACHE .env
+# Expected: USE_CACHE=1  # 価格データのキャッシュを有効化
+
+# 2. Run comprehensive verification
+make cache-verify
+
+# 3. Check cache directory exists after first run
+ls -lh output/raw/prices/
+# Expected: daily_quotes_YYYYMMDD_YYYYMMDD.parquet (~2-3GB)
+
+# 4. Check cache file date range matches request
+# If requesting 2020-2025 but cache is 2015-2025, it should hit
+# If requesting 2020-2026 but cache is 2020-2025, it will miss
+```
+
+**Cache file too small (only a few MB)**:
+```bash
+# Verify cache content
+python -c "import polars as pl; df = pl.read_parquet('output/raw/prices/daily_quotes_*.parquet'); print(f'Records: {len(df):,}, Stocks: {df[\"Code\"].n_unique()}, Date range: {df[\"Date\"].min()} to {df[\"Date\"].max()}')"
+
+# Possible causes:
+# 1. Very short date range (e.g., 1-2 weeks)
+# 2. Market filter applied (only specific stocks)
+# 3. Data fetch partially failed
+```
+
+**Cache performance not improving**:
+```bash
+# Check logs for cache hit confirmation
+make dataset-gpu START=2020-09-06 END=2025-09-06 2>&1 | grep -E "CACHE (HIT|MISS)|💾"
+# Expected on first run: "🌐 CACHE MISS" then "💾 Saved to cache"
+# Expected on second run: "📦 CACHE HIT: Daily Quotes (saved ~45s)"
+
+# If cache miss persists:
+# - Date range might differ from cached range
+# - Cache may be expired (check CACHE_MAX_AGE_DAYS)
+# - Cache file may be corrupted (delete and rebuild)
+```
+
+**GCS upload fails after cache save**:
+```bash
+# Check GCS credentials
+ls -lh gogooku-b3b34bc07639.json
+# Verify GCS enabled in .env
+grep GCS_ENABLED .env
+
+# Note: Cache still saves locally even if GCS upload fails
+# You can manually upload later with:
+python scripts/upload_output_to_gcs.py
+```
 
 ## Performance Benchmarks
 
