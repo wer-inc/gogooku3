@@ -60,6 +60,17 @@ env/
 !/.env.example
 !/.env.*.example
 
+# Credentials and secrets (CRITICAL: Never commit!)
+*.key
+*.pem
+*service-account*.json
+*service_account*.json
+gogooku*.json
+github.pat
+*.pat
+*credentials*.json
+!*example*credentials*.json
+
 # Models and checkpoints
 /models/
 *.pth
