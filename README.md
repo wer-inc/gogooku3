@@ -72,6 +72,8 @@ nano .env
 source venv/bin/activate
 ```
 
+> ℹ️ `make setup`（内部では `scripts/setup_env.sh`）は、`gcloud` / `gsutil` が未導入の場合に Google Cloud SDK をローカルへダウンロードします。生成される `google-cloud-sdk/` フォルダとアーカイブは `.gitignore` 済みなので Git には追加しないでください。すでにシステムに `gcloud` が入っている環境ではダウンロード処理は自動的にスキップされます。
+
 ### 2. システム検証
 
 ```bash

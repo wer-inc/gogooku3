@@ -110,10 +110,11 @@ dataset-bg:
 	echo "📅 Period: $$START_VAL → $$END_VAL"; \
 	echo "📝 Log: $$log"; \
 	echo ""; \
-	echo "🩺 Preflight: checking credentials and GPU (non-strict)..."; \
-	if ! $(MAKE) -f Makefile.dataset dataset-check; then \
+	echo "🩺 Preflight: checking credentials and GPU (STRICT - GPU required)..."; \
+	if ! $(MAKE) -f Makefile.dataset dataset-check-strict; then \
 	  echo ""; \
-	  echo "❌ Preflight failed. Please fix your .env credentials and/or GPU setup."; \
+	  echo "❌ Preflight failed. GPU is REQUIRED for background dataset generation."; \
+	  echo "💡 If GPU is not available, use 'make dataset-cpu' instead."; \
 	  exit 1; \
 	fi; \
 	echo ""; \
@@ -150,14 +151,16 @@ dataset:
 	@echo "  3️⃣  Build full dataset (up to 395 features, ~307 active, GPU-accelerated)"
 	@echo "  4️⃣  Show cache statistics"
 	@echo "  5️⃣  Prune old dataset generations (keep latest only)"
+	@echo "  6️⃣  Sync to GCS (if enabled)"
 	@echo ""
 	@echo "⏱️  Estimated time:"
-	@echo "  • Initial run: 2-3 hours (CPU fallback) or 30-60 min (GPU)"
+	@echo "  • Initial run: 30-60 min (GPU required)"
 	@echo "  • Subsequent runs: <3 seconds (cache hit)"
 	@echo ""
-	@$(MAKE) -f Makefile.dataset dataset-check || { \
+	@$(MAKE) -f Makefile.dataset dataset-check-strict || { \
 	  echo ""; \
-	  echo "❌ Preflight check failed. Please check credentials in .env"; \
+	  echo "❌ Preflight check failed. GPU is REQUIRED for this command."; \
+	  echo "💡 If GPU is not available, use 'make dataset-cpu START=... END=...' instead."; \
 	  exit 1; \
 	}
 	@echo ""
@@ -179,8 +182,16 @@ dataset:
 	@$(MAKE) -f Makefile.dataset cache-stats
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "🗑️  Step 5/5: Pruning old dataset generations..."
+	@echo "🗑️  Step 5/6: Pruning old dataset generations..."
 	@$(MAKE) -f Makefile.dataset datasets-prune
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "☁️  Step 6/6: Syncing to GCS..."
+	@if [ "$${GCS_ENABLED}" = "1" ]; then \
+		$(MAKE) gcs-sync; \
+	else \
+		echo "⏭️  GCS sync skipped (GCS_ENABLED != 1)"; \
+	fi
 	@echo ""
 	@echo "╔══════════════════════════════════════════════════════════════════╗"
 	@echo "║  ✅ Dataset build complete!                                      ║"
@@ -226,7 +237,7 @@ dataset-gpu:
 	fi
 	@echo ""
 	@env $(SAFE_GPU_ENV) \
-	python scripts/pipelines/run_full_dataset.py \
+	./venv/bin/python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END) \
 	  --gpu-etl --enable-graph-features \
 	  --graph-window $(GRAPH_WINDOW) \
@@ -247,7 +258,7 @@ dataset-gpu-refresh:
 	  echo "Usage: make dataset-gpu-refresh START=YYYY-MM-DD END=YYYY-MM-DD"; \
 	  exit 1; }
 	@env $(SAFE_GPU_ENV) \
-	python scripts/pipelines/run_full_dataset.py \
+	./venv/bin/python scripts/pipelines/run_full_dataset.py \
 	  --jquants --force-refresh --start-date $(START) --end-date $(END) \
 	  --gpu-etl --enable-graph-features \
 	  --graph-window $(GRAPH_WINDOW) \
@@ -278,7 +289,7 @@ dataset-cpu:
 	  echo "✅ Cache enabled (USE_CACHE=1)"; \
 	fi
 	@echo ""
-	python scripts/pipelines/run_full_dataset.py \
+	./venv/bin/python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END)
 
 # Production dataset with custom config
@@ -300,7 +311,7 @@ dataset-prod:
 	  echo "✅ Cache enabled (USE_CACHE=1)"; \
 	fi
 	@echo ""
-	python scripts/pipelines/run_full_dataset.py \
+	./venv/bin/python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END) \
 	  --config configs/pipeline/full_dataset.yaml
 
@@ -323,7 +334,7 @@ dataset-research:
 	  echo "✅ Cache enabled (USE_CACHE=1)"; \
 	fi
 	@echo ""
-	python scripts/pipelines/run_full_dataset.py \
+	./venv/bin/python scripts/pipelines/run_full_dataset.py \
 	  --jquants --start-date $(START) --end-date $(END) \
 	  --config configs/pipeline/research_full_indices.yaml
 
@@ -334,7 +345,7 @@ dataset-fetch:
 	  echo "Usage: make dataset-fetch START=YYYY-MM-DD END=YYYY-MM-DD"; \
 	  exit 1; }
 	@echo "📥 Fetching raw data only (no dataset build)"
-	python scripts/data/fetch_jquants_history.py \
+	./venv/bin/python scripts/data/fetch_jquants_history.py \
 	  --jquants --all --start-date $(START) --end-date $(END)
 
 # ============================================================================
@@ -349,14 +360,14 @@ dataset-check:
 	@echo "🩺 Running preflight check (credentials + basic GPU)"
 	@echo "   (GPU fallback to CPU allowed)"
 	@env $(SAFE_GPU_ENV) \
-	python scripts/pipelines/run_full_dataset.py --jquants --check-env-only
+	./venv/bin/python scripts/pipelines/run_full_dataset.py --jquants --check-env-only
 
 # Strict check: requires fully functional GPU graph features
 dataset-check-strict:
 	@echo "🩺 Running STRICT preflight check (GPU graph required)"
 	@echo "   (This check will fail if cuDF/cuGraph cannot be imported)"
 	@env $(SAFE_GPU_ENV) \
-	python scripts/pipelines/run_full_dataset.py \
+	./venv/bin/python scripts/pipelines/run_full_dataset.py \
 	  --jquants --check-env-only --require-gpu-graph
 
 # Clean dataset artifacts (keep raw data and caches)
@@ -464,7 +475,7 @@ dataset-safe:
 	echo "📅 Period: $$START_VAL → $$END_VAL"; \
 	echo "📦 Chunk size: $$CHUNK_YEARS year(s)"; \
 	echo ""; \
-	python scripts/data/dataset_generator_safe.py \
+	./venv/bin/python scripts/data/dataset_generator_safe.py \
 	  --start-date "$$START_VAL" \
 	  --end-date "$$END_VAL" \
 	  --chunk-years $$CHUNK_YEARS
@@ -475,7 +486,7 @@ dataset-safe-resume:
 	@START_VAL="$(START)"; END_VAL="$(END)"; \
 	if [ -z "$$START_VAL" ]; then START_VAL="$(DEFAULT_START)"; fi; \
 	if [ -z "$$END_VAL" ]; then END_VAL="$(DEFAULT_END)"; fi; \
-	python scripts/data/dataset_generator_safe.py \
+	./venv/bin/python scripts/data/dataset_generator_safe.py \
 	  --start-date "$$START_VAL" \
 	  --end-date "$$END_VAL" \
 	  --resume
@@ -498,7 +509,7 @@ cache-cleanup:
 # Show detailed cache statistics and recommendations
 cache-monitor:
 	@echo "📊 Cache monitoring report"
-	@python scripts/maintenance/cache_monitor.py --verbose
+	@./venv/bin/python scripts/maintenance/cache_monitor.py --verbose
 
 # Monitor memory usage of a running process
 # Usage: make memory-monitor PID=<process_id>
@@ -509,4 +520,4 @@ memory-monitor:
 	  exit 1; \
 	fi
 	@echo "👁️  Monitoring process $(PID)..."
-	@python scripts/monitoring/memory_monitor.py --pid $(PID) --gpu
+	@./venv/bin/python scripts/monitoring/memory_monitor.py --pid $(PID) --gpu

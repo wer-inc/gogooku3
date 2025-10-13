@@ -36,72 +36,101 @@ help:
 .PHONY: setup
 setup:
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "  🚀 gogooku3 Environment Setup"
+	@echo "  🚀 gogooku3 Environment Setup (GPU Required)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
-	@echo "📦 Step 1/7: Creating Python virtual environment..."
-	python3 -m venv venv
-	./venv/bin/pip install --upgrade pip
+	@echo "📦 Step 1/6: Creating Python virtual environment..."
+	@if [ -d venv ]; then \
+		echo "   ⚠️  venv already exists - skipping creation"; \
+		echo "   💡 To rebuild: rm -rf venv && make setup"; \
+	else \
+		python3 -m venv venv || { echo "❌ venv creation failed"; exit 1; }; \
+		echo "   ✅ Virtual environment created"; \
+	fi
+	@./venv/bin/pip install --upgrade pip setuptools wheel || { echo "❌ pip upgrade failed"; exit 1; }
 	@echo "✅ Python venv ready"
 	@echo ""
-	@echo "📦 Step 2/7: Installing Python dependencies..."
-	./venv/bin/pip install -r requirements.txt
-	@echo "✅ Python dependencies installed"
+	@echo "📦 Step 2/6: Installing project dependencies..."
+	@echo "   📝 Installing from pyproject.toml (production + dev)"
+	@./venv/bin/pip install -e . || { echo "❌ Dependency installation failed"; exit 1; }
+	@./venv/bin/pip install -e ".[dev]" || { echo "❌ Dev tools installation failed"; exit 1; }
+	@echo "✅ All dependencies installed"
 	@echo ""
-	@echo "🔧 Step 3/7: Installing development tools..."
-	./venv/bin/pip install -e .
-	@echo "✅ Package installed in editable mode"
-	@echo ""
-	@echo "🎨 Step 4/7: Setting up pre-commit hooks..."
-	./venv/bin/pre-commit install || echo "⚠️  pre-commit install failed (non-critical)"
-	./venv/bin/pre-commit install -t commit-msg || echo "⚠️  commit-msg hook failed (non-critical)"
+	@echo "🎨 Step 3/6: Setting up pre-commit hooks..."
+	@./venv/bin/pre-commit install || { echo "❌ pre-commit install failed"; exit 1; }
+	@./venv/bin/pre-commit install -t commit-msg || { echo "❌ commit-msg hook failed"; exit 1; }
 	@echo "✅ Pre-commit hooks installed"
 	@echo ""
-	@echo "📝 Step 5/7: Creating .env from template..."
+	@echo "📝 Step 4/6: Creating .env from template..."
 	@if [ ! -f .env ]; then \
 		cp .env.example .env && echo "✅ .env created from template (please edit with your credentials)"; \
 	else \
 		echo "✅ .env already exists (skipping)"; \
 	fi
 	@echo ""
-	@echo "🎮 Step 6/7: Checking GPU availability..."
-	@if command -v nvidia-smi >/dev/null 2>&1; then \
-		echo "✅ GPU detected: $$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"; \
-		echo "   Installing GPU packages..."; \
-		./venv/bin/pip install cupy-cuda12x --quiet || echo "⚠️  CuPy install failed (optional)"; \
-		echo "   Installing RAPIDS (this may take a few minutes)..."; \
-		./venv/bin/pip install --extra-index-url=https://pypi.nvidia.com \
-			cudf-cu12==24.12.* \
-			cugraph-cu12==24.12.* \
-			rmm-cu12==24.12.* --quiet || echo "⚠️  RAPIDS install failed (optional)"; \
-		echo "   Running GPU environment fixes..."; \
-		bash scripts/setup_gpu_env.sh || echo "⚠️  GPU setup script failed (optional)"; \
-		echo "✅ GPU setup complete"; \
-	else \
-		echo "ℹ️  No GPU detected (CPU-only mode)"; \
+	@echo "🎮 Step 5/6: Setting up GPU environment (REQUIRED)..."
+	@if ! command -v nvidia-smi >/dev/null 2>&1; then \
+		echo "❌ GPU NOT detected - nvidia-smi not found"; \
+		echo "❌ This project requires GPU for dataset generation and training"; \
+		echo "💡 If you have a GPU, install NVIDIA drivers and CUDA toolkit"; \
+		exit 1; \
 	fi
+	@echo "✅ GPU detected: $$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+	@echo "📦 Installing GPU packages (this may take 5-10 minutes)..."
 	@echo ""
-	@echo "✅ Step 7/7: Verifying installation..."
-	@./venv/bin/python -c "import gogooku3; print(f'✅ gogooku3 v{gogooku3.__version__} ready')" || echo "⚠️  Package verification failed"
-	@./venv/bin/python -c "import torch; print(f'✅ PyTorch {torch.__version__}' + (' (CUDA available)' if torch.cuda.is_available() else ' (CPU only)'))" || echo "⚠️  PyTorch check failed"
-	@./venv/bin/python -c "import polars; print(f'✅ Polars {polars.__version__}')" || echo "⚠️  Polars check failed"
+	@echo "  1/3: Installing CuPy for CUDA 12.x..."
+	@./venv/bin/pip install cupy-cuda12x || { echo "❌ CuPy installation failed"; exit 1; }
+	@echo "  2/3: Installing RAPIDS (cuDF, cuGraph, RMM)..."
+	@./venv/bin/pip install --extra-index-url=https://pypi.nvidia.com \
+		cudf-cu12==24.12.0 \
+		cugraph-cu12==24.12.0 \
+		rmm-cu12==24.12.0 || { echo "❌ RAPIDS installation failed"; exit 1; }
+	@echo "  3/3: Removing numba-cuda conflicts..."
+	@./venv/bin/pip uninstall -y numba-cuda 2>/dev/null || true
+	@echo ""
+	@echo "🔍 Verifying GPU packages..."
+	@./venv/bin/python -c "import cupy; import cudf; import cugraph; import rmm; print('✅ All GPU packages verified')" || { \
+		echo "❌ GPU package verification failed"; \
+		exit 1; \
+	}
+	@bash scripts/setup_env.sh || { echo "❌ Environment setup script failed"; exit 1; }
+	@echo "✅ Complete GPU environment setup finished"
+	@echo ""
+	@echo "✅ Step 6/6: Final verification with assertions..."
+	@./venv/bin/python -c "import gogooku3; print(f'✅ gogooku3 v{gogooku3.__version__} ready')" || { echo "❌ Package verification failed"; exit 1; }
+	@./venv/bin/python -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print(f'✅ PyTorch {torch.__version__} (CUDA available)')" || { echo "❌ PyTorch/CUDA verification failed"; exit 1; }
+	@./venv/bin/python -c "import polars; print(f'✅ Polars {polars.__version__}')" || { echo "❌ Polars verification failed"; exit 1; }
+	@./venv/bin/python -c "import cupy; import cudf; import cugraph; import rmm; print('✅ GPU stack verified (CuPy, cuDF, cuGraph, RMM)')" || { echo "❌ GPU stack verification failed"; exit 1; }
+	@echo ""
+	@echo "🔍 System Information:"
+	@echo "   GPU: $$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+	@echo "   CUDA: $$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
+	@echo "   Python: $$(./venv/bin/python --version)"
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  ✅ Setup Complete!"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  1. Edit .env file with your credentials:"
+	@echo "  1. Edit .env file with your JQuants API credentials:"
 	@echo "     nano .env"
+	@echo "     (Set JQUANTS_AUTH_EMAIL and JQUANTS_AUTH_PASSWORD)"
 	@echo ""
 	@echo "  2. Activate virtual environment:"
 	@echo "     source venv/bin/activate"
 	@echo ""
-	@echo "  3. Run verification:"
-	@echo "     python scripts/smoke_test.py"
+	@echo "  3. Run smoke test to verify everything works:"
+	@echo "     python scripts/smoke_test.py --max-epochs 1"
 	@echo ""
-	@echo "  4. Generate dataset:"
+	@echo "  4. Generate dataset (SSH-safe background mode):"
 	@echo "     make dataset-bg"
+	@echo "     (or 'make go' as shorthand)"
+	@echo ""
+	@echo "  5. Monitor dataset generation:"
+	@echo "     tail -f _logs/dataset/latest.log"
+	@echo ""
+	@echo "💡 Tip: Run 'make cache-verify' to check cache configuration"
+	@echo "💡 Tip: Run 'make help' or 'make help-dataset' for all commands"
 	@echo ""
 
 # RAPIDS GPU-accelerated data processing
@@ -118,17 +147,6 @@ rapids-verify:
 	@echo "🔍 Verifying RAPIDS installation..."
 	@python -c "import cudf; import cugraph; import rmm; print(f'✅ cuDF {cudf.__version__}, cuGraph {cugraph.__version__}, RMM {rmm.__version__}')"
 	@python -c "from src.utils.gpu_etl import init_rmm, to_cudf, to_polars; import polars as pl; df = pl.DataFrame({'x': [1,2,3]}); to_polars(to_cudf(df)); print('✅ GPU-ETL pipeline functional')"
-
-# GPU Environment Setup (for dataset generation and training)
-.PHONY: setup-gpu check-gpu
-
-setup-gpu:
-	@echo "🚀 Setting up GPU environment for dataset generation and training..."
-	@bash scripts/setup_gpu_env.sh
-
-check-gpu:
-	@echo "🔍 Checking GPU environment..."
-	@bash scripts/setup_gpu_env.sh --dry-run
 
 # Docker services
 docker-up:
@@ -178,13 +196,10 @@ GCS_LOCAL_DIR ?= output/datasets/
 
 gcs-sync:
 	@echo "☁️  Syncing output to GCS bucket"
-	@if [ "$${GCS_ENABLED}" != "1" ]; then \
-		echo "❌ GCS not enabled. Set GCS_ENABLED=1 in .env"; \
-		exit 1; \
-	fi
-	@python -c "from src.gogooku3.utils.gcs_storage import sync_directory_to_gcs; \
-		uploaded, skipped = sync_directory_to_gcs('$(GCS_LOCAL_DIR)', '$(GCS_PREFIX)'); \
-		print(f'✅ Uploaded: {uploaded}, Skipped: {skipped}')"
+	@echo "   ✅ Excludes output/raw/ (local cache only)"
+	@echo "   ✅ Excludes symlinks (prevents duplication)"
+	@echo "   ✅ Deletes remote files not present locally"
+	@bash scripts/maintenance/sync_to_gcs.sh
 
 gcs-upload:
 	@echo "☁️  Uploading file to GCS"
