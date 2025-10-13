@@ -39,7 +39,7 @@ dependencies = [
     
     # Technical Analysis
     "pandas-ta>=0.3.14b0",
-    "pywt>=1.4.0",
+    "PyWavelets>=1.4.0",
     
     # Data Sources & APIs
     "aiohttp>=3.9.0",

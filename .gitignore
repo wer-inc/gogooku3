@@ -92,6 +92,10 @@ monitoring.db
 *.out
 *.err
 
+# Google Cloud SDK (downloaded locally by setup scripts)
+/google-cloud-sdk/
+/google-cloud-cli-*.tar.gz
+
 # Legacy log locations (deprecated)
 /dagster_home/logs/
 /mlruns/**/logs/

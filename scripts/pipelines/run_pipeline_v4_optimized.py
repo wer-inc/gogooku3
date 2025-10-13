@@ -440,7 +440,7 @@ class JQuantsOptimizedFetcherV4:
                         cache_dir = Path("output/raw/prices")
                         cache_dir.mkdir(parents=True, exist_ok=True)
                         cache_path = cache_dir / f"daily_quotes_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                        save_parquet_with_gcs(combined_df, cache_path)
+                        save_parquet_with_gcs(combined_df, cache_path, auto_sync=False)
                         logger.info(f"💾 Saved to cache: {cache_path.name}")
                     except Exception as e:
                         logger.warning(f"Failed to save cache: {e}")
@@ -467,7 +467,7 @@ class JQuantsOptimizedFetcherV4:
                     cache_dir = Path("output/raw/prices")
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     cache_path = cache_dir / f"daily_quotes_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                    save_parquet_with_gcs(df, cache_path)
+                    save_parquet_with_gcs(df, cache_path, auto_sync=False)
                     logger.info(f"💾 Saved to cache: {cache_path.name}")
                 except Exception as e:
                     logger.warning(f"Failed to save cache: {e}")
@@ -707,7 +707,7 @@ class JQuantsOptimizedFetcherV4:
                 cache_dir = Path("output/raw/statements")
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_path = cache_dir / f"event_raw_statements_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                save_parquet_with_gcs(result_df, cache_path)
+                save_parquet_with_gcs(result_df, cache_path, auto_sync=False)
                 logger.info(f"💾 Saved to cache: {cache_path.name}")
             except Exception as e:
                 logger.warning(f"Failed to save cache: {e}")
@@ -806,7 +806,7 @@ class JQuantsOptimizedFetcherV4:
                     cache_dir = Path("output/raw/indices")
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     cache_path = cache_dir / f"topix_history_{from_date.replace('-', '')}_{to_date.replace('-', '')}.parquet"
-                    save_parquet_with_gcs(df, cache_path)
+                    save_parquet_with_gcs(df, cache_path, auto_sync=False)
                     logger.info(f"💾 Saved to cache: {cache_path.name}")
                 except Exception as e:
                     logger.warning(f"Failed to save cache: {e}")
@@ -1110,7 +1110,7 @@ class JQuantsPipelineV4Optimized:
                     outdir = self.output_dir / "raw" / "statements"
                     outdir.mkdir(parents=True, exist_ok=True)
                     out_path = outdir / f"event_raw_statements_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                    save_parquet_with_gcs(statements_df, out_path)
+                    save_parquet_with_gcs(statements_df, out_path, auto_sync=False)
                     # Maintain a stable symlink for fallback loaders
                     try:
                         link = outdir / "event_raw_statements.parquet"

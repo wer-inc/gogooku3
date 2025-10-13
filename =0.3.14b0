@@ -1,0 +1,30 @@
+Collecting pandas-ta
+  Using cached pandas_ta-0.4.71b0-py3-none-any.whl.metadata (2.3 kB)
+Collecting numba==0.61.2 (from pandas-ta)
+  Using cached numba-0.61.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.8 kB)
+Collecting numpy>=2.2.6 (from pandas-ta)
+  Using cached numpy-2.3.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+Requirement already satisfied: pandas>=2.3.2 in ./venv/lib/python3.12/site-packages (from pandas-ta) (2.3.3)
+Requirement already satisfied: tqdm>=4.67.1 in ./venv/lib/python3.12/site-packages (from pandas-ta) (4.67.1)
+Collecting llvmlite<0.45,>=0.44.0dev0 (from numba==0.61.2->pandas-ta)
+  Downloading llvmlite-0.44.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (5.0 kB)
+Collecting numpy>=2.2.6 (from pandas-ta)
+  Downloading numpy-2.2.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (62 kB)
+Requirement already satisfied: python-dateutil>=2.8.2 in ./venv/lib/python3.12/site-packages (from pandas>=2.3.2->pandas-ta) (2.9.0.post0)
+Requirement already satisfied: pytz>=2020.1 in ./venv/lib/python3.12/site-packages (from pandas>=2.3.2->pandas-ta) (2025.2)
+Requirement already satisfied: tzdata>=2022.7 in ./venv/lib/python3.12/site-packages (from pandas>=2.3.2->pandas-ta) (2025.2)
+Requirement already satisfied: six>=1.5 in ./venv/lib/python3.12/site-packages (from python-dateutil>=2.8.2->pandas>=2.3.2->pandas-ta) (1.17.0)
+Downloading pandas_ta-0.4.71b0-py3-none-any.whl (240 kB)
+Downloading numba-0.61.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (3.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.9/3.9 MB 62.8 MB/s  0:00:00
+Downloading llvmlite-0.44.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (42.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 42.4/42.4 MB 112.9 MB/s  0:00:00
+Downloading numpy-2.2.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (16.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.5/16.5 MB 98.6 MB/s  0:00:00
+Installing collected packages: numpy, llvmlite, numba, pandas-ta
+  Attempting uninstall: numpy
+    Found existing installation: numpy 1.26.4
+    Uninstalling numpy-1.26.4:
+      Successfully uninstalled numpy-1.26.4
+
+Successfully installed llvmlite-0.44.0 numba-0.61.2 numpy-2.2.6 pandas-ta-0.4.71b0
