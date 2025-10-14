@@ -531,8 +531,27 @@ class CompleteATFTTrainingPipeline:
                 # data/model/train は既定のdefaultsで固定。必要な範囲のみ上書き。
                 # ただし、CLI引数で提供されている場合はスキップ（CLI優先）
                 overrides = []
+                # Check for Safe mode once
+                is_safe_mode = os.getenv("FORCE_SINGLE_PROCESS", "0") == "1"
+
                 if "train.batch.train_batch_size" not in cli_override_keys:
-                    overrides.append(f"train.batch.train_batch_size={self.atft_settings['batch_size']}")
+                    # Use Safe mode batch size if FORCE_SINGLE_PROCESS=1
+                    safe_batch_size = int(os.getenv("SAFE_MODE_BATCH_SIZE", "256"))
+                    batch_size = safe_batch_size if is_safe_mode else self.atft_settings['batch_size']
+                    overrides.append(f"train.batch.train_batch_size={batch_size}")
+
+                # In Safe mode, explicitly set single-worker DataLoader via Hydra
+                if is_safe_mode:
+                    if "train.batch.num_workers" not in cli_override_keys:
+                        overrides.append("train.batch.num_workers=0")
+                    if "train.batch.prefetch_factor" not in cli_override_keys:
+                        overrides.append("train.batch.prefetch_factor=null")
+                    if "train.batch.persistent_workers" not in cli_override_keys:
+                        overrides.append("train.batch.persistent_workers=false")
+                    if "train.batch.pin_memory" not in cli_override_keys:
+                        overrides.append("train.batch.pin_memory=false")
+                    logger.info(f"[Safe Mode] Setting single-worker DataLoader: batch_size={safe_batch_size if is_safe_mode else self.atft_settings['batch_size']}, num_workers=0")
+
                 if "train.optimizer.lr" not in cli_override_keys:
                     overrides.append(f"train.optimizer.lr={self.atft_settings['learning_rate']}")
                 if "train.trainer.max_epochs" not in cli_override_keys:
@@ -823,8 +842,10 @@ class CompleteATFTTrainingPipeline:
                     new_bs = max(64, cur_bs // 2)
                     new_vbs = max(128, cur_vbs // 2)
                     new_ga = min(32, max(1, cur_ga * 2))
-                    new_workers = min(cur_workers, 8)
-                    new_prefetch = min(cur_prefetch, 2)
+                    # Safe mode check: always use single-worker in Safe mode
+                    is_safe_mode = os.getenv("FORCE_SINGLE_PROCESS", "0") == "1"
+                    new_workers = 0 if is_safe_mode else min(cur_workers, 8)
+                    new_prefetch = 0 if is_safe_mode else min(cur_prefetch, 2)
 
                     logger.warning(
                         "[OOM-retry] CUDA OOM detected. Retrying with: "
