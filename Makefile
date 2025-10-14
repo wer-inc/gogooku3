@@ -382,6 +382,22 @@ cache-info:
 	@echo "  See CACHE_FIX_DOCUMENTATION.md for details"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# ============================================================================
+# Daily Cache Update (Cron-based pre-population)
+# ============================================================================
+
+.PHONY: update-cache update-cache-silent
+
+update-cache:
+	@echo "🔄 Updating daily caches..."
+	@echo "   ✅ Daily Quotes: Full contract range"
+	@echo "   ✅ Statements: Full contract range"
+	@echo "   ✅ TOPIX: Full available range"
+	@python scripts/cache/update_daily_cache.py
+
+update-cache-silent:
+	@python scripts/cache/update_daily_cache.py --silent
+
 # Database operations
 db-init:
 	docker exec -i gogooku3-clickhouse clickhouse-client < docker/clickhouse-init.sql

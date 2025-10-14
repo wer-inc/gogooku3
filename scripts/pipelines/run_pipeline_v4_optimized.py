@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 
 
 SUPPORT_LOOKBACK_DAYS = 420  # approx 20 months to cover YoY/Z-score lookbacks
-# Minimum collection span enforced regardless of requested start date
-MIN_COLLECTION_DAYS = int(os.getenv("MIN_COLLECTION_DAYS", "3650"))  # ~10 years by default
+# Note: MIN_COLLECTION_DAYS removed - use requested dates + lookback only
+# To fetch long-term data, specify explicit --start-date instead of forcing minimum span
 
 
 # ========================================
@@ -56,8 +56,8 @@ MIN_COLLECTION_DAYS = int(os.getenv("MIN_COLLECTION_DAYS", "3650"))  # ~10 years
 
 def _find_latest_with_date_range(
     glob: str, req_start: str, req_end: str
-) -> Path | None:
-    """Find cached file that covers the requested date range.
+) -> Dict | None:
+    """Find cached file with complete or partial match for requested date range.
 
     Args:
         glob: Glob pattern to match files (e.g., "daily_quotes_*.parquet")
@@ -65,7 +65,16 @@ def _find_latest_with_date_range(
         req_end: Requested end date (YYYY-MM-DD)
 
     Returns:
-        Path to the cached file if found and valid, None otherwise
+        Dictionary with cache info if found, None otherwise:
+        {
+            "path": Path to cache file,
+            "cache_start": Cache start date (YYYY-MM-DD),
+            "cache_end": Cache end date (YYYY-MM-DD),
+            "match_type": "complete" | "partial",
+            "missing_start": Start date to fetch (YYYY-MM-DD) or None,
+            "missing_end": End date to fetch (YYYY-MM-DD) or None,
+            "missing_ranges": List of (start, end) tuples for gaps outside the cache
+        }
     """
     import re
 
@@ -75,39 +84,338 @@ def _find_latest_with_date_range(
     # Find all matching files under output/
     candidates = sorted(Path("output").rglob(glob))
 
+    best_match = None
+    best_coverage = 0.0  # Percentage of requested range covered
+
     for cand in reversed(candidates):  # Try newest first
         # Extract date range from filename: *_YYYYMMDD_YYYYMMDD.parquet
         match = re.search(r"_(\d{8})_(\d{8})\.parquet$", cand.name)
-        if match:
-            file_start = datetime.strptime(match.group(1), "%Y%m%d")
-            file_end = datetime.strptime(match.group(2), "%Y%m%d")
+        if not match:
+            continue
 
-            # Check if file covers the requested range
+        file_start = datetime.strptime(match.group(1), "%Y%m%d")
+        file_end = datetime.strptime(match.group(2), "%Y%m%d")
+
+        # Check for any overlap
+        overlap_start = max(file_start, req_start_dt)
+        overlap_end = min(file_end, req_end_dt)
+
+        if overlap_start <= overlap_end:
+            # There is overlap
+            overlap_days = (overlap_end - overlap_start).days + 1
+            total_days = (req_end_dt - req_start_dt).days + 1
+            coverage = overlap_days / total_days
+
+            # Complete match (100% coverage)
             if file_start <= req_start_dt and file_end >= req_end_dt:
-                logger.debug(
-                    f"✅ Cache found: {cand.name} covers {req_start} to {req_end}"
+                logger.info(
+                    f"📦 COMPLETE MATCH: {cand.name} covers {req_start} to {req_end}"
                 )
-                return cand
+                return {
+                    "path": cand,
+                    "cache_start": file_start.strftime("%Y-%m-%d"),
+                    "cache_end": file_end.strftime("%Y-%m-%d"),
+                    "match_type": "complete",
+                    "missing_start": None,
+                    "missing_end": None
+                }
+
+            # Partial match - keep track of best coverage
+            if coverage > best_coverage:
+                best_coverage = coverage
+
+                # Determine missing ranges
+                missing_ranges: List[Tuple[str, str]] = []
+
+                if req_start_dt < file_start:
+                    # Need data before cache starts
+                    missing_ranges.append((
+                        req_start,
+                        (file_start - timedelta(days=1)).strftime("%Y-%m-%d")
+                    ))
+
+                if req_end_dt > file_end:
+                    # Need data after cache ends
+                    trailing_gap_start = (file_end + timedelta(days=1)).strftime("%Y-%m-%d")
+                    missing_ranges.append((trailing_gap_start, req_end))
+
+                # Backwards compatibility: only expose single range via legacy keys
+                if len(missing_ranges) == 1:
+                    legacy_missing_start, legacy_missing_end = missing_ranges[0]
+                else:
+                    legacy_missing_start = None
+                    legacy_missing_end = None
+
+                best_match = {
+                    "path": cand,
+                    "cache_start": file_start.strftime("%Y-%m-%d"),
+                    "cache_end": file_end.strftime("%Y-%m-%d"),
+                    "match_type": "partial",
+                    "missing_start": legacy_missing_start,
+                    "missing_end": legacy_missing_end,
+                    "missing_ranges": missing_ranges,
+                    "coverage": coverage
+                }
+
+    if best_match:
+        # Check minimum coverage threshold (Phase 2 optimization #1)
+        min_coverage = float(os.getenv("MIN_CACHE_COVERAGE", "0.3"))
+
+        # Try multi-cache if enabled and single file coverage is below threshold (Phase 2 optimization #2)
+        enable_multi_cache = os.getenv("ENABLE_MULTI_CACHE", "1") == "1"
+        if best_match['coverage'] < min_coverage and enable_multi_cache:
+            logger.info(
+                f"⚠️  Single file coverage too low ({best_match['coverage']*100:.1f}% < {min_coverage*100:.0f}% threshold)"
+            )
+            logger.info("   Trying multi-cache file combination...")
+
+            # Try to find better coverage with multiple files
+            multi_match = _find_best_cache_combination(glob, req_start, req_end, max_files=3)
+
+            if multi_match and multi_match['coverage'] > best_match['coverage']:
+                # Multi-cache provides better coverage
+                logger.info(f"✅ Multi-cache improves coverage: {best_match['coverage']*100:.1f}% → {multi_match['coverage']*100:.1f}%")
+
+                # Still check if even multi-cache meets threshold
+                if multi_match['coverage'] < min_coverage:
+                    logger.info(
+                        f"⚠️  Even with multi-cache, coverage too low ({multi_match['coverage']*100:.1f}% < {min_coverage*100:.0f}% threshold), "
+                        f"falling back to full API fetch"
+                    )
+                    return None
+
+                # Return multi-cache result
+                missing_ranges = multi_match.get("missing_ranges") or []
+                if missing_ranges:
+                    for range_start, range_end in missing_ranges:
+                        logger.info(f"   Need to fetch: {range_start} to {range_end}")
+                else:
+                    logger.info("   Need to fetch: (none)")
+
+                return multi_match
             else:
-                logger.debug(
-                    f"⏩ Cache skip: {cand.name} "
-                    f"(file: {file_start.strftime('%Y-%m-%d')} to {file_end.strftime('%Y-%m-%d')}, "
-                    f"need: {req_start} to {req_end})"
-                )
+                # Multi-cache doesn't help, fall back to full API fetch
+                logger.info("   Multi-cache didn't improve coverage, falling back to full API fetch")
+                return None
+        elif best_match['coverage'] < min_coverage:
+            # Multi-cache disabled and coverage too low
+            logger.info(
+                f"⚠️  Coverage too low ({best_match['coverage']*100:.1f}% < {min_coverage*100:.0f}% threshold), "
+                f"falling back to full API fetch for efficiency"
+            )
+            return None
 
-    return None
+        logger.info(
+            f"🔄 PARTIAL MATCH: {best_match['path'].name} covers "
+            f"{best_match['coverage']*100:.1f}% ({best_match['cache_start']} to {best_match['cache_end']})"
+        )
+        missing_ranges = best_match.get("missing_ranges") or []
+        if missing_ranges:
+            for range_start, range_end in missing_ranges:
+                logger.info(f"   Need to fetch: {range_start} to {range_end}")
+        else:
+            logger.info("   Need to fetch: (none)")
+
+    return best_match
 
 
-def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
+def _find_best_cache_combination(
+    glob: str, req_start: str, req_end: str, max_files: int = 3
+) -> Dict | None:
+    """Find the best combination of multiple cache files to maximize coverage.
+
+    This function attempts to find multiple cache files that together provide
+    better coverage than a single file. It's useful when you have fragmented
+    cache files (e.g., from different time periods).
+
+    Args:
+        glob: Glob pattern to match files (e.g., "daily_quotes_*.parquet")
+        req_start: Requested start date (YYYY-MM-DD)
+        req_end: Requested end date (YYYY-MM-DD)
+        max_files: Maximum number of cache files to combine (default: 3)
+
+    Returns:
+        Dictionary with multi-cache info if found, None otherwise:
+        {
+            "cache_files": [
+                {"path": Path, "start": str, "end": str},
+                ...
+            ],
+            "match_type": "multi-partial",
+            "missing_ranges": List of (start, end) tuples for remaining gaps,
+            "coverage": float (0.0-1.0),
+            "total_cached_days": int
+        }
+    """
+    import re
+
+    req_start_dt = datetime.strptime(req_start, "%Y-%m-%d")
+    req_end_dt = datetime.strptime(req_end, "%Y-%m-%d")
+    total_days = (req_end_dt - req_start_dt).days + 1
+
+    # Find all matching files with overlap
+    candidates = []
+    for cand in sorted(Path("output").rglob(glob)):
+        match = re.search(r"_(\d{8})_(\d{8})\.parquet$", cand.name)
+        if not match:
+            continue
+
+        file_start = datetime.strptime(match.group(1), "%Y%m%d")
+        file_end = datetime.strptime(match.group(2), "%Y%m%d")
+
+        # Check for any overlap with requested range
+        overlap_start = max(file_start, req_start_dt)
+        overlap_end = min(file_end, req_end_dt)
+
+        if overlap_start <= overlap_end:
+            candidates.append({
+                "path": cand,
+                "start": file_start,
+                "end": file_end,
+                "overlap_start": overlap_start,
+                "overlap_end": overlap_end
+            })
+
+    if len(candidates) == 0:
+        return None
+
+    # Sort by start date
+    candidates.sort(key=lambda x: x["start"])
+
+    # Greedy algorithm: Select files that fill gaps
+    # Start with the file that covers the earliest part of the requested range
+    selected = []
+    covered_ranges = []  # List of (start_dt, end_dt) tuples
+
+    for cand in candidates:
+        if len(selected) >= max_files:
+            break
+
+        # Check if this file adds new coverage
+        adds_coverage = False
+
+        if len(covered_ranges) == 0:
+            # First file - take it if it overlaps
+            adds_coverage = True
+        else:
+            # Check if this file fills a gap or extends coverage
+            cand_range = (cand["overlap_start"], cand["overlap_end"])
+
+            for covered_start, covered_end in covered_ranges:
+                # Check if this file extends coverage before or after
+                if cand_range[1] >= covered_start and cand_range[0] <= covered_end:
+                    # Overlaps or extends existing coverage
+                    if cand_range[0] < covered_start or cand_range[1] > covered_end:
+                        adds_coverage = True
+                        break
+
+            # Also check if it fills a gap between covered ranges
+            if not adds_coverage and len(covered_ranges) >= 2:
+                for i in range(len(covered_ranges) - 1):
+                    gap_start = covered_ranges[i][1] + timedelta(days=1)
+                    gap_end = covered_ranges[i+1][0] - timedelta(days=1)
+                    if cand_range[0] <= gap_end and cand_range[1] >= gap_start:
+                        adds_coverage = True
+                        break
+
+        if adds_coverage:
+            selected.append(cand)
+            covered_ranges.append((cand["overlap_start"], cand["overlap_end"]))
+
+    if len(selected) <= 1:
+        # No benefit from multi-file approach
+        return None
+
+    # Merge overlapping ranges to calculate actual coverage
+    covered_ranges.sort()
+    merged_ranges = []
+    current_start, current_end = covered_ranges[0]
+
+    for start, end in covered_ranges[1:]:
+        if start <= current_end + timedelta(days=1):
+            # Overlapping or contiguous - merge
+            current_end = max(current_end, end)
+        else:
+            # Gap - save current range and start new one
+            merged_ranges.append((current_start, current_end))
+            current_start, current_end = start, end
+    merged_ranges.append((current_start, current_end))
+
+    # Calculate total covered days
+    covered_days = sum((end - start).days + 1 for start, end in merged_ranges)
+    coverage = covered_days / total_days
+
+    # Calculate missing ranges
+    missing_ranges: List[Tuple[str, str]] = []
+
+    if merged_ranges[0][0] > req_start_dt:
+        # Gap before first covered range
+        missing_ranges.append((
+            req_start,
+            (merged_ranges[0][0] - timedelta(days=1)).strftime("%Y-%m-%d")
+        ))
+
+    # Gaps between covered ranges
+    for i in range(len(merged_ranges) - 1):
+        gap_start = merged_ranges[i][1] + timedelta(days=1)
+        gap_end = merged_ranges[i+1][0] - timedelta(days=1)
+        if gap_start <= gap_end:
+            missing_ranges.append((
+                gap_start.strftime("%Y-%m-%d"),
+                gap_end.strftime("%Y-%m-%d")
+            ))
+
+    if merged_ranges[-1][1] < req_end_dt:
+        # Gap after last covered range
+        missing_ranges.append((
+            (merged_ranges[-1][1] + timedelta(days=1)).strftime("%Y-%m-%d"),
+            req_end
+        ))
+
+    # Format result
+    cache_files = [
+        {
+            "path": c["path"],
+            "start": c["start"].strftime("%Y-%m-%d"),
+            "end": c["end"].strftime("%Y-%m-%d")
+        }
+        for c in selected
+    ]
+
+    logger.info(
+        f"🔗 MULTI-CACHE MATCH: {len(selected)} files provide {coverage*100:.1f}% coverage"
+    )
+    for cf in cache_files:
+        logger.info(f"   - {cf['path'].name} ({cf['start']} to {cf['end']})")
+
+    return {
+        "cache_files": cache_files,
+        "match_type": "multi-partial",
+        "missing_ranges": missing_ranges,
+        "coverage": coverage,
+        "total_cached_days": covered_days
+    }
+
+
+def _is_cache_valid(cache_info: Dict | Path | None, max_age_days: int) -> bool:
     """Check if cached file exists and is not stale.
 
     Args:
-        file_path: Path to cached file
+        cache_info: Dictionary from _find_latest_with_date_range() or Path or None
         max_age_days: Maximum age in days before considering stale
 
     Returns:
         True if file exists and is fresh enough, False otherwise
     """
+    # Handle both dict (new format) and Path (legacy format)
+    if cache_info is None:
+        return False
+
+    if isinstance(cache_info, dict):
+        file_path = cache_info.get("path")
+    else:
+        file_path = cache_info
+
     if file_path is None or not file_path.exists():
         return False
 
@@ -117,7 +425,7 @@ def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
         is_valid = file_age_days <= max_age_days
 
         if is_valid:
-            logger.info(
+            logger.debug(
                 f"✅ Cache valid: {file_path.name} "
                 f"(age: {file_age_days:.1f} days, limit: {max_age_days} days)"
             )
@@ -131,6 +439,142 @@ def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
     except Exception as e:
         logger.warning(f"Failed to check cache validity for {file_path}: {e}")
         return False
+
+
+def _merge_contiguous_ranges(ranges: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    """Merge contiguous date ranges to minimize API calls.
+
+    Args:
+        ranges: List of (start_date, end_date) tuples in YYYY-MM-DD format
+
+    Returns:
+        Merged list of date ranges where contiguous ranges are combined
+
+    Example:
+        Input: [('2025-01-01', '2025-01-05'), ('2025-01-06', '2025-01-10')]
+        Output: [('2025-01-01', '2025-01-10')]
+    """
+    if not ranges:
+        return []
+
+    # Convert to datetime for easier comparison
+    dt_ranges = []
+    for start_str, end_str in ranges:
+        start_dt = datetime.strptime(start_str, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_str, "%Y-%m-%d")
+        dt_ranges.append((start_dt, end_dt))
+
+    # Sort by start date
+    dt_ranges.sort()
+
+    # Merge contiguous ranges
+    merged = []
+    current_start, current_end = dt_ranges[0]
+
+    for start, end in dt_ranges[1:]:
+        # Check if this range is contiguous with the current range
+        if start <= current_end + timedelta(days=1):
+            # Contiguous or overlapping - extend current range
+            current_end = max(current_end, end)
+        else:
+            # Gap - save current range and start a new one
+            merged.append((current_start.strftime("%Y-%m-%d"), current_end.strftime("%Y-%m-%d")))
+            current_start, current_end = start, end
+
+    # Add the last range
+    merged.append((current_start.strftime("%Y-%m-%d"), current_end.strftime("%Y-%m-%d")))
+
+    # Log merging result if ranges were combined
+    if len(merged) < len(ranges):
+        logger.info(f"   Optimized: Merged {len(ranges)} ranges into {len(merged)} contiguous ranges")
+
+    return merged
+
+
+def _load_cache_data(cache_info: Dict, start_date: str, end_date: str, date_column: str = "Date") -> pl.DataFrame | None:
+    """Load cached data, handling both single-file and multi-file cases.
+
+    Args:
+        cache_info: Cache info dictionary from _find_latest_with_date_range()
+        start_date: Start date to filter (YYYY-MM-DD)
+        end_date: End date to filter (YYYY-MM-DD)
+        date_column: Name of the date column to filter (default: "Date")
+
+    Returns:
+        Merged DataFrame from cache files, or None if loading fails
+    """
+    try:
+        match_type = cache_info.get("match_type")
+
+        if match_type == "multi-partial":
+            # Load and merge multiple cache files
+            cache_files = cache_info.get("cache_files", [])
+            if not cache_files:
+                return None
+
+            logger.info(f"   Loading {len(cache_files)} cache files...")
+            all_frames = []
+
+            for cf in cache_files:
+                cache_path = cf["path"]
+                try:
+                    df = pl.read_parquet(cache_path)
+                    logger.info(f"   Loaded: {cache_path.name} ({len(df):,} records)")
+                    all_frames.append(df)
+                except Exception as e:
+                    logger.warning(f"   Failed to load {cache_path.name}: {e}")
+
+            if not all_frames:
+                return None
+
+            # Merge all frames
+            merged_df = pl.concat(all_frames)
+            logger.info(f"   Merged: {len(merged_df):,} total records from {len(all_frames)} files")
+
+            # Filter to requested date range
+            if date_column in merged_df.columns:
+                # Handle Date type (for TOPIX)
+                if merged_df.schema[date_column] == pl.Date:
+                    from_date_typed = pl.lit(start_date).str.strptime(pl.Date, "%Y-%m-%d")
+                    to_date_typed = pl.lit(end_date).str.strptime(pl.Date, "%Y-%m-%d")
+                    merged_df = merged_df.filter(
+                        (pl.col(date_column) >= from_date_typed) & (pl.col(date_column) <= to_date_typed)
+                    )
+                else:
+                    # String type
+                    merged_df = merged_df.filter(
+                        (pl.col(date_column) >= start_date) & (pl.col(date_column) <= end_date)
+                    )
+
+            return merged_df
+        else:
+            # Single file case (complete or partial match)
+            cache_path = cache_info.get("path")
+            if not cache_path:
+                return None
+
+            df = pl.read_parquet(cache_path)
+
+            # Filter to requested date range
+            if date_column in df.columns:
+                # Handle Date type (for TOPIX)
+                if df.schema[date_column] == pl.Date:
+                    from_date_typed = pl.lit(start_date).str.strptime(pl.Date, "%Y-%m-%d")
+                    to_date_typed = pl.lit(end_date).str.strptime(pl.Date, "%Y-%m-%d")
+                    df = df.filter(
+                        (pl.col(date_column) >= from_date_typed) & (pl.col(date_column) <= to_date_typed)
+                    )
+                else:
+                    # String type
+                    df = df.filter(
+                        (pl.col(date_column) >= start_date) & (pl.col(date_column) <= end_date)
+                    )
+
+            return df
+
+    except Exception as e:
+        logger.warning(f"Failed to load cache data: {e}")
+        return None
 
 
 # ========================================
@@ -350,133 +794,195 @@ class JQuantsOptimizedFetcherV4:
         max_cache_age_days = int(os.getenv("CACHE_MAX_AGE_DAYS", "7"))
 
         # Step 1: キャッシュをチェック
+        cached_data = None  # Will hold cached DataFrame for partial matches
+        missing_business_days = []  # Business days to fetch from API
+
         if use_cache and business_days:
             start_date = business_days[0]
             end_date = business_days[-1]
 
-            cached_file = _find_latest_with_date_range(
+            cache_info = _find_latest_with_date_range(
                 "daily_quotes_*.parquet",
                 start_date,
                 end_date
             )
 
-            if cached_file and _is_cache_valid(cached_file, max_cache_age_days):
-                try:
-                    price_df = pl.read_parquet(cached_file)
+            if cache_info and _is_cache_valid(cache_info, max_cache_age_days):
+                match_type = cache_info.get("match_type") if isinstance(cache_info, dict) else "complete"
 
-                    # 日付範囲フィルタ
-                    if "Date" in price_df.columns:
-                        price_df = price_df.filter(
-                            (pl.col("Date") >= start_date) & (pl.col("Date") <= end_date)
-                        )
+                if match_type == "complete":
+                    # Complete match - return directly
+                    try:
+                        price_df = pl.read_parquet(cache_info["path"])
 
-                    # 市場フィルタリング
-                    if target_codes and "Code" in price_df.columns:
-                        original_count = len(price_df)
-                        price_df = price_df.filter(pl.col("Code").is_in(target_codes))
-                        logger.info(f"  Filtered: {original_count} → {len(price_df)} records (market codes)")
+                        # 日付範囲フィルタ
+                        if "Date" in price_df.columns:
+                            price_df = price_df.filter(
+                                (pl.col("Date") >= start_date) & (pl.col("Date") <= end_date)
+                            )
 
-                    # キャッシュヒットを記録
-                    self.tracker.record_cache_hit("Daily Quotes", 45.0)  # 平均30-60秒の中央値
+                        # 市場フィルタリング
+                        if target_codes and "Code" in price_df.columns:
+                            original_count = len(price_df)
+                            price_df = price_df.filter(pl.col("Code").is_in(target_codes))
+                            logger.info(f"  Filtered: {original_count} → {len(price_df)} records (market codes)")
 
-                    self.tracker.end_component(metric, api_calls=0, records=len(price_df))
-                    return price_df
-                except Exception as e:
-                    logger.warning(f"⚠️  Failed to load cache: {e}, falling back to API")
-                    self.tracker.record_cache_miss("Daily Quotes")
+                        # キャッシュヒットを記録
+                        self.tracker.record_cache_hit("Daily Quotes", 45.0)  # 平均30-60秒の中央値
+
+                        self.tracker.end_component(metric, api_calls=0, records=len(price_df))
+                        return price_df
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to load cache: {e}, falling back to API")
+                        self.tracker.record_cache_miss("Daily Quotes")
+
+                elif match_type == "partial" or match_type == "multi-partial":
+                    # Partial match (single or multi-file) - load cached data and prepare to fetch missing range
+                    try:
+                        logger.info(f"🔄 Using {match_type.replace('-', ' ')} cache match ({cache_info['coverage']*100:.1f}% coverage)")
+                        cached_data = _load_cache_data(cache_info, start_date, end_date, date_column="Date")
+
+                        # Calculate which business days are missing
+                        missing_ranges = cache_info.get("missing_ranges") or []
+                        if not missing_ranges and cache_info.get("missing_start") and cache_info.get("missing_end"):
+                            missing_ranges = [(cache_info["missing_start"], cache_info["missing_end"])]
+
+                        missing_business_days = []
+                        range_summaries = []
+                        for range_start, range_end in missing_ranges:
+                            range_days = [
+                                d for d in business_days
+                                if d >= range_start and d <= range_end
+                            ]
+                            missing_business_days.extend(range_days)
+                            range_summaries.append((range_start, range_end, len(range_days)))
+                        if missing_business_days:
+                            missing_business_days = sorted(set(missing_business_days))
+
+                        logger.info(f"   Cached: {len(cached_data):,} records from cache")
+                        if range_summaries:
+                            for start, end, count in range_summaries:
+                                logger.info(f"   Need to fetch: {count} business days ({start} to {end})")
+                        else:
+                            logger.info("   Need to fetch: 0 business days (range already satisfied?)")
+
+                        # Record partial cache hit (estimate time saved)
+                        coverage = cache_info.get("coverage", 0.5)
+                        time_saved = 45.0 * coverage  # Proportional savings
+                        self.tracker.record_cache_hit(f"Daily Quotes (partial {coverage*100:.0f}%)", time_saved)
+
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to load partial cache: {e}, fetching all from API")
+                        cached_data = None
+                        missing_business_days = []
+                        self.tracker.record_cache_miss("Daily Quotes")
             else:
                 self.tracker.record_cache_miss("Daily Quotes")
 
-        # Step 2: キャッシュがなければAPIから取得
-        # 軸の自動選択
-        axis, axis_metrics = await self.axis_decider.get_optimal_axis(
-            session,
-            sample_days=business_days[:3] if len(business_days) > 3 else business_days,
-            market_filter=target_codes is not None
-        )
+        # If we have partial cache, only fetch missing days; otherwise fetch all
+        days_to_fetch = missing_business_days if missing_business_days else business_days
 
-        logger.info(f"Selected axis: {axis} (reason: {axis_metrics.get('decision_reason')})")
+        # Step 2: Fetch from API (if needed)
+        new_data = None
 
-        if axis == "by_code" and target_codes:
-            # 銘柄軸で取得
-            logger.info(f"Fetching by code axis for {len(target_codes)} stocks...")
+        if days_to_fetch:
+            # 軸の自動選択
+            axis, axis_metrics = await self.axis_decider.get_optimal_axis(
+                session,
+                sample_days=days_to_fetch[:3] if len(days_to_fetch) > 3 else days_to_fetch,
+                market_filter=target_codes is not None
+            )
 
-            all_dfs = []
-            api_calls = 0
+            logger.info(f"Selected axis: {axis} (reason: {axis_metrics.get('decision_reason')})")
 
-            # バッチ処理
-            codes_list = list(target_codes)
-            batch_size = 50
+            if axis == "by_code" and target_codes:
+                # 銘柄軸で取得
+                logger.info(f"Fetching by code axis for {len(target_codes)} stocks...")
 
-            for i in range(0, len(codes_list), batch_size):
-                batch_codes = codes_list[i:i+batch_size]
+                all_dfs = []
+                api_calls = 0
 
-                tasks = []
-                for code in batch_codes:
-                    task = self.code_fetcher.fetch_by_code(
-                        session, code,
-                        business_days[0], business_days[-1]
-                    )
-                    tasks.append(task)
+                # バッチ処理
+                codes_list = list(target_codes)
+                batch_size = 50
 
-                results = await asyncio.gather(*tasks)
-                api_calls += len(tasks)
+                for i in range(0, len(codes_list), batch_size):
+                    batch_codes = codes_list[i:i+batch_size]
 
-                for df in results:
-                    if not df.is_empty():
-                        all_dfs.append(df)
+                    tasks = []
+                    for code in batch_codes:
+                        task = self.code_fetcher.fetch_by_code(
+                            session, code,
+                            days_to_fetch[0], days_to_fetch[-1]
+                        )
+                        tasks.append(task)
 
-                logger.info(f"  Progress: {min(i+batch_size, len(codes_list))}/{len(codes_list)} stocks")
+                    results = await asyncio.gather(*tasks)
+                    api_calls += len(tasks)
 
-            if all_dfs:
-                combined_df = pl.concat(all_dfs)
+                    for df in results:
+                        if not df.is_empty():
+                            all_dfs.append(df)
 
-                # Step 3: キャッシュに保存
-                if use_cache and business_days:
-                    try:
-                        from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                        start_date = business_days[0]
-                        end_date = business_days[-1]
-                        cache_dir = Path("output/raw/prices")
-                        cache_dir.mkdir(parents=True, exist_ok=True)
-                        cache_path = cache_dir / f"daily_quotes_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                        save_parquet_with_gcs(combined_df, cache_path, auto_sync=False)
-                        logger.info(f"💾 Saved to cache: {cache_path.name}")
-                    except Exception as e:
-                        logger.warning(f"Failed to save cache: {e}")
+                    logger.info(f"  Progress: {min(i+batch_size, len(codes_list))}/{len(codes_list)} stocks")
 
-                self.tracker.end_component(metric, api_calls=api_calls, records=len(combined_df))
-                return combined_df
+                if all_dfs:
+                    new_data = pl.concat(all_dfs)
+            else:
+                # 日付軸で取得（既存の実装を使用）
+                logger.info(f"Fetching by date axis for {len(days_to_fetch)} days...")
+                new_data = await self.fetch_daily_quotes_bulk(session, days_to_fetch)
+
+                # 市場フィルタリング
+                if target_codes and not new_data.is_empty():
+                    original_count = len(new_data)
+                    new_data = new_data.filter(pl.col("Code").is_in(target_codes))
+                    logger.info(f"Filtered: {original_count} → {len(new_data)} records")
+
+        # Step 3: Merge cached + new data (if we have partial cache)
+        if cached_data is not None and new_data is not None and not new_data.is_empty():
+            # Merge cached and new data
+            logger.info(f"🔀 Merging cached ({len(cached_data):,}) + new ({len(new_data):,}) data...")
+            final_df = pl.concat([cached_data, new_data])
+            logger.info(f"   Total: {len(final_df):,} records after merge")
+        elif cached_data is not None:
+            # Only cached data (all business days were in cache)
+            final_df = cached_data
+        elif new_data is not None and not new_data.is_empty():
+            # Only new data (no cache or cache miss)
+            final_df = new_data
         else:
-            # 日付軸で取得（既存の実装を使用）
-            logger.info(f"Fetching by date axis for {len(business_days)} days...")
-            df = await self.fetch_daily_quotes_bulk(session, business_days)
+            # No data at all
+            self.tracker.end_component(metric)
+            return pl.DataFrame()
 
-            # 市場フィルタリング
-            if target_codes:
-                original_count = len(df)
-                df = df.filter(pl.col("Code").is_in(target_codes))
-                logger.info(f"Filtered: {original_count} → {len(df)} records")
+        # Apply market filtering to final result
+        if target_codes and "Code" in final_df.columns and cached_data is not None:
+            # Need to filter if we used cached data (already filtered for new_data above)
+            original_count = len(final_df)
+            final_df = final_df.filter(pl.col("Code").is_in(target_codes))
+            logger.info(f"  Final filter: {original_count} → {len(final_df)} records")
 
-            # Step 3: キャッシュに保存
-            if use_cache and business_days and not df.is_empty():
-                try:
-                    from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                    start_date = business_days[0]
-                    end_date = business_days[-1]
-                    cache_dir = Path("output/raw/prices")
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-                    cache_path = cache_dir / f"daily_quotes_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                    save_parquet_with_gcs(df, cache_path, auto_sync=False)
-                    logger.info(f"💾 Saved to cache: {cache_path.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to save cache: {e}")
+        # Step 4: Save extended cache (with full date range)
+        if use_cache and business_days and not final_df.is_empty():
+            try:
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+                start_date = business_days[0]
+                end_date = business_days[-1]
+                cache_dir = Path("output/raw/prices")
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_dir / f"daily_quotes_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
 
-            self.tracker.end_component(metric, api_calls=len(business_days), records=len(df))
-            return df
+                # Save merged data with full date range
+                save_parquet_with_gcs(final_df, cache_path, auto_sync=False)
+                logger.info(f"💾 Saved extended cache: {cache_path.name} ({len(final_df):,} records)")
+            except Exception as e:
+                logger.warning(f"Failed to save cache: {e}")
 
-        self.tracker.end_component(metric)
-        return pl.DataFrame()
+        # Calculate API calls for tracking
+        api_calls_made = len(days_to_fetch) if days_to_fetch and new_data is not None else 0
+        self.tracker.end_component(metric, api_calls=api_calls_made, records=len(final_df))
+        return final_df
 
     async def fetch_daily_quotes_bulk(
         self,
@@ -609,7 +1115,7 @@ class JQuantsOptimizedFetcherV4:
     async def fetch_statements_by_date(
         self, session: aiohttp.ClientSession, business_days: List[str]
     ) -> pl.DataFrame:
-        """date軸での財務諸表取得 - キャッシュ優先（20%高速化）"""
+        """date軸での財務諸表取得 - キャッシュ優先（20%高速化）+ 部分マッチ対応"""
         metric = self.tracker.start_component("statements_by_date")
 
         # Check environment variables for cache control
@@ -617,89 +1123,159 @@ class JQuantsOptimizedFetcherV4:
         max_cache_age_days = int(os.getenv("CACHE_MAX_AGE_DAYS", "7"))
 
         # Step 1: キャッシュをチェック
+        cached_data = None
+        missing_business_days = []
+
         if use_cache and business_days:
             start_date = business_days[0]
             end_date = business_days[-1]
 
-            cached_file = _find_latest_with_date_range(
+            cache_info = _find_latest_with_date_range(
                 "event_raw_statements_*.parquet",
                 start_date,
                 end_date
             )
 
-            if cached_file and _is_cache_valid(cached_file, max_cache_age_days):
-                try:
-                    statements_df = pl.read_parquet(cached_file)
+            if cache_info and _is_cache_valid(cache_info, max_cache_age_days):
+                match_type = cache_info.get("match_type") if isinstance(cache_info, dict) else "complete"
 
-                    # 日付範囲フィルタ（DisclosedDateまたはDisclosureDate列がある場合）
-                    date_col = None
-                    if "DisclosedDate" in statements_df.columns:
-                        date_col = "DisclosedDate"
-                    elif "DisclosureDate" in statements_df.columns:
-                        date_col = "DisclosureDate"
+                if match_type == "complete":
+                    # Complete match - return directly
+                    try:
+                        statements_df = pl.read_parquet(cache_info["path"])
 
-                    if date_col:
-                        statements_df = statements_df.filter(
-                            (pl.col(date_col) >= start_date) & (pl.col(date_col) <= end_date)
-                        )
+                        # 日付範囲フィルタ（DisclosedDateまたはDisclosureDate列がある場合）
+                        date_col = None
+                        if "DisclosedDate" in statements_df.columns:
+                            date_col = "DisclosedDate"
+                        elif "DisclosureDate" in statements_df.columns:
+                            date_col = "DisclosureDate"
 
-                    # キャッシュヒットを記録
-                    self.tracker.record_cache_hit("Statements", 30.0)  # 平均20-40秒の中央値
+                        if date_col:
+                            statements_df = statements_df.filter(
+                                (pl.col(date_col) >= start_date) & (pl.col(date_col) <= end_date)
+                            )
 
-                    self.tracker.end_component(metric, api_calls=0, records=len(statements_df))
-                    return statements_df
-                except Exception as e:
-                    logger.warning(f"⚠️  Failed to load cache: {e}, falling back to API")
-                    self.tracker.record_cache_miss("Statements")
+                        # キャッシュヒットを記録
+                        self.tracker.record_cache_hit("Statements", 30.0)  # 平均20-40秒の中央値
+
+                        self.tracker.end_component(metric, api_calls=0, records=len(statements_df))
+                        return statements_df
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to load cache: {e}, falling back to API")
+                        self.tracker.record_cache_miss("Statements")
+
+                elif match_type == "partial" or match_type == "multi-partial":
+                    # Partial match (single or multi-file) - load cached data and prepare to fetch missing range
+                    try:
+                        logger.info(f"🔄 Using {match_type.replace('-', ' ')} cache match ({cache_info['coverage']*100:.1f}% coverage)")
+
+                        # Determine which date column to use
+                        # Note: We'll use DisclosedDate as the primary column
+                        date_col = "DisclosedDate"  # Default, will be checked in helper
+                        cached_data = _load_cache_data(cache_info, start_date, end_date, date_column=date_col)
+
+                        # Calculate missing business days
+                        missing_ranges = cache_info.get("missing_ranges") or []
+                        if not missing_ranges and cache_info.get("missing_start") and cache_info.get("missing_end"):
+                            missing_ranges = [(cache_info["missing_start"], cache_info["missing_end"])]
+
+                        missing_business_days = []
+                        range_summaries = []
+                        for range_start, range_end in missing_ranges:
+                            range_days = [
+                                d for d in business_days
+                                if d >= range_start and d <= range_end
+                            ]
+                            missing_business_days.extend(range_days)
+                            range_summaries.append((range_start, range_end, len(range_days)))
+                        if missing_business_days:
+                            missing_business_days = sorted(set(missing_business_days))
+
+                        logger.info(f"   Cached: {len(cached_data):,} records from cache")
+                        if range_summaries:
+                            for start, end, count in range_summaries:
+                                logger.info(f"   Need to fetch: {count} business days ({start} to {end})")
+                        else:
+                            logger.info("   Need to fetch: 0 business days (range already satisfied?)")
+
+                        # Record partial cache hit
+                        coverage = cache_info.get("coverage", 0.5)
+                        time_saved = 30.0 * coverage
+                        self.tracker.record_cache_hit(f"Statements (partial {coverage*100:.0f}%)", time_saved)
+
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to load partial cache: {e}, fetching all from API")
+                        cached_data = None
+                        missing_business_days = []
+                        self.tracker.record_cache_miss("Statements")
             else:
                 self.tracker.record_cache_miss("Statements")
 
-        # Step 2: キャッシュがなければAPIから取得
-        url = f"{self.base_url}/fins/statements"
-        headers = {"Authorization": f"Bearer {self.id_token}"}
+        # If we have partial cache, only fetch missing days; otherwise fetch all
+        days_to_fetch = missing_business_days if missing_business_days else business_days
 
-        all_statements = []
-        valid_days = 0
+        # Step 2: Fetch from API (if needed)
+        new_data = None
 
-        for date in business_days:
-            date_api = date.replace("-", "")
-            params = {"date": date_api}
-            pagination_key = None
-            statements_for_date = []
+        if days_to_fetch:
+            url = f"{self.base_url}/fins/statements"
+            headers = {"Authorization": f"Bearer {self.id_token}"}
 
-            while True:
-                if pagination_key:
-                    params["pagination_key"] = pagination_key
+            all_statements = []
 
-                try:
-                    async with self.semaphore:
-                        async with session.get(url, headers=headers, params=params) as response:
-                            if response.status == 404:
-                                break
-                            elif response.status != 200:
-                                break
+            for date in days_to_fetch:
+                date_api = date.replace("-", "")
+                params = {"date": date_api}
+                pagination_key = None
+                statements_for_date = []
 
-                            data = await response.json()
-                            statements = data.get("statements", [])
+                while True:
+                    if pagination_key:
+                        params["pagination_key"] = pagination_key
 
-                            if statements:
-                                statements_for_date.extend(statements)
+                    try:
+                        async with self.semaphore:
+                            async with session.get(url, headers=headers, params=params) as response:
+                                if response.status == 404:
+                                    break
+                                elif response.status != 200:
+                                    break
 
-                            pagination_key = data.get("pagination_key")
-                            if not pagination_key:
-                                break
+                                data = await response.json()
+                                statements = data.get("statements", [])
 
-                except Exception:
-                    break
+                                if statements:
+                                    statements_for_date.extend(statements)
 
-            if statements_for_date:
-                all_statements.extend(statements_for_date)
-                valid_days += 1
+                                pagination_key = data.get("pagination_key")
+                                if not pagination_key:
+                                    break
 
-        result_df = pl.DataFrame() if not all_statements else pl.DataFrame(all_statements)
+                    except Exception:
+                        break
 
-        # Step 3: キャッシュに保存
-        if use_cache and business_days and not result_df.is_empty():
+                if statements_for_date:
+                    all_statements.extend(statements_for_date)
+
+            if all_statements:
+                new_data = pl.DataFrame(all_statements)
+
+        # Step 3: Merge cached + new data
+        if cached_data is not None and new_data is not None and not new_data.is_empty():
+            logger.info(f"🔀 Merging cached ({len(cached_data):,}) + new ({len(new_data):,}) statements...")
+            final_df = pl.concat([cached_data, new_data])
+            logger.info(f"   Total: {len(final_df):,} records after merge")
+        elif cached_data is not None:
+            final_df = cached_data
+        elif new_data is not None and not new_data.is_empty():
+            final_df = new_data
+        else:
+            self.tracker.end_component(metric, api_calls=0, records=0)
+            return pl.DataFrame()
+
+        # Step 4: Save extended cache
+        if use_cache and business_days and not final_df.is_empty():
             try:
                 from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
                 start_date = business_days[0]
@@ -707,113 +1283,181 @@ class JQuantsOptimizedFetcherV4:
                 cache_dir = Path("output/raw/statements")
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_path = cache_dir / f"event_raw_statements_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
-                save_parquet_with_gcs(result_df, cache_path, auto_sync=False)
-                logger.info(f"💾 Saved to cache: {cache_path.name}")
+                save_parquet_with_gcs(final_df, cache_path, auto_sync=False)
+                logger.info(f"💾 Saved extended cache: {cache_path.name} ({len(final_df):,} records)")
             except Exception as e:
                 logger.warning(f"Failed to save cache: {e}")
 
-        self.tracker.end_component(metric, api_calls=len(business_days), records=len(result_df))
-        return result_df
+        api_calls_made = len(days_to_fetch) if days_to_fetch and new_data is not None else 0
+        self.tracker.end_component(metric, api_calls=api_calls_made, records=len(final_df))
+        return final_df
 
     async def fetch_topix_data(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
     ) -> pl.DataFrame:
-        """Fetch TOPIX index data - キャッシュ優先（5%高速化）"""
+        """Fetch TOPIX index data - キャッシュ優先（5%高速化）+ 部分マッチ対応"""
 
         # Check environment variables for cache control
         use_cache = os.getenv("USE_CACHE", "1") == "1"
         max_cache_age_days = int(os.getenv("CACHE_MAX_AGE_DAYS", "7"))
 
         # Step 1: キャッシュをチェック
+        cached_data = None
+        missing_ranges: List[Tuple[str, str]] = []
+
         if use_cache:
-            cached_file = _find_latest_with_date_range(
+            cache_info = _find_latest_with_date_range(
                 "topix_history_*.parquet",
                 from_date,
                 to_date
             )
 
-            if cached_file and _is_cache_valid(cached_file, max_cache_age_days):
-                try:
-                    topix_df = pl.read_parquet(cached_file)
+            if cache_info and _is_cache_valid(cache_info, max_cache_age_days):
+                match_type = cache_info.get("match_type") if isinstance(cache_info, dict) else "complete"
 
-                    # 日付範囲フィルタ
-                    if "Date" in topix_df.columns:
-                        topix_df = topix_df.filter(
-                            (pl.col("Date") >= from_date) & (pl.col("Date") <= to_date)
-                        )
+                if match_type == "complete":
+                    # Complete match - return directly
+                    try:
+                        topix_df = pl.read_parquet(cache_info["path"])
 
-                    # キャッシュヒットを記録
-                    self.tracker.record_cache_hit("TOPIX", 3.5)  # 平均2-5秒の中央値
+                        # 日付範囲フィルタ (Date型の列と比較するため、文字列をDate型に変換)
+                        if "Date" in topix_df.columns:
+                            from_date_typed = pl.lit(from_date).str.strptime(pl.Date, "%Y-%m-%d")
+                            to_date_typed = pl.lit(to_date).str.strptime(pl.Date, "%Y-%m-%d")
+                            topix_df = topix_df.filter(
+                                (pl.col("Date") >= from_date_typed) & (pl.col("Date") <= to_date_typed)
+                            )
 
-                    return topix_df
-                except Exception as e:
-                    logger.warning(f"⚠️  Failed to load cache: {e}, falling back to API")
-                    self.tracker.record_cache_miss("TOPIX")
+                        # キャッシュヒットを記録
+                        self.tracker.record_cache_hit("TOPIX", 3.5)  # 平均2-5秒の中央値
+
+                        return topix_df
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to load cache: {e}, falling back to API")
+                        self.tracker.record_cache_miss("TOPIX")
+
+                elif match_type == "partial" or match_type == "multi-partial":
+                    # Partial match (single or multi-file) - load cached data and prepare to fetch missing range
+                    try:
+                        logger.info(f"🔄 Using {match_type.replace('-', ' ')} cache match ({cache_info['coverage']*100:.1f}% coverage)")
+                        cached_data = _load_cache_data(cache_info, from_date, to_date, date_column="Date")
+
+                        # Get missing date ranges
+                        missing_ranges = cache_info.get("missing_ranges") or []
+                        if not missing_ranges and cache_info.get("missing_start") and cache_info.get("missing_end"):
+                            missing_ranges = [(cache_info["missing_start"], cache_info["missing_end"])]
+
+                        logger.info(f"   Cached: {len(cached_data):,} records from cache")
+                        if missing_ranges:
+                            for start, end in missing_ranges:
+                                logger.info(f"   Need to fetch: {start} to {end}")
+                        else:
+                            logger.info("   Need to fetch: (no gaps detected)")
+
+                        # Record partial cache hit
+                        coverage = cache_info.get("coverage", 0.5)
+                        time_saved = 3.5 * coverage
+                        self.tracker.record_cache_hit(f"TOPIX (partial {coverage*100:.0f}%)", time_saved)
+
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to load partial cache: {e}, fetching all from API")
+                        cached_data = None
+                        missing_ranges = []
+                        self.tracker.record_cache_miss("TOPIX")
             else:
                 self.tracker.record_cache_miss("TOPIX")
 
-        # Step 2: キャッシュがなければAPIから取得
-        url = f"{self.base_url}/indices/topix"
-        headers = {"Authorization": f"Bearer {self.id_token}"}
+        # Determine what to fetch
+        if cached_data is not None:
+            ranges_to_fetch = missing_ranges
+        else:
+            ranges_to_fetch = [(from_date, to_date)]
 
-        from_api = from_date.replace("-", "")
-        to_api = to_date.replace("-", "")
+        # Phase 2 optimization #3: Merge contiguous ranges to reduce API calls
+        if len(ranges_to_fetch) > 1:
+            ranges_to_fetch = _merge_contiguous_ranges(ranges_to_fetch)
 
-        all_data = []
-        pagination_key = None
+        # Step 2: Fetch from API (if needed)
+        new_data = None
 
-        while True:
-            params = {"from": from_api, "to": to_api}
-            if pagination_key:
-                params["pagination_key"] = pagination_key
+        if ranges_to_fetch:
+            url = f"{self.base_url}/indices/topix"
+            headers = {"Authorization": f"Bearer {self.id_token}"}
 
+            fetched_frames: List[pl.DataFrame] = []
+
+            for fetch_from, fetch_to in ranges_to_fetch:
+                from_api = fetch_from.replace("-", "")
+                to_api = fetch_to.replace("-", "")
+
+                all_data = []
+                pagination_key = None
+
+                while True:
+                    params = {"from": from_api, "to": to_api}
+                    if pagination_key:
+                        params["pagination_key"] = pagination_key
+
+                    try:
+                        async with session.get(url, headers=headers, params=params) as response:
+                            if response.status != 200:
+                                logger.warning(f"Failed to fetch TOPIX: {response.status}")
+                                break
+
+                            data = await response.json()
+                            topix_data = data.get("topix", [])
+
+                            if topix_data:
+                                all_data.extend(topix_data)
+
+                            pagination_key = data.get("pagination_key")
+                            if not pagination_key:
+                                break
+
+                    except Exception as e:
+                        logger.error(f"Error fetching TOPIX: {e}")
+                        break
+
+                if all_data:
+                    frame = pl.DataFrame(all_data)
+                    if "Date" in frame.columns:
+                        frame = frame.with_columns(
+                            pl.col("Date").str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
+                        )
+                    for c in ("Open", "High", "Low", "Close", "Volume"):
+                        if c in frame.columns:
+                            frame = frame.with_columns(pl.col(c).cast(pl.Float64, strict=False))
+                    frame = frame.sort("Date")
+                    fetched_frames.append(frame)
+
+            if fetched_frames:
+                new_data = pl.concat(fetched_frames).sort("Date")
+
+        # Step 3: Merge cached + new data
+        if cached_data is not None and new_data is not None and not new_data.is_empty():
+            logger.info(f"🔀 Merging cached ({len(cached_data):,}) + new ({len(new_data):,}) TOPIX data...")
+            final_df = pl.concat([cached_data, new_data]).sort("Date")
+            logger.info(f"   Total: {len(final_df):,} records after merge")
+        elif cached_data is not None:
+            final_df = cached_data
+        elif new_data is not None and not new_data.is_empty():
+            final_df = new_data
+        else:
+            return pl.DataFrame()
+
+        # Step 4: Save extended cache
+        if use_cache and not final_df.is_empty():
             try:
-                async with session.get(url, headers=headers, params=params) as response:
-                    if response.status != 200:
-                        logger.warning(f"Failed to fetch TOPIX: {response.status}")
-                        break
-
-                    data = await response.json()
-                    topix_data = data.get("topix", [])
-
-                    if topix_data:
-                        all_data.extend(topix_data)
-
-                    pagination_key = data.get("pagination_key")
-                    if not pagination_key:
-                        break
-
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+                cache_dir = Path("output/raw/indices")
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_dir / f"topix_history_{from_date.replace('-', '')}_{to_date.replace('-', '')}.parquet"
+                save_parquet_with_gcs(final_df, cache_path, auto_sync=False)
+                logger.info(f"💾 Saved extended cache: {cache_path.name} ({len(final_df):,} records)")
             except Exception as e:
-                logger.error(f"Error fetching TOPIX: {e}")
-                break
+                logger.warning(f"Failed to save cache: {e}")
 
-        if all_data:
-            df = pl.DataFrame(all_data)
-            # Normalize dtypes
-            if "Date" in df.columns:
-                df = df.with_columns(
-                    pl.col("Date").str.strptime(pl.Date, format="%Y-%m-%d", strict=False)
-                )
-            for c in ("Open", "High", "Low", "Close", "Volume"):
-                if c in df.columns:
-                    df = df.with_columns(pl.col(c).cast(pl.Float64, strict=False))
-            df = df.sort("Date")
-
-            # Step 3: キャッシュに保存
-            if use_cache and not df.is_empty():
-                try:
-                    from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                    cache_dir = Path("output/raw/indices")
-                    cache_dir.mkdir(parents=True, exist_ok=True)
-                    cache_path = cache_dir / f"topix_history_{from_date.replace('-', '')}_{to_date.replace('-', '')}.parquet"
-                    save_parquet_with_gcs(df, cache_path, auto_sync=False)
-                    logger.info(f"💾 Saved to cache: {cache_path.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to save cache: {e}")
-
-            return df
-
-        return pl.DataFrame()
+        return final_df
 
     async def fetch_trades_spec(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -896,54 +1540,51 @@ class JQuantsPipelineV4Optimized:
         if not end_date:
             end_date = datetime.now().strftime("%Y-%m-%d")
         if not start_date:
-            start_date = os.getenv("ML_PIPELINE_START_DATE", "2019-01-01")
+            # Default to 1 year ago if not specified (instead of forcing 10 years)
+            start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
 
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
 
-        min_available_dt: datetime | None = None
-        min_available_str = os.getenv("JQUANTS_MIN_AVAILABLE_DATE") or os.getenv("ML_PIPELINE_START_DATE")
-        if min_available_str:
+        # Support rolling contracts (e.g., "last 10 years")
+        # Priority: JQUANTS_SUBSCRIPTION_START > dynamic calculation from JQUANTS_CONTRACT_YEARS
+        subscription_start_str = os.getenv("JQUANTS_SUBSCRIPTION_START")
+
+        if subscription_start_str:
+            # Explicit start date provided
             try:
-                min_available_dt = datetime.strptime(min_available_str, "%Y-%m-%d")
+                subscription_start_dt = datetime.strptime(subscription_start_str, "%Y-%m-%d")
             except ValueError:
                 logger.warning(
-                    "Invalid subscription lower bound %s; ignoring",
-                    min_available_str,
+                    "Invalid JQUANTS_SUBSCRIPTION_START=%s; falling back to rolling contract",
+                    subscription_start_str,
                 )
+                subscription_start_str = None
 
-        span_days = (end_dt - start_dt).days
-        min_span = max(MIN_COLLECTION_DAYS, SUPPORT_LOOKBACK_DAYS)
-        if span_days < min_span:
-            adjusted_start_dt = end_dt - timedelta(days=min_span)
-            if min_available_dt and adjusted_start_dt < min_available_dt:
-                adjusted_start_dt = min_available_dt
-            if adjusted_start_dt < start_dt:
-                logger.info(
-                    "Extending start date from %s to %s to satisfy minimum collection span of %d days",
-                    start_dt.strftime("%Y-%m-%d"),
-                    adjusted_start_dt.strftime("%Y-%m-%d"),
-                    min_span,
-                )
-            start_dt = adjusted_start_dt
-            start_date = start_dt.strftime("%Y-%m-%d")
-
-        if min_available_dt and start_dt < min_available_dt:
+        if not subscription_start_str:
+            # Dynamic rolling contract (e.g., last 10 years from today)
+            contract_years = int(os.getenv("JQUANTS_CONTRACT_YEARS", "10"))
+            subscription_start_dt = datetime.now() - timedelta(days=365 * contract_years + 2)  # +2 for leap years
             logger.info(
-                "Capping start date at subscription lower bound %s",
-                min_available_dt.strftime("%Y-%m-%d"),
+                "Using rolling %d-year contract: subscription starts from %s (dynamic)",
+                contract_years,
+                subscription_start_dt.strftime("%Y-%m-%d"),
             )
-            start_dt = min_available_dt
-            start_date = start_dt.strftime("%Y-%m-%d")
+
+        # Note: No longer enforce MIN_COLLECTION_DAYS
+        # Just use requested dates + lookback for technical indicators
+        # If you want long-term data, specify explicit --start-date
 
         support_start_dt = start_dt - timedelta(days=SUPPORT_LOOKBACK_DAYS)
-        if min_available_dt and support_start_dt < min_available_dt:
-            logger.info(
-                "Capping support lookback start %s at %s",
+        if support_start_dt < subscription_start_dt:
+            logger.warning(
+                "⚠️  Lookback start %s is before subscription coverage %s; clamping to %s",
                 support_start_dt.strftime("%Y-%m-%d"),
-                min_available_dt.strftime("%Y-%m-%d"),
+                subscription_start_dt.strftime("%Y-%m-%d"),
+                subscription_start_dt.strftime("%Y-%m-%d"),
             )
-            support_start_dt = min_available_dt
+            logger.warning("   (This is normal for early dates - technical indicators may have less history)")
+            support_start_dt = subscription_start_dt
         support_start_date = support_start_dt.strftime("%Y-%m-%d")
 
         async with aiohttp.ClientSession() as session:

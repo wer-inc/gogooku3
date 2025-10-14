@@ -715,33 +715,74 @@ async def main() -> int:
     )
     start_date = start_dt.strftime("%Y-%m-%d")
     end_date = end_dt.strftime("%Y-%m-%d")
+    requested_start_date = start_date
 
-    # Respect subscription lower bound so we don't trigger 400 errors when
-    # enforcing the 420-day support lookback. 既定では ML_PIPELINE_START_DATE
-    # を最小開始日に用い、指定が無ければ start_date を下限とする。
-    min_available_str = (
-        os.getenv("JQUANTS_MIN_AVAILABLE_DATE")
-        or os.getenv("ML_PIPELINE_START_DATE")
-        or start_date
-    )
-    try:
-        min_available_dt = datetime.strptime(min_available_str, "%Y-%m-%d")
-    except ValueError:
-        logger.warning(
-            "Invalid JQUANTS_MIN_AVAILABLE_DATE=%s; falling back to %s",
-            min_available_str,
-            start_date,
-        )
-        min_available_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    # Separate contract validation from data fetch range
+    # Contract validation: Use JQUANTS_SUBSCRIPTION_START for API 400 prevention
+    # Data fetch range: Use user-requested dates (no forced historical data)
 
-    flow_start_dt = start_dt - timedelta(days=FLOW_SUPPORT_LOOKBACK_DAYS)
-    if flow_start_dt < min_available_dt:
+    # Support rolling contracts (e.g., "last 10 years")
+    # Priority: JQUANTS_SUBSCRIPTION_START > dynamic calculation from JQUANTS_CONTRACT_YEARS
+    subscription_start_str = os.getenv("JQUANTS_SUBSCRIPTION_START")
+
+    if subscription_start_str:
+        # Explicit start date provided
+        try:
+            subscription_start_dt = datetime.strptime(subscription_start_str, "%Y-%m-%d")
+        except ValueError:
+            logger.warning(
+                "Invalid JQUANTS_SUBSCRIPTION_START=%s; falling back to rolling contract",
+                subscription_start_str,
+            )
+            subscription_start_str = None
+
+    if not subscription_start_str:
+        # Dynamic rolling contract (e.g., last 10 years from today)
+        contract_years = int(os.getenv("JQUANTS_CONTRACT_YEARS", "10"))
+        subscription_start_dt = datetime.now() - timedelta(days=365 * contract_years + 2)  # +2 for leap years
         logger.info(
-            "Flow support start %s is before subscription lower bound %s; capping",
-            flow_start_dt.strftime("%Y-%m-%d"),
-            min_available_dt.strftime("%Y-%m-%d"),
+            "Using rolling %d-year contract: subscription starts from %s (dynamic)",
+            contract_years,
+            subscription_start_dt.strftime("%Y-%m-%d"),
         )
-        flow_start_dt = min_available_dt
+
+    # Validate user-requested range is within subscription coverage
+    # If out of range, stop immediately with clear error message
+    if args.jquants:
+        if start_dt < subscription_start_dt:
+            logger.error(
+                "❌ Requested start date %s is before subscription coverage %s",
+                start_date,
+                subscription_start_dt.strftime("%Y-%m-%d"),
+            )
+            logger.error("   Please adjust --start-date or check your J-Quants plan")
+            logger.error("   Your subscription covers: %s ~ now", subscription_start_dt.strftime("%Y-%m-%d"))
+            return 1
+
+        if end_dt < subscription_start_dt:
+            logger.error(
+                "❌ Requested end date %s is before subscription coverage %s",
+                end_date,
+                subscription_start_dt.strftime("%Y-%m-%d"),
+            )
+            logger.error("   Your subscription covers: %s ~ now", subscription_start_dt.strftime("%Y-%m-%d"))
+            return 1
+
+    # Calculate lookback start for technical indicators (420 days)
+    # This is a system requirement, not a user request
+    flow_start_dt = start_dt - timedelta(days=FLOW_SUPPORT_LOOKBACK_DAYS)
+
+    # Clamp lookback to subscription start if needed (this is acceptable)
+    # User didn't request this far back, it's just for indicator calculation
+    if flow_start_dt < subscription_start_dt:
+        logger.warning(
+            "⚠️  Lookback start %s is before subscription coverage %s; clamping to %s",
+            flow_start_dt.strftime("%Y-%m-%d"),
+            subscription_start_dt.strftime("%Y-%m-%d"),
+            subscription_start_dt.strftime("%Y-%m-%d"),
+        )
+        logger.warning("   (This is normal for early dates - technical indicators may have less history)")
+        flow_start_dt = subscription_start_dt
 
     flow_start_date = flow_start_dt.strftime("%Y-%m-%d")
 
@@ -1273,6 +1314,12 @@ async def main() -> int:
         disable_halt_mask=getattr(args, "disable_halt_mask", False),
     )
     logger.info("Full enriched dataset saved")
+    if requested_start_date != start_date:
+        logger.info(
+            "Dataset start date adjusted to %s (requested %s) due to subscription coverage",
+            start_date,
+            requested_start_date,
+        )
     logger.info(f"  Dataset : {pq_path}")
     logger.info(f"  Metadata: {meta_path}")
     logger.info(f"  Symlink : {Path('output') / 'ml_dataset_latest_full.parquet'}")
