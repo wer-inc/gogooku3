@@ -1,0 +1,246 @@
+# ============================================================================
+# Makefile.train - Unified Training Commands
+# ============================================================================
+#
+# This file provides a clean, hierarchical training command structure:
+#
+# Layer 1 (User-Friendly): Simple commands for common tasks
+# Layer 2 (Detailed Control): Explicit control over training parameters
+# Layer 3 (Utilities): Monitoring, validation, and management tools
+#
+# ============================================================================
+
+.PHONY: help-train
+
+help-train:
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo "  🧠 Training Commands"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@echo ""
+	@echo "📊 Layer 1: User-Friendly (RECOMMENDED)"
+	@echo "  make train           Start optimized training (background, 120 epochs)"
+	@echo "  make train-quick     Quick validation (3 epochs, foreground)"
+	@echo "  make train-safe      Stable training (single-worker, conservative)"
+	@echo ""
+	@echo "🎯 Layer 2: Detailed Control"
+	@echo "  make train-optimized Full optimizations (multi-worker, compile, RankIC)"
+	@echo "  make train-standard  Standard training (conservative settings)"
+	@echo ""
+	@echo "🛠️  Layer 3: Utilities"
+	@echo "  make train-status    Check training status and progress"
+	@echo "  make train-stop      Stop running training"
+	@echo "  make train-validate  Validate configuration"
+	@echo "  make train-monitor   Monitor training logs in real-time"
+	@echo ""
+	@echo "⚙️  Environment Variables (optional)"
+	@echo "  EPOCHS=N             Number of epochs (default: 120)"
+	@echo "  BATCH_SIZE=N         Batch size (default: 2048)"
+	@echo "  LR=N                 Learning rate (default: 2e-4)"
+	@echo "  HIDDEN_SIZE=N        Model hidden size (default: 256)"
+	@echo "  DATA_PATH=path       Dataset path (default: auto-detect)"
+	@echo ""
+	@echo "📝 Examples"
+	@echo "  make train                    # Standard optimized training"
+	@echo "  make train EPOCHS=75          # Custom epoch count"
+	@echo "  make train-quick              # Quick 3-epoch test"
+	@echo "  make train-safe EPOCHS=50     # Safe mode with custom epochs"
+	@echo "  make train-status             # Check progress"
+	@echo ""
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+# ============================================================================
+# Layer 1: User-Friendly Commands
+# ============================================================================
+
+.PHONY: train train-quick train-safe
+
+# Default training settings
+EPOCHS ?= 120
+BATCH_SIZE ?= 2048
+LR ?= 2e-4
+HIDDEN_SIZE ?= 256
+DATA_PATH ?= output/ml_dataset_latest_full.parquet
+LOG_DIR ?= _logs/training
+
+train:
+	@echo "🚀 Starting optimized training (background)"
+	@echo "   Epochs: $(EPOCHS)"
+	@echo "   Batch size: $(BATCH_SIZE)"
+	@echo "   Learning rate: $(LR)"
+	@echo "   Hidden size: $(HIDDEN_SIZE)"
+	@echo "   Dataset: $(DATA_PATH)"
+	@echo ""
+	@mkdir -p $(LOG_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR)/train_$${TIMESTAMP}.log"; \
+	echo "📝 Log file: $$LOG_FILE"; \
+	nohup python scripts/train.py \
+		--data-path $(DATA_PATH) \
+		--epochs $(EPOCHS) \
+		--batch-size $(BATCH_SIZE) \
+		--lr $(LR) \
+		--hidden-size $(HIDDEN_SIZE) \
+		--mode optimized \
+		--background \
+		> $$LOG_FILE 2>&1 & \
+	PID=$$!; \
+	echo $$PID > $(LOG_DIR)/latest.pid; \
+	ln -sf train_$${TIMESTAMP}.log $(LOG_DIR)/latest.log; \
+	echo "✅ Training started (PID: $$PID)"; \
+	echo "📊 Monitor: make train-monitor"; \
+	echo "🛑 Stop: make train-stop"
+
+train-quick:
+	@echo "⚡ Running quick validation (3 epochs)"
+	@echo "   This will run in foreground for immediate feedback"
+	@python scripts/train.py \
+		--data-path $(DATA_PATH) \
+		--epochs 3 \
+		--batch-size $(BATCH_SIZE) \
+		--lr $(LR) \
+		--hidden-size $(HIDDEN_SIZE) \
+		--mode optimized \
+		--no-background
+
+train-safe:
+	@echo "🛡️  Starting safe training (single-worker, conservative)"
+	@echo "   Epochs: $(EPOCHS)"
+	@echo "   Batch size: 128 (fixed for stability)"
+	@mkdir -p $(LOG_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	LOG_FILE="$(LOG_DIR)/train_safe_$${TIMESTAMP}.log"; \
+	echo "📝 Log file: $$LOG_FILE"; \
+	nohup python scripts/train.py \
+		--data-path $(DATA_PATH) \
+		--epochs $(EPOCHS) \
+		--batch-size 128 \
+		--lr 1e-4 \
+		--hidden-size $(HIDDEN_SIZE) \
+		--mode safe \
+		--background \
+		> $$LOG_FILE 2>&1 & \
+	PID=$$!; \
+	echo $$PID > $(LOG_DIR)/latest_safe.pid; \
+	ln -sf train_safe_$${TIMESTAMP}.log $(LOG_DIR)/latest_safe.log; \
+	echo "✅ Safe training started (PID: $$PID)"; \
+	echo "📊 Monitor: tail -f $$LOG_FILE"
+
+# ============================================================================
+# Layer 2: Detailed Control
+# ============================================================================
+
+.PHONY: train-optimized train-standard
+
+train-optimized:
+	@echo "🎯 Running fully optimized training"
+	@echo "   ✅ Multi-worker DataLoader (NUM_WORKERS=8)"
+	@echo "   ✅ Model capacity (hidden_size=$(HIDDEN_SIZE))"
+	@echo "   ✅ RankIC + Sharpe optimization"
+	@echo "   ✅ torch.compile enabled"
+	@echo "   ✅ Plateau scheduler"
+	@python scripts/train.py \
+		--data-path $(DATA_PATH) \
+		--epochs $(EPOCHS) \
+		--batch-size $(BATCH_SIZE) \
+		--lr $(LR) \
+		--hidden-size $(HIDDEN_SIZE) \
+		--mode optimized \
+		--compile \
+		--multi-worker \
+		--num-workers 8 \
+		--no-background
+
+train-standard:
+	@echo "📊 Running standard training (conservative)"
+	@echo "   ✅ Single-worker (stable)"
+	@echo "   ✅ Standard loss functions"
+	@echo "   ✅ No experimental features"
+	@python scripts/train.py \
+		--data-path $(DATA_PATH) \
+		--epochs $(EPOCHS) \
+		--batch-size 512 \
+		--lr 1e-4 \
+		--hidden-size 128 \
+		--mode standard \
+		--no-background
+
+# ============================================================================
+# Layer 3: Utilities
+# ============================================================================
+
+.PHONY: train-status train-stop train-validate train-monitor
+
+train-status:
+	@echo "📊 Training Status"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	@if [ -f $(LOG_DIR)/latest.pid ]; then \
+		PID=$$(cat $(LOG_DIR)/latest.pid); \
+		if ps -p $$PID > /dev/null 2>&1; then \
+			echo "✅ Training is running (PID: $$PID)"; \
+			echo ""; \
+			echo "📈 GPU Status:"; \
+			nvidia-smi --query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total --format=csv,noheader,nounits | \
+				awk '{printf "   GPU: %s%% | Memory: %s%% (%s/%s MB)\n", $$1, $$2, $$3, $$4}'; \
+			echo ""; \
+			echo "📄 Log file: $(LOG_DIR)/latest.log"; \
+			echo "📊 Latest output:"; \
+			tail -20 $(LOG_DIR)/latest.log | sed 's/^/   /'; \
+		else \
+			echo "❌ Training not running (stale PID: $$PID)"; \
+			rm -f $(LOG_DIR)/latest.pid; \
+		fi; \
+	else \
+		echo "❌ No training process found"; \
+		echo "💡 Start training: make train"; \
+	fi
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+train-stop:
+	@echo "🛑 Stopping training..."
+	@if [ -f $(LOG_DIR)/latest.pid ]; then \
+		PID=$$(cat $(LOG_DIR)/latest.pid); \
+		if ps -p $$PID > /dev/null 2>&1; then \
+			kill $$PID && echo "✅ Training stopped (PID: $$PID)" || echo "❌ Failed to stop training"; \
+			rm -f $(LOG_DIR)/latest.pid; \
+		else \
+			echo "❌ Training not running (stale PID: $$PID)"; \
+			rm -f $(LOG_DIR)/latest.pid; \
+		fi; \
+	else \
+		echo "❌ No training process found"; \
+	fi
+
+train-validate:
+	@echo "🔍 Validating training configuration"
+	@python scripts/train.py --validate-only \
+		--data-path $(DATA_PATH) \
+		--epochs $(EPOCHS) \
+		--batch-size $(BATCH_SIZE) \
+		--lr $(LR) \
+		--hidden-size $(HIDDEN_SIZE)
+
+train-monitor:
+	@echo "📡 Monitoring training logs (Ctrl+C to stop)"
+	@if [ -f $(LOG_DIR)/latest.log ]; then \
+		tail -f $(LOG_DIR)/latest.log; \
+	else \
+		echo "❌ No log file found"; \
+		echo "💡 Start training first: make train"; \
+		exit 1; \
+	fi
+
+# ============================================================================
+# Legacy Commands (Deprecated - will be removed in future version)
+# ============================================================================
+
+.PHONY: smoke train-atft
+
+smoke:
+	@echo "⚠️  WARNING: 'make smoke' is deprecated. Use 'make train-quick' instead."
+	@sleep 2
+	@$(MAKE) train-quick
+
+train-atft:
+	@echo "⚠️  WARNING: 'make train-atft' is deprecated. Use 'make train-optimized' instead."
+	@sleep 2
+	@$(MAKE) train-optimized

@@ -6,6 +6,9 @@ SHELL := /bin/bash
 # Include dataset generation module
 include Makefile.dataset
 
+# Include unified training commands
+include Makefile.train
+
 help:
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "  gogooku3 - Japanese Stock ML Pipeline"
@@ -21,7 +24,7 @@ help:
 	@echo ""
 	@echo "📚 Common Commands:"
 	@echo "  make setup          Setup environment"
-	@echo "  make train          Train model"
+	@echo "  make train          Train model (optimized)"
 	@echo "  make test           Run tests"
 	@echo "  make clean          Cleanup"
 	@echo ""
@@ -29,7 +32,9 @@ help:
 	@echo "  make gcs-status     Check GCS configuration"
 	@echo "  make gcs-sync       Sync datasets to GCS"
 	@echo ""
-	@echo "📖 Full help: make help-dataset    (dataset commands)"
+	@echo "📖 Full help:"
+	@echo "  make help-dataset   Dataset commands"
+	@echo "  make help-train     Training commands"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Python environment setup
@@ -408,11 +413,11 @@ minio-create-bucket:
 	docker exec gogooku3-minio mc mb local/gogooku3 --ignore-existing
 
 # ============================================================================
-# Training Commands
+# Training Commands (DEPRECATED - Use commands from Makefile.train instead)
 # ============================================================================
-
-train:
-	@$(MAKE) train-stable
+# NOTE: Legacy training commands below are deprecated
+# Use: make train, make train-quick, make train-safe (from Makefile.train)
+# Run 'make help-train' for new unified commands
 
 .PHONY: clean-deprecated
 clean-deprecated:

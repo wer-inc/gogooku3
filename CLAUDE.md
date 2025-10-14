@@ -27,21 +27,34 @@ pre-commit install -t commit-msg
 ```
 
 ### Primary Training Commands
+
+**Note**: Training commands are now organized in `Makefile.train` with a clean 3-layer structure.
+
 ```bash
-# RECOMMENDED: Production optimized training (PDF analysis-based improvements)
-make train-optimized              # All improvements applied
-make train-optimized-dry          # Check configuration
-make train-optimized-report       # Show optimization report
+# Layer 1: User-Friendly (RECOMMENDED)
+make train                         # Optimized training (background, 120 epochs)
+make train-quick                   # Quick validation (3 epochs, foreground)
+make train-safe                    # Stable single-worker training
 
-# Alternative training methods
-make train-integrated              # Standard integrated pipeline
-make train-integrated-safe         # With SafeTrainingPipeline validation
-make train-atft                   # Direct ATFT training
-make smoke                         # Quick 1-epoch test
+# Layer 2: Detailed Control
+make train-optimized               # Fully optimized (multi-worker, compile, RankIC)
+make train-standard                # Conservative standard training
 
-# GPU-specific training
-REQUIRE_GPU=1 make train-optimized  # Force GPU usage
-make train-gpu-latest              # Use latest dataset with GPU
+# Layer 3: Utilities
+make train-status                  # Check training status and progress
+make train-stop                    # Stop running training
+make train-validate                # Validate configuration
+make train-monitor                 # Monitor training logs in real-time
+
+# Customization with environment variables
+make train EPOCHS=75               # Custom epoch count
+make train BATCH_SIZE=4096         # Custom batch size
+make train LR=1e-4                 # Custom learning rate
+make train HIDDEN_SIZE=512         # Custom model size
+
+# Legacy commands (deprecated, still work)
+make train-atft                    # Use 'make train-optimized' instead
+make smoke                         # Use 'make train-quick' instead
 ```
 
 ### Data Pipeline
@@ -350,9 +363,10 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True  # GPU memory fragmentation fix
 
 The project uses a modular Makefile structure for better maintainability:
 
-**`Makefile`** (635 lines) - Main entry point:
-- General setup, testing, and training commands
-- Includes `Makefile.dataset` for all dataset operations
+**`Makefile`** (Main entry point):
+- General setup and testing commands
+- Includes `Makefile.dataset` for dataset operations
+- Includes `Makefile.train` for training operations
 - Simplified main `help` target
 
 **`Makefile.dataset`** (318 lines) - Dataset generation module:
@@ -369,10 +383,25 @@ The project uses a modular Makefile structure for better maintainability:
   - Cache management
   - Cleanup and rebuild
 
+**`Makefile.train`** (247 lines) - Training commands module:
+- **Layer 1 (User-Friendly)**: `train`, `train-quick`, `train-safe`
+  - Background execution with PID tracking
+  - Sensible defaults (120 epochs, batch_size=2048)
+  - Automatic log file management
+- **Layer 2 (Detailed Control)**: `train-optimized`, `train-standard`
+  - Full optimization stack (multi-worker, compile, RankIC)
+  - Conservative settings (single-worker, no experimental features)
+- **Layer 3 (Utilities)**: `train-status`, `train-stop`, `train-validate`, `train-monitor`
+  - Real-time monitoring
+  - Process management
+  - Configuration validation
+
 **Key Features**:
+- Unified entry point: `scripts/train.py` wraps `integrated_ml_training_pipeline.py`
+- Environment variable-based configuration (mode-specific settings)
 - Updated `RMM_POOL_SIZE=40GB` (from 0) for OOM prevention
 - Monthly cache sharding: `output/graph_cache/YYYYMM/w{WINDOW}-t{THRESHOLD}-k{K}/`
-- All legacy commands (`dataset-full-gpu`, etc.) remain supported for backward compatibility
+- All legacy commands (`dataset-full-gpu`, `train-atft`, `smoke`, etc.) remain supported for backward compatibility
 
 ## Common Issues & Solutions
 
