@@ -87,6 +87,44 @@ def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
         "persistent_workers": bool(persistent_workers),
     }
 
+    # CRITICAL: Safe mode (FORCE_SINGLE_PROCESS=1) ALWAYS overrides multi-worker settings
+    # This must be checked BEFORE any other guards to ensure proper single-process operation
+    is_safe_mode = os.getenv("FORCE_SINGLE_PROCESS", "0").lower() in ("1", "true", "yes")
+    if is_safe_mode:
+        logger.info(
+            "[SAFE MODE] Enforcing single-process DataLoader (num_workers=0) due to FORCE_SINGLE_PROCESS=1"
+        )
+        params["num_workers"] = 0
+        params["persistent_workers"] = False
+        params["prefetch_factor"] = None
+        params["pin_memory"] = False
+        os.environ["NUM_WORKERS"] = "0"
+        os.environ["PERSISTENT_WORKERS"] = "0"
+        os.environ["PIN_MEMORY"] = "0"
+        os.environ["PREFETCH_FACTOR"] = "0"
+
+        # CRITICAL FIX (2025-10-14): Limit PyTorch internal thread pool to prevent deadlock
+        # Root cause: PyTorch uses 128 threads by default, causing contention with Parquet I/O
+        # This leads to deadlock when iterating DataLoader in training loop
+        try:
+            import torch
+            torch.set_num_threads(1)
+            logger.info("[SAFE MODE] Limited PyTorch threads to 1 (prevents 128-thread deadlock)")
+        except Exception as e:
+            logger.warning(f"[SAFE MODE] Failed to limit PyTorch threads: {e}")
+
+        # Limit all parallel computation libraries
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+        os.environ["POLARS_MAX_THREADS"] = "1"
+
+        # Skip remaining guards - Safe mode takes absolute priority
+        _apply_thread_cap_env(0)
+        params["multiprocessing_context"] = None
+        return params
+
     # Global loader-guard (mirrors scripts/train_atft.py):
     # Unless ALLOW_UNSAFE_DATALOADER=1, force single-process mode to avoid
     # sporadic worker aborts seen with multi-process parquet loading.

@@ -6,6 +6,17 @@
 - A100 GPU最適化設定
 """
 
+# CRITICAL: Safe mode thread limiting MUST happen before importing torch
+# Otherwise PyTorch will already have spawned 128 threads causing deadlock with Parquet I/O
+import os
+if os.getenv("FORCE_SINGLE_PROCESS", "0") == "1":
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    os.environ["POLARS_MAX_THREADS"] = "1"
+    # Note: torch.set_num_threads(1) will still be called in data_module.py as backup
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
