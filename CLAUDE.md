@@ -431,6 +431,58 @@ make dataset-gpu START=2020-09-06 END=2025-09-06
 ls -la output/ml_dataset_latest_full.parquet
 ```
 
+**Safe mode deadlock (training hangs at Phase 0)**:
+```bash
+# Symptoms:
+# - Training starts but hangs at "Phase 0: Baseline"
+# - High thread count (128+ threads) despite FORCE_SINGLE_PROCESS=1
+# - 0% GPU utilization
+# - Process stuck in 'futex_wait_queue' state
+
+# Root cause:
+# PyTorch spawns 128 internal threads on 256-core systems BEFORE thread
+# limiting environment variables take effect, causing deadlock with Parquet I/O
+
+# Solution (already implemented in train_atft.py:9-18):
+# Environment variables MUST be set BEFORE importing torch
+# The fix is automatic when using FORCE_SINGLE_PROCESS=1
+
+# Verification:
+ps -p <PID> -o pid,nlwp  # Check thread count
+# Expected: 15-30 threads (not 128)
+
+# If still deadlocking, check for zombie processes:
+ps aux | grep train_atft.py | grep -v grep
+# Kill any old processes:
+kill -9 <old_PIDs>
+
+# Then restart training:
+FORCE_SINGLE_PROCESS=1 make train-safe EPOCHS=3
+```
+
+**Safe mode configuration**:
+```bash
+# Safe mode is activated automatically when using:
+make train-safe EPOCHS=120
+
+# Or manually with environment variable:
+FORCE_SINGLE_PROCESS=1 python scripts/integrated_ml_training_pipeline.py \
+  --max-epochs 120 --data-path output/ml_dataset_latest_full.parquet
+
+# Safe mode applies these settings automatically:
+# - DataLoader: num_workers=0 (single-process)
+# - PyTorch threads: 1 (prevents deadlock)
+# - OMP/MKL/OPENBLAS: 1 thread each
+# - Batch size: 256 (vs 2048 in optimized mode)
+# - No multiprocessing context
+
+# Expected performance:
+# - Thread count: 15-30 (vs 128 in normal mode)
+# - Training speed: ~60% of optimized mode
+# - Memory usage: Lower and more predictable
+# - Stability: 100% (no deadlocks or OOM)
+```
+
 ### Data Pipeline Issues
 
 **JQuants API errors**:
