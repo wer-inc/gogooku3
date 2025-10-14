@@ -6,8 +6,6 @@ ATFT Data Module
 import logging
 import multiprocessing as mp
 import os
-import pickle
-import time
 from bisect import bisect_right
 from pathlib import Path
 from typing import Any
@@ -372,8 +370,7 @@ class StreamingParquetDataset(Dataset):
     @staticmethod
     def _detect_columns(sample_path: Path) -> list[str]:
         try:
-            # Use collect_schema().names() instead of .columns to avoid schema resolution warnings
-            return pl.scan_parquet(sample_path).collect_schema().names()
+            return pl.scan_parquet(sample_path).columns
         except Exception as exc:
             logger.warning("Failed to detect columns from %s: %s", sample_path, exc)
             return []
@@ -393,94 +390,8 @@ class StreamingParquetDataset(Dataset):
             return original
         return resolved
 
-    def _get_cache_path(self) -> Path:
-        """Get the path to the metadata cache file."""
-        if not self.file_paths:
-            return Path(".")  / ".metadata_cache.pkl"
-        # Place cache in the split directory (train/val/test specific)
-        # e.g., output/atft_data/train/xxx.parquet -> output/atft_data/train/.metadata_cache.pkl
-        return self.file_paths[0].parent / ".metadata_cache.pkl"
-
-    def _validate_cache(self, cached: dict) -> bool:
-        """Validate that cached metadata is still valid."""
-        try:
-            # Check if file count matches
-            if cached.get('file_count') != len(self.file_paths):
-                logger.debug("Cache invalid: file count mismatch")
-                return False
-
-            # Check if cache is not too old (7 days)
-            cache_age_days = (time.time() - cached.get('created_at', 0)) / 86400
-            if cache_age_days > 7:
-                logger.debug("Cache invalid: too old (%.1f days)", cache_age_days)
-                return False
-
-            return True
-        except Exception as exc:
-            logger.debug("Cache validation failed: %s", exc)
-            return False
-
-    def _load_metadata_cache(self) -> bool:
-        """Load metadata from cache if available and valid."""
-        cache_path = self._get_cache_path()
-
-        if not cache_path.exists():
-            logger.debug("No metadata cache found at %s", cache_path)
-            return False
-
-        try:
-            with open(cache_path, 'rb') as f:
-                cached = pickle.load(f)
-
-            if not self._validate_cache(cached):
-                return False
-
-            # Load cached metadata
-            self._file_window_counts = cached['window_counts']
-            self._cumulative_windows = cached['cumulative_windows']
-            self.sequence_dates = cached.get('sequence_dates')
-            self._length = cached['total_length']
-
-            logger.info("✅ Loaded metadata from cache (%d windows)", self._length)
-            return True
-
-        except Exception as exc:
-            logger.warning("Failed to load metadata cache: %s", exc)
-            return False
-
-    def _save_metadata_cache(self) -> None:
-        """Save metadata to cache."""
-        cache_path = self._get_cache_path()
-
-        try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-            cache_data = {
-                'window_counts': self._file_window_counts,
-                'cumulative_windows': self._cumulative_windows,
-                'sequence_dates': self.sequence_dates,
-                'total_length': self._length,
-                'file_count': len(self.file_paths),
-                'created_at': time.time()
-            }
-
-            with open(cache_path, 'wb') as f:
-                pickle.dump(cache_data, f)
-
-            logger.debug("Saved metadata cache to %s", cache_path)
-
-        except Exception as exc:
-            logger.warning("Failed to save metadata cache: %s", exc)
-
     def _build_index(self) -> None:
         """Pre-compute cumulative window counts for each parquet file."""
-        # Try to load from cache first
-        start_time = time.time()
-        if self._load_metadata_cache():
-            logger.info("Metadata loading took %.2fs (from cache)", time.time() - start_time)
-            return
-
-        # Cache miss or invalid - build from scratch
         total_length = 0
         skipped_files = 0
 
@@ -562,10 +473,6 @@ class StreamingParquetDataset(Dataset):
                 skipped_files,
                 self.sequence_length,
             )
-
-        # Save metadata to cache for next run
-        self._save_metadata_cache()
-        logger.info("Metadata building took %.2fs (from scratch)", time.time() - start_time)
 
     def _get_file_num_rows(self, file_path: Path) -> int:
         """Read the row count from parquet metadata (fast path)."""
