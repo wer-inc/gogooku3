@@ -4,10 +4,20 @@ Complete ATFT-GAT-FAN Training Pipeline for gogooku3
 ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する統合学習パイプライン
 """
 
+# CRITICAL: Safe mode thread limiting MUST happen before importing torch
+# Otherwise PyTorch will already have spawned 128 threads causing deadlock with Parquet I/O
+import os
+if os.getenv("FORCE_SINGLE_PROCESS", "0") == "1":
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    os.environ["POLARS_MAX_THREADS"] = "1"
+    # Note: torch.set_num_threads(1) will still be called in data_module.py as backup
+
 import asyncio
 import json
 import logging
-import os
 import subprocess
 import sys
 import time
