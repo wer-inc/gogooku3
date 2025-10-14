@@ -238,7 +238,10 @@ class TradingCalendarFetcher:
         ])
 
     def _load_subscription_bounds(self) -> Tuple[Optional[date], Optional[date]]:
-        """環境変数から契約範囲を読み込む。"""
+        """環境変数から契約範囲を読み込む。デフォルトは2015-10-13以降。"""
+        # JQuants API の標準契約範囲（ライトプラン以上）
+        DEFAULT_START = date(2015, 10, 13)
+
         start_candidates = [
             os.getenv("JQUANTS_SUBSCRIPTION_START"),
             os.getenv("JQUANTS_MIN_API_DATE"),
@@ -252,8 +255,12 @@ class TradingCalendarFetcher:
         start_dates = [d for d in (self._parse_date(v) for v in start_candidates) if d]
         end_dates = [d for d in (self._parse_date(v) for v in end_candidates) if d]
 
-        start = max(start_dates) if start_dates else None
+        # デフォルト値を使用（環境変数が設定されていない場合）
+        start = max(start_dates) if start_dates else DEFAULT_START
         end = min(end_dates) if end_dates else None
+
+        logger.info(f"Trading Calendar 契約範囲: {start.isoformat() if start else 'None'} ~ {end.isoformat() if end else 'Now'}")
+
         return start, end
 
     def _clamp_requested_range(
@@ -312,7 +319,12 @@ class TradingCalendarFetcher:
     def _extract_subscription_bounds(
         cls, text: str
     ) -> Tuple[Optional[date], Optional[date]]:
-        """エラーテキストから契約開始・終了日を抽出する。"""
+        """エラーテキストから契約開始・終了日を抽出する。
+
+        エラーメッセージ例：
+        - "Your subscription covers the following dates: 2015-10-13 ~ ."
+        - "Your subscription covers the following dates: 2015-10-13 ~ 2025-12-31"
+        """
         if not text:
             return None, None
 
@@ -322,12 +334,20 @@ class TradingCalendarFetcher:
         except json.JSONDecodeError:
             message = text
 
+        # 日付パターンを抽出
         matches = re.findall(r"20\d{2}-\d{2}-\d{2}", message)
         if not matches:
             return None, None
 
         start = cls._parse_date(matches[0])
+
+        # 終了日の処理
+        # "2015-10-13 ~ ." のように終了日が空の場合はNone
+        # "2015-10-13 ~ 2025-12-31" のように終了日がある場合はパース
         end = cls._parse_date(matches[1]) if len(matches) > 1 else None
+
+        logger.info(f"エラーメッセージから契約範囲を抽出: {start.isoformat() if start else 'None'} ~ {end.isoformat() if end else 'Now'}")
+
         return start, end
 
 
