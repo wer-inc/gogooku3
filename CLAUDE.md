@@ -431,7 +431,7 @@ make dataset-gpu START=2020-09-06 END=2025-09-06
 ls -la output/ml_dataset_latest_full.parquet
 ```
 
-**Safe mode deadlock (training hangs at Phase 0)**:
+**Safe mode deadlock (training hangs at Phase 0)** - **FIXED (2025-10-14)**:
 ```bash
 # Symptoms:
 # - Training starts but hangs at "Phase 0: Baseline"
@@ -443,21 +443,29 @@ ls -la output/ml_dataset_latest_full.parquet
 # PyTorch spawns 128 internal threads on 256-core systems BEFORE thread
 # limiting environment variables take effect, causing deadlock with Parquet I/O
 
-# Solution (already implemented in train_atft.py:9-18):
-# Environment variables MUST be set BEFORE importing torch
+# Solution (FIXED - implemented in 2 scripts):
+# 1. train_atft.py:9-18 - Thread limiting BEFORE torch import
+# 2. integrated_ml_training_pipeline.py:9-16 - Thread limiting BEFORE torch import
+# Both scripts now set environment variables BEFORE importing PyTorch
 # The fix is automatic when using FORCE_SINGLE_PROCESS=1
 
 # Verification:
-ps -p <PID> -o pid,nlwp  # Check thread count
-# Expected: 15-30 threads (not 128)
+ps aux | grep train_atft | grep -v grep
+# Find the PID of active train_atft.py process, then:
+ps -p <PID> -o pid,nlwp,stat,%cpu
+# Expected: NLWP=15-30 threads (not 128), Stat=Rl (running), CPU >100%
+
+# Success indicators in logs:
+grep "SAFE MODE.*Limited PyTorch threads" _logs/training/train_safe_*.log
+# Expected: "[SAFE MODE] Limited PyTorch threads to 1 (prevents 128-thread deadlock)"
 
 # If still deadlocking, check for zombie processes:
-ps aux | grep train_atft.py | grep -v grep
-# Kill any old processes:
-kill -9 <old_PIDs>
+ps aux | grep -E "train_atft|integrated_ml" | grep -v grep
+# Kill any old processes with <50% CPU (likely hung):
+ps aux | grep python | awk '$3 < 50 {print $2}' | xargs -r kill -9
 
 # Then restart training:
-FORCE_SINGLE_PROCESS=1 make train-safe EPOCHS=3
+make train-safe EPOCHS=3
 ```
 
 **Safe mode configuration**:
@@ -476,11 +484,27 @@ FORCE_SINGLE_PROCESS=1 python scripts/integrated_ml_training_pipeline.py \
 # - Batch size: 256 (vs 2048 in optimized mode)
 # - No multiprocessing context
 
-# Expected performance:
-# - Thread count: 15-30 (vs 128 in normal mode)
+# Expected performance (after 2025-10-14 fix):
+# - Thread count: 15 (vs 128 before fix - 90% reduction)
+# - CPU utilization: 100%+ (active training)
 # - Training speed: ~60% of optimized mode
 # - Memory usage: Lower and more predictable
 # - Stability: 100% (no deadlocks or OOM)
+# - Epoch 1 completion time: ~6 minutes
+
+# Verification commands:
+# Check thread count of active training:
+ps aux | grep train_atft | grep -v grep | awk '{print $2}' | xargs -I{} ps -p {} -o pid,nlwp,stat,%cpu
+
+# Monitor training progress:
+tail -f _logs/training/train_safe_*.log | grep -E "Epoch|Val Loss|SAFE MODE"
+
+# Expected log output:
+# [SAFE MODE] Limited PyTorch threads to 1 (prevents 128-thread deadlock)
+# Phase 0: Baseline
+# [VAL-DEBUG] batch0 metrics - Sharpe: 0.079, IC: 0.000, RankIC: -0.009
+# Epoch 1/5: Train Loss=0.357, Val Loss=0.354, LR=5.00e-04
+# ✅ Saved best model (val_loss=0.354)
 ```
 
 ### Data Pipeline Issues
@@ -693,4 +717,157 @@ n_splits=5, embargo_days=20, min_train_days=252
 - All `scripts/` still work
 - Use `gogooku3.compat` for gradual migration
 - No breaking changes for existing workflows
-- どんなタスクでもちゃんと分析し、熟考し上で正しい判断をしてから実行してください。
+
+## Critical Philosophy: Deep Reasoning Over Quick Fixes
+
+**どんなタスクでもちゃんと分析し、熟考し上で正しい判断をしてから実行してください。**
+
+This codebase represents months of careful design decisions. Before making changes:
+
+### 1. **Understand Before Changing**
+- Existing designs have **reasons** - investigate design intent first
+- Safe mode exists for **stability**, not speed - respect trade-offs
+- Read code history: `git log --grep="pattern" --oneline`
+- Check for past discussions: `git log --all -S "code_pattern" --oneline`
+
+### 2. **Problem Space Before Solution Space**
+```
+❌ Wrong: "Deadlock → Disable multi-worker → Change data format"
+✅ Right: "Deadlock → Why deadlock? → fork() thread issue → multiprocessing_context='spawn'"
+```
+
+**Ask these questions first**:
+- Why does this code exist in its current form?
+- What problem was it designed to solve?
+- Has this been tried before and failed?
+- What are the system-level constraints?
+
+### 3. **Patience Over Speed**
+- **Slow but correct > Fast but wrong** - Always
+- Initial epochs take time (Cold start, JIT compilation, cache warming)
+- Single-worker mode: 20-25 min/epoch is **normal**, not a bug
+- Don't kill processes prematurely - wait for full epoch completion
+
+**Signs of normal behavior** (not failures):
+- First epoch taking 2-3x longer than subsequent epochs
+- High thread count during initialization (drops after setup)
+- Silent periods during training phase (logs only during validation)
+- IC=0 but RankIC≠0 in early epochs (normal learning progression)
+
+### 4. **System Thinking Required**
+Consider all layers before changes:
+```
+[Business Layer]    Research goals, reproducibility, time constraints
+[Application Layer] Training pipeline, DataLoader, model architecture
+[Runtime Layer]     PyTorch threads, Polars/Rayon, Python GIL
+[OS Layer]          fork() vs spawn(), thread scheduling
+[Hardware Layer]    A100 GPU, 216GB RAM, 24-core CPU
+```
+
+Changes at one layer affect all others. Understand the full stack.
+
+### 5. **When Training Appears Stuck**
+Before assuming failure, verify:
+```bash
+# 1. Is process actually running?
+ps -p <PID> -o pid,nlwp,stat,%cpu,%mem,etime
+# Expected: stat=Rl (running), %cpu>50
+
+# 2. Is GPU being used?
+nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader
+# Expected: >0% utilization during training
+
+# 3. Is log file growing?
+ls -lh --time-style='+%H:%M:%S' logs/ml_training.log
+# Check if modification time is recent
+
+# 4. Wait for full epoch (20-30 min in Safe mode)
+# Then check for epoch completion in logs
+```
+
+### 6. **Multi-Worker DataLoader: Known Complexity**
+
+**The Issue**: PyTorch's default `fork()` + Polars/Parquet → deadlock
+
+**Root Cause**:
+- PyTorch spawns 128 internal BLAS threads on 256-core systems
+- `fork()` copies parent's memory but thread states are **zombie**
+- Polars (Rayon/Rust) tries to create new threads → **deadlock**
+
+**Solutions** (in priority order):
+1. **Safe mode** (num_workers=0): Stable, 60% speed, no deadlock
+2. **multiprocessing_context='spawn'**: Clean process, no zombie threads
+3. **Data preloading**: 216GB RAM can hold 10GB dataset entirely
+4. **PyArrow engine**: Different threading model, may avoid issue
+
+**When to use each**:
+- **Research/debugging**: Use Safe mode (stability > speed)
+- **Production**: Implement spawn() or preloading (after testing)
+- **Never**: Don't change data formats without understanding why
+
+### 7. **"Degeneracy" vs Normal Learning**
+**False alarm indicators**:
+```python
+IC = 0.000000        # Pearson correlation (linear)
+RankIC = 0.0100      # Spearman correlation (rank-based)
+pred std = 0.00001   # Very small but non-zero
+```
+
+**This is often NORMAL in early epochs**:
+- Models start with near-constant predictions (learning mean)
+- Rank correlation (RankIC) develops before linear correlation (IC)
+- std increases gradually as model learns patterns
+
+**True degeneracy** (actually broken):
+```python
+pred std = 0.0000000  # Exactly zero (all identical)
+RankIC = 0.000000     # No rank correlation at all
+Loss not decreasing   # After 5+ epochs
+```
+
+Wait **at least 5 epochs** before diagnosing degeneracy.
+
+### 8. **Design Trade-offs Are Intentional**
+
+| Mode | Speed | Stability | Debug | Reproduce | Use Case |
+|------|-------|-----------|-------|-----------|----------|
+| **Safe** | 60% | ✅✅✅ | ✅✅✅ | ✅✅✅ | Research, debugging |
+| **Optimized** | 100% | ⚠️ | ⚠️⚠️ | ⚠️ | Production (after validation) |
+
+Don't optimize prematurely. Start with Safe mode, understand the system, then optimize **specific bottlenecks** with **measured impact**.
+
+### 9. **Respect for Existing Code**
+
+This codebase has:
+- 5600+ lines in train_atft.py
+- 800+ lines in integrated_ml_training_pipeline.py
+- Complex SafeTrainingPipeline with 7-step validation
+- Sophisticated phase-based training system
+- Production-grade error handling
+
+**Before changing any of this**:
+1. Read the full implementation
+2. Understand the design intent
+3. Check git history for context
+4. Test thoroughly in Safe mode first
+5. Document why the change is needed
+
+### 10. **Key Learnings from 2025-10-14 Session**
+
+**What went wrong**:
+- Premature optimization (trying Optimized mode first)
+- Impatience (killing processes after 8 minutes)
+- Misdiagnosis (calling IC=0 "degeneracy" after 1 epoch)
+- Ignoring design intent (Safe mode exists for a reason)
+
+**What worked**:
+- Deep reasoning about root causes (PyTorch thread pool issue)
+- Patience (letting training run for 22+ minutes)
+- Understanding Problem Space before Solution Space
+- Respecting existing design decisions
+
+**Permanent fixes implemented**:
+- `train_atft.py:9-18` - Thread limiting BEFORE torch import
+- `integrated_ml_training_pipeline.py:7-16` - Same fix
+- Both scripts now handle FORCE_SINGLE_PROCESS=1 correctly
+- Thread count reduced from 128 → 15 (90% reduction)

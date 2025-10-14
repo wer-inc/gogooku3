@@ -636,29 +636,10 @@ train-integrated-hpo:
 		--config-path $(CONFIG_PATH) \
 		--config-name $(CONFIG_NAME)
 
-train-atft:
-	@echo "🧠 Running ATFT training directly"
-	@echo "   Config: $(CONFIG_PATH)/$(CONFIG_NAME)"
-	python scripts/train_atft.py \
-		--config-path $(CONFIG_PATH) \
-		--config-name $(CONFIG_NAME)
-
-train-safe:
-	@echo "🛡️ Running SafeTrainingPipeline only"
-	@echo "   Output: $(OUTPUT_BASE)"
-	python scripts/run_safe_training.py \
-		--data-dir $(OUTPUT_BASE) \
-		--n-splits 2 \
-		--embargo-days 20 \
-		--memory-limit 6 \
-		--verbose
-
-smoke:
-	@echo "💨 Running quick smoke test (1 epoch)"
-	@echo "   Output: $(OUTPUT_BASE)"
-	python scripts/smoke_test.py \
-		--output-base $(OUTPUT_BASE) \
-		--max-epochs 1
+# Deprecated targets removed - use commands from Makefile.train:
+# - make train-atft    → use 'make train-optimized'
+# - make train-safe    → use 'make train-safe' (new definition in Makefile.train)
+# - make smoke         → use 'make train-quick'
 
 # Alias for HPO with ATFT
 .PHONY: hpo-atft
@@ -688,16 +669,9 @@ train-improved-validate:
 	@echo "🔍 Validating improved training configuration"
 	@./scripts/run_improved_training.sh --validate-only
 
-# Production optimized training (PDF analysis based)
-.PHONY: train-optimized train-optimized-quick train-optimized-report train-optimized-dry
-
-train-optimized:
-	@echo "🚀 Running production-optimized training (PDF analysis based)"
-	@echo "   ✅ All improvements from PDF analysis applied"
-	@echo "   ✅ ALLOW_UNSAFE_DATALOADER=1 (multi-worker enabled)"
-	@echo "   ✅ hidden_size=256, RankIC/Sharpe optimization"
-	@echo "   ✅ torch.compile enabled, feature grouping aligned"
-	@python scripts/train_optimized_direct.py
+# Production optimized training (DEPRECATED - Use Makefile.train)
+# Use 'make train-optimized' which now calls the new unified definition from Makefile.train
+.PHONY: train-optimized-quick train-optimized-report train-optimized-dry
 
 train-optimized-quick:
 	@echo "⚡ Running quick validation (3 epochs)"
