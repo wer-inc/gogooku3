@@ -28,6 +28,7 @@ import sys
 from omegaconf import OmegaConf
 import pandas as pd
 import numpy as np
+from scipy import stats as scipy_stats
 from tqdm import tqdm
 import gc
 from typing import Optional
@@ -1796,8 +1797,17 @@ class MultiHorizonLoss(nn.Module):
             targ_centered = targ_valid - targ_mean
 
             cov = (pred_centered * targ_centered).mean()
-            pred_std = pred_centered.std() + 1e-8
-            targ_std = targ_centered.std() + 1e-8
+            pred_std = pred_centered.std()
+            targ_std = targ_centered.std()
+
+            # Early return if variance is too small (avoid numerical issues)
+            eps = 1e-8
+            if pred_std < eps or targ_std < eps:
+                if debug_prefix:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"[IC-DEBUG] {debug_prefix} - Zero variance detected: pred_std={pred_std.item():.12f}, targ_std={targ_std.item():.12f}")
+                return 0.0
 
             ic = cov / (pred_std * targ_std)
 
@@ -1815,31 +1825,27 @@ class MultiHorizonLoss(nn.Module):
     
     @staticmethod
     def compute_rank_ic(predictions: torch.Tensor, targets: torch.Tensor) -> float:
-        """Compute Rank IC (Spearman correlation)"""
+        """Compute Rank IC (Spearman correlation) with proper tie handling"""
         with torch.no_grad():
-            # Flatten tensors
-            pred_flat = predictions.flatten()
-            targ_flat = targets.flatten()
-            
+            # Flatten tensors and convert to numpy
+            pred_flat = predictions.flatten().cpu().numpy()
+            targ_flat = targets.flatten().cpu().numpy()
+
             # Remove NaN/Inf
-            valid_mask = torch.isfinite(pred_flat) & torch.isfinite(targ_flat)
+            valid_mask = np.isfinite(pred_flat) & np.isfinite(targ_flat)
             if valid_mask.sum() < 2:
                 return 0.0
-            
+
             pred_valid = pred_flat[valid_mask]
             targ_valid = targ_flat[valid_mask]
-            
-            # Compute ranks
-            pred_ranks = pred_valid.argsort().argsort().float()
-            targ_ranks = targ_valid.argsort().argsort().float()
-            
-            # Spearman correlation on ranks
-            n = pred_ranks.shape[0]
-            pred_ranks = (pred_ranks - pred_ranks.mean()) / (pred_ranks.std() + 1e-8)
-            targ_ranks = (targ_ranks - targ_ranks.mean()) / (targ_ranks.std() + 1e-8)
-            
-            rank_ic = (pred_ranks * targ_ranks).mean()
-            return rank_ic.item()
+
+            # Use scipy.stats.spearmanr which handles ties correctly
+            # (average ranking for tied values)
+            try:
+                corr, _ = scipy_stats.spearmanr(pred_valid, targ_valid)
+                return 0.0 if np.isnan(corr) else float(corr)
+            except Exception:
+                return 0.0
 
     # ===== 重み制御ユーティリティ =====
     def _get_current_weights(self) -> dict | None:
@@ -3604,8 +3610,19 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     logger.debug(f"[train-phase] loss value: {loss}")
                 train_batches += 1
             
-            # Validation
-            model.eval()
+            # Validation with MC Dropout
+            # MC Dropout: Keep dropout enabled during validation to avoid constant predictions
+            # but set BatchNorm to eval mode to use running stats
+            if os.getenv("MC_DROPOUT_VAL", "1") == "1":
+                model.train()  # Keep dropout enabled
+                # Manually set BatchNorm layers to eval mode
+                for module in model.modules():
+                    if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
+                        module.eval()
+                logger.info("[MC-DROPOUT] Validation with dropout enabled (BatchNorm in eval mode)")
+            else:
+                model.eval()  # Standard eval mode (all dropout disabled)
+
             val_loss = 0.0
             val_batches = 0
             val_metrics = {'sharpe': [], 'ic': [], 'rank_ic': []}
@@ -6029,8 +6046,9 @@ def train(config: DictConfig) -> None:
         if os.getenv("USE_DIR_AUX", "1") == "1"
         else 0.0,
         sigma_weighting_lambda=float(os.getenv("SIGMA_WEIGHT_LAMBDA", "0.0")),
-        pred_var_min=float(os.getenv("PRED_VAR_MIN", "0.005")),
-        pred_var_weight=float(os.getenv("PRED_VAR_WEIGHT", "0.1")),
+        # Strengthened variance penalty to combat constant prediction collapse
+        pred_var_min=float(os.getenv("PRED_VAR_MIN", "0.01")),      # 0.005 → 0.01
+        pred_var_weight=float(os.getenv("PRED_VAR_WEIGHT", "0.3")),  # 0.1 → 0.3
     )
     # LARS/LAMB オプション（環境変数で簡易切替）。未インストールなら AdamW へフォールバック
     opt_choice = os.getenv("OPTIMIZER", "adamw").lower()

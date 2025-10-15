@@ -12,9 +12,9 @@ input_projection:
   dropout: 0.1
 
 input_dims:
-  basic_features: 200  # Updated 2025-10-04: Match DataLoader detection (F=200)
+  basic_features: 365  # Updated 2025-10-15: Match actual feature count
   historical_features: 0
-  total_features: 200  # Updated 2025-10-04: Match DataLoader detection (F=200)
+  total_features: 365  # Updated 2025-10-15: Match actual feature count
 
 tft:
   lstm:
