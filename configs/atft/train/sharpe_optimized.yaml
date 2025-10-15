@@ -1,0 +1,235 @@
+# Sharpe-Optimized Training Configuration
+# Designed to improve Sharpe ratio from -0.0184 to >0.3
+# Based on analysis in docs/PREDICTION_ANALYSIS.md
+
+# Training configuration
+trainer:
+  max_epochs: 80  # Reduced from 120 for faster iteration
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 2  # Effective batch = 4096
+  log_every_n_steps: 50
+
+# Optimizer configuration
+optimizer:
+  type: AdamW
+  lr: 3e-4  # Slightly lower for stability
+  weight_decay: 1e-5
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Learning rate scheduler
+scheduler:
+  type: ReduceLROnPlateau
+  monitor: val/sharpe_ratio  # CHANGED: Monitor Sharpe instead of RankIC
+  mode: max
+  patience: 10
+  factor: 0.5
+  min_lr: 1e-6
+  verbose: true
+
+# Batch configuration
+batch:
+  train_batch_size: 2048
+  val_batch_size: 4096
+  num_workers: 8
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+
+# Loss configuration (CRITICAL: Sharpe-focused)
+loss:
+  # Main prediction loss (reduced weight)
+  main:
+    type: quantile
+    weight: 0.3  # Reduced from 1.0
+
+  # Auxiliary losses (NEW: Transaction cost + Sharpe)
+  auxiliary:
+    # Advanced Sharpe loss
+    sharpe_loss:
+      enabled: true
+      type: multi  # Multi-objective: Sharpe + Sortino + Calmar
+      sharpe_weight: 0.4
+      sortino_weight: 0.3
+      calmar_weight: 0.3
+      min_periods: 30
+      annualization_factor: 252
+      risk_free_rate: 0.0
+
+    # Transaction cost modeling
+    transaction_cost:
+      enabled: true
+      type: transaction_cost
+      cost_bps: 10  # 0.1% per trade (conservative for Japan)
+      weight: 0.2
+      use_l1: true
+      normalize_by_volatility: false
+
+    # Temporal consistency (reduce IC volatility)
+    temporal_consistency:
+      enabled: true
+      type: temporal_consistency
+      weight: 0.1
+      use_squared: false
+
+    # RankIC loss (reduced weight but still included)
+    ranking_loss:
+      enabled: true
+      type: pairwise_rank
+      weight: 0.1  # Reduced from 0.2
+      scale: 5.0
+      topk: 0  # Use all pairs
+
+# Multi-horizon configuration
+prediction:
+  use_multi_horizon_heads: true
+  horizons: [1, 5, 10, 20]
+  horizon_weights:
+    1: 1.0   # Short-term most important for Sharpe
+    5: 0.8
+    10: 0.5
+    20: 0.3
+  primary_horizon: 1  # Focus on 1-day for transaction cost
+
+# Early stopping (monitor Sharpe)
+early_stopping:
+  monitor: val/sharpe_ratio  # CHANGED: Stop based on Sharpe
+  mode: max
+  patience: 25
+  min_delta: 0.01  # Require 0.01 improvement
+  verbose: true
+
+# Validation configuration
+validation:
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+
+# Logging configuration
+logging:
+  log_dir: logs/sharpe_optimized
+  experiment_name: sharpe_optimization_v1
+  log_model_checkpoints: true
+
+  # Track critical metrics
+  metrics_to_track:
+    - train_loss
+    - val_loss
+    - val/sharpe_ratio
+    - val/sortino_ratio
+    - val/calmar_ratio
+    - val/rank_ic_1d
+    - val/rank_ic_5d
+    - transaction_cost
+    - turnover_penalty
+    - temporal_consistency
+
+# Checkpoint configuration
+checkpoint:
+  save_top_k: 5
+  monitor: val/sharpe_ratio  # CHANGED: Save best Sharpe models
+  mode: max
+  save_last: true
+  filename: "sharpe_opt_epoch{epoch:02d}_sharpe{val/sharpe_ratio:.4f}"
+  auto_insert_metric_name: false
+
+# Phase-based loss weights (gradual shift to Sharpe)
+phase_config:
+  enabled: true
+  phases:
+    # Phase 0: Baseline (build basic predictive power)
+    - name: baseline
+      epochs: 10
+      loss_weights:
+        quantile: 0.7
+        sharpe: 0.2
+        transaction_cost: 0.1
+
+    # Phase 1: Introduce Sharpe optimization
+    - name: sharpe_intro
+      epochs: 15
+      loss_weights:
+        quantile: 0.5
+        sharpe: 0.3
+        transaction_cost: 0.15
+        temporal_consistency: 0.05
+
+    # Phase 2: Balance IC and Sharpe
+    - name: balanced
+      epochs: 20
+      loss_weights:
+        quantile: 0.4
+        sharpe: 0.35
+        transaction_cost: 0.2
+        temporal_consistency: 0.05
+
+    # Phase 3: Sharpe-focused fine-tuning
+    - name: sharpe_focus
+      epochs: 20
+      loss_weights:
+        quantile: 0.3
+        sharpe: 0.4
+        transaction_cost: 0.2
+        temporal_consistency: 0.1
+
+    # Phase 4: Final optimization
+    - name: final
+      epochs: 15
+      loss_weights:
+        quantile: 0.25
+        sharpe: 0.45
+        transaction_cost: 0.2
+        temporal_consistency: 0.1
+
+# Regularization
+regularization:
+  dropout: 0.2
+  weight_decay: 1e-5
+  label_smoothing: 0.0
+
+  # Prediction consistency across time
+  prediction_smoothing:
+    enabled: true
+    alpha: 0.1  # EMA coefficient for predictions
+
+# Data augmentation (optional)
+augmentation:
+  enabled: false  # Disable for now
+  noise_std: 0.0
+
+# Performance optimization
+performance:
+  compile_model: false  # Disabled for debugging
+  use_amp: true
+  amp_dtype: bf16
+  cudnn_benchmark: true
+  num_workers: 8
+  persistent_workers: true
+
+# Debugging
+debug:
+  enabled: false
+  fast_dev_run: false
+  detect_anomaly: false
+  profiler: false
+
+# Experiment tracking
+experiment:
+  tags:
+    - sharpe_optimization
+    - transaction_cost_modeling
+    - temporal_consistency
+  notes: |
+    Sharpe-focused training with transaction cost modeling.
+    Goal: Improve Sharpe from -0.0184 to >0.3 while maintaining IC >0.03.
+
+    Key improvements:
+    1. Multi-objective Sharpe loss (Sharpe + Sortino + Calmar)
+    2. Transaction cost penalty (10 bps)
+    3. Temporal consistency regularization
+    4. Phase-based gradual shift to Sharpe optimization
+
+    Expected outcomes:
+    - Sharpe: -0.0184 → 0.35+ (conservative target)
+    - IC: 0.0523 → 0.04+ (acceptable degradation)
+    - Daily turnover: ~50% → 25% (50% reduction)

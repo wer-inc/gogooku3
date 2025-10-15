@@ -574,7 +574,9 @@ class ATFT_GAT_FAN(pl.LightningModule):
         projected = self.input_projection(selected_features)
 
         # Temporal Fusion Transformer
-        return_attention = self.training and self.gat is not None and self.gat_entropy_weight > 0
+        # FIX: Always compute attention (train/eval mode consistency)
+        # Loss is only added during training, but forward behavior should be identical
+        return_attention = self.gat is not None and self.gat_entropy_weight > 0
 
         # 🔧 DEBUG (2025-10-07): Log return_attention decision
         import logging

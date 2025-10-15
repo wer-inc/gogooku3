@@ -1,0 +1,162 @@
+# Sharpe-Optimized Configuration
+# Main configuration for Sharpe ratio optimization training
+
+defaults:
+  - _self_
+  - data: jpx_large_scale
+  - model: atft_gat_fan
+  - train: sharpe_optimized  # Use our new Sharpe-optimized training config
+  - hardware: default
+  - override hydra/hydra_logging: default
+  - override hydra/job_logging: default
+
+# Hydra configuration
+hydra:
+  job:
+    chdir: false
+    name: ATFT-Sharpe-Optimization
+  run:
+    dir: logs/sharpe_opt/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: logs/sharpe_opt/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+# Model configuration (inherit from atft_gat_fan, with adjustments)
+model:
+  name: ATFT_GAT_FAN
+  hidden_size: 256  # Keep larger size for capacity
+
+  input_dims:
+    total_features: 365  # Match actual data features (auto-detected)
+    historical_features: 0
+
+  # Variable Selection (enabled for feature selection)
+  variable_selection:
+    enabled: true
+    per_feature_group: false
+
+  # Adaptive normalization
+  fan:
+    enabled: true
+  san:
+    enabled: true
+
+  # GAT configuration
+  gat:
+    enabled: true
+    architecture:
+      hidden_channels: [256]
+      heads: [4]
+      concat: [true]
+      num_layers: 1
+    layer_config:
+      dropout: 0.2
+      edge_dropout: 0.1
+    edge_features:
+      edge_dim: 0
+    regularization:
+      edge_weight_penalty: 0.01
+      attention_entropy_penalty: 0.001
+
+# Data configuration
+data:
+  path: ${oc.env:OUTPUT_BASE,output}/ml_dataset_latest_full.parquet
+
+  schema:
+    date_column: Date
+    code_column: Code
+    target_column: returns_1d
+    feature_columns: null
+
+  graph_builder:
+    cache_dir: output/graph_cache
+    ewm_halflife: 30
+    k: 24
+    edge_threshold: 0.18
+    min_edges: 75
+    log_mktcap_col: log_mktcap
+    lookback: 60
+    method: ewm_demean
+    min_obs: 40
+    use_in_training: true
+    return_cols:
+      - returns_1d
+      - feat_ret_1d
+    sector_col: sector17_name
+    shrinkage_gamma: 0.1
+    size_tau: 1.0
+    symmetric: true
+
+  split:
+    method: walk_forward
+    n_splits: 5
+    embargo_days: 20
+    min_train_days: 252
+
+  time_series:
+    sequence_length: 60
+    prediction_horizons: [1, 5, 10, 20]
+
+# Normalization (enable online normalization)
+normalization:
+  online_normalization:
+    enabled: true
+  cross_sectional:
+    enabled: false
+
+# Environment variables (for loss configuration)
+environment:
+  allow_unsafe_dataloader: ${oc.env:ALLOW_UNSAFE_DATALOADER,1}
+  use_sharpe_loss: 1  # Enable Sharpe loss
+  use_transaction_cost: 1  # Enable transaction cost
+  use_temporal_consistency: 1  # Enable consistency regularization
+
+# Logging configuration
+logging:
+  level: INFO
+  wandb:
+    enabled: false
+  tensorboard:
+    enabled: true
+    log_dir: logs/sharpe_opt/tensorboard
+
+# Project settings
+project:
+  name: ATFT-Sharpe-Optimization
+  seed: 42
+  deterministic: true
+
+# Paths
+paths:
+  root: .
+  data: data
+  logs: logs/sharpe_opt
+  models: models/sharpe_opt
+
+# Mode
+mode: train
+
+# Additional optimization flags
+improvements:
+  compile_model: false  # Disabled for compatibility
+  force_multiworker: true
+  num_workers: 8
+  persistent_workers: true
+  prefetch_factor: 4
+
+  # Sharpe optimization flags
+  sharpe_optimization:
+    enabled: true
+    monitor_sharpe: true
+    reduce_turnover: true
+    temporal_consistency: true
+
+# Debug settings
+debug:
+  enabled: false
+  fast_dev_run: false
+  detect_anomaly: false
+  profiler: false
+
+# Feature categories config
+feature_categories_config: configs/atft/feature_categories_actual.yaml
