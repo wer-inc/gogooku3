@@ -1,0 +1,11 @@
+- data.source.data_dir=output/atft_data
+- train.batch.train_batch_size=512
+- train.optimizer.lr=5.6115164153345e-05
+- train.trainer.max_epochs=3
+- train.trainer.precision=16-mixed
+- train.trainer.check_val_every_n_epoch=1
+- train.trainer.enable_progress_bar=true
+- model.hidden_size=384
+- model.gat.layer_config.dropout=0.3124217733388137
+- model.gat.architecture.num_layers=2
+- +hpo.output_metrics_json=output/hpo_final_test/trial_0/metrics.json

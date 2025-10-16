@@ -5,7 +5,7 @@ Adaptive Temporal Fusion Transformer with Graph Attention and Frequency Adaptive
 import logging
 import re
 
-import pytorch_lightning as pl
+# import pytorch_lightning as pl  # DISABLED due to std::bad_alloc error
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -27,7 +27,7 @@ from src.training.curriculum import (
 logger = logging.getLogger(__name__)
 
 
-class ATFT_GAT_FAN(pl.LightningModule):
+class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import issues
     """
     ATFT-GAT-FAN: Adaptive Temporal Fusion Transformer with Graph Attention and Frequency Adaptive Normalization
 
@@ -693,27 +693,27 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
         return output
 
-    def on_train_epoch_start(self) -> None:
-        if self.curriculum_scheduler is None:
-            return
+    # Removed Lightning callback - will be called manually from training loop if needed
+    # def on_train_epoch_start(self) -> None:
+    #     if self.curriculum_scheduler is None:
+    #         return
+    #     phase = self.curriculum_scheduler.get_phase_config(self.current_epoch)
+    #     self.curriculum_horizon_weights = phase.horizon_weights
+    #     self.curriculum_active_horizons = {f'horizon_{h}d' for h in phase.prediction_horizons}
 
-        phase = self.curriculum_scheduler.get_phase_config(self.current_epoch)
-        self.curriculum_horizon_weights = phase.horizon_weights
-        self.curriculum_active_horizons = {f'horizon_{h}d' for h in phase.prediction_horizons}
-        self.log('curriculum/phase', phase.name, prog_bar=False, on_step=False, on_epoch=True)
+    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int, current_epoch: int = 0):
+        """学習ステップ（Multi-horizon対応）
 
-    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int):
-        """学習ステップ（Multi-horizon対応）"""
+        Args:
+            batch: Batch data dictionary
+            batch_idx: Batch index
+            current_epoch: Current training epoch (replaces self.current_epoch from Lightning)
+        """
         # Decision Layer スケジューラ更新（エポック開始時に一度だけ）
         if (hasattr(self, 'decision_scheduler') and self.decision_scheduler is not None and
             batch_idx == 0):  # エポックの最初のバッチでのみ更新
-            current_epoch = self.current_epoch if hasattr(self, 'current_epoch') else 0
             scheduled_params = self.decision_scheduler.step(current_epoch, self.decision_layer)
-
-            # スケジュールされたパラメータをログ
-            for param_name, param_value in scheduled_params.items():
-                self.log(f'decision_schedule/{param_name}', param_value,
-                        on_step=False, on_epoch=True, prog_bar=False)
+            # Note: scheduled_params logging removed (was Lightning self.log)
 
         outputs = self.forward(batch)
         predictions = outputs['predictions']
@@ -758,9 +758,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
                 total_loss += weighted_loss
                 horizon_losses[f'train_loss_{horizon_key}'] = horizon_loss
-
-                # Log individual horizon losses
-                self.log(f'train_loss_{horizon_key}', horizon_loss, prog_bar=False)
+                # Note: horizon loss logging removed (was Lightning self.log)
 
         else:
             # Single-horizon training (backward compatibility)
@@ -772,7 +770,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 target_tensor = target_tensor.squeeze(-1)
             main_loss = self.quantile_loss(predictions['single'], target_tensor)
             total_loss = main_loss
-            self.log('train_main_loss', main_loss, prog_bar=True)
+            # Note: main loss logging removed (was Lightning self.log)
 
         # Auxiliary losses (applied to all horizons)
         if hasattr(self, 'sharpe_loss') and output_type == 'multi_horizon':
@@ -783,7 +781,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 if target_tensor is not None:
                     sharpe_loss = self.sharpe_loss(predictions[primary_horizon], target_tensor)
                     total_loss = total_loss + sharpe_loss
-                    self.log('train_sharpe_loss', sharpe_loss, prog_bar=False)
+                    # Note: sharpe loss logging removed (was Lightning self.log)
 
         # Rank損失（主ホライズンの中央値スコアでペアワイズ）
         if output_type == 'multi_horizon' and self.rank_loss is not None and self.rank_loss_weight > 0:
@@ -796,7 +794,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
                     y = target_tensor.view(-1)
                     rk = self.rank_loss(z.view(-1), y) * self.rank_loss_weight
                     total_loss = total_loss + rk
-                    self.log('train_rank_loss', rk.detach(), prog_bar=False)
+                    # Note: rank loss logging removed (was Lightning self.log)
 
         # 意思決定層ロス（主ホライズンの分位点）
         if output_type == 'multi_horizon' and self.decision_layer is not None:
@@ -807,15 +805,12 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 if target_tensor is not None:
                     dl_total, comps = self.decision_layer(q, target_tensor.view(-1))
                     total_loss = total_loss + dl_total
-                    # 重要メトリクスをログ
-                    self.log('train_decision_sharpe', comps['decision_sharpe'], prog_bar=False)
-                    self.log('train_pos_l2', comps['decision_pos_l2'], prog_bar=False)
-                    self.log('train_fee', comps['decision_fee'], prog_bar=False)
+                    # Note: decision layer metrics logging removed (was Lightning self.log)
 
         # Variable selection sparsity正則化
         if isinstance(self._vsn_sparsity_loss, torch.Tensor) and self._vsn_sparsity_loss.numel() > 0:
             total_loss = total_loss + self._vsn_sparsity_loss
-            self.log('train_vsn_sparsity', self._vsn_sparsity_loss.detach(), prog_bar=False)
+            # Note: VSN sparsity logging removed (was Lightning self.log)
 
         # GAT正則化 (edge weight / attention entropy)
         if self.gat is not None:
@@ -829,7 +824,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
                     and self.gat_edge_weight > 0):
                 edge_reg = self.gat_edge_weight * self._gat_edge_reg_value
                 total_loss = total_loss + edge_reg
-                self.log('train_gat_edge_penalty', self._gat_edge_reg_value.detach(), prog_bar=False)
+                # Note: GAT edge penalty logging removed (was Lightning self.log)
                 # 🔧 DEBUG (2025-10-06): Log GAT edge regularization
                 logger.debug(f"[GAT-LOSS] Adding edge_reg={edge_reg.item():.6f} (weight={self.gat_edge_weight})")
             else:
@@ -839,14 +834,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
                     and self.gat_entropy_weight > 0):
                 entropy_reg = -self.gat_entropy_weight * self._gat_attention_entropy
                 total_loss = total_loss + entropy_reg
-                self.log('train_gat_entropy', self._gat_attention_entropy.detach(), prog_bar=False)
+                # Note: GAT entropy logging removed (was Lightning self.log)
                 # 🔧 DEBUG (2025-10-06): Log GAT entropy regularization
                 logger.debug(f"[GAT-LOSS] Adding entropy_reg={entropy_reg.item():.6f} (weight={self.gat_entropy_weight})")
             else:
                 logger.debug(f"[GAT-LOSS] Skipping entropy_reg (condition not met)")
 
-        # ログ記録
-        self.log('train_loss', total_loss, prog_bar=True)
+        # Note: train_loss logging removed (was Lightning self.log)
 
         # MoE load-balance正則化（オプション）
         try:
@@ -861,7 +855,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
                 from .regime_moe import moe_load_balance_penalty
                 lb_loss = lb_lambda * moe_load_balance_penalty(self.prediction_head.last_gate_probs)
                 total_loss = total_loss + lb_loss
-                self.log('train_moe_lb_loss', lb_loss, prog_bar=False)
+                # Note: MoE load balance loss logging removed (was Lightning self.log)
             except Exception:
                 pass
 
@@ -887,9 +881,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
 
                 val_loss = self.quantile_loss(pred, target_tensor)
                 total_loss += val_loss
-
-                # Log individual horizon validation losses
-                self.log(f'val_loss_{horizon_key}', val_loss, prog_bar=False, sync_dist=True)
+                # Note: individual horizon validation loss logging removed (was Lightning self.log)
 
         else:
             # Single-horizon validation
@@ -902,7 +894,7 @@ class ATFT_GAT_FAN(pl.LightningModule):
             val_loss = self.quantile_loss(predictions['single'], target_tensor)
             total_loss = val_loss
 
-        self.log('val_loss', total_loss, prog_bar=True, sync_dist=True)
+        # Note: val_loss logging removed (was Lightning self.log)
         return total_loss
 
     def _calculate_financial_metrics(self, predictions: torch.Tensor, targets: torch.Tensor):
@@ -931,51 +923,13 @@ class ATFT_GAT_FAN(pl.LightningModule):
             'hit_rate': hit_rate
         }
 
-    def configure_optimizers(self):
-        """オプティマイザーの設定"""
-        training_cfg = self._get_training_config()
-        optimizer_config = getattr(training_cfg, "optimizer", None)
-
-        opt_type = str(getattr(optimizer_config, "type", "AdamW")) if optimizer_config is not None else "AdamW"
-        lr = float(getattr(optimizer_config, "lr", 1e-3)) if optimizer_config is not None else 1e-3
-        weight_decay = float(getattr(optimizer_config, "weight_decay", 0.0)) if optimizer_config is not None else 0.0
-        betas = getattr(optimizer_config, "betas", (0.9, 0.999)) if optimizer_config is not None else (0.9, 0.999)
-        eps = float(getattr(optimizer_config, "eps", 1e-8)) if optimizer_config is not None else 1e-8
-
-        if opt_type.lower() == 'adamw':
-            optimizer = torch.optim.AdamW(
-                self.parameters(),
-                lr=lr,
-                weight_decay=weight_decay,
-                betas=tuple(betas),
-                eps=eps
-            )
-        else:
-            raise ValueError(f"Unsupported optimizer: {opt_type}")
-
-        # スケジューラー設定
-        scheduler_config = getattr(training_cfg, "scheduler", None)
-
-        if scheduler_config is not None and getattr(scheduler_config, 'type', '') == 'CosineAnnealingWarmRestarts':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer,
-                T_0=int(getattr(scheduler_config, 'T_0', 10)),
-                T_mult=int(getattr(scheduler_config, 'T_mult', 1)),
-                eta_min=float(getattr(scheduler_config, 'eta_min', 1e-6))
-            )
-        else:
-            scheduler = None
-
-        if scheduler:
-            return {
-                'optimizer': optimizer,
-                'lr_scheduler': {
-                    'scheduler': scheduler,
-                    'interval': 'epoch'
-                }
-            }
-        else:
-            return optimizer
+    # NOTE: configure_optimizers was a Lightning-specific method.
+    # Optimizer and scheduler creation has been moved to train_atft.py.
+    # This method is no longer used when running with standard PyTorch training loop.
+    #
+    # def configure_optimizers(self):
+    #     """オプティマイザーの設定 - DEPRECATED, moved to train_atft.py"""
+    #     pass
 class PredictionHead(nn.Module):
     """改善版予測ヘッド（single-horizon用、backward compatibility）"""
     def __init__(self, hidden_size: int, config: DictConfig, output_std: float = 0.01, layer_scale_gamma: float = 0.1):
