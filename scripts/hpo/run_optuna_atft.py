@@ -63,9 +63,9 @@ class ATFTOptunaOptimizer:
 
         # Suggest hyperparameters matching Hydra config structure
         lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
-        # Reduced ranges to avoid CUBLAS_STATUS_NOT_SUPPORTED errors (hidden_size=512, batch_size=4096)
-        batch_size = trial.suggest_categorical("batch_size", [512, 1024, 2048])  # Removed 4096
-        hidden_size = trial.suggest_categorical("hidden_size", [128, 256, 384])  # Removed 512
+        # A100 80GB optimized ranges - much larger batch sizes possible
+        batch_size = trial.suggest_categorical("batch_size", [2048, 4096, 8192])  # Optimized for A100 80GB
+        hidden_size = trial.suggest_categorical("hidden_size", [256, 384, 512])  # Larger models for better capacity
         gat_dropout = trial.suggest_float("gat_dropout", 0.1, 0.4)
         gat_layers = trial.suggest_int("gat_layers", 2, 4)
 
@@ -103,12 +103,38 @@ class ATFTOptunaOptimizer:
         logger.info(f"Trial {trial.number}: lr={lr:.2e}, batch={batch_size}, hidden={hidden_size}, gat_dropout={gat_dropout:.3f}, gat_layers={gat_layers}")
 
         try:
-            # Run training
+            # Run training with A100 80GB + 2TiB RAM + 256-core CPU optimized environment
+            import os
+            env = os.environ.copy()
+
+            # GPU Optimization (A100 80GB)
+            env["CUDA_VISIBLE_DEVICES"] = "0"
+            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+            # DataLoader: Safe mode (num_workers=0) to avoid fork() + Polars deadlock
+            # Multi-worker with Polars/Parquet causes 117+ thread deadlock on 256-core systems
+            env["NUM_WORKERS"] = "0"  # Single-process DataLoader (stable)
+            env["PIN_MEMORY"] = "1"
+
+            # Memory Optimization
+            env["RMM_POOL_SIZE"] = "70GB"  # 70GB for A100 80GB (留余10GB)
+            env["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512,expandable_segments:True"
+
+            # Thread Optimization: Moderate thread count to avoid contention
+            env["OMP_NUM_THREADS"] = "8"   # Reduced from 24 to prevent thread explosion
+            env["MKL_NUM_THREADS"] = "8"   # Reduced from 24 to prevent thread explosion
+            env["OPENBLAS_NUM_THREADS"] = "1"
+
+            # Mixed Precision (bf16 for A100)
+            env["USE_AMP"] = "1"
+            env["AMP_DTYPE"] = "bf16"
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=7200,  # 2 hour timeout (increased from 1h for 10 epochs with 8.9M rows)
+                timeout=3600,  # 1 hour timeout (should be faster with GPU optimization)
+                env=env,
             )
 
             # Log subprocess output for debugging
