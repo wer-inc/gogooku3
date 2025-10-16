@@ -3326,11 +3326,30 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     ]
     
     # Optimizer初期化
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=phases[0]["lr"],
-        weight_decay=config.train.optimizer.weight_decay
-    )
+    optimizer_type = os.getenv("OPTIMIZER_TYPE", "adamw").lower()
+    lr = phases[0]["lr"]
+    weight_decay = config.train.optimizer.weight_decay
+
+    if optimizer_type == "adabelief":
+        from adabelief_pytorch import AdaBelief
+        optimizer = AdaBelief(
+            model.parameters(),
+            lr=lr,
+            eps=1e-16,
+            betas=(0.9, 0.999),
+            weight_decay=weight_decay,
+            weight_decouple=True,
+            rectify=True,
+            print_change_log=False
+        )
+        logger.info(f"[optimizer] Using AdaBelief (lr={lr:.2e}, wd={weight_decay:.2e})")
+    else:  # default: adamw
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=lr,
+            weight_decay=weight_decay
+        )
+        logger.info(f"[optimizer] Using AdamW (lr={lr:.2e}, wd={weight_decay:.2e})")
     # Fusion control + alpha warmup settings
     fuse_mode = os.getenv("FUSE_FORCE_MODE", "auto").lower()  # auto|tft_only
     fuse_start_phase = int(os.getenv("FUSE_START_PHASE", "2"))
@@ -3346,6 +3365,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     warmup_epochs_phase = int(os.getenv("PHASE_WARMUP_EPOCHS", "2"))
     if sched_choice == "plateau":
         logger.info("[Scheduler] Using ReduceLROnPlateau (phase-scoped)")
+    elif sched_choice == "cosine_restarts":
+        T_0 = int(os.getenv("COSINE_T0", "10"))  # First restart period
+        T_mult = int(os.getenv("COSINE_TMULT", "2"))  # Period multiplier
+        eta_min = float(os.getenv("COSINE_ETA_MIN", "5e-5"))  # Minimum LR
+        logger.info(f"[Scheduler] Using CosineAnnealingWarmRestarts (T_0={T_0}, T_mult={T_mult}, eta_min={eta_min:.1e})")
     else:
         logger.info(f"[Scheduler] Using Warmup+Cosine (warmup_epochs={warmup_epochs_phase})")
     
@@ -3456,10 +3480,17 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         _phase_best = -float("inf") if early_stop_maximize else float("inf")
         _no_improve = 0
         
-        # ReduceLROnPlateau scheduler for this phase (if selected)
+        # Scheduler creation for this phase
         if sched_choice == "plateau":
             phase_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-5
+            )
+        elif sched_choice == "cosine_restarts":
+            phase_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer,
+                T_0=T_0,
+                T_mult=T_mult,
+                eta_min=eta_min
             )
 
         # エポック実行
