@@ -63,8 +63,9 @@ class ATFTOptunaOptimizer:
 
         # Suggest hyperparameters matching Hydra config structure
         lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
-        batch_size = trial.suggest_categorical("batch_size", [512, 1024, 2048, 4096])
-        hidden_size = trial.suggest_categorical("hidden_size", [128, 256, 384, 512])
+        # Reduced ranges to avoid CUBLAS_STATUS_NOT_SUPPORTED errors (hidden_size=512, batch_size=4096)
+        batch_size = trial.suggest_categorical("batch_size", [512, 1024, 2048])  # Removed 4096
+        hidden_size = trial.suggest_categorical("hidden_size", [128, 256, 384])  # Removed 512
         gat_dropout = trial.suggest_float("gat_dropout", 0.1, 0.4)
         gat_layers = trial.suggest_int("gat_layers", 2, 4)
 
@@ -72,6 +73,14 @@ class ATFTOptunaOptimizer:
         trial_dir = self.output_dir / f"trial_{trial.number}"
         trial_dir.mkdir(exist_ok=True)
         hpo_metrics_path = trial_dir / "metrics.json"
+
+        # ✅ FIX: Dynamically generate GAT architecture lists matching num_layers
+        # hidden_channels: all layers use hidden_size
+        hidden_channels_str = f"[{','.join([str(hidden_size)] * gat_layers)}]"
+        # heads: first layer uses 8 heads, subsequent layers use 4 heads
+        heads_str = f"[{','.join(['8'] + ['4'] * (gat_layers - 1))}]"
+        # concat: all layers concatenate except the last one
+        concat_str = f"[{','.join(['true'] * (gat_layers - 1) + ['false'])}]"
 
         # Build command with Hydra overrides matching config structure
         cmd = [
@@ -83,7 +92,11 @@ class ATFTOptunaOptimizer:
             f"--lr={lr}",
             f"model.hidden_size={hidden_size}",
             f"model.gat.layer_config.dropout={gat_dropout}",
+            # GAT architecture with all 4 parameters
             f"model.gat.architecture.num_layers={gat_layers}",
+            f"model.gat.architecture.hidden_channels={hidden_channels_str}",
+            f"model.gat.architecture.heads={heads_str}",
+            f"model.gat.architecture.concat={concat_str}",
             f"+hpo.output_metrics_json={hpo_metrics_path}",  # Add new parameter with + prefix
         ]
 
@@ -95,7 +108,7 @@ class ATFTOptunaOptimizer:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3600,  # 1 hour timeout
+                timeout=7200,  # 2 hour timeout (increased from 1h for 10 epochs with 8.9M rows)
             )
 
             # Log subprocess output for debugging

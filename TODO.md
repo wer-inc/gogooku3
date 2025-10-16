@@ -1,456 +1,263 @@
-# TODO.md - gogooku3-standalone
+# TODO.md - gogooku3
 
-**最終更新**: 2025-10-07 15:50 (Phase 7-1完了)
-**前バージョン**: `TODO.md.backup-20251007-before-cleanup`
+**最終更新**: 2025-10-16 07:20 (HPO Sweep実行中)
+**前バージョン**: GAT勾配ゼロ問題解決版（2025-10-07）
 
 ---
 
-## 📌 現在の状況 (2025-10-07)
+## 📌 現在の状況 (2025-10-16)
 
-### ✅ GAT勾配ゼロ問題 - 完全解決済み
+### ✅ PyTorch Lightning依存関係削除 - 完了
 
-**状態**: Phase 6完了、検証済み、本番トレーニング準備完了
+**状態**: PyTorch Lightning完全削除、純粋なPyTorchモデルに移行完了
 
-**根本原因**: `config_production_optimized.yaml`に`model.gat`設定セクションが完全欠落
-- `gat_entropy_weight`と`gat_edge_weight`がデフォルト0.0で初期化
-- GAT loss metricsが計算されず、勾配がGATパラメータに流れない
+**問題**:
+- PyTorch Lightning import時に `std::bad_alloc` エラー発生
+- 2TiB RAM環境でもインポート不可能
+- v2.5.5, v2.0.9, v1.9.5 全てのバージョンで失敗
 
-**解決方法**: GAT regularization設定を追加
-```yaml
-model:
-  gat:
-    regularization:
-      edge_weight_penalty: 0.01
-      attention_entropy_penalty: 0.001
-```
+**解決方法**: PyTorch Lightningを完全削除し、純粋なnn.Moduleに移行
+- `ATFT_GAT_FAN` を `pl.LightningModule` → `torch.nn.Module` に変更
+- 全ての `self.log()` 呼び出しを削除（15箇所以上）
+- `on_train_epoch_start()` コールバックを無効化
+- `configure_optimizers()` を学習スクリプトに移動
+- `training_step()` / `validation_step()` の引数を調整
 
-**検証結果**: トレーニング実行でGAT loss metrics計算・勾配フロー確認済み
-**詳細**: 下記「解決済みセクション」参照
+**検証結果**:
+- ✅ モデルインポート成功
+- ✅ 1エポック学習テスト成功（Loss=0.3588, Val Loss=0.3626）
+- ✅ HPO sweep開始成功
+
+### 🚀 HPO Sweep実行中 (2025-10-16)
+
+**状態**: 20トライアルHPO sweep正常稼働中
+
+**開始時刻**: 2025-10-16 06:43 (UTC)
+**プロセスID**: 159175
+**完了予定**: 2025-10-17 午前1-3時頃（約20-30時間）
+
+**設定**:
+- Study名: `atft_hpo_production_20251016`
+- トライアル数: 20
+- エポック/トライアル: 10
+- 出力先: `output/hpo_production/`
+- ログ: `/tmp/hpo_production.log`
+
+**最適化パラメータ**:
+- Learning Rate: 1e-5 ~ 1e-3 (log scale)
+- Batch Size: 512, 1024, 2048, 4096
+- Hidden Size: 128, 256, 384, 512
+- GAT Dropout: 0.1 ~ 0.4
+- GAT Layers: 2 ~ 4
+
+**目標**: Sharpe Ratio 最大化
+
+**環境**:
+- GPU: NVIDIA A100 80GB PCIe
+- CPU: 256-core AMD EPYC
+- RAM: 2.0 TiB (前回の10倍)
+- Dataset: 8.9M rows, 4,484 stocks, 112 columns
 
 ---
 
 ## ⏳ 次のタスク（優先順）
 
-### 1. 本番トレーニング実行 🚀 (Phase 7-2)
-- [ ] 完全トレーニング実行 (120 epochs)
-- [ ] GAT loss metricsの監視
-- [ ] TensorBoard/W&Bでの可視化
-- [ ] チェックポイント保存とモデル評価
+### 1. HPO Sweep完了待ち 🕐
+- [x] HPO sweep開始（2025-10-16 06:43）
+- [ ] 中間結果確認（4-6時間後: 今日 10:00-12:00頃）
+- [ ] 半分完了確認（12時間後: 今日 18:00頃）
+- [ ] 最終結果確認（20-30時間後: 明日 08:00-10:00頃）
 
-### 2. GAT効果の定量評価 📊 (Phase 7-4 - LOW priority)
-- [ ] RankIC改善度の測定 (GAT有効 vs 無効)
-- [ ] Sharpe比改善度の測定
-- [ ] Attention weights分析（どの銘柄ペアが相関学習されているか）
-- [ ] Edge importance分析
+### 2. HPO結果分析 📊 (Sweep完了後)
+- [ ] 最良パラメータの特定
+- [ ] 全20トライアルの結果比較
+- [ ] パフォーマンス傾向の分析
+- [ ] 最適パラメータでの本番学習実行
 
-### 3. コードクリーンアップ 🧹 (Phase 7-1 ✅ 完了)
-- [x] **Phase 7-1 完了 (2025-10-07)**: 診断ログを`DEBUG`レベルに変換 ✅
-  - 18個のlogger.info()をlogger.debug()に変換完了
-  - [GAT-INIT]のみINFOレベルで保持（初期化時1回のみ）
-  - 本番ログ54.9M → 1エントリに削減（99.9998%減）
-  - 詳細: `/tmp/phase7_1_summary.md`
-- [ ] Phase 1-5の修正コードレビュー
-- [ ] 不要なコメントの削除
-- [ ] コードドキュメント更新
-
-### 4. 設定管理の改善 ⚙️
-- [ ] 設定ファイル検証スクリプト作成
-  ```python
-  def validate_gat_config(config):
-      """GAT設定の必須パラメータをチェック"""
-      if config.model.gat.enabled:
-          assert hasattr(config.model.gat, 'regularization')
-          assert config.model.gat.regularization.edge_weight_penalty > 0
-          assert config.model.gat.regularization.attention_entropy_penalty > 0
-  ```
-- [ ] 必須パラメータのチェック自動化
-- [ ] 設定ファイルテンプレートの作成
+### 3. モデルパフォーマンス評価 📈
+- [ ] 最良モデルでのSharpe Ratio評価
+- [ ] RankIC/IC改善度の測定
+- [ ] バックテスト実行
+- [ ] 予測精度の検証
 
 ---
 
-## ✅ 解決済み: GAT勾配ゼロ問題 (2025-10-06～2025-10-07)
+## ✅ 完了済みタスク
 
-### 問題の概要
-ATFT-GAT-FANモデルのトレーニング中、GATレイヤーのパラメータに勾配が常にゼロになる現象が発生。GAT自体は実行されているが、勾配がGATパラメータまで伝播しない。
+### HPO環境セットアップ (2025-10-16)
+- [x] 環境セットアップと検証
+- [x] 前回のsweep結果確認（W&B/ローカル）
+- [x] メモリ最適化設定の適用（2TiB RAM用）
+- [x] GCSからデータセットダウンロード（8.9M rows）
+- [x] W&Bインストールと認証（v0.22.2）
+- [x] HPO環境セットアップ（Optuna v4.5.0）
+- [x] PyTorch Lightning依存関係削除
+- [x] 1エポック学習テスト実行
+- [x] HPO sweep実行（1トライアルテスト）
+- [x] 20トライアル本格的なHPO sweep開始
 
-### 調査プロセス（6段階、約30時間）
+### PyTorch Lightning削除作業 (2025-10-16)
+- [x] `import pytorch_lightning as pl` コメントアウト
+- [x] クラス継承変更（`pl.LightningModule` → `nn.Module`）
+- [x] `self.log()` 呼び出し削除（全箇所）
+- [x] `on_train_epoch_start()` 無効化
+- [x] `configure_optimizers()` 移動
+- [x] `training_step()` / `validation_step()` 引数調整
+- [x] `einops` パッケージインストール
+- [x] モデルインポートテスト成功
+- [x] 学習動作確認テスト成功
 
-#### Phase 1: edge_index未渡し問題
-- **仮説**: edge_indexがbatch dictに含まれていない
-- **修正**: train_atft.py内の`_forward_with_optional_graph()`を2箇所修正
-- **結果**: ❌ GAT実行されるようになったが勾配ゼロ継続
-
-#### Phase 2: .detach()による勾配切断
-- **仮説**: edge cacheの`.detach()`が勾配を切断
-- **修正**: train_atft.py:6785-6786の`.detach()`削除
-- **検証**: PHASE_MAX_BATCHES=20で実行、Batch 10（新規edge構築時）確認
-- **結果**: ❌ 新規edge構築時でもGAT勾配ゼロ
-
-#### Phase 3: torch.compile非互換性
-- **仮説**: torch.compile dynamic=False設定が動的グラフと非互換
-- **修正**: model/atft_gat_fan.yamlでcompile.enabled=false
-- **検証**: PHASE_MAX_BATCHES=10で実行
-- **結果**: ❌ torch.compile無効でもGAT勾配ゼロ
-
-#### Phase 4: backbone_projection動的再作成 ✅ 部分解決
-- **発見**: `_ensure_backbone_projection()`がforward pass中に新しいLinear層を作成
-- **メカニズム**:
-  1. `__init__`: GAT有効時 → `Linear(512, 256)`作成
-  2. Optimizer初期化: この時点のパラメータのみ登録
-  3. Forward pass: 次元変化検出 → 新しい`Linear(256, 256)`作成
-  4. 新層のパラメータはOptimizer未登録 → 勾配計算されるが更新されない
-- **修正**: ゼロパディングで次元統一、動的層作成を防止
-- **結果**: ✅ 動的層作成は解決、❌ GAT勾配はゼロのまま
-
-#### Phase 5: Graph builder無効化問題 ✅ 根本原因特定
-- **発見**: `config_production_optimized.yaml`で`use_in_training: false`設定
-- **メカニズム**: Graph builder無効 → edge_index構築されない → GAT実行スキップ → GAT loss計算されない
-- **修正**: `use_in_training: true`に変更
-- **検証結果**: ✅ GAT実行成功、✅ edge_index正しく渡される
-- **結果**: ✅ GAT実行問題は解決、❌ 新たな勾配消失問題を発見
-
-#### Phase 6: GAT loss計算無効化問題 ✅ 最終解決
-- **発見**: `config_production_optimized.yaml`に`model.gat`セクション完全欠落
-- **根本原因**:
-  1. `model.gat`セクション不在 → `gat_entropy_weight`, `gat_edge_weight`がデフォルト0.0
-  2. `return_attention = self.training and self.gat is not None and self.gat_entropy_weight > 0` → False
-  3. GAT loss metrics計算されない
-  4. GAT lossが`total_loss`に追加されない
-  5. 結果: GATパラメータに勾配が流れない
-
-- **修正内容**: `configs/atft/config_production_optimized.yaml` (Line 106-122)
-  ```yaml
-  model:
-    gat:
-      enabled: true
-      architecture:
-        hidden_channels: [256]
-        heads: [4]
-        concat: [true]
-        num_layers: 1
-      layer_config:
-        dropout: 0.2
-        edge_dropout: 0.1
-      edge_features:
-        edge_dim: 0
-      regularization:
-        edge_weight_penalty: 0.01
-        attention_entropy_penalty: 0.001
-  ```
-
-- **検証結果** (`/tmp/gat_diagnostic_unbuffered.log`):
-  - ✅ 設定ロード: `gat_entropy_weight=0.001, gat_edge_weight=0.01`
-  - ✅ return_attention有効化: `return_attention=True` during training
-  - ✅ GAT loss metrics計算: `_gat_attention_entropy=1.730430, _gat_edge_reg_value=0.028566`
-  - ✅ 勾配フロー確認: `gat_features.requires_grad=True`, `combined_features.requires_grad=True`
-  - ✅ グラフ構築: 256 nodes, 2786 edges, avg_deg=10.88
-
-- **結果**: ✅ **GAT勾配ゼロ問題は完全に解決**
-
-### 修正ファイルまとめ
-
-1. **configs/atft/config_production_optimized.yaml** (2箇所):
-   - Line 106-122: `model.gat`セクション追加（Phase 6）
-   - Line 203: `use_in_training: true`に変更（Phase 5）
-
-2. **src/atft_gat_fan/models/architectures/atft_gat_fan.py**:
-   - Line 600-624: ゼロパディング実装（Phase 4）
-   - 複数箇所: 診断ログ追加（Phase 6調査用）
-
-3. **scripts/train_atft.py**:
-   - edge_index渡し修正（Phase 1）
-   - `.detach()`削除（Phase 2）
+### GAT勾配ゼロ問題解決 (2025-10-06～2025-10-07)
+- [x] Phase 1-6の調査完了
+- [x] 根本原因特定（設定ファイル不完全）
+- [x] GAT regularization設定追加
+- [x] ゼロパディング実装
+- [x] 検証ログでの動作確認
+- [x] 診断ログDEBUG化（Phase 7-1）
 
 ---
 
-## 🔄 Phase 7: 本番トレーニング準備 (2025-10-07)
+## 🔍 監視方法（HPO Sweep）
 
-### Phase 7-1: 診断ログDEBUG化 ✅ 完了 (2025-10-07 15:50)
+### リアルタイム進捗確認
+```bash
+# HPO進捗（Optunaログ）
+tail -f /tmp/hpo_production.log
 
-**目的**: 本番トレーニング時のログスパムを防止
+# 学習詳細ログ
+tail -f logs/ml_training.log
 
-**問題**:
-- 19個の診断ログが`logger.info()`レベルで実装
-- 本番トレーニング: 25,448 batches/epoch × 120 epochs × 18 logs/batch = 54.9M log entries
-- 数GB規模のログファイル生成 + I/Oオーバーヘッド
+# プロセス状態
+ps aux | grep 159175 | grep -v grep
 
-**実施内容**: `src/atft_gat_fan/models/architectures/atft_gat_fan.py`
-- ✅ 18個の診断ログを`logger.debug()`に変換
-  - Line 582: `[RETURN-ATT]` return_attention決定
-  - Line 596, 616: `[GAT-EXEC]` GAT実行
-  - Line 600, 609, 611: `[RETURN-ATT]` GAT loss metrics
-  - Line 618, 620, 628, 630, 633, 655: `[GAT-DEBUG]` 詳細デバッグ情報
-  - Line 823, 824, 832, 834, 842, 844: `[GAT-LOSS]` GAT loss計算
-- ✅ 初期化ログのみINFOレベルで保持（Line 337: `[GAT-INIT]`）
+# 完了トライアル数
+ls output/hpo_production/trial_* 2>/dev/null | wc -l
+```
 
-**結果**:
-- 本番ログ出力: 54.9M → 1エントリ (99.9998%削減)
-- デバッグモード時は依然として全ログ取得可能
-- 詳細レポート: `/tmp/phase7_1_summary.md`
+### 中間結果確認
+```bash
+# 全トライアル結果
+cat output/hpo_production/all_trials.json | jq '.[] | {trial: .number, sharpe: .value, params: .params}'
 
-**次のステップ**: Phase 7-2（本番トレーニング実行）
+# 現在の最良パラメータ
+cat output/hpo_production/best_params.json
+```
+
+### GPU/CPU使用状況
+```bash
+# GPU監視
+watch -n 5 nvidia-smi
+
+# CPU/メモリ監視
+htop
+```
+
+---
+
+## 📁 重要なファイル
+
+### HPO関連
+```
+scripts/hpo/run_optuna_atft.py                # HPO実行スクリプト
+output/hpo_production/best_params.json        # 最良パラメータ
+output/hpo_production/all_trials.json         # 全トライアル結果
+output/hpo_production/trial_*/metrics.json    # 各トライアルメトリクス
+/tmp/hpo_production.log                       # HPOログ
+```
+
+### モデル・設定
+```
+src/atft_gat_fan/models/architectures/atft_gat_fan.py  # モデル（PyTorch Lightning削除済み）
+configs/atft/config_production_optimized.yaml           # 本番設定
+configs/atft/model/atft_gat_fan.yaml                    # モデル設定
+```
+
+### ログ
+```
+logs/ml_training.log                          # 学習ログ
+/tmp/hpo_production.log                       # HPOログ
+```
 
 ---
 
 ## 📚 学んだ教訓
 
-### 1. Hydra設定ファイル管理の重要性 ⚠️
+### PyTorch Lightning依存関係問題
+- **問題**: 大規模RAM環境でもインポート時にメモリエラー
+- **原因**: PyTorch Lightning内部のメモリ割り当て問題
+- **解決**: 完全削除し、純粋なPyTorchに移行
+- **教訓**: 重要なフレームワーク依存は避け、コア機能のみ使用すべき
 
-**問題**:
-- Hydra設定の階層構造で、サブセクション欠落によるデフォルト値適用
-- `model/atft_gat_fan.yaml`には設定があるが、`config_production_optimized.yaml`で上書きされず
-
-**教訓**:
-- 重要なモデルコンポーネントは**設定必須項目として検証**すべき
-- デフォルト値に依存せず、明示的に設定を記述
-- 本番設定ファイルは包括的なレビューが必要
-
-**対策**:
-```python
-def validate_model_config(config):
-    """モデル設定の必須項目をチェック"""
-    required_sections = ['gat', 'fan', 'san', 'vsn']
-    for section in required_sections:
-        if getattr(config.model, section, {}).get('enabled', False):
-            # 有効化されたコンポーネントの必須パラメータをチェック
-            pass
-```
-
-### 2. PyTorch動的グラフのベストプラクティス 🔧
-
-**ゼロパディングによる次元統一**:
-```python
-# ❌ 悪い例: 条件分岐で次元が変わる
-if gat_features is not None:
-    combined = torch.cat([base, gat_features], dim=-1)
-else:
-    combined = base
-
-# ✅ 良い例: ゼロパディングで次元統一
-if gat_features is not None:
-    combined = torch.cat([base, gat_features], dim=-1)
-else:
-    zero_pad = torch.zeros(base.size(0), base.size(1), gat_dim, device=base.device)
-    combined = torch.cat([base, zero_pad], dim=-1)
-```
-
-**Optimizer初期化のタイミング**:
-- `__init__`で全てのレイヤーを作成
-- Optimizer初期化後に新しいレイヤーを作成しない
-- Forward pass中の動的層作成は避ける
-
-**勾配デバッグの三段階確認**:
-1. 計算グラフの連続性: `requires_grad=True`
-2. Optimizer登録状況: `optimizer.param_groups`
-3. Parameter IDの一致: 初期化時と実行時のid(param)
-
-### 3. 診断ログの効果的な使用 🔍
-
-**段階的ログ追加**:
-1. 初期化時: パラメータ値の確認
-2. Forward pass時: 中間状態の確認
-3. Loss計算時: 各コンポーネントの寄与確認
-4. Backward時: 勾配の確認
-
-**ログレベルの使い分け**:
-- `DEBUG`: 詳細な診断情報（本番では無効化）
-- `INFO`: 重要な状態遷移
-- `WARNING`: 潜在的な問題
-
-### 4. 系統的デバッグのアプローチ 🧪
-
-**Deep Reasoning手法**:
-1. 現象の正確な観察
-2. 仮説の立案
-3. 最小限の修正で検証
-4. 結果の詳細な分析
-5. 次の仮説へ（または解決）
-
-**今回の成功要因**:
-- 各フェーズで1つの仮説に集中
-- 検証ログの詳細な保存
-- 失敗からの学び（Phase 1-3の仮説は間違っていたが、原因を絞り込めた）
+### HPO設定の重要性
+- **発見**: 適切なハイパーパラメータ探索は性能向上に不可欠
+- **方法**: Optunaによる自動最適化（TPE sampler + Median pruner）
+- **メトリクス**: Sharpe Ratio最大化を目標に設定
 
 ---
 
-## 🚀 今後の改善提案
+## 🎯 今後の目標
 
-### 1. 設定検証の自動化 ⚙️
+### 短期目標 (1-2日)
+- [ ] ✅ HPO sweep完了（20トライアル）
+- [ ] 📊 最良パラメータ特定
+- [ ] 🚀 最適パラメータで本番学習実行（120 epochs）
+- [ ] 📈 モデルパフォーマンス評価
 
-**実装例**:
-```python
-# scripts/validate_config.py
-def validate_atft_config(config_path: str):
-    """ATFT設定ファイルの必須項目を検証"""
-    config = load_config(config_path)
+### 中期目標 (1週間)
+- [ ] 🔍 バックテスト実行
+- [ ] 📝 結果レポート作成
+- [ ] ⚙️ 本番デプロイ準備
+- [ ] 🧪 Ablation study（GAT有無、layers数など）
 
-    # GAT設定チェック
-    if config.model.gat.enabled:
-        assert hasattr(config.model.gat, 'regularization'), \
-            "GAT regularization config is missing"
-        assert config.model.gat.regularization.edge_weight_penalty > 0, \
-            "edge_weight_penalty must be > 0"
-        assert config.model.gat.regularization.attention_entropy_penalty > 0, \
-            "attention_entropy_penalty must be > 0"
-
-    # Graph builder設定チェック
-    if config.model.gat.enabled:
-        assert config.data.graph_builder.use_in_training, \
-            "GAT enabled but graph_builder.use_in_training is false"
-
-    print("✅ Config validation passed")
-```
-
-**統合方法**:
-- `train_atft.py`の開始時に自動実行
-- CI/CDパイプラインに組み込み
-
-### 2. GAT monitoring強化 📊
-
-**追加すべきメトリクス**:
-- `gat/attention_entropy`: Attention分布の多様性
-- `gat/edge_regularization`: Edge weightの正則化
-- `gat/edge_count`: 各ステップのエッジ数
-- `gat/avg_attention`: 平均attention weight
-
-**実装**:
-```python
-# トレーニングステップ内
-if self.gat is not None and self._gat_attention_entropy is not None:
-    self.log('gat/attention_entropy', self._gat_attention_entropy)
-    self.log('gat/edge_regularization', self._gat_edge_reg_value)
-    self.log('gat/edge_count', edge_index.size(1))
-```
-
-### 3. コードクリーンアップ計画 🧹
-
-**診断ログの整理**:
-```python
-# 条件付きログ化
-if self.config.debug.gat_verbose:
-    logger.debug(f"[GAT-DEBUG] ...")
-else:
-    # 本番環境では無効
-    pass
-```
-
-**不要な修正コードの削除**:
-- Phase 2の`.detach()`削除は効果なし → コメント追加して残す
-- Phase 3のtorch.compile無効化 → 設定で制御可能なので維持
-
-### 4. ドキュメント化 📝
-
-**作成すべきドキュメント**:
-- `docs/troubleshooting/gat_gradient_zero.md`: 今回の問題と解決方法
-- `docs/config/gat_configuration.md`: GAT設定ガイド
-- `docs/architecture/atft_gat_fan.md`: モデルアーキテクチャ解説
-
-**設定テンプレート**:
-- `configs/templates/gat_minimal.yaml`: 最小構成
-- `configs/templates/gat_production.yaml`: 本番推奨構成
-
----
-
-## 📊 次の目標
-
-### 短期目標 (1週間)
-- [ ] ✅ 完全トレーニング実行 (120 epochs)
-- [ ] 📊 GAT効果の定量評価
-  - RankIC改善度: 目標 +5%
-  - Sharpe比改善度: 目標 +10%
-- [ ] 🧹 診断ログのクリーンアップ
-- [ ] 📝 トラブルシューティングドキュメント作成
-
-### 中期目標 (1ヶ月)
-- [ ] ⚙️ 設定検証自動化の実装
-- [ ] 🔍 GAT hyperparameter tuning
-  - heads: [2, 4, 8]
-  - hidden_channels: [128, 256, 512]
-  - dropout: [0.1, 0.2, 0.3]
-- [ ] 📚 ドキュメント整備
-- [ ] 🧪 Ablation study (GAT有無、heads数、層数)
-
-### 長期目標 (3ヶ月)
-- [ ] 🌐 他のGNNアーキテクチャの検証
-  - GraphSAGE: 大規模グラフ対応
-  - GIN: 表現力の高いGNN
-  - GAT v2: 改良版GAT
+### 長期目標 (1ヶ月)
+- [ ] 🌐 他のGNNアーキテクチャ検証
 - [ ] 🔄 Multi-hop attention mechanisms
-- [ ] 📈 Dynamic graph learning (時系列でグラフ構造を学習)
-- [ ] 🏆 Production deployment準備
+- [ ] 📈 Dynamic graph learning
+- [ ] 🏆 Production deployment
 
 ---
 
-## 📝 参考情報
+## 🚨 トラブルシューティング
 
-### 重要なファイル
-
-```
-# 設定ファイル
-configs/atft/config_production_optimized.yaml    # ✅ GAT設定追加済み (本番用)
-configs/atft/model/atft_gat_fan.yaml             # モデル設定
-configs/atft/train/production_improved.yaml      # トレーニング設定
-
-# モデル実装
-src/atft_gat_fan/models/architectures/atft_gat_fan.py  # ✅ ゼロパディング実装済み
-
-# トレーニングスクリプト
-scripts/train_atft.py                             # ✅ edge_index修正済み
-scripts/integrated_ml_training_pipeline.py        # 統合パイプライン
-
-# ドキュメント
-TODO.md                                           # このファイル
-TODO.md.backup-20251007-before-cleanup           # 整理前バックアップ
-```
-
-### よく使うコマンド
-
+### HPO Sweepが停止した場合
 ```bash
-# 本番トレーニング
-cd /home/ubuntu/gogooku3-standalone
-make train-optimized
+# プロセス確認
+ps aux | grep 159175
 
-# 検証トレーニング（短時間）
-PHASE_MAX_BATCHES=10 python scripts/train_atft.py \
-  --config-path configs/atft \
-  --config-name config_production_optimized
-
-# GAT関連ログの確認
-tail -f logs/ml_training.log | grep -E "GAT|gat_"
-
-# モデルパラメータ確認
-python -c "
-from omegaconf import OmegaConf
-cfg = OmegaConf.load('configs/atft/config_production_optimized.yaml')
-print(OmegaConf.to_yaml(cfg.model.gat))
-"
-
-# 設定検証（TODO: 実装予定）
-python scripts/validate_config.py configs/atft/config_production_optimized.yaml
+# 停止していた場合は再開（Optunaは途中から再開可能）
+nohup python scripts/hpo/run_optuna_atft.py \
+  --data-path output/ml_dataset_latest_full.parquet \
+  --n-trials 20 \
+  --max-epochs 10 \
+  --study-name atft_hpo_production_20251016 \
+  --output-dir output/hpo_production \
+  > /tmp/hpo_production.log 2>&1 &
 ```
 
-### 環境情報
+### メモリ不足エラー
+- 2TiB RAM環境では発生しないはずだが、発生した場合:
+  - バッチサイズを512に固定
+  - `NUM_WORKERS=4` に削減
+
+### GPU OOMエラー
+- A100 80GBでは発生しないはずだが、発生した場合:
+  - Mixed precision training確認（bf16使用中）
+  - `RMM_POOL_SIZE=40GB` に削減
+
+---
+
+## 📊 環境情報（新環境）
 
 ```
 GPU: NVIDIA A100 80GB PCIe
-CPU: 24-core AMD EPYC 7V13
-Memory: 216GB RAM
-Storage: 291GB SSD (167GB free)
+CPU: 256-core AMD EPYC
+Memory: 2.0 TiB RAM (前回の10倍)
+Storage: SSD
 CUDA: 12.x
-PyTorch: 2.x
-Python: 3.10
-```
-
-### 検証ログファイル
-
-```
-# Phase 6検証ログ（GAT問題解決確認）
-/tmp/gat_diagnostic_unbuffered.log              # ✅ 最新検証ログ（成功）
-/tmp/gat_fix_verification.log                   # 修正後の検証ログ
-
-# 過去の検証ログ（参考）
-/tmp/gat_diagnostic_phase5.log                  # Phase 5検証
-/tmp/torch_compile_disabled_verification.log    # Phase 3検証
+PyTorch: 2.9.0+cu128
+Python: 3.12.3
+Optuna: 4.5.0
+wandb: 0.22.2
 ```
 
 ---
@@ -458,232 +265,26 @@ Python: 3.10
 ## 🎉 まとめ
 
 ### 達成したこと
-✅ GAT勾配ゼロ問題を6段階の調査で完全解決
-✅ 根本原因を特定: 設定ファイルの不完全さ
-✅ 解決策を実装・検証: GAT regularization設定追加
-✅ ドキュメント化: 問題・解決・教訓を詳細に記録
+- ✅ PyTorch Lightning依存関係を完全削除
+- ✅ 純粋なPyTorchモデルに移行成功
+- ✅ 新環境（2TiB RAM）でHPO sweep開始成功
+- ✅ 20トライアルの自動ハイパーパラメータ最適化実行中
+
+### 進行中
+- 🚀 HPO sweep実行中（PID: 159175）
+- ⏱️ 完了予定: 2025-10-17 午前1-3時頃
 
 ### 次のステップ
-🚀 本番トレーニング実行（120 epochs）
-📊 GAT効果の定量評価
-🧹 コードクリーンアップ
-⚙️ 設定検証の自動化
-
-### コミットメッセージ案
-```
-fix(gat): Resolve GAT gradient zero problem - Phase 6 complete
-
-Root cause: Missing model.gat configuration section in config_production_optimized.yaml
-- Added GAT regularization config (edge_weight_penalty=0.01, attention_entropy_penalty=0.001)
-- Enabled graph builder (use_in_training: true)
-- Implemented zero-padding for dynamic dimensions
-- Fixed edge_index passing in train_atft.py
-
-Verification:
-- GAT loss metrics computed successfully
-- Gradient flow confirmed (requires_grad=True)
-- Graph construction working (256 nodes, 2786 edges)
-
-Closes #GAT-GRADIENT-ZERO
-```
+- 📊 HPO結果分析（明日朝）
+- 🎯 最適パラメータで本番学習
+- 📈 モデルパフォーマンス評価
+- 🏆 Production deployment準備
 
 ---
 
-**注**: 詳細な実装履歴とバックアップは以下を参照:
-- `TODO.md.backup-20251007-before-cleanup` (整理前の完全版)
-- `TODO.md.backup-20251006-*` (Phase 6調査前)
-- Git commit history
+**注**: 詳細な過去の履歴（GAT勾配ゼロ問題など）は以下に記録済み:
+- Phase 1-6の調査プロセス
+- 各種修正ファイル
+- 検証ログ
 
-
-----
-
-トレーニングプロセスは正常に実行中です。現在マルチワーカーDataLoaderの初期化中です。監視方法をまとめます。
-
-🎯 本番トレーニング開始完了
-
-✅ 確認済み事項
-
-プロセス状態:
-- PID: 6172 (train_atft.py)
-- CPU: 7.8%, Memory: 0.5%
-- ステータス: DataLoader初期化中
-
-設定確認:
-- ✅ GPU: NVIDIA A100 80GB PCIe検出
-- ✅ hidden_size: 256
-- ✅ Multi-worker mode: 8 workers
-- ✅ Feature dimensions: 182
-- ✅ Targets: 4 horizons (1d, 5d, 10d, 20d)
-- ✅ Feature clipping: ±8.00
-- ✅ Max epochs: 120
-
-データ:
-- Train batches: 20 (10,612 samples)
-- Val batches: 3 (2,166 samples)
-- Test: 2,171 samples
-
-📊 監視方法
-
-リアルタイムログ監視:
-# 最新のログを監視
-tail -f /home/ubuntu/gogooku3-standalone/logs/ml_training.log
-
-# GAT関連のログのみフィルタ
-tail -f /home/ubuntu/gogooku3-standalone/logs/ml_training.log | grep -E "GAT|gat_"
-
-# エポック進捗監視
-tail -f /home/ubuntu/gogooku3-standalone/logs/ml_training.log | grep -E "Epoch|RankIC|Sharpe"
-
-GPU使用状況監視:
-watch -n 5 nvidia-smi
-
-プロセス状態確認:
-ps aux | grep train_atft.py | grep -v grep
-
-ログファイル:
-- メインログ: /home/ubuntu/gogooku3-standalone/logs/train_optimized_20251008_142111.log
-- MLトレーニングログ: /home/ubuntu/gogooku3-standalone/logs/ml_training.log
-- PIDファイル: /home/ubuntu/gogooku3-standalone/logs/train_optimized_latest.pid
-
-⏰ 予想実行時間
-
-- torch.compile無効: 8-12時間
-- 完了予定: 2025-10-09 02:00-06:00頃
-
-🔍 次のステップ
-
-トレーニングは120 epochs実行されます。数分後にモデル初期化とGAT設定のログが出力されます。
-
-重要なマイルストーン:
-1. モデル初期化完了 - GAT設定確認（数分後）
-2. 最初のepoch完了 - GAT loss metrics確認（30-60分後）
-3. Phase 0完了 (2 epochs) - 初期トレーニング検証
-4. Phase 1-3 - フェーズごとの性能改善確認
-5. トレーニング完了 (120 epochs) - 最終モデル評価
-
-トレーニングが正常に開始されました！継続的な監視が必要な場合は、上記のコマンドをご利用ください。
-
----
-
- 分析の核心を整理
-
-  ✅ IC=0の真因: 予測が定数（std=0）→ 共分散=0 → IC=0（数学的に正しい）
-  ❌ RankICの誤誘導: argsort().argsort()がタイ無視 → 定数予測でも擬似順位差 → 偶然の非ゼロ相関
-
-  これにより「Train IC改善」という私の判断はRankICのバグによる誤誘導でした。申し訳ありません。
-
-  修正の優先順位
-
-  RankIC修正を先に実施すべきです。理由：
-
-  1. 誤誘導の排除が最優先 - 現状、RankICが「学習している」という誤った印象を与えている
-  2. 真の学習状況の把握 - scipy.stats.spearmanr（タイ補正あり）に変更すれば、定数予測時はRankIC≈0になり、本当の学習進捗が可視化される
-  3. IC修正は補助的 - +1e-8の問題は数値的な見栄えの改善で、診断精度には影響が少ない
-
-  実装方針
-
-  # train_atft.py:1817 の compute_rank_ic 修正
-  from scipy.stats import spearmanr
-
-  @staticmethod
-  def compute_rank_ic(predictions: torch.Tensor, targets: torch.Tensor) -> float:
-      """Compute Rank Information Coefficient with proper tie handling"""
-      with torch.no_grad():
-          pred_flat = predictions.flatten().cpu().numpy()
-          targ_flat = targets.flatten().cpu().numpy()
-
-          valid_mask = np.isfinite(pred_flat) & np.isfinite(targ_flat)
-          if valid_mask.sum() < 2:
-              return 0.0
-
-          # scipy handles ties correctly with average ranking
-          corr, _ = spearmanr(pred_flat[valid_mask], targ_flat[valid_mask])
-          return 0.0 if np.isnan(corr) else float(corr)
-
-  根本原因の調査が必要
-
-  修正後もなぜeval modeで予測が定数になるかの調査が必要です：
-  - 訓練時: IC=0.0093（定数ではない）
-  - 評価時: std=0.000000（完全定数）
-
-  可能性：
-  1. Feature selection (VSN/FAN/SAN) がeval modeで全特徴をゼロ化
-  2. Dropout無効化で特定の経路が支配的に
-  3. PRED_VAR_MIN/PRED_VAR_WEIGHTが訓練時のみ効いている
-
-  現在の訓練をどうするか
-
-  提案: 訓練を止めてパッチ適用すべきです。理由：
-  - 正確な指標なしでは学習進捗を判断できない
-  - Epoch 4まで進んだが、真のIC/RankICは未知
-  - 修正後に再訓練した方が、データに基づいた判断が可能
-
-  RankIC修正→IC修正の順で適用してよろしいでしょうか？
-  また、訓練を止めるタイミングについてもご指示ください。
-ß
-
------
-
-● 現在実行中の訓練ログファイル:
-
-  📄 メインログ: /root/gogooku3/outputs/inference/2025-10-14/14-28-30/ATFT-GAT-FAN.log
-     サイズ: 148KB
-     最終更新: 15:28 (Epoch 4完了時)
-
-  ⚠️ 注意:
-  ❌ logs/ml_training.log (700KB、14:35更新)
-     → これは古いログで、Epoch 1で止まっています
-     → 私が最初に監視していたのはこちら（誤り）
-
-  リアルタイム監視コマンド:
-  tail -f /root/gogooku3/outputs/inference/2025-10-14/14-28-30/ATFT-GAT-FAN.log
-
-  このログファイルでEpoch 1-4の進捗が確認できます。必要であれば内容を確認しますか？
-
-----
-
-● はい、継続して完了を待ちましょう。
-
-  推奨アクション:
-
-  私がずっと待機する必要はありません。
-
-  効率的な待ち方:
-
-  1. 訓練は自動で進行
-    - バックグラウンドで稼働中 (PID 1091427)
-    - Early Stopping が自動で判断
-    - チェックポイントは自動保存
-  2. 必要なときに確認
-  # 進捗確認 (いつでも実行可能)
-  python /tmp/parse_phases_correct.py
-
-  # プロセス確認
-  ps -p 1091427
-  3. 完了の目安
-    - Phase 2 残り: 約 56分 (4 epochs)
-    - Phase 3: 約 3-4時間
-    - 合計: 約 4-5 時間後に完了
-
-  完了後に確認すべきこと:
-
-  # 最終結果
-  tail -100 logs/production_ic_fixed_20251015_041033.log
-
-  # 保存されたモデル
-  ls -lh checkpoints/
-
-  チェックポイント:
-
-  Phase 1 の最良モデルは既に保存済み:
-  - checkpoints/atft_gat_fan_phase1_epoch*.pt
-  - これが最終的に最良モデルになる可能性が高い
-
-  ---
-  私の提案: あなたは他の作業をしていてください。
-
-  - 訓練完了後 (4-5時間後) に "現在どのような結果になっていますか" と聞いてください
-  - 完了したら全 Phase を比較分析します
-  - Phase 1 モデルがベストなら、それを production 用に推奨します
-
-  それまで訓練は自動で進みます。よろしいですか？
+現在はHPO sweepに集中。明日朝に最適パラメータを取得し、本番学習に進みます。
