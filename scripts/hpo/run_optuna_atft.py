@@ -61,33 +61,33 @@ class ATFTOptunaOptimizer:
     def objective(self, trial: Trial) -> float:
         """Optuna objective function"""
 
-        # Suggest hyperparameters using train.* namespace
-        lr = trial.suggest_float("train.optimizer.lr", 1e-6, 1e-3, log=True)
-        batch_size = trial.suggest_categorical("train.batch.train_batch_size", [512, 1024, 2048])
-        dropout = trial.suggest_float("train.model.dropout", 0.0, 0.3)
-        num_layers = trial.suggest_int("train.model.num_layers", 4, 8)
-        hidden_dim = trial.suggest_categorical("train.model.hidden_dim", [128, 256, 512])
+        # Suggest hyperparameters matching Hydra config structure
+        lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
+        batch_size = trial.suggest_categorical("batch_size", [512, 1024, 2048, 4096])
+        hidden_size = trial.suggest_categorical("hidden_size", [128, 256, 384, 512])
+        gat_dropout = trial.suggest_float("gat_dropout", 0.1, 0.4)
+        gat_layers = trial.suggest_int("gat_layers", 2, 4)
 
         # Create HPO metrics output path
         trial_dir = self.output_dir / f"trial_{trial.number}"
         trial_dir.mkdir(exist_ok=True)
         hpo_metrics_path = trial_dir / "metrics.json"
 
-        # Build command with overrides
+        # Build command with Hydra overrides matching config structure
         cmd = [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "integrated_ml_training_pipeline_final.py"),
+            str(REPO_ROOT / "scripts" / "integrated_ml_training_pipeline.py"),
             "--data-path", str(self.data_path),
             f"--max-epochs={self.max_epochs_per_trial}",
-            f"train.optimizer.lr={lr}",
-            f"train.batch.train_batch_size={batch_size}",
-            f"train.model.dropout={dropout}",
-            f"train.model.num_layers={num_layers}",
-            f"train.model.hidden_dim={hidden_dim}",
-            f"hpo.output_metrics_json={hpo_metrics_path}",
+            f"--batch-size={batch_size}",
+            f"--lr={lr}",
+            f"model.hidden_size={hidden_size}",
+            f"model.gat.layer_config.dropout={gat_dropout}",
+            f"model.gat.architecture.num_layers={gat_layers}",
+            f"+hpo.output_metrics_json={hpo_metrics_path}",  # Add new parameter with + prefix
         ]
 
-        logger.info(f"Trial {trial.number}: Starting with lr={lr:.2e}, batch_size={batch_size}")
+        logger.info(f"Trial {trial.number}: lr={lr:.2e}, batch={batch_size}, hidden={hidden_size}, gat_dropout={gat_dropout:.3f}, gat_layers={gat_layers}")
 
         try:
             # Run training
@@ -97,6 +97,12 @@ class ATFTOptunaOptimizer:
                 text=True,
                 timeout=3600,  # 1 hour timeout
             )
+
+            # Log subprocess output for debugging
+            if result.returncode != 0:
+                logger.error(f"Trial {trial.number} failed with return code {result.returncode}")
+                logger.error(f"STDERR: {result.stderr[-500:]}")  # Last 500 chars
+                logger.error(f"STDOUT (last 500): {result.stdout[-500:]}")
 
             # Load metrics from JSON
             if hpo_metrics_path.exists():
@@ -117,7 +123,9 @@ class ATFTOptunaOptimizer:
                 return sharpe
 
             else:
-                logger.warning(f"Trial {trial.number}: No metrics file found")
+                logger.warning(f"Trial {trial.number}: No metrics file found at {hpo_metrics_path}")
+                logger.warning(f"Subprocess return code: {result.returncode}")
+                logger.warning(f"Subprocess STDERR (last 200): {result.stderr[-200:]}")
                 return 0.0
 
         except subprocess.TimeoutExpired:
