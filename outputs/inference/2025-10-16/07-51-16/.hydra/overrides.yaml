@@ -1,0 +1,17 @@
+- data.source.data_dir=output/atft_data
+- train.batch.train_batch_size=1024
+- train.optimizer.lr=1.6435497475111308e-05
+- train.trainer.max_epochs=10
+- train.trainer.precision=16-mixed
+- train.trainer.check_val_every_n_epoch=1
+- train.trainer.enable_progress_bar=true
+- model.hidden_size=128
+- model.gat.layer_config.dropout=0.16863944964748676
+- model.gat.architecture.num_layers=2
+- +hpo.output_metrics_json=output/hpo_production/trial_9/metrics.json
+- train.batch.train_batch_size=512
+- train.batch.val_batch_size=768
+- train.batch.test_batch_size=768
+- +train.batch.gradient_accumulation_steps=2
+- train.batch.num_workers=8
+- train.batch.prefetch_factor=2
