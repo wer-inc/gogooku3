@@ -111,10 +111,14 @@ class ATFTOptunaOptimizer:
             env["CUDA_VISIBLE_DEVICES"] = "0"
             env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-            # DataLoader: Safe mode (num_workers=0) to avoid fork() + Polars deadlock
-            # Multi-worker with Polars/Parquet causes 117+ thread deadlock on 256-core systems
-            env["NUM_WORKERS"] = "0"  # Single-process DataLoader (stable)
+            # DataLoader: Parallel loading with spawn context (fixes CPU bottleneck)
+            # spawn avoids fork() thread deadlock on 256-core systems
+            env["ALLOW_UNSAFE_DATALOADER"] = "1"
+            env["NUM_WORKERS"] = "2"  # Parallel data loading
+            env["MULTIPROCESSING_CONTEXT"] = "spawn"  # Avoid fork() deadlock
+            env["PREFETCH_FACTOR"] = "2"
             env["PIN_MEMORY"] = "1"
+            env["PERSISTENT_WORKERS"] = "1"
 
             # Memory Optimization
             env["RMM_POOL_SIZE"] = "70GB"  # 70GB for A100 80GB (留余10GB)
@@ -127,6 +131,18 @@ class ATFTOptunaOptimizer:
 
             # Mixed Precision (bf16 for A100)
             env["USE_AMP"] = "1"
+
+            # Loss weights: Focus on RankIC/IC over Sharpe
+            env["USE_RANKIC"] = "1"
+            env["RANKIC_WEIGHT"] = "0.5"  # Strong RankIC focus
+            env["CS_IC_WEIGHT"] = "0.3"   # Cross-sectional IC
+            env["SHARPE_WEIGHT"] = "0.1"  # Reduced Sharpe weight
+
+            # Phase training: Remove batch cap
+            env["PHASE_MAX_BATCHES"] = "0"  # No limit (full dataset)
+
+            # Validation logging: Reduce verbosity
+            env["VAL_DEBUG_LOGGING"] = "0"  # Disable per-batch VAL-DEBUG logs
             env["AMP_DTYPE"] = "bf16"
 
             result = subprocess.run(
