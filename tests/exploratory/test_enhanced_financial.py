@@ -5,8 +5,8 @@
 """
 
 import sys
-import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # パス設定
@@ -14,6 +14,7 @@ project_root = Path(__file__).parent
 sys.path.append(str(project_root))
 
 from scripts.data.direct_api_dataset_builder import DirectAPIDatasetBuilder
+
 
 def main():
     """メイン実行関数"""
@@ -50,6 +51,7 @@ def main():
     else:
         print("❌ J-Quants API認証失敗")
         print("APIキーの設定を確認してください")
+
 
 if __name__ == "__main__":
     main()

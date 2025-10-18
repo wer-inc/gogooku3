@@ -6,12 +6,9 @@ Available loss functions:
 - MultiHorizonRankPreservingLoss: Multi-horizon version for ATFT-GAT-FAN
 """
 
-from .rank_preserving_loss import (
-    RankPreservingLoss,
-    MultiHorizonRankPreservingLoss,
-)
+from .rank_preserving_loss import MultiHorizonRankPreservingLoss, RankPreservingLoss
 
 __all__ = [
-    'RankPreservingLoss',
-    'MultiHorizonRankPreservingLoss',
+    "RankPreservingLoss",
+    "MultiHorizonRankPreservingLoss",
 ]

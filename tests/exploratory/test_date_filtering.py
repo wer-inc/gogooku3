@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Test data loading with date filtering to verify we get valid targets"""
 
-import pandas as pd
+
 import numpy as np
-from pathlib import Path
-import sys
+import pandas as pd
 
 # Test parameters
 MIN_DATE = "2018-01-01"
@@ -21,7 +20,7 @@ print(f"Full dataset shape: {df.shape}")
 print(f"Full date range: {df['date'].min()} to {df['date'].max()}")
 
 # Apply date filter
-df_filtered = df[df['date'] >= MIN_DATE]
+df_filtered = df[df["date"] >= MIN_DATE]
 print(f"\nAfter filtering (>= {MIN_DATE}):")
 print(f"  Shape: {df_filtered.shape}")
 print(f"  Date range: {df_filtered['date'].min()} to {df_filtered['date'].max()}")
@@ -32,7 +31,9 @@ print("\n" + "=" * 60)
 print("TARGET COLUMN ANALYSIS")
 print("=" * 60)
 
-target_cols = [col for col in df.columns if col.startswith('feat_ret_') and col.endswith('d')]
+target_cols = [
+    col for col in df.columns if col.startswith("feat_ret_") and col.endswith("d")
+]
 print(f"\nFound {len(target_cols)} target columns: {target_cols}")
 
 for col in target_cols:
@@ -43,9 +44,13 @@ for col in target_cols:
     full_valid = np.isfinite(full_values)
     full_nonzero = (full_values != 0) & full_valid
 
-    print(f"  Full dataset:")
-    print(f"    Valid: {full_valid.sum()}/{len(full_values)} ({100*full_valid.sum()/len(full_values):.1f}%)")
-    print(f"    Non-zero: {full_nonzero.sum()}/{len(full_values)} ({100*full_nonzero.sum()/len(full_values):.1f}%)")
+    print("  Full dataset:")
+    print(
+        f"    Valid: {full_valid.sum()}/{len(full_values)} ({100*full_valid.sum()/len(full_values):.1f}%)"
+    )
+    print(
+        f"    Non-zero: {full_nonzero.sum()}/{len(full_values)} ({100*full_nonzero.sum()/len(full_values):.1f}%)"
+    )
 
     if full_valid.any():
         valid_full = full_values[full_valid]
@@ -58,8 +63,12 @@ for col in target_cols:
     filt_nonzero = (filt_values != 0) & filt_valid
 
     print(f"  After date filter (>= {MIN_DATE}):")
-    print(f"    Valid: {filt_valid.sum()}/{len(filt_values)} ({100*filt_valid.sum()/len(filt_values):.1f}%)")
-    print(f"    Non-zero: {filt_nonzero.sum()}/{len(filt_values)} ({100*filt_nonzero.sum()/len(filt_values):.1f}%)")
+    print(
+        f"    Valid: {filt_valid.sum()}/{len(filt_values)} ({100*filt_valid.sum()/len(filt_values):.1f}%)"
+    )
+    print(
+        f"    Non-zero: {filt_nonzero.sum()}/{len(filt_values)} ({100*filt_nonzero.sum()/len(filt_values):.1f}%)"
+    )
 
     if filt_valid.any():
         valid_filt = filt_values[filt_valid]
@@ -73,10 +82,10 @@ print("DATA QUALITY BY TIME PERIOD")
 print("=" * 60)
 
 # Group by year
-df['year'] = pd.to_datetime(df['date']).dt.year
+df["year"] = pd.to_datetime(df["date"]).dt.year
 
-for year in sorted(df['year'].unique())[-5:]:  # Last 5 years
-    year_data = df[df['year'] == year]
+for year in sorted(df["year"].unique())[-5:]:  # Last 5 years
+    year_data = df[df["year"] == year]
     print(f"\nYear {year} ({len(year_data)} samples):")
 
     for col in target_cols[:2]:  # Check first 2 horizons
@@ -93,7 +102,7 @@ print("RECOMMENDATION")
 print("=" * 60)
 
 # Check if 2018+ data has good quality
-recent_data = df[df['date'] >= "2018-01-01"]
+recent_data = df[df["date"] >= "2018-01-01"]
 for col in target_cols:
     values = recent_data[col].values
     valid = np.isfinite(values)
@@ -109,5 +118,5 @@ for col in target_cols:
     else:
         print(f"✅ {col}: {validity_rate:.1f}% valid, {nonzero_rate:.1f}% non-zero")
 
-print(f"\n💡 Recommendation: Use MIN_TRAINING_DATE='2018-01-01' or later")
-print(f"   This filters out early data with invalid/missing targets")
+print("\n💡 Recommendation: Use MIN_TRAINING_DATE='2018-01-01' or later")
+print("   This filters out early data with invalid/missing targets")

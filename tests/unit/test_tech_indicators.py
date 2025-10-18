@@ -1,6 +1,12 @@
 import numpy as np
 import pandas as pd
-from gogooku3.features.tech_indicators import kama, vidya, fractional_diff, rolling_quantiles
+
+from gogooku3.features.tech_indicators import (
+    fractional_diff,
+    kama,
+    rolling_quantiles,
+    vidya,
+)
 
 
 def test_kama_vidya_shapes():
@@ -26,4 +32,3 @@ def test_rolling_quantiles_cols():
     rq = rolling_quantiles(s, window=63, quants=(0.1, 0.5, 0.9))
     assert set(rq.columns) == {"rq_10", "rq_50", "rq_90"}
     assert rq.shape[0] == len(s)
-

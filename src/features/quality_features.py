@@ -13,12 +13,12 @@ Quality Financial Features Generator
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import polars as pl
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class QualityFinancialFeaturesGenerator:
     """
     高品質金融特徴量生成器
-    
+
     生成する特徴量:
     1. 明示的Sharpe分母（daily_vol）
     2. Flow指標（SMI、デルタ、±2σフラグ）
@@ -37,14 +37,14 @@ class QualityFinancialFeaturesGenerator:
 
     def __init__(
         self,
-        volatility_column: str = 'volatility_20d',
+        volatility_column: str = "volatility_20d",
         volume_columns: list[str] | None = None,
         index_return_column: str | None = None,
         use_cross_sectional_quantiles: bool = True,
         rolling_window: int = 252,
         flow_window: int = 60,
         sigma_threshold: float = 2.0,
-        verbose: bool = True
+        verbose: bool = True,
     ):
         """
         Args:
@@ -58,7 +58,7 @@ class QualityFinancialFeaturesGenerator:
             verbose: 詳細ログ
         """
         self.volatility_column = volatility_column
-        self.volume_columns = volume_columns or ['adjustment_volume', 'turnover_value']
+        self.volume_columns = volume_columns or ["adjustment_volume", "turnover_value"]
         self.index_return_column = index_return_column
         self.use_cross_sectional_quantiles = use_cross_sectional_quantiles
         self.rolling_window = rolling_window
@@ -68,15 +68,15 @@ class QualityFinancialFeaturesGenerator:
 
         # 特徴量名の統一マッピング
         self.feature_name_mapping = {
-            'ema_gap_5': 'ema_gap_5d',
-            'ema_gap_10': 'ema_gap_10d',
-            'ema_gap_20': 'ema_gap_20d',
-            'ma_gap_5': 'ema_gap_5d',
-            'ma_gap_10': 'ema_gap_10d',
-            'ma_gap_20': 'ema_gap_20d',
-            'macd_histogram': 'macd_hist',
-            'bb_width': 'bb_width_20',
-            'bb_position': 'bb_pos_20'
+            "ema_gap_5": "ema_gap_5d",
+            "ema_gap_10": "ema_gap_10d",
+            "ema_gap_20": "ema_gap_20d",
+            "ma_gap_5": "ema_gap_5d",
+            "ma_gap_10": "ema_gap_10d",
+            "ma_gap_20": "ema_gap_20d",
+            "macd_histogram": "macd_hist",
+            "bb_width": "bb_width_20",
+            "bb_position": "bb_pos_20",
         }
 
         if self.verbose:
@@ -93,29 +93,33 @@ class QualityFinancialFeaturesGenerator:
         try:
             if self.volatility_column in df.columns:
                 # 年率ボラティリティを日次に変換
-                df = df.with_columns([
-                    (pl.col(self.volatility_column) / np.sqrt(252)).alias('daily_vol')
-                ])
+                df = df.with_columns(
+                    [(pl.col(self.volatility_column) / np.sqrt(252)).alias("daily_vol")]
+                )
 
                 if self.verbose:
                     logger.debug("Added daily_vol column from volatility_20d")
             else:
                 # フォールバック: リターンの移動標準偏差
-                if 'return_1d' in df.columns:
-                    df = df.with_columns([
-                        pl.col('return_1d').rolling_std(window_size=20, min_periods=5).alias('daily_vol')
-                    ])
+                if "return_1d" in df.columns:
+                    df = df.with_columns(
+                        [
+                            pl.col("return_1d")
+                            .rolling_std(window_size=20, min_periods=5)
+                            .alias("daily_vol")
+                        ]
+                    )
                     logger.debug("Added daily_vol from return_1d rolling std")
                 else:
                     # デフォルト値
-                    df = df.with_columns([pl.lit(0.02).alias('daily_vol')])
+                    df = df.with_columns([pl.lit(0.02).alias("daily_vol")])
                     logger.warning("Used default daily_vol=0.02")
 
             return df
 
         except Exception as e:
             logger.warning(f"Failed to add daily_vol: {e}")
-            return df.with_columns([pl.lit(0.02).alias('daily_vol')])
+            return df.with_columns([pl.lit(0.02).alias("daily_vol")])
 
     def _add_explicit_sharpe_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """明示的Sharpe分母を使った特徴量"""
@@ -125,13 +129,12 @@ class QualityFinancialFeaturesGenerator:
 
             sharpe_exprs = []
             for h in horizons:
-                return_col = f'return_{h}d'
+                return_col = f"return_{h}d"
                 if return_col in df.columns:
                     # Sharpe = リターン / (日次vol * √h)
                     sharpe_expr = (
-                        pl.col(return_col) /
-                        (pl.col('daily_vol') * np.sqrt(h) + 1e-12)
-                    ).alias(f'sharpe_{h}d')
+                        pl.col(return_col) / (pl.col("daily_vol") * np.sqrt(h) + 1e-12)
+                    ).alias(f"sharpe_{h}d")
                     sharpe_exprs.append(sharpe_expr)
 
             if sharpe_exprs:
@@ -151,7 +154,7 @@ class QualityFinancialFeaturesGenerator:
             flow_exprs = []
 
             # 出来高ベースFlow（仮想的な外国人・個人フロー）
-            if 'adjustment_volume' in df.columns and 'turnover_value' in df.columns:
+            if "adjustment_volume" in df.columns and "turnover_value" in df.columns:
                 # SMI = (外国人流入 - 個人流入) / 総流入の概算
                 # 簡易実装: volume_spikeとprice_actionの組み合わせ
 
@@ -163,56 +166,80 @@ class QualityFinancialFeaturesGenerator:
                         try:
                             from src.utils.gpu_etl import cs_z  # type: ignore
 
-                            df = cs_z(df, value_col='adjustment_volume', group_keys=('date',), out_name='__vol_cs_z')
-                            df = cs_z(df, value_col='turnover_value', group_keys=('date',), out_name='__tov_cs_z')
-                            volume_z = pl.col('__vol_cs_z')
-                            turnover_z = pl.col('__tov_cs_z')
+                            df = cs_z(
+                                df,
+                                value_col="adjustment_volume",
+                                group_keys=("date",),
+                                out_name="__vol_cs_z",
+                            )
+                            df = cs_z(
+                                df,
+                                value_col="turnover_value",
+                                group_keys=("date",),
+                                out_name="__tov_cs_z",
+                            )
+                            volume_z = pl.col("__vol_cs_z")
+                            turnover_z = pl.col("__tov_cs_z")
                         except Exception:
                             use_gpu = False
                     if not use_gpu:
                         # 日次クロスセクション分位（CPU）
                         volume_z = (
-                            (pl.col('adjustment_volume') -
-                             pl.col('adjustment_volume').mean().over('date')) /
-                            (pl.col('adjustment_volume').std().over('date') + 1e-12)
-                        )
+                            pl.col("adjustment_volume")
+                            - pl.col("adjustment_volume").mean().over("date")
+                        ) / (pl.col("adjustment_volume").std().over("date") + 1e-12)
 
                         turnover_z = (
-                            (pl.col('turnover_value') -
-                             pl.col('turnover_value').mean().over('date')) /
-                            (pl.col('turnover_value').std().over('date') + 1e-12)
-                        )
+                            pl.col("turnover_value")
+                            - pl.col("turnover_value").mean().over("date")
+                        ) / (pl.col("turnover_value").std().over("date") + 1e-12)
                 else:
                     # ローリングZ-score
                     volume_z = (
-                        (pl.col('adjustment_volume') -
-                         pl.col('adjustment_volume').rolling_mean(window_size=self.flow_window, min_periods=10)) /
-                        (pl.col('adjustment_volume').rolling_std(window_size=self.flow_window, min_periods=10) + 1e-12)
+                        pl.col("adjustment_volume")
+                        - pl.col("adjustment_volume").rolling_mean(
+                            window_size=self.flow_window, min_periods=10
+                        )
+                    ) / (
+                        pl.col("adjustment_volume").rolling_std(
+                            window_size=self.flow_window, min_periods=10
+                        )
+                        + 1e-12
                     )
 
                     turnover_z = (
-                        (pl.col('turnover_value') -
-                         pl.col('turnover_value').rolling_mean(window_size=self.flow_window, min_periods=10)) /
-                        (pl.col('turnover_value').rolling_std(window_size=self.flow_window, min_periods=10) + 1e-12)
+                        pl.col("turnover_value")
+                        - pl.col("turnover_value").rolling_mean(
+                            window_size=self.flow_window, min_periods=10
+                        )
+                    ) / (
+                        pl.col("turnover_value").rolling_std(
+                            window_size=self.flow_window, min_periods=10
+                        )
+                        + 1e-12
                     )
 
                 # SMI（仮想フロー指標）
                 smi = volume_z - turnover_z
-                flow_exprs.append(smi.alias('smi'))
+                flow_exprs.append(smi.alias("smi"))
 
                 # ±2σフラグ
-                flow_exprs.extend([
-                    (volume_z > self.sigma_threshold).alias('volume_spike_2sigma'),
-                    (volume_z < -self.sigma_threshold).alias('volume_drop_2sigma'),
-                    (turnover_z > self.sigma_threshold).alias('turnover_spike_2sigma'),
-                    (smi > self.sigma_threshold).alias('flow_positive_2sigma'),
-                    (smi < -self.sigma_threshold).alias('flow_negative_2sigma')
-                ])
+                flow_exprs.extend(
+                    [
+                        (volume_z > self.sigma_threshold).alias("volume_spike_2sigma"),
+                        (volume_z < -self.sigma_threshold).alias("volume_drop_2sigma"),
+                        (turnover_z > self.sigma_threshold).alias(
+                            "turnover_spike_2sigma"
+                        ),
+                        (smi > self.sigma_threshold).alias("flow_positive_2sigma"),
+                        (smi < -self.sigma_threshold).alias("flow_negative_2sigma"),
+                    ]
+                )
 
                 # Δ5d（5日変化）
-                if 'return_5d' in df.columns:
+                if "return_5d" in df.columns:
                     smi_delta = smi - smi.shift(5, fill_value=0)
-                    flow_exprs.append(smi_delta.alias('smi_delta_5d'))
+                    flow_exprs.append(smi_delta.alias("smi_delta_5d"))
 
             if flow_exprs:
                 df = df.with_columns(flow_exprs)
@@ -220,7 +247,7 @@ class QualityFinancialFeaturesGenerator:
                     logger.debug(f"Added {len(flow_exprs)} Flow indicators")
 
             # GPUで追加した一時列はクリーンアップ
-            drop_tmp = [c for c in ('__vol_cs_z', '__tov_cs_z') if c in df.columns]
+            drop_tmp = [c for c in ("__vol_cs_z", "__tov_cs_z") if c in df.columns]
             if drop_tmp:
                 df = df.drop(drop_tmp)
             return df
@@ -247,38 +274,52 @@ class QualityFinancialFeaturesGenerator:
 
                         # cs_rank_and_z でランク正規化（0..1）を取得
                         tmp = cs_rank_and_z(
-                            df.select(['date', self.volatility_column]).with_row_count('__rid__'),
+                            df.select(["date", self.volatility_column]).with_row_count(
+                                "__rid__"
+                            ),
                             rank_col=self.volatility_column,
                             z_col=self.volatility_column,
                             group_keys=("date",),
                             out_rank_name="__vol_q",
                             out_z_name="__dummy",
                         )
-                        tmp = tmp.sort('__rid__').select(['__vol_q'])
+                        tmp = tmp.sort("__rid__").select(["__vol_q"])
                         df = df.hstack([tmp])
-                        vol_quantile = pl.col('__vol_q')
+                        vol_quantile = pl.col("__vol_q")
                     except Exception:
                         use_gpu = False
                 if not use_gpu:
-                    vol_quantile = pl.col(self.volatility_column).rank(method='average').over('date') / pl.col(self.volatility_column).count().over('date')
+                    vol_quantile = pl.col(self.volatility_column).rank(
+                        method="average"
+                    ).over("date") / pl.col(self.volatility_column).count().over("date")
 
-                vol_flag_exprs.extend([
-                    (vol_quantile >= 0.8).alias('high_vol_flag'),
-                    (vol_quantile <= 0.2).alias('low_vol_flag'),
-                    (vol_quantile).alias('vol_cs_quantile')
-                ])
+                vol_flag_exprs.extend(
+                    [
+                        (vol_quantile >= 0.8).alias("high_vol_flag"),
+                        (vol_quantile <= 0.2).alias("low_vol_flag"),
+                        (vol_quantile).alias("vol_cs_quantile"),
+                    ]
+                )
             else:
                 # ローリング分位
-                vol_rolling_mean = pl.col(self.volatility_column).rolling_mean(window_size=self.rolling_window, min_periods=60)
-                vol_rolling_std = pl.col(self.volatility_column).rolling_std(window_size=self.rolling_window, min_periods=60)
+                vol_rolling_mean = pl.col(self.volatility_column).rolling_mean(
+                    window_size=self.rolling_window, min_periods=60
+                )
+                vol_rolling_std = pl.col(self.volatility_column).rolling_std(
+                    window_size=self.rolling_window, min_periods=60
+                )
 
-                vol_z_score = (pl.col(self.volatility_column) - vol_rolling_mean) / (vol_rolling_std + 1e-12)
+                vol_z_score = (pl.col(self.volatility_column) - vol_rolling_mean) / (
+                    vol_rolling_std + 1e-12
+                )
 
-                vol_flag_exprs.extend([
-                    (vol_z_score > 1.5).alias('high_vol_flag'),
-                    (vol_z_score < -1.5).alias('low_vol_flag'),
-                    vol_z_score.alias('vol_rolling_zscore')
-                ])
+                vol_flag_exprs.extend(
+                    [
+                        (vol_z_score > 1.5).alias("high_vol_flag"),
+                        (vol_z_score < -1.5).alias("low_vol_flag"),
+                        vol_z_score.alias("vol_rolling_zscore"),
+                    ]
+                )
 
             if vol_flag_exprs:
                 df = df.with_columns(vol_flag_exprs)
@@ -286,8 +327,8 @@ class QualityFinancialFeaturesGenerator:
                     logger.debug(f"Added {len(vol_flag_exprs)} volatility flags")
 
             # GPU一時列の掃除
-            if '__vol_q' in df.columns:
-                df = df.drop(['__vol_q'])
+            if "__vol_q" in df.columns:
+                df = df.drop(["__vol_q"])
             return df
 
         except Exception as e:
@@ -297,23 +338,26 @@ class QualityFinancialFeaturesGenerator:
     def _add_index_excess_returns(self, df: pl.DataFrame) -> pl.DataFrame:
         """指数残差リターンを追加"""
         try:
-            if self.index_return_column is None or self.index_return_column not in df.columns:
+            if (
+                self.index_return_column is None
+                or self.index_return_column not in df.columns
+            ):
                 return df
 
             excess_exprs = []
             horizons = [1, 5, 10, 20]
 
             for h in horizons:
-                return_col = f'return_{h}d'
+                return_col = f"return_{h}d"
                 if return_col in df.columns:
                     # 簡易ベータ = 1.0と仮定（実際はローリング回帰で計算すべき）
                     beta = 1.0
 
-                    excess_return = (
-                        pl.col(return_col) - beta * pl.col(self.index_return_column)
+                    excess_return = pl.col(return_col) - beta * pl.col(
+                        self.index_return_column
                     )
 
-                    excess_exprs.append(excess_return.alias(f'excess_return_{h}d'))
+                    excess_exprs.append(excess_return.alias(f"excess_return_{h}d"))
 
             if excess_exprs:
                 df = df.with_columns(excess_exprs)
@@ -351,18 +395,21 @@ class QualityFinancialFeaturesGenerator:
         try:
             # 除外パターン
             drop_patterns = [
-                'row_idx',  # インデックス列
-                '_isna',    # 欠損フラグ（0埋めで対応）
-                '_1d_1d',   # 重複パターン
-                '_temp_',   # 一時列
+                "row_idx",  # インデックス列
+                "_isna",  # 欠損フラグ（0埋めで対応）
+                "_1d_1d",  # 重複パターン
+                "_temp_",  # 一時列
             ]
 
             # Flow系の0埋め列をチェック
             flow_zero_cols = []
-            if hasattr(df, 'columns'):
+            if hasattr(df, "columns"):
                 for col in df.columns:
                     # Flow系で全て0の列を特定
-                    if any(pattern in col.lower() for pattern in ['flow', 'smi']) and col in df.columns:
+                    if (
+                        any(pattern in col.lower() for pattern in ["flow", "smi"])
+                        and col in df.columns
+                    ):
                         try:
                             if df[col].sum() == 0 and df[col].std() == 0:
                                 flow_zero_cols.append(col)
@@ -395,15 +442,14 @@ class QualityFinancialFeaturesGenerator:
             return df
 
     def generate_quality_features(
-        self,
-        data: pd.DataFrame | pl.DataFrame
+        self, data: pd.DataFrame | pl.DataFrame
     ) -> pl.DataFrame:
         """
         高品質特徴量を生成
-        
+
         Args:
             data: 入力データ
-            
+
         Returns:
             特徴量拡張されたデータ
         """
@@ -467,11 +513,17 @@ class QualityFinancialFeaturesGenerator:
         """
         try:
             # TOPIX特徴量が既に存在するか確認
-            existing_topix_cols = [col for col in df.columns if col.startswith(('mkt_', 'beta_', 'alpha_', 'rel_'))]
+            existing_topix_cols = [
+                col
+                for col in df.columns
+                if col.startswith(("mkt_", "beta_", "alpha_", "rel_"))
+            ]
 
             if existing_topix_cols:
                 if self.verbose:
-                    logger.info(f"TOPIX features already exist: {len(existing_topix_cols)} features")
+                    logger.info(
+                        f"TOPIX features already exist: {len(existing_topix_cols)} features"
+                    )
                 return df
 
             # TOPIX特徴量がなければ、MLDatasetBuilderを使って追加
@@ -484,7 +536,11 @@ class QualityFinancialFeaturesGenerator:
                 builder = MLDatasetBuilder()
                 df_with_topix = builder.add_topix_features(df)
 
-                topix_cols = [col for col in df_with_topix.columns if col.startswith(('mkt_', 'beta_', 'alpha_', 'rel_'))]
+                topix_cols = [
+                    col
+                    for col in df_with_topix.columns
+                    if col.startswith(("mkt_", "beta_", "alpha_", "rel_"))
+                ]
                 if self.verbose:
                     logger.info(f"Added {len(topix_cols)} TOPIX market features")
 
@@ -492,7 +548,9 @@ class QualityFinancialFeaturesGenerator:
 
             except ImportError:
                 if self.verbose:
-                    logger.warning("MLDatasetBuilder not available, skipping TOPIX integration")
+                    logger.warning(
+                        "MLDatasetBuilder not available, skipping TOPIX integration"
+                    )
                 return df
 
         except Exception as e:
@@ -502,44 +560,49 @@ class QualityFinancialFeaturesGenerator:
     def get_feature_categories(self, columns: list[str]) -> dict[str, list[str]]:
         """特徴量をカテゴリ別に分類"""
         categories = {
-            'price_features': [],
-            'volume_features': [],
-            'technical_indicators': [],
-            'volatility_features': [],
-            'flow_features': [],
-            'sharpe_features': [],
-            'flag_features': [],
-            'excess_returns': [],
-            'market_features': [],  # TOPIX市場特徴量
-            'cross_features': [],   # 銘柄×市場クロス特徴量
-            'other': []
+            "price_features": [],
+            "volume_features": [],
+            "technical_indicators": [],
+            "volatility_features": [],
+            "flow_features": [],
+            "sharpe_features": [],
+            "flag_features": [],
+            "excess_returns": [],
+            "market_features": [],  # TOPIX市場特徴量
+            "cross_features": [],  # 銘柄×市場クロス特徴量
+            "other": [],
         }
 
         for col in columns:
             col_lower = col.lower()
 
-            if any(pattern in col_lower for pattern in ['price', 'close', 'open', 'high', 'low']):
-                categories['price_features'].append(col)
-            elif any(pattern in col_lower for pattern in ['volume', 'turnover']):
-                categories['volume_features'].append(col)
-            elif any(pattern in col_lower for pattern in ['rsi', 'ema', 'macd', 'bb_', 'atr']):
-                categories['technical_indicators'].append(col)
-            elif any(pattern in col_lower for pattern in ['vol', 'volatility']):
-                categories['volatility_features'].append(col)
-            elif any(pattern in col_lower for pattern in ['flow', 'smi']):
-                categories['flow_features'].append(col)
-            elif 'sharpe' in col_lower:
-                categories['sharpe_features'].append(col)
-            elif any(pattern in col_lower for pattern in ['flag', 'spike', '_2sigma']):
-                categories['flag_features'].append(col)
-            elif 'excess' in col_lower:
-                categories['excess_returns'].append(col)
-            elif col.startswith('mkt_'):
-                categories['market_features'].append(col)
-            elif any(pattern in col_lower for pattern in ['beta_', 'alpha_', 'rel_']):
-                categories['cross_features'].append(col)
+            if any(
+                pattern in col_lower
+                for pattern in ["price", "close", "open", "high", "low"]
+            ):
+                categories["price_features"].append(col)
+            elif any(pattern in col_lower for pattern in ["volume", "turnover"]):
+                categories["volume_features"].append(col)
+            elif any(
+                pattern in col_lower for pattern in ["rsi", "ema", "macd", "bb_", "atr"]
+            ):
+                categories["technical_indicators"].append(col)
+            elif any(pattern in col_lower for pattern in ["vol", "volatility"]):
+                categories["volatility_features"].append(col)
+            elif any(pattern in col_lower for pattern in ["flow", "smi"]):
+                categories["flow_features"].append(col)
+            elif "sharpe" in col_lower:
+                categories["sharpe_features"].append(col)
+            elif any(pattern in col_lower for pattern in ["flag", "spike", "_2sigma"]):
+                categories["flag_features"].append(col)
+            elif "excess" in col_lower:
+                categories["excess_returns"].append(col)
+            elif col.startswith("mkt_"):
+                categories["market_features"].append(col)
+            elif any(pattern in col_lower for pattern in ["beta_", "alpha_", "rel_"]):
+                categories["cross_features"].append(col)
             else:
-                categories['other'].append(col)
+                categories["other"].append(col)
 
         # 空のカテゴリを除外
         return {k: v for k, v in categories.items() if v}
@@ -547,18 +610,18 @@ class QualityFinancialFeaturesGenerator:
     def validate_features(self, df: pl.DataFrame) -> dict[str, Any]:
         """特徴量品質を検証"""
         validation_results = {
-            'total_features': len(df.columns),
-            'missing_daily_vol': 'daily_vol' not in df.columns,
-            'zero_variance_features': [],
-            'high_missing_features': [],
-            'infinite_features': [],
-            'feature_categories': {}
+            "total_features": len(df.columns),
+            "missing_daily_vol": "daily_vol" not in df.columns,
+            "zero_variance_features": [],
+            "high_missing_features": [],
+            "infinite_features": [],
+            "feature_categories": {},
         }
 
         try:
             # 各特徴量をチェック
             for col in df.columns:
-                if col in ['date', 'code']:
+                if col in ["date", "code"]:
                     continue
 
                 try:
@@ -566,22 +629,24 @@ class QualityFinancialFeaturesGenerator:
 
                     # ゼロ分散チェック
                     if series.std() == 0:
-                        validation_results['zero_variance_features'].append(col)
+                        validation_results["zero_variance_features"].append(col)
 
                     # 高欠損率チェック
                     null_rate = series.null_count() / len(series)
                     if null_rate > 0.5:
-                        validation_results['high_missing_features'].append(col)
+                        validation_results["high_missing_features"].append(col)
 
                     # 無限値チェック
                     if not series.is_finite().all():
-                        validation_results['infinite_features'].append(col)
+                        validation_results["infinite_features"].append(col)
 
                 except Exception:
                     continue
 
             # 特徴量カテゴリ分析
-            validation_results['feature_categories'] = self.get_feature_categories(df.columns)
+            validation_results["feature_categories"] = self.get_feature_categories(
+                df.columns
+            )
 
         except Exception as e:
             logger.warning(f"Feature validation failed: {e}")

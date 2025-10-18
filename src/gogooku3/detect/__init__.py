@@ -11,11 +11,11 @@ Public utilities:
 - evaluate_vus_pr: range-level PR curve area (threshold sweep)
 """
 
-from .residual import robust_scale_qmad, residual_q_score
 from .change_point import change_point_score
+from .ensemble import DetectionEnsemble, calibrate_sigmoid, stack_and_score
+from .ranges import Range, RangeLabel, evaluate_vus_pr, score_to_ranges
+from .residual import residual_q_score, robust_scale_qmad
 from .spectral_residual import spectral_residual_score
-from .ensemble import calibrate_sigmoid, stack_and_score, DetectionEnsemble
-from .ranges import score_to_ranges, evaluate_vus_pr, Range, RangeLabel
 
 __all__ = [
     "robust_scale_qmad",
@@ -30,4 +30,3 @@ __all__ = [
     "Range",
     "RangeLabel",
 ]
-

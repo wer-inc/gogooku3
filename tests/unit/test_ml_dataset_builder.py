@@ -3,7 +3,11 @@ Unit tests for ML Dataset Builder
 """
 
 import pytest
-pytest.skip("core.ml_dataset_builder is not available in current repository structure - temporarily skipped pending migration", allow_module_level=True)
+
+pytest.skip(
+    "core.ml_dataset_builder is not available in current repository structure - temporarily skipped pending migration",
+    allow_module_level=True,
+)
 
 import polars as pl
 from core.ml_dataset_builder import MLDatasetBuilder

@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CurriculumPhase:
     """カリキュラム学習のフェーズ設定"""
+
     name: str
     start_epoch: int
     end_epoch: int
@@ -29,7 +30,7 @@ class CurriculumPhase:
 class CurriculumScheduler:
     """
     金融時系列予測用カリキュラム学習スケジューラー
-    
+
     段階的複雑性増加:
     1. 短期シーケンス → 長期シーケンス (40 → 60)
     2. 単一ホライズン → マルチホライズン ([1] → [1,5] → [1,2,3,5,10,20])
@@ -44,7 +45,7 @@ class CurriculumScheduler:
         target_sequence_length: int = 60,
         base_horizons: list[int] | None = None,
         target_horizons: list[int] | None = None,
-        enable_difficulty_sampling: bool = True
+        enable_difficulty_sampling: bool = True,
     ):
         """
         Args:
@@ -70,7 +71,9 @@ class CurriculumScheduler:
 
         logger.info(f"Initialized CurriculumScheduler with {len(self.phases)} phases")
         for i, phase in enumerate(self.phases):
-            logger.info(f"Phase {i}: {phase.name} (epochs {phase.start_epoch}-{phase.end_epoch})")
+            logger.info(
+                f"Phase {i}: {phase.name} (epochs {phase.start_epoch}-{phase.end_epoch})"
+            )
 
     def _build_curriculum_phases(self) -> list[CurriculumPhase]:
         """カリキュラムフェーズを構築"""
@@ -78,72 +81,82 @@ class CurriculumScheduler:
 
         # Phase 1: シンプルベースライン (0-25%)
         phase1_end = int(self.max_epochs * 0.25)
-        phases.append(CurriculumPhase(
-            name="simple_baseline",
-            start_epoch=0,
-            end_epoch=phase1_end,
-            sequence_length=self.base_sequence_length,
-            prediction_horizons=self.base_horizons,
-            horizon_weights=dict.fromkeys(self.base_horizons, 1.0),
-            difficulty_features={
-                'peer_features': False,
-                'graph_features': False,
-                'volatility_sampling': False,
-                'augmentation': False
-            }
-        ))
+        phases.append(
+            CurriculumPhase(
+                name="simple_baseline",
+                start_epoch=0,
+                end_epoch=phase1_end,
+                sequence_length=self.base_sequence_length,
+                prediction_horizons=self.base_horizons,
+                horizon_weights=dict.fromkeys(self.base_horizons, 1.0),
+                difficulty_features={
+                    "peer_features": False,
+                    "graph_features": False,
+                    "volatility_sampling": False,
+                    "augmentation": False,
+                },
+            )
+        )
 
         # Phase 2: シーケンス拡張 (25-50%)
         phase2_end = int(self.max_epochs * 0.5)
-        intermediate_seq_len = int((self.base_sequence_length + self.target_sequence_length) / 2)
-        phases.append(CurriculumPhase(
-            name="sequence_extension",
-            start_epoch=phase1_end,
-            end_epoch=phase2_end,
-            sequence_length=intermediate_seq_len,
-            prediction_horizons=[1, 5],  # ホライズン追加
-            horizon_weights={1: 1.0, 5: 0.8},
-            difficulty_features={
-                'peer_features': True,
-                'graph_features': False,
-                'volatility_sampling': False,
-                'augmentation': False
-            }
-        ))
+        intermediate_seq_len = int(
+            (self.base_sequence_length + self.target_sequence_length) / 2
+        )
+        phases.append(
+            CurriculumPhase(
+                name="sequence_extension",
+                start_epoch=phase1_end,
+                end_epoch=phase2_end,
+                sequence_length=intermediate_seq_len,
+                prediction_horizons=[1, 5],  # ホライズン追加
+                horizon_weights={1: 1.0, 5: 0.8},
+                difficulty_features={
+                    "peer_features": True,
+                    "graph_features": False,
+                    "volatility_sampling": False,
+                    "augmentation": False,
+                },
+            )
+        )
 
         # Phase 3: マルチホライズン展開 (50-75%)
         phase3_end = int(self.max_epochs * 0.75)
         mid_horizons = [1, 2, 3, 5, 10]
-        phases.append(CurriculumPhase(
-            name="multi_horizon",
-            start_epoch=phase2_end,
-            end_epoch=phase3_end,
-            sequence_length=self.target_sequence_length,
-            prediction_horizons=mid_horizons,
-            horizon_weights={1: 1.0, 2: 0.9, 3: 0.8, 5: 0.7, 10: 0.6},
-            difficulty_features={
-                'peer_features': True,
-                'graph_features': True,
-                'volatility_sampling': True,
-                'augmentation': False
-            }
-        ))
+        phases.append(
+            CurriculumPhase(
+                name="multi_horizon",
+                start_epoch=phase2_end,
+                end_epoch=phase3_end,
+                sequence_length=self.target_sequence_length,
+                prediction_horizons=mid_horizons,
+                horizon_weights={1: 1.0, 2: 0.9, 3: 0.8, 5: 0.7, 10: 0.6},
+                difficulty_features={
+                    "peer_features": True,
+                    "graph_features": True,
+                    "volatility_sampling": True,
+                    "augmentation": False,
+                },
+            )
+        )
 
         # Phase 4: フル複雑性 (75-100%)
-        phases.append(CurriculumPhase(
-            name="full_complexity",
-            start_epoch=phase3_end,
-            end_epoch=self.max_epochs,
-            sequence_length=self.target_sequence_length,
-            prediction_horizons=self.target_horizons,
-            horizon_weights={1: 1.0, 2: 0.9, 3: 0.8, 5: 0.7, 10: 0.6, 20: 0.5},
-            difficulty_features={
-                'peer_features': True,
-                'graph_features': True,
-                'volatility_sampling': True,
-                'augmentation': True
-            }
-        ))
+        phases.append(
+            CurriculumPhase(
+                name="full_complexity",
+                start_epoch=phase3_end,
+                end_epoch=self.max_epochs,
+                sequence_length=self.target_sequence_length,
+                prediction_horizons=self.target_horizons,
+                horizon_weights={1: 1.0, 2: 0.9, 3: 0.8, 5: 0.7, 10: 0.6, 20: 0.5},
+                difficulty_features={
+                    "peer_features": True,
+                    "graph_features": True,
+                    "volatility_sampling": True,
+                    "augmentation": True,
+                },
+            )
+        )
 
         return phases
 
@@ -190,16 +203,16 @@ class CurriculumScheduler:
         self,
         epoch: int,
         volatilities: np.ndarray | None = None,
-        returns: np.ndarray | None = None
+        returns: np.ndarray | None = None,
     ) -> np.ndarray | None:
         """
         難易度ベースサンプリング重みを取得
-        
+
         Args:
             epoch: 現在エポック
             volatilities: ボラティリティ配列
             returns: リターン配列
-            
+
         Returns:
             サンプリング重み（None=均等重み）
         """
@@ -207,7 +220,7 @@ class CurriculumScheduler:
             return None
 
         phase = self.get_phase_config(epoch)
-        if not phase.difficulty_features.get('volatility_sampling', False):
+        if not phase.difficulty_features.get("volatility_sampling", False):
             return None
 
         if volatilities is None:
@@ -223,12 +236,18 @@ class CurriculumScheduler:
 
         return weights / weights.sum()  # 正規化
 
-    def _compute_volatility_weights(self, epoch: int, volatilities: np.ndarray) -> np.ndarray:
+    def _compute_volatility_weights(
+        self, epoch: int, volatilities: np.ndarray
+    ) -> np.ndarray:
         """ボラティリティベースの重み計算"""
         # フェーズに応じた重み調整
-        phase_progress = (epoch - self.phases[self.current_phase_idx].start_epoch) / \
-                        max(self.phases[self.current_phase_idx].end_epoch -
-                            self.phases[self.current_phase_idx].start_epoch, 1)
+        phase_progress = (
+            epoch - self.phases[self.current_phase_idx].start_epoch
+        ) / max(
+            self.phases[self.current_phase_idx].end_epoch
+            - self.phases[self.current_phase_idx].start_epoch,
+            1,
+        )
 
         # 初期は低ボラティリティを重視、後期は高ボラティリティも含める
         vol_percentile = np.percentile(volatilities, [25, 50, 75])
@@ -258,9 +277,13 @@ class CurriculumScheduler:
         weights = np.ones_like(returns)
 
         # 極端リターンの段階導入
-        phase_progress = (epoch - self.phases[self.current_phase_idx].start_epoch) / \
-                        max(self.phases[self.current_phase_idx].end_epoch -
-                            self.phases[self.current_phase_idx].start_epoch, 1)
+        phase_progress = (
+            epoch - self.phases[self.current_phase_idx].start_epoch
+        ) / max(
+            self.phases[self.current_phase_idx].end_epoch
+            - self.phases[self.current_phase_idx].start_epoch,
+            1,
+        )
 
         if phase_progress < 0.5:
             # 極端値を抑制
@@ -277,18 +300,20 @@ class CurriculumScheduler:
         """現在のデータ拡張設定を取得"""
         phase = self.get_phase_config(epoch)
 
-        if not phase.difficulty_features.get('augmentation', False):
-            return {'enabled': False}
+        if not phase.difficulty_features.get("augmentation", False):
+            return {"enabled": False}
 
         # フェーズ進行度に応じた拡張強度
-        phase_progress = (epoch - phase.start_epoch) / max(phase.end_epoch - phase.start_epoch, 1)
+        phase_progress = (epoch - phase.start_epoch) / max(
+            phase.end_epoch - phase.start_epoch, 1
+        )
 
         return {
-            'enabled': True,
-            'noise_scale': 0.002 + 0.003 * phase_progress,  # 0.002 → 0.005
-            'feature_dropout_p': 0.05 + 0.05 * phase_progress,  # 0.05 → 0.10
-            'time_warping': phase_progress > 0.5,
-            'magnitude_warping': phase_progress > 0.7
+            "enabled": True,
+            "noise_scale": 0.002 + 0.003 * phase_progress,  # 0.002 → 0.005
+            "feature_dropout_p": 0.05 + 0.05 * phase_progress,  # 0.05 → 0.10
+            "time_warping": phase_progress > 0.5,
+            "magnitude_warping": phase_progress > 0.7,
         }
 
     def get_learning_rate_multiplier(self, epoch: int) -> float:
@@ -315,30 +340,30 @@ class CurriculumScheduler:
     def get_phase_summary(self) -> dict[str, Any]:
         """カリキュラム全体のサマリー"""
         return {
-            'total_phases': len(self.phases),
-            'current_phase': self.current_phase_idx,
-            'max_epochs': self.max_epochs,
-            'sequence_progression': f"{self.base_sequence_length} → {self.target_sequence_length}",
-            'horizon_progression': f"{self.base_horizons} → {self.target_horizons}",
-            'phases': [
+            "total_phases": len(self.phases),
+            "current_phase": self.current_phase_idx,
+            "max_epochs": self.max_epochs,
+            "sequence_progression": f"{self.base_sequence_length} → {self.target_sequence_length}",
+            "horizon_progression": f"{self.base_horizons} → {self.target_horizons}",
+            "phases": [
                 {
-                    'name': phase.name,
-                    'epochs': f"{phase.start_epoch}-{phase.end_epoch}",
-                    'sequence_length': phase.sequence_length,
-                    'horizons': phase.prediction_horizons
+                    "name": phase.name,
+                    "epochs": f"{phase.start_epoch}-{phase.end_epoch}",
+                    "sequence_length": phase.sequence_length,
+                    "horizons": phase.prediction_horizons,
                 }
                 for phase in self.phases
-            ]
+            ],
         }
 
 
 def create_simple_curriculum(max_epochs: int = 50) -> CurriculumScheduler:
     """
     シンプルなカリキュラムを作成（少ないエポック用）
-    
+
     Args:
         max_epochs: 最大エポック数
-        
+
     Returns:
         シンプル設定のCurriculumScheduler
     """
@@ -348,17 +373,17 @@ def create_simple_curriculum(max_epochs: int = 50) -> CurriculumScheduler:
         target_sequence_length=60,
         base_horizons=[1, 5],
         target_horizons=[1, 5, 10],
-        enable_difficulty_sampling=True
+        enable_difficulty_sampling=True,
     )
 
 
 def create_research_curriculum(max_epochs: int = 200) -> CurriculumScheduler:
     """
     研究用の詳細カリキュラムを作成（多エポック研究用）
-    
+
     Args:
         max_epochs: 最大エポック数
-        
+
     Returns:
         詳細設定のCurriculumScheduler
     """
@@ -368,5 +393,5 @@ def create_research_curriculum(max_epochs: int = 200) -> CurriculumScheduler:
         target_sequence_length=60,
         base_horizons=[1],
         target_horizons=[1, 2, 3, 5, 10, 20],
-        enable_difficulty_sampling=True
+        enable_difficulty_sampling=True,
     )

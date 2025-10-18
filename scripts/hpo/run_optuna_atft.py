@@ -62,12 +62,22 @@ class ATFTOptunaOptimizer:
         """Optuna objective function"""
 
         # Suggest hyperparameters matching Hydra config structure
-        lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
-        # A100 80GB optimized ranges - much larger batch sizes possible
-        batch_size = trial.suggest_categorical("batch_size", [2048, 4096, 8192])  # Optimized for A100 80GB
-        hidden_size = trial.suggest_categorical("hidden_size", [256, 384, 512])  # Larger models for better capacity
+        lr = trial.suggest_float(
+            "lr", 5e-6, 5e-3, log=True
+        )  # Wider range for better exploration
+        # A100 80GB optimized ranges - EXPANDED for better GPU utilization
+        batch_size = trial.suggest_categorical(
+            "batch_size", [4096, 6144, 8192, 12288]
+        )  # Larger batches
+        hidden_size = trial.suggest_categorical(
+            "hidden_size", [256, 384, 512, 768]
+        )  # Larger models
         gat_dropout = trial.suggest_float("gat_dropout", 0.1, 0.4)
         gat_layers = trial.suggest_int("gat_layers", 2, 4)
+        # NEW: Gradient accumulation for even larger effective batch sizes
+        grad_accum = trial.suggest_categorical(
+            "grad_accum", [1, 2, 4]
+        )  # Effective batch up to 49152
 
         # Create HPO metrics output path
         trial_dir = self.output_dir / f"trial_{trial.number}"
@@ -86,11 +96,13 @@ class ATFTOptunaOptimizer:
         cmd = [
             sys.executable,
             str(REPO_ROOT / "scripts" / "integrated_ml_training_pipeline.py"),
-            "--data-path", str(self.data_path),
+            "--data-path",
+            str(self.data_path),
             f"--max-epochs={self.max_epochs_per_trial}",
             f"--batch-size={batch_size}",
             f"--lr={lr}",
             f"model.hidden_size={hidden_size}",
+            f"train.trainer.accumulate_grad_batches={grad_accum}",  # Gradient accumulation
             f"model.gat.layer_config.dropout={gat_dropout}",
             # GAT architecture with all 4 parameters
             f"model.gat.architecture.num_layers={gat_layers}",
@@ -100,42 +112,53 @@ class ATFTOptunaOptimizer:
             f"+hpo.output_metrics_json={hpo_metrics_path}",  # Add new parameter with + prefix
         ]
 
-        logger.info(f"Trial {trial.number}: lr={lr:.2e}, batch={batch_size}, hidden={hidden_size}, gat_dropout={gat_dropout:.3f}, gat_layers={gat_layers}")
+        logger.info(
+            f"Trial {trial.number}: lr={lr:.2e}, batch={batch_size}, hidden={hidden_size}, gat_dropout={gat_dropout:.3f}, gat_layers={gat_layers}, grad_accum={grad_accum}"
+        )
 
         try:
             # Run training with A100 80GB + 2TiB RAM + 256-core CPU optimized environment
             import os
+
             env = os.environ.copy()
 
             # GPU Optimization (A100 80GB)
             env["CUDA_VISIBLE_DEVICES"] = "0"
             env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-            # DataLoader: Parallel loading with spawn context (fixes CPU bottleneck)
+            # DataLoader: ENHANCED parallel loading with spawn context (fixes CPU bottleneck)
             # spawn avoids fork() thread deadlock on 256-core systems
             env["ALLOW_UNSAFE_DATALOADER"] = "1"
-            env["NUM_WORKERS"] = "2"  # Parallel data loading
+            env["NUM_WORKERS"] = "4"  # INCREASED: 2→4 for better GPU utilization
             env["MULTIPROCESSING_CONTEXT"] = "spawn"  # Avoid fork() deadlock
-            env["PREFETCH_FACTOR"] = "2"
+            env["PREFETCH_FACTOR"] = "4"  # INCREASED: 2→4 for better prefetch
             env["PIN_MEMORY"] = "1"
+            env["PIN_MEMORY_DEVICE"] = "cuda:0"  # Explicit device pinning
             env["PERSISTENT_WORKERS"] = "1"
 
             # Memory Optimization
             env["RMM_POOL_SIZE"] = "70GB"  # 70GB for A100 80GB (留余10GB)
-            env["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512,expandable_segments:True"
+            env[
+                "PYTORCH_CUDA_ALLOC_CONF"
+            ] = "max_split_size_mb:512,expandable_segments:True"
 
             # Thread Optimization: Moderate thread count to avoid contention
-            env["OMP_NUM_THREADS"] = "8"   # Reduced from 24 to prevent thread explosion
-            env["MKL_NUM_THREADS"] = "8"   # Reduced from 24 to prevent thread explosion
+            env["OMP_NUM_THREADS"] = "8"  # Reduced from 24 to prevent thread explosion
+            env["MKL_NUM_THREADS"] = "8"  # Reduced from 24 to prevent thread explosion
             env["OPENBLAS_NUM_THREADS"] = "1"
 
-            # Mixed Precision (bf16 for A100)
+            # Mixed Precision (bf16 for A100) - ENHANCED
             env["USE_AMP"] = "1"
+            env["AMP_DTYPE"] = "bf16"
+            # cuDNN optimization
+            env["TORCH_CUDNN_V8_API_ENABLED"] = "1"  # Enable cuDNN V8 API
+            env["CUDA_MODULE_LOADING"] = "LAZY"  # Faster startup
+            env["PYTORCH_NVFUSER_DISABLE"] = "0"  # Enable NVFuser compiler
 
             # Loss weights: Focus on RankIC/IC over Sharpe
             env["USE_RANKIC"] = "1"
             env["RANKIC_WEIGHT"] = "0.5"  # Strong RankIC focus
-            env["CS_IC_WEIGHT"] = "0.3"   # Cross-sectional IC
+            env["CS_IC_WEIGHT"] = "0.3"  # Cross-sectional IC
             env["SHARPE_WEIGHT"] = "0.1"  # Reduced Sharpe weight
 
             # Phase training: Remove batch cap
@@ -155,7 +178,9 @@ class ATFTOptunaOptimizer:
 
             # Log subprocess output for debugging
             if result.returncode != 0:
-                logger.error(f"Trial {trial.number} failed with return code {result.returncode}")
+                logger.error(
+                    f"Trial {trial.number} failed with return code {result.returncode}"
+                )
                 logger.error(f"STDERR: {result.stderr[-500:]}")  # Last 500 chars
                 logger.error(f"STDOUT (last 500): {result.stdout[-500:]}")
 
@@ -178,7 +203,9 @@ class ATFTOptunaOptimizer:
                 return sharpe
 
             else:
-                logger.warning(f"Trial {trial.number}: No metrics file found at {hpo_metrics_path}")
+                logger.warning(
+                    f"Trial {trial.number}: No metrics file found at {hpo_metrics_path}"
+                )
                 logger.warning(f"Subprocess return code: {result.returncode}")
                 logger.warning(f"Subprocess STDERR (last 200): {result.stderr[-200:]}")
                 return 0.0
@@ -223,12 +250,14 @@ class ATFTOptunaOptimizer:
         trials_file = self.output_dir / "all_trials.json"
         trials_data = []
         for trial in self.study.trials:
-            trials_data.append({
-                "number": trial.number,
-                "params": trial.params,
-                "value": trial.value,
-                "state": str(trial.state),
-            })
+            trials_data.append(
+                {
+                    "number": trial.number,
+                    "params": trial.params,
+                    "value": trial.value,
+                    "state": str(trial.state),
+                }
+            )
         with open(trials_file, "w") as f:
             json.dump(trials_data, f, indent=2)
 

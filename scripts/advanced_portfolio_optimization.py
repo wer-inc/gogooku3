@@ -10,12 +10,14 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +31,14 @@ class InputSpec:
 
 
 def _infer_return_column(df: pd.DataFrame) -> Optional[str]:
-    candidates = ["actual_return", "returns_1d", "ret_1d", "feat_ret_1d", "target", "label_excess_1_bps"]
+    candidates = [
+        "actual_return",
+        "returns_1d",
+        "ret_1d",
+        "feat_ret_1d",
+        "target",
+        "label_excess_1_bps",
+    ]
     for c in candidates:
         if c in df.columns:
             return c
@@ -47,14 +56,14 @@ def _daily_long_short_returns(
     mode: str = "ls",  # ls|lo|so
     invert_sign: bool = False,
     cost_bps: float = 5.0,
-) -> Tuple[pd.DataFrame, float]:
+) -> tuple[pd.DataFrame, float]:
     """日次でロングショートの均等重みポートを構築し、日次リターンとSharpeを返す"""
     df = df.copy()
     if invert_sign:
         df[pred_col] = -df[pred_col]
 
     daily = []
-    last_weights: Dict[str, float] = {}
+    last_weights: dict[str, float] = {}
     for d, g in df.groupby(date_col):
         g = g[[code_col, pred_col, ret_col]].dropna()
         if len(g) < 10:
@@ -69,7 +78,7 @@ def _daily_long_short_returns(
             n_short = max(1, int(len(g) * short_frac))
             shorts = g.head(n_short)
 
-        weights: Dict[str, float] = {}
+        weights: dict[str, float] = {}
         if len(longs) > 0:
             w = 1.0 / max(len(longs), 1)
             for code in longs[code_col].values:
@@ -84,7 +93,10 @@ def _daily_long_short_returns(
         gross = sum(weights.get(k, 0.0) * ret_map.get(k, 0.0) for k in weights.keys())
 
         # ターンオーバーコスト（単純化）：前日との差のL1ノルム×cost_bps
-        turnover = sum(abs(weights.get(k, 0.0) - last_weights.get(k, 0.0)) for k in set(weights) | set(last_weights))
+        turnover = sum(
+            abs(weights.get(k, 0.0) - last_weights.get(k, 0.0))
+            for k in set(weights) | set(last_weights)
+        )
         net = gross - (cost_bps * 1e-4) * turnover
         daily.append({"date": d, "gross": gross, "turnover": turnover, "net": net})
         last_weights = weights
@@ -96,7 +108,14 @@ def _daily_long_short_returns(
     return daily_df, float(sharpe)
 
 
-def run_with_input(spec: InputSpec, long_frac: float, short_frac: float, mode: str, invert_sign: bool, cost_bps: float) -> Dict:
+def run_with_input(
+    spec: InputSpec,
+    long_frac: float,
+    short_frac: float,
+    mode: str,
+    invert_sign: bool,
+    cost_bps: float,
+) -> dict:
     path = Path(spec.path) if spec.path else None
     if path is None or not path.exists():
         raise FileNotFoundError(f"Input not found: {spec.path}")
@@ -113,7 +132,9 @@ def run_with_input(spec: InputSpec, long_frac: float, short_frac: float, mode: s
 
     ret_col = spec.ret_col or _infer_return_column(df)
     if ret_col is None:
-        raise ValueError("Return column not found. Provide --ret-col or include one of: actual_return, returns_1d, ret_1d, feat_ret_1d, target")
+        raise ValueError(
+            "Return column not found. Provide --ret-col or include one of: actual_return, returns_1d, ret_1d, feat_ret_1d, target"
+        )
 
     daily_df, sharpe = _daily_long_short_returns(
         df,
@@ -145,7 +166,9 @@ def run_with_input(spec: InputSpec, long_frac: float, short_frac: float, mode: s
     ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
     daily_path = out_dir / f"daily_returns_{ts}.parquet"
     daily_df.to_parquet(daily_path, index=False) if not daily_df.empty else None
-    (out_dir / f"report_{ts}.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    (out_dir / f"report_{ts}.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False)
+    )
     logger.info(f"Saved portfolio report: {out_dir}/report_{ts}.json")
     if not daily_df.empty:
         logger.info(f"Saved daily returns: {daily_path}")
@@ -153,7 +176,7 @@ def run_with_input(spec: InputSpec, long_frac: float, short_frac: float, mode: s
     return report
 
 
-def demo() -> Dict:
+def demo() -> dict:
     logger.info("=== デモモード（擬似データ） ===")
     rng = np.random.default_rng(42)
     n_days, n_assets = 250, 300
@@ -170,14 +193,22 @@ def demo() -> Dict:
 
     spec = InputSpec(path=None)
     # ロングショート20/20、コスト5bps、符号反転ありで試す
-    daily_df, sharpe = _daily_long_short_returns(df, "date", "Code", "predicted_return", "returns_1d", 0.2, 0.2, "ls", True, 5.0)
+    daily_df, sharpe = _daily_long_short_returns(
+        df, "date", "Code", "predicted_return", "returns_1d", 0.2, 0.2, "ls", True, 5.0
+    )
     logger.info(f"デモ Sharpe (net): {sharpe:.4f} | days={len(daily_df)}")
     return {"demo_sharpe": sharpe}
 
 
 def main():
-    p = argparse.ArgumentParser(description="Advanced Portfolio Optimization (with real inputs)")
-    p.add_argument("--input", type=str, help="Predictions file (csv/parquet) including returns column")
+    p = argparse.ArgumentParser(
+        description="Advanced Portfolio Optimization (with real inputs)"
+    )
+    p.add_argument(
+        "--input",
+        type=str,
+        help="Predictions file (csv/parquet) including returns column",
+    )
     p.add_argument("--date-col", type=str, default="date")
     p.add_argument("--code-col", type=str, default="Code")
     p.add_argument("--pred-col", type=str, default="predicted_return")
@@ -201,7 +232,14 @@ def main():
         pred_col=args.pred_col,
         ret_col=args.ret_col,
     )
-    run_with_input(spec, args.long_frac, args.short_frac, args.mode, args.invert_sign, args.cost_bps)
+    run_with_input(
+        spec,
+        args.long_frac,
+        args.short_frac,
+        args.mode,
+        args.invert_sign,
+        args.cost_bps,
+    )
 
 
 if __name__ == "__main__":

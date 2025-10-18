@@ -33,8 +33,12 @@ for var, expected in env_vars.items():
 
 # Check phase loss weights separately (it's complex)
 phase_weights = os.environ.get("PHASE_LOSS_WEIGHTS", "NOT SET")
-if "huber" in phase_weights and "quantile" in phase_weights and "sharpe" in phase_weights:
-    print(f"✅ PHASE_LOSS_WEIGHTS: Set correctly (contains huber, quantile, sharpe)")
+if (
+    "huber" in phase_weights
+    and "quantile" in phase_weights
+    and "sharpe" in phase_weights
+):
+    print("✅ PHASE_LOSS_WEIGHTS: Set correctly (contains huber, quantile, sharpe)")
 else:
     print(f"❌ PHASE_LOSS_WEIGHTS: {phase_weights[:50]}...")
 

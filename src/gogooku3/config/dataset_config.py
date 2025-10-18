@@ -40,12 +40,18 @@ class JQuantsAPIConfig(BaseSettings):
     min_concurrency: int = Field(4, description="Minimum concurrency during throttle")
     tcp_limit: int = Field(30, description="TCP connection limit")
     tcp_limit_per_host: int = Field(15, description="TCP connection limit per host")
-    sock_connect_timeout: float = Field(10.0, description="Socket connect timeout (seconds)")
+    sock_connect_timeout: float = Field(
+        10.0, description="Socket connect timeout (seconds)"
+    )
     sock_read_timeout: float = Field(60.0, description="Socket read timeout (seconds)")
 
     # Throttling
-    throttle_backoff: float = Field(0.6, description="Concurrency reduction factor on throttle")
-    throttle_sleep: float = Field(30.0, description="Sleep duration after throttle (seconds)")
+    throttle_backoff: float = Field(
+        0.6, description="Concurrency reduction factor on throttle"
+    )
+    throttle_sleep: float = Field(
+        30.0, description="Sleep duration after throttle (seconds)"
+    )
     throttle_step: int = Field(2, description="Recovery step size")
     throttle_recovery_success: int = Field(
         180, description="Success count needed for recovery"
@@ -70,7 +76,9 @@ class GPUConfig(BaseSettings):
     )
 
     use_gpu_etl: bool = Field(
-        True, alias="USE_GPU_ETL", description="Enable GPU-accelerated ETL (RAPIDS/cuDF)"
+        True,
+        alias="USE_GPU_ETL",
+        description="Enable GPU-accelerated ETL (RAPIDS/cuDF)",
     )
     require_gpu: bool = Field(
         False, alias="REQUIRE_GPU", description="Require GPU (fail if unavailable)"
@@ -79,7 +87,9 @@ class GPUConfig(BaseSettings):
         "cuda_async", alias="RMM_ALLOCATOR", description="RMM allocator type"
     )
     rmm_pool_size: str = Field(
-        "70GB", alias="RMM_POOL_SIZE", description="RMM pool size (e.g., 70GB, 0 for dynamic)"
+        "70GB",
+        alias="RMM_POOL_SIZE",
+        description="RMM pool size (e.g., 70GB, 0 for dynamic)",
     )
     cudf_spill: bool = Field(
         True, alias="CUDF_SPILL", description="Enable cuDF spilling to avoid OOM"
@@ -110,20 +120,22 @@ class FeatureFlagsConfig(BaseSettings):
 
     # Graph features
     graph_features: bool = Field(
-        True, alias="ENABLE_GRAPH_FEATURES", description="Graph-structured features (degree, correlation)"
+        True,
+        alias="ENABLE_GRAPH_FEATURES",
+        description="Graph-structured features (degree, correlation)",
     )
 
     # Margin features
-    margin_weekly: bool = Field(
-        True, description="Weekly margin interest features"
-    )
+    margin_weekly: bool = Field(True, description="Weekly margin interest features")
     daily_margin: bool = Field(
         True, alias="ENABLE_DAILY_MARGIN", description="Daily margin interest features"
     )
 
     # Options features
     nk225_option_features: bool = Field(
-        True, alias="ENABLE_NK225_OPTION_FEATURES", description="Nikkei225 index option features"
+        True,
+        alias="ENABLE_NK225_OPTION_FEATURES",
+        description="Nikkei225 index option features",
     )
     option_market_features: bool = Field(
         False, description="Attach NK225 option market aggregates to equity panel"
@@ -136,16 +148,16 @@ class FeatureFlagsConfig(BaseSettings):
     sector_cs: bool = Field(
         True, alias="ENABLE_SECTOR_CS", description="Sector cross-sectional features"
     )
-    sector_onehot33: bool = Field(
-        False, description="33-sector one-hot encodings"
-    )
+    sector_onehot33: bool = Field(False, description="33-sector one-hot encodings")
 
     # Short selling features
     short_selling: bool = Field(
         True, alias="ENABLE_SHORT_SELLING", description="Short selling data integration"
     )
     sector_short_selling: bool = Field(
-        True, alias="ENABLE_SECTOR_SHORT_SELLING", description="Sector-wise short selling features"
+        True,
+        alias="ENABLE_SECTOR_SHORT_SELLING",
+        description="Sector-wise short selling features",
     )
     sector_short_z_scores: bool = Field(
         True, description="Z-score features for sector short selling"
@@ -156,7 +168,9 @@ class FeatureFlagsConfig(BaseSettings):
         True, alias="ENABLE_EARNINGS_EVENTS", description="Earnings announcement events"
     )
     pead_features: bool = Field(
-        True, alias="ENABLE_PEAD_FEATURES", description="Post-Earnings Announcement Drift features"
+        True,
+        alias="ENABLE_PEAD_FEATURES",
+        description="Post-Earnings Announcement Drift features",
     )
 
 
@@ -171,7 +185,9 @@ class GraphConfig(BaseSettings):
     )
 
     window: int = Field(60, description="Correlation window (days)")
-    threshold: float = Field(0.3, description="Absolute correlation threshold for edges")
+    threshold: float = Field(
+        0.3, description="Absolute correlation threshold for edges"
+    )
     max_k: int = Field(4, alias="GRAPH_MAX_K", description="Max edges per node")
     cache_dir: Path | None = Field(
         None, alias="GRAPH_CACHE_DIR", description="Cache directory for graph artifacts"
@@ -195,20 +211,18 @@ class DatasetConfig(BaseSettings):
     end_date: str | None = Field(
         None, description="End date (YYYY-MM-DD, default: today)"
     )
-    lookback_days: int = Field(
-        1826, description="Default lookback days (~5 years)"
-    )
+    lookback_days: int = Field(1826, description="Default lookback days (~5 years)")
     support_lookback_days: int = Field(
         420, description="Support lookback for flow/z-score features"
     )
     min_collection_days: int = Field(
-        3650, alias="MIN_COLLECTION_DAYS", description="Minimum collection span (~10 years)"
+        3650,
+        alias="MIN_COLLECTION_DAYS",
+        description="Minimum collection span (~10 years)",
     )
 
     # Pipeline settings
-    use_jquants: bool = Field(
-        True, description="Use J-Quants API (vs offline data)"
-    )
+    use_jquants: bool = Field(True, description="Use J-Quants API (vs offline data)")
     use_calendar_api: bool = Field(
         True, description="Use Trading Calendar API for business days"
     )
@@ -223,9 +237,7 @@ class DatasetConfig(BaseSettings):
     output_dir: Path = Field(
         Path("output/datasets"), description="Output directory for datasets"
     )
-    save_intermediate: bool = Field(
-        True, description="Save intermediate artifacts"
-    )
+    save_intermediate: bool = Field(True, description="Save intermediate artifacts")
 
     # Sub-configurations
     jquants: JQuantsAPIConfig = Field(default_factory=JQuantsAPIConfig)
@@ -234,7 +246,7 @@ class DatasetConfig(BaseSettings):
     graph: GraphConfig = Field(default_factory=GraphConfig)
 
     @model_validator(mode="after")
-    def validate_and_compute_dates(self) -> "DatasetConfig":
+    def validate_and_compute_dates(self) -> DatasetConfig:
         """Validate and compute default date ranges."""
         # Compute end_date if not provided
         if not self.end_date:
@@ -255,7 +267,9 @@ class DatasetConfig(BaseSettings):
 
         # Validate date range
         if start_dt >= end_dt:
-            raise ValueError(f"start_date ({self.start_date}) must be before end_date ({self.end_date})")
+            raise ValueError(
+                f"start_date ({self.start_date}) must be before end_date ({self.end_date})"
+            )
 
         # Check minimum span
         span_days = (end_dt - start_dt).days
@@ -279,7 +293,7 @@ class DatasetConfig(BaseSettings):
         cls,
         cli_args: dict | None = None,
         env_file: str | Path | None = None,
-    ) -> "DatasetConfig":
+    ) -> DatasetConfig:
         """Create config from CLI arguments and environment variables.
 
         Args:

@@ -44,4 +44,3 @@ def test_detect_score_minimal():
     assert r.status_code == 200
     res = r.json()
     assert "ranges" in res
-

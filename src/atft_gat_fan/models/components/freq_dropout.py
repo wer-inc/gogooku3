@@ -3,12 +3,12 @@ Frequency Adaptive Normalization (FAN) with FreqDropout
 周波数適応正規化と帯域マスクドロップアウト
 """
 
+import logging
+import math
+from typing import Optional
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, Tuple, List
-import math
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class FreqDropout1D(nn.Module):
         p: float = 0.1,
         min_width: float = 0.05,
         max_width: float = 0.2,
-        dim: int = -2  # 時間次元
+        dim: int = -2,  # 時間次元
     ):
         """
         Args:
@@ -86,11 +86,7 @@ class FrequencyAdaptiveNormalization(nn.Module):
     """
 
     def __init__(
-        self,
-        num_features: int,
-        seq_len: int,
-        num_bands: int = 8,
-        dropout: float = 0.1
+        self, num_features: int, seq_len: int, num_bands: int = 8, dropout: float = 0.1
     ):
         """
         Args:
@@ -108,7 +104,7 @@ class FrequencyAdaptiveNormalization(nn.Module):
         self.band_gains = nn.Parameter(torch.ones(num_bands, num_features))
 
         # 帯域の境界
-        self.register_buffer('band_edges', self._create_band_edges())
+        self.register_buffer("band_edges", self._create_band_edges())
 
         # ドロップアウト
         self.dropout = nn.Dropout(dropout)
@@ -174,7 +170,7 @@ class AdaptiveNormalization(nn.Module):
         hidden_size: int,
         config: Optional[any] = None,
         fan_enabled: bool = True,
-        san_enabled: bool = False
+        san_enabled: bool = False,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -189,7 +185,7 @@ class AdaptiveNormalization(nn.Module):
             self.fan = FrequencyAdaptiveNormalization(
                 num_features=hidden_size,
                 seq_len=60,  # デフォルト値
-                num_bands=8
+                num_bands=8,
             )
         else:
             self.fan = None

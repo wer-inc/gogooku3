@@ -134,3 +134,5 @@ DISPOSITION.csv
 *_inventory.csv
 *_report.md
 cleanup_execution_report.md
+logs/
+outputs/

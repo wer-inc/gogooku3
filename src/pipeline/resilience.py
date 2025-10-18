@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Awaitable
+from typing import Any
 
 
 @dataclass
@@ -25,7 +26,7 @@ class ResilientPipeline:
         if self.cfg.checkpoint_enabled:
             self.ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_checkpoint(self, stage: str, data: Dict[str, Any]) -> Path | None:
+    def save_checkpoint(self, stage: str, data: dict[str, Any]) -> Path | None:
         if not self.cfg.checkpoint_enabled:
             return None
         ts = time.strftime("%Y%m%d_%H%M%S")
@@ -47,12 +48,14 @@ class ResilientPipeline:
                 last_exc = e
                 # checkpoint error state
                 self.save_checkpoint(stage, {"error": str(e), "attempt": i + 1})
-                time.sleep(min(2 ** i, 30))
+                time.sleep(min(2**i, 30))
         if last_exc:
             raise last_exc
         return None
 
-    async def execute_with_retry_async(self, stage: str, operation: Callable[[], Awaitable[Any]]) -> Any:
+    async def execute_with_retry_async(
+        self, stage: str, operation: Callable[[], Awaitable[Any]]
+    ) -> Any:
         """Async version of execute_with_retry for coroutine operations."""
         attempts = self.cfg.max_retries + 1 if self.cfg.enabled else 1
         last_exc: Exception | None = None
@@ -63,8 +66,7 @@ class ResilientPipeline:
                 last_exc = e
                 # checkpoint error state
                 self.save_checkpoint(stage, {"error": str(e), "attempt": i + 1})
-                await asyncio.sleep(min(2 ** i, 30))
+                await asyncio.sleep(min(2**i, 30))
         if last_exc:
             raise last_exc
         return None
-

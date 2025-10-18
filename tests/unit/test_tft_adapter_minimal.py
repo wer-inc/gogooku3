@@ -1,5 +1,6 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from gogooku3.forecast import TFTAdapter
 
 
@@ -12,10 +13,15 @@ def test_tft_adapter_fit_predict_shapes():
     for i in ids:
         base = rng.normal(0, 0.1, size=len(ts)).cumsum()
         for t, k in zip(ts, range(len(ts))):
-            rows.append({
-                "id": i, "ts": t, "y": base[k] + 0.1 * k,
-                "feat1": k, "feat2": np.sin(k/7)
-            })
+            rows.append(
+                {
+                    "id": i,
+                    "ts": t,
+                    "y": base[k] + 0.1 * k,
+                    "feat1": k,
+                    "feat2": np.sin(k / 7),
+                }
+            )
     df = pd.DataFrame(rows)
     model = TFTAdapter(horizons=[1, 5, 10])
     model.fit(df)
@@ -24,4 +30,3 @@ def test_tft_adapter_fit_predict_shapes():
     assert out["h"].nunique() == 3
     # per id one origin row per horizon
     assert out.groupby("id").size().min() >= 3
-

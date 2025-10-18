@@ -4,15 +4,13 @@ End-to-End tests for gogooku3-standalone Docker environment.
 Tests the complete application workflow in a containerized environment.
 """
 
-import os
+import subprocess
 import sys
 import time
-import json
+from pathlib import Path
+
 import pytest
 import requests
-import subprocess
-from pathlib import Path
-from unittest.mock import patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -46,7 +44,7 @@ class TestE2EDocker:
                 cwd=self.project_root,
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=120,
             )
 
             assert result.returncode == 0, f"Docker compose failed: {result.stderr}"
@@ -59,7 +57,7 @@ class TestE2EDocker:
                 ["docker", "compose", "ps"],
                 cwd=self.project_root,
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             assert result.returncode == 0
@@ -70,7 +68,7 @@ class TestE2EDocker:
             subprocess.run(
                 ["docker", "compose", "down"],
                 cwd=self.project_root,
-                capture_output=True
+                capture_output=True,
             )
 
     def test_docker_compose_config_valid(self):
@@ -82,7 +80,7 @@ class TestE2EDocker:
             ["docker", "compose", "config"],
             cwd=self.project_root,
             capture_output=True,
-            text=True
+            text=True,
         )
 
         assert result.returncode == 0, f"Invalid compose config: {result.stderr}"
@@ -95,7 +93,7 @@ class TestE2EDocker:
             pytest.skip(".env.example not found")
 
         # Read .env.example
-        with open(env_example, 'r') as f:
+        with open(env_example) as f:
             content = f.read()
 
         # Check for required environment variables
@@ -104,7 +102,7 @@ class TestE2EDocker:
             "MINIO_ROOT_PASSWORD",
             "CLICKHOUSE_USER",
             "CLICKHOUSE_PASSWORD",
-            "REDIS_PASSWORD"
+            "REDIS_PASSWORD",
         ]
 
         for var in required_vars:
@@ -121,21 +119,23 @@ class TestE2EDocker:
             subprocess.run(
                 ["docker", "compose", "up", "-d", "minio"],
                 cwd=self.project_root,
-                check=True
+                check=True,
             )
 
             # Wait for MinIO to start
             time.sleep(10)
 
             # Test MinIO health endpoint
-            response = requests.get("http://localhost:9000/minio/health/live", timeout=5)
+            response = requests.get(
+                "http://localhost:9000/minio/health/live", timeout=5
+            )
             assert response.status_code == 200
 
         finally:
             subprocess.run(
                 ["docker", "compose", "down"],
                 cwd=self.project_root,
-                capture_output=True
+                capture_output=True,
             )
 
     @pytest.mark.integration
@@ -149,17 +149,25 @@ class TestE2EDocker:
             subprocess.run(
                 ["docker", "compose", "up", "-d", "clickhouse"],
                 cwd=self.project_root,
-                check=True
+                check=True,
             )
 
             # Wait for ClickHouse to start
             time.sleep(15)
 
             # Test ClickHouse connection
-            result = subprocess.run([
-                "docker", "exec", "gogooku3-clickhouse",
-                "clickhouse-client", "--query", "SELECT 1"
-            ], capture_output=True, text=True)
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "gogooku3-clickhouse",
+                    "clickhouse-client",
+                    "--query",
+                    "SELECT 1",
+                ],
+                capture_output=True,
+                text=True,
+            )
 
             assert result.returncode == 0
             assert "1" in result.stdout
@@ -168,7 +176,7 @@ class TestE2EDocker:
             subprocess.run(
                 ["docker", "compose", "down"],
                 cwd=self.project_root,
-                capture_output=True
+                capture_output=True,
             )
 
     @pytest.mark.integration
@@ -182,17 +190,18 @@ class TestE2EDocker:
             subprocess.run(
                 ["docker", "compose", "up", "-d", "redis"],
                 cwd=self.project_root,
-                check=True
+                check=True,
             )
 
             # Wait for Redis to start
             time.sleep(5)
 
             # Test Redis connection
-            result = subprocess.run([
-                "docker", "exec", "gogooku3-redis",
-                "redis-cli", "ping"
-            ], capture_output=True, text=True)
+            result = subprocess.run(
+                ["docker", "exec", "gogooku3-redis", "redis-cli", "ping"],
+                capture_output=True,
+                text=True,
+            )
 
             assert result.returncode == 0
             assert "PONG" in result.stdout
@@ -201,7 +210,7 @@ class TestE2EDocker:
             subprocess.run(
                 ["docker", "compose", "down"],
                 cwd=self.project_root,
-                capture_output=True
+                capture_output=True,
             )
 
     def test_application_startup(self):
@@ -215,7 +224,8 @@ class TestE2EDocker:
         sys.path.insert(0, str(self.project_root))
         try:
             import main
-            assert hasattr(main, 'main'), "main.py does not have main function"
+
+            assert hasattr(main, "main"), "main.py does not have main function"
         except ImportError as e:
             pytest.skip(f"Cannot import main module: {e}")
 
@@ -257,7 +267,7 @@ class TestE2EDocker:
             "pyproject.toml",
             "requirements.txt",
             "README.md",
-            ".gitignore"
+            ".gitignore",
         ]
 
         for filename in required_files:
@@ -269,7 +279,7 @@ class TestE2EDocker:
         gitignore = self.project_root / ".gitignore"
 
         if gitignore.exists():
-            with open(gitignore, 'r') as f:
+            with open(gitignore) as f:
                 content = f.read()
 
             # Check that sensitive files are ignored
@@ -287,21 +297,25 @@ class TestE2EDocker:
             # Check if main.py can create it
             pass  # This would require running main.py
 
-    @pytest.mark.parametrize("service_name,expected_image", [
-        ("minio", "minio/minio:latest"),
-        ("clickhouse", "clickhouse/clickhouse-server:latest"),
-        ("redis", "redis:7-alpine"),
-    ])
+    @pytest.mark.parametrize(
+        "service_name,expected_image",
+        [
+            ("minio", "minio/minio:latest"),
+            ("clickhouse", "clickhouse/clickhouse-server:latest"),
+            ("redis", "redis:7-alpine"),
+        ],
+    )
     def test_docker_service_images(self, service_name, expected_image):
         """Test that Docker services use expected images."""
         if not self.compose_file.exists():
             pytest.skip("docker-compose.yml not found")
 
-        with open(self.compose_file, 'r') as f:
+        with open(self.compose_file) as f:
             content = f.read()
 
-        assert f"image: {expected_image}" in content, \
-            f"Service {service_name} should use image {expected_image}"
+        assert (
+            f"image: {expected_image}" in content
+        ), f"Service {service_name} should use image {expected_image}"
 
     def test_environment_file_structure(self):
         """Test .env.example file structure."""
@@ -310,19 +324,16 @@ class TestE2EDocker:
         if not env_example.exists():
             pytest.skip(".env.example not found")
 
-        with open(env_example, 'r') as f:
+        with open(env_example) as f:
             content = f.read()
 
         # Check for required sections
-        required_sections = [
-            "MinIO",
-            "ClickHouse",
-            "Redis"
-        ]
+        required_sections = ["MinIO", "ClickHouse", "Redis"]
 
         for section in required_sections:
-            assert section.upper() in content.upper(), \
-                f"Section {section} not found in .env.example"
+            assert (
+                section.upper() in content.upper()
+            ), f"Section {section} not found in .env.example"
 
 
 class TestE2EWorkflow:
@@ -335,9 +346,9 @@ class TestE2EWorkflow:
         if not main_py.exists():
             pytest.skip("main.py not found")
 
-        result = subprocess.run([
-            sys.executable, str(main_py), "--help"
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            [sys.executable, str(main_py), "--help"], capture_output=True, text=True
+        )
 
         assert result.returncode == 0
         assert "safe-training" in result.stdout
@@ -351,9 +362,11 @@ class TestE2EWorkflow:
             pytest.skip("main.py not found")
 
         # Test invalid workflow
-        result = subprocess.run([
-            sys.executable, str(main_py), "invalid-workflow"
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            [sys.executable, str(main_py), "invalid-workflow"],
+            capture_output=True,
+            text=True,
+        )
 
         assert result.returncode != 0  # Should fail with invalid workflow
 

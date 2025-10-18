@@ -8,44 +8,53 @@ Identifies missing features and provides corrected category mappings.
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
 
 import polars as pl
 import yaml
 
 
-def load_actual_features(data_path: str) -> List[str]:
+def load_actual_features(data_path: str) -> list[str]:
     """Load actual feature columns from dataset."""
     df = pl.read_parquet(data_path)
 
     # Exclude target and metadata columns
-    exclude = {'date', 'Date', 'code', 'Code', 'target',
-               'target_1d', 'target_5d', 'target_10d', 'target_20d'}
+    exclude = {
+        "date",
+        "Date",
+        "code",
+        "Code",
+        "target",
+        "target_1d",
+        "target_5d",
+        "target_10d",
+        "target_20d",
+    }
 
     features = [c for c in df.columns if c not in exclude]
     return features
 
 
-def load_feature_categories(config_path: str) -> Dict[str, List[str]]:
+def load_feature_categories(config_path: str) -> dict[str, list[str]]:
     """Load feature categories from config."""
     with open(config_path) as f:
         config = yaml.safe_load(f)
 
-    return config['feature_categories']
+    return config["feature_categories"]
 
 
-def analyze_mapping(actual_features: List[str],
-                    category_config: Dict[str, List[str]]) -> Dict:
+def analyze_mapping(
+    actual_features: list[str], category_config: dict[str, list[str]]
+) -> dict:
     """Analyze mapping between actual features and categories."""
 
     # Normalize feature names (lowercase for matching)
     actual_set = set(f.lower() for f in actual_features)
 
     results = {
-        'mapped': {},
-        'unmapped': [],
-        'missing_from_data': {},
-        'category_counts': {}
+        "mapped": {},
+        "unmapped": [],
+        "missing_from_data": {},
+        "category_counts": {},
     }
 
     # Check each category
@@ -66,7 +75,10 @@ def analyze_mapping(actual_features: List[str],
                 # Try partial match (e.g., 'returns_1d' matches 'returns_1d')
                 found = False
                 for actual_feat in actual_features:
-                    if feat_lower in actual_feat.lower() or actual_feat.lower() in feat_lower:
+                    if (
+                        feat_lower in actual_feat.lower()
+                        or actual_feat.lower() in feat_lower
+                    ):
                         mapped.append(actual_feat)
                         found = True
                         break
@@ -74,21 +86,21 @@ def analyze_mapping(actual_features: List[str],
                 if not found:
                     missing.append(feat)
 
-        results['mapped'][category] = mapped
-        results['missing_from_data'][category] = missing
-        results['category_counts'][category] = len(mapped)
+        results["mapped"][category] = mapped
+        results["missing_from_data"][category] = missing
+        results["category_counts"][category] = len(mapped)
 
     # Find unmapped features
     all_mapped = set()
-    for mapped_list in results['mapped'].values():
+    for mapped_list in results["mapped"].values():
         all_mapped.update(f.lower() for f in mapped_list)
 
-    results['unmapped'] = [f for f in actual_features if f.lower() not in all_mapped]
+    results["unmapped"] = [f for f in actual_features if f.lower() not in all_mapped]
 
     return results
 
 
-def print_analysis(results: Dict, actual_count: int):
+def print_analysis(results: dict, actual_count: int):
     """Print analysis results."""
     print("=" * 80)
     print("📊 FEATURE MAPPING ANALYSIS")
@@ -101,13 +113,15 @@ def print_analysis(results: Dict, actual_count: int):
     print("📋 Category Mapping Summary:")
     print("-" * 80)
     total_mapped = 0
-    for category in sorted(results['category_counts'].keys()):
-        count = results['category_counts'][category]
+    for category in sorted(results["category_counts"].keys()):
+        count = results["category_counts"][category]
         total_mapped += count
-        missing_count = len(results['missing_from_data'].get(category, []))
+        missing_count = len(results["missing_from_data"].get(category, []))
 
         status = "✅" if missing_count == 0 else "⚠️"
-        print(f"  {status} {category:15s}: {count:3d} mapped, {missing_count:3d} missing from data")
+        print(
+            f"  {status} {category:15s}: {count:3d} mapped, {missing_count:3d} missing from data"
+        )
 
     print("-" * 80)
     print(f"  Total mapped: {total_mapped}")
@@ -115,10 +129,10 @@ def print_analysis(results: Dict, actual_count: int):
     print()
 
     # Show unmapped features
-    if results['unmapped']:
+    if results["unmapped"]:
         print("⚠️  UNMAPPED FEATURES (not in any category):")
         print("-" * 80)
-        for feat in sorted(results['unmapped']):
+        for feat in sorted(results["unmapped"]):
             print(f"  - {feat}")
         print()
 
@@ -126,7 +140,7 @@ def print_analysis(results: Dict, actual_count: int):
     print("❌ MISSING FROM DATA (defined in config but not found):")
     print("-" * 80)
     has_missing = False
-    for category, missing_list in results['missing_from_data'].items():
+    for category, missing_list in results["missing_from_data"].items():
         if missing_list:
             has_missing = True
             print(f"\n  {category}:")
@@ -138,34 +152,33 @@ def print_analysis(results: Dict, actual_count: int):
     print()
 
 
-def generate_corrected_config(results: Dict, actual_features: List[str],
-                              output_path: str):
+def generate_corrected_config(
+    results: dict, actual_features: list[str], output_path: str
+):
     """Generate corrected feature category config."""
 
-    corrected = {
-        'feature_categories': {}
-    }
+    corrected = {"feature_categories": {}}
 
     # Add mapped features
-    for category, mapped_list in results['mapped'].items():
+    for category, mapped_list in results["mapped"].items():
         if mapped_list:
-            corrected['feature_categories'][category] = sorted(mapped_list)
+            corrected["feature_categories"][category] = sorted(mapped_list)
 
     # Add unmapped to 'additional' category
-    if results['unmapped']:
-        if 'additional' not in corrected['feature_categories']:
-            corrected['feature_categories']['additional'] = []
-        corrected['feature_categories']['additional'] = sorted(results['unmapped'])
+    if results["unmapped"]:
+        if "additional" not in corrected["feature_categories"]:
+            corrected["feature_categories"]["additional"] = []
+        corrected["feature_categories"]["additional"] = sorted(results["unmapped"])
 
     # Add expected counts
-    corrected['expected_counts'] = {
+    corrected["expected_counts"] = {
         category: len(features)
-        for category, features in corrected['feature_categories'].items()
+        for category, features in corrected["feature_categories"].items()
     }
-    corrected['expected_counts']['total'] = len(actual_features)
+    corrected["expected_counts"]["total"] = len(actual_features)
 
     # Write to file
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         yaml.dump(corrected, f, default_flow_style=False, sort_keys=False)
 
     print(f"✅ Corrected config saved to: {output_path}")
@@ -177,19 +190,19 @@ def main():
 
     parser = argparse.ArgumentParser(description="Validate feature category mapping")
     parser.add_argument(
-        '--data',
-        default='output/ml_dataset_20251001_154821_full.parquet',
-        help='Path to ML dataset parquet file'
+        "--data",
+        default="output/ml_dataset_20251001_154821_full.parquet",
+        help="Path to ML dataset parquet file",
     )
     parser.add_argument(
-        '--config',
-        default='configs/atft/feature_categories.yaml',
-        help='Path to feature categories config'
+        "--config",
+        default="configs/atft/feature_categories.yaml",
+        help="Path to feature categories config",
     )
     parser.add_argument(
-        '--output',
-        default='configs/atft/feature_categories_corrected.yaml',
-        help='Path to save corrected config'
+        "--output",
+        default="configs/atft/feature_categories_corrected.yaml",
+        help="Path to save corrected config",
     )
 
     args = parser.parse_args()
@@ -226,10 +239,10 @@ def main():
     print()
     print("Next steps:")
     print(f"  1. Review corrected config: {args.output}")
-    print(f"  2. Update model config to use corrected feature counts")
-    print(f"  3. Re-run training with correct feature mapping")
+    print("  2. Update model config to use corrected feature counts")
+    print("  3. Re-run training with correct feature mapping")
     print()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
