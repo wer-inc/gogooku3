@@ -1,4 +1,0 @@
-- train.trainer.max_epochs=1
-- +train.trainer.limit_train_batches=1
-- +train.trainer.limit_val_batches=1
-- train.batch.train_batch_size=32

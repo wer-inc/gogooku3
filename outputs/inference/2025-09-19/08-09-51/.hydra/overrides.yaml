@@ -1,3 +1,0 @@
-- data.source.data_dir=output/atft_data
-- train.trainer.max_epochs=1
-- train.batch.train_batch_size=32

@@ -1,5 +1,0 @@
-- pipeline.start_date=2025-09-01
-- pipeline.end_date=2025-09-10
-- pipeline.output_dir=/home/ubuntu/gogooku3-standalone/benchmark_output/component_benchmark
-- pipeline.profiling.enabled=true
-- pipeline.jquants=false

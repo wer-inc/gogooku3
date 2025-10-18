@@ -1,4 +1,0 @@
-- pipeline.start_date=2024-09-01
-- pipeline.end_date=2024-09-03
-- pipeline.output_dir=/home/ubuntu/gogooku3-standalone/test_output_base
-- pipeline.jquants=true

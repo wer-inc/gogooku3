@@ -1,4 +1,0 @@
-- pipeline.start_date=2025-08-09
-- pipeline.end_date=2025-09-15
-- pipeline.output_dir=/home/ubuntu/gogooku3-standalone/benchmark_output/full_comparison
-- pipeline.jquants=false
