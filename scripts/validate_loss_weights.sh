@@ -20,7 +20,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 EPOCHS=10
-BATCH_SIZE=2048
+BATCH_SIZE=1024  # Reduced from 2048 to avoid OOM
 LR=2e-4
 HIDDEN_SIZE=256
 DATA_PATH="output/ml_dataset_latest_full.parquet"

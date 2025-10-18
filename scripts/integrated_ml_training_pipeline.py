@@ -7,6 +7,7 @@ ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する統合学習パ�
 # CRITICAL: Safe mode thread limiting MUST happen before importing torch
 # Otherwise PyTorch will already have spawned 128 threads causing deadlock with Parquet I/O
 import os
+
 if os.getenv("FORCE_SINGLE_PROCESS", "0") == "1":
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
@@ -37,6 +38,7 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 # ログ設定
+Path("logs").mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -48,8 +50,13 @@ logger = logging.getLogger(__name__)
 class CompleteATFTTrainingPipeline:
     """ATFT-GAT-FANの成果を完全に再現する統合学習パイプライン"""
 
-    def __init__(self, data_path: str | None = None, sample_size: int | None = None,
-                 run_safe_pipeline: bool = False, extra_overrides: list[str] | None = None):
+    def __init__(
+        self,
+        data_path: str | None = None,
+        sample_size: int | None = None,
+        run_safe_pipeline: bool = False,
+        extra_overrides: list[str] | None = None,
+    ):
         self.output_dir = Path("output")
         self.logs_dir = Path("logs")
         self.logs_dir.mkdir(exist_ok=True)
@@ -122,7 +129,9 @@ class CompleteATFTTrainingPipeline:
                     if ds_path and Path(ds_path).exists():
                         await self._run_safe_training_pipeline(Path(ds_path))
                     else:
-                        logger.warning("Safe pipeline requested, but dataset path is unavailable. Skipping.")
+                        logger.warning(
+                            "Safe pipeline requested, but dataset path is unavailable. Skipping."
+                        )
             except Exception as _e:
                 logger.warning(f"SafeTrainingPipeline step skipped: {_e}")
 
@@ -184,7 +193,9 @@ class CompleteATFTTrainingPipeline:
                 if ok_po:
                     result["portfolio_optimization"] = po_info
                 else:
-                    result["portfolio_optimization"] = {"error": po_info.get("error", "unknown")}
+                    result["portfolio_optimization"] = {
+                        "error": po_info.get("error", "unknown")
+                    }
             except Exception as _e:
                 logger.warning(f"Portfolio optimization step skipped: {_e}")
 
@@ -192,16 +203,18 @@ class CompleteATFTTrainingPipeline:
             logger.info(
                 f"✅ Complete ATFT-GAT-FAN Training Pipeline completed successfully in {elapsed_time:.2f}s"
             )
-            ach = validation_info.get('sharpe_ratio', None)
+            ach = validation_info.get("sharpe_ratio", None)
             if ach is not None:
                 logger.info(f"🎯 Achieved Sharpe Ratio: {ach}")
             try:
                 po = result.get("portfolio_optimization", {})
                 rep = po.get("report", {})
                 if rep and "sharpe" in rep:
-                    logger.info(f"📈 Portfolio Sharpe (net, cost 5bps): {rep['sharpe']:.4f}")
-            except Exception:
-                pass
+                    logger.info(
+                        f"📈 Portfolio Sharpe (net, cost 5bps): {rep['sharpe']:.4f}"
+                    )
+            except Exception:  # noqa: S110
+                pass  # Optional portfolio optimization - silent fail is acceptable
 
             return True, result
 
@@ -224,9 +237,15 @@ class CompleteATFTTrainingPipeline:
             # ATFT-GAT-FANのパス設定（スタンドアロン運用時は任意）
             # - ATFT_EXTERNAL_PATH: 既存ATFTリポジトリの場所（未設定なら既定パス）
             # - REQUIRE_ATFT_EXTERNAL: 1/trueで必須化（既定はオプション）
-            ext_path_env = os.getenv("ATFT_EXTERNAL_PATH", "/home/ubuntu/gogooku2/apps/ATFT-GAT-FAN")
+            ext_path_env = os.getenv(
+                "ATFT_EXTERNAL_PATH", "/home/ubuntu/gogooku2/apps/ATFT-GAT-FAN"
+            )
             atft_path = Path(ext_path_env)
-            require_ext = os.getenv("REQUIRE_ATFT_EXTERNAL", "0").lower() in ("1", "true", "yes")
+            require_ext = os.getenv("REQUIRE_ATFT_EXTERNAL", "0").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
             if not atft_path.exists():
                 if require_ext:
                     logger.error(
@@ -264,15 +283,19 @@ class CompleteATFTTrainingPipeline:
                 ml_dataset_paths.append(self.data_path)
 
             # output内の最新のデータセットを探す
-            output_datasets = sorted(Path("output").glob("ml_dataset_*.parquet"), reverse=True)
+            output_datasets = sorted(
+                Path("output").glob("ml_dataset_*.parquet"), reverse=True
+            )
             ml_dataset_paths.extend(output_datasets[:3])  # 最新3つまで
 
             # デフォルトパス
-            ml_dataset_paths.extend([
-                Path("output/ml_dataset_production.parquet"),
-                Path("data/processed/ml_dataset_latest.parquet"),
-                Path("data/ml_dataset.parquet")
-            ])
+            ml_dataset_paths.extend(
+                [
+                    Path("output/ml_dataset_production.parquet"),
+                    Path("data/processed/ml_dataset_latest.parquet"),
+                    Path("data/ml_dataset.parquet"),
+                ]
+            )
 
             ml_dataset_path = None
             for path in ml_dataset_paths:
@@ -298,7 +321,9 @@ class CompleteATFTTrainingPipeline:
                     gb = (
                         df.group_by("Code")
                         .agg(pl.len().alias("n"))
-                        .filter(pl.col("n") >= min_seq)  # 学習に必要な系列長を満たす銘柄のみ
+                        .filter(
+                            pl.col("n") >= min_seq
+                        )  # 学習に必要な系列長を満たす銘柄のみ
                         .sort("n")  # 過剰サンプルを避けるため行数の少ない銘柄から採用
                     )
                     codes = gb.select(["Code", "n"]).to_dict(as_series=False)
@@ -315,32 +340,50 @@ class CompleteATFTTrainingPipeline:
                             f"🔎 Sample mode: selected {len(sel_codes)} codes for ~{self.sample_size} rows (actual={len(df)})"
                         )
                     else:
-                        logger.warning("Sample mode requested but could not determine codes; falling back to head() sampling")
+                        logger.warning(
+                            "Sample mode requested but could not determine codes; falling back to head() sampling"
+                        )
                         df = df.head(self.sample_size)
                 except Exception as e:
-                    logger.warning(f"Sample mode failed ({e}); falling back to head() sampling")
+                    logger.warning(
+                        f"Sample mode failed ({e}); falling back to head() sampling"
+                    )
                     try:
                         df = df.head(self.sample_size)
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: S110
+                        pass  # Polars head() failure is non-critical
 
             # データ検証
             validation_result = self._validate_ml_dataset(df)
             if not validation_result["valid"]:
                 error_details = []
-                if validation_result['missing_columns']:
-                    error_details.append(f"Missing columns: {validation_result['missing_columns']}")
-                if not validation_result.get('has_return_column', False):
-                    error_details.append("No return/target column found (needs one of: returns_1d, feat_ret_1d, target, returns)")
-                if validation_result['total_columns'] < 50:
-                    error_details.append(f"Not enough features: {validation_result['total_columns']} < 50")
-                if validation_result['total_rows'] == 0:
+                if validation_result["missing_columns"]:
+                    error_details.append(
+                        f"Missing columns: {validation_result['missing_columns']}"
+                    )
+                if not validation_result.get("has_return_column", False):
+                    error_details.append(
+                        "No return/target column found (needs one of: returns_1d, feat_ret_1d, target, returns)"
+                    )
+                if validation_result["total_columns"] < 50:
+                    error_details.append(
+                        f"Not enough features: {validation_result['total_columns']} < 50"
+                    )
+                if validation_result["total_rows"] == 0:
                     error_details.append("Dataset is empty")
 
-                error_msg = "; ".join(error_details) if error_details else "Unknown validation error"
+                error_msg = (
+                    "; ".join(error_details)
+                    if error_details
+                    else "Unknown validation error"
+                )
                 logger.error(f"Dataset validation failed: {error_msg}")
-                logger.info(f"Dataset info - Rows: {validation_result['total_rows']}, Cols: {validation_result['total_columns']}")
-                logger.info(f"Sample columns: {validation_result.get('column_sample', [])}")
+                logger.info(
+                    f"Dataset info - Rows: {validation_result['total_rows']}, Cols: {validation_result['total_columns']}"
+                )
+                logger.info(
+                    f"Sample columns: {validation_result.get('column_sample', [])}"
+                )
                 return False, {"error": error_msg}
 
             data_info = {
@@ -376,16 +419,21 @@ class CompleteATFTTrainingPipeline:
             experiment_name="integrated_safe",
             verbose=False,
         )
-        res = pipe.run_pipeline(n_splits=2, embargo_days=20, memory_limit_gb=8.0, save_results=True)
+        res = pipe.run_pipeline(
+            n_splits=2, embargo_days=20, memory_limit_gb=8.0, save_results=True
+        )
         # 代表的な指標をログ
         try:
             rep = (res or {}).get("final_report", {})
             baseline = (res or {}).get("step5_baseline", {})
             logger.info(f"Safe pipeline report: keys={list(rep.keys())[:5]}")
             if baseline:
-                logger.info("Baseline metrics (subset): " + ", ".join(f"{k}={v}" for k, v in list(baseline.items())[:5]))
-        except Exception:
-            pass
+                logger.info(
+                    "Baseline metrics (subset): "
+                    + ", ".join(f"{k}={v}" for k, v in list(baseline.items())[:5])
+                )
+        except Exception:  # noqa: S110
+            pass  # Baseline logging failure is non-critical
 
     async def _convert_ml_to_atft_format(self, df: pl.DataFrame) -> tuple[bool, dict]:
         """MLデータセットをATFT-GAT-FAN形式に変換"""
@@ -404,6 +452,7 @@ class CompleteATFTTrainingPipeline:
                 from scripts.models.unified_feature_converter import (
                     UnifiedFeatureConverter,
                 )
+
                 converter = UnifiedFeatureConverter()
                 # 既存の変換結果があり、再利用可能ならスキップ
                 try:
@@ -411,12 +460,18 @@ class CompleteATFTTrainingPipeline:
 
                     _train_dir = _P(out_dir) / "train"
                     force_reconvert = os.getenv("FORCE_CONVERT", "0") == "1"
-                    if (not force_reconvert) and _train_dir.exists() and any(_train_dir.glob("*.parquet")):
+                    if (
+                        (not force_reconvert)
+                        and _train_dir.exists()
+                        and any(_train_dir.glob("*.parquet"))
+                    ):
                         logger.info(
                             f"♻️  Reusing existing converted data at {out_dir} (skip conversion)"
                         )
                         file_paths = {
-                            "train_files": sorted(str(p) for p in _train_dir.glob("*.parquet")),
+                            "train_files": sorted(
+                                str(p) for p in _train_dir.glob("*.parquet")
+                            ),
                             "val_files": sorted(
                                 str(p) for p in (_P(out_dir) / "val").glob("*.parquet")
                             ),
@@ -431,23 +486,29 @@ class CompleteATFTTrainingPipeline:
                     # フォールバック: 常に変換
                     file_paths = converter.convert_to_atft_format(df, out_dir)
             except ImportError:
-                logger.warning("UnifiedFeatureConverter not found, using direct training approach")
+                logger.warning(
+                    "UnifiedFeatureConverter not found, using direct training approach"
+                )
                 # Create mock file paths for compatibility
                 file_paths = {
                     "train_files": ["direct_training"],
                     "val_files": [],
                     "test_files": [],
-                    "metadata": {"direct_mode": True}
+                    "metadata": {"direct_mode": True},
                 }
 
             conversion_info = {
                 "file_paths": file_paths,
-                "converter": "Direct" if "direct_training" in str(file_paths) else "UnifiedFeatureConverter",
+                "converter": "Direct"
+                if "direct_training" in str(file_paths)
+                else "UnifiedFeatureConverter",
                 "output_dir": out_dir,
-                "dataframe": df  # Keep dataframe for direct training
+                "dataframe": df,  # Keep dataframe for direct training
             }
 
-            logger.info(f"✅ Conversion completed: Mode = {conversion_info['converter']}")
+            logger.info(
+                f"✅ Conversion completed: Mode = {conversion_info['converter']}"
+            )
             return True, conversion_info
 
         except Exception as e:
@@ -516,8 +577,11 @@ class CompleteATFTTrainingPipeline:
             # 最適化プロファイル使用時は、学習ハイパラのHydraオーバーライド注入を避ける
             _optimized_pre = False
             try:
-                for tok in (self.extra_overrides or []):
-                    if tok.strip().endswith("config_production_optimized") or "production_improved" in tok:
+                for tok in self.extra_overrides or []:
+                    if (
+                        tok.strip().endswith("config_production_optimized")
+                        or "production_improved" in tok
+                    ):
                         _optimized_pre = True
                         break
             except Exception:
@@ -547,7 +611,11 @@ class CompleteATFTTrainingPipeline:
                 if "train.batch.train_batch_size" not in cli_override_keys:
                     # Use Safe mode batch size if FORCE_SINGLE_PROCESS=1
                     safe_batch_size = int(os.getenv("SAFE_MODE_BATCH_SIZE", "256"))
-                    batch_size = safe_batch_size if is_safe_mode else self.atft_settings['batch_size']
+                    batch_size = (
+                        safe_batch_size
+                        if is_safe_mode
+                        else self.atft_settings["batch_size"]
+                    )
                     overrides.append(f"train.batch.train_batch_size={batch_size}")
 
                 # In Safe mode, explicitly set single-worker DataLoader via Hydra
@@ -560,16 +628,26 @@ class CompleteATFTTrainingPipeline:
                         overrides.append("train.batch.persistent_workers=false")
                     if "train.batch.pin_memory" not in cli_override_keys:
                         overrides.append("train.batch.pin_memory=false")
-                    logger.info(f"[Safe Mode] Setting single-worker DataLoader: batch_size={safe_batch_size if is_safe_mode else self.atft_settings['batch_size']}, num_workers=0")
+                    logger.info(
+                        f"[Safe Mode] Setting single-worker DataLoader: batch_size={safe_batch_size if is_safe_mode else self.atft_settings['batch_size']}, num_workers=0"
+                    )
 
                 if "train.optimizer.lr" not in cli_override_keys:
-                    overrides.append(f"train.optimizer.lr={self.atft_settings['learning_rate']}")
+                    overrides.append(
+                        f"train.optimizer.lr={self.atft_settings['learning_rate']}"
+                    )
                 if "train.trainer.max_epochs" not in cli_override_keys:
-                    overrides.append(f"train.trainer.max_epochs={self.atft_settings['max_epochs']}")
+                    overrides.append(
+                        f"train.trainer.max_epochs={self.atft_settings['max_epochs']}"
+                    )
                 if "train.trainer.precision" not in cli_override_keys:
-                    overrides.append(f"train.trainer.precision={self.atft_settings['precision']}")
+                    overrides.append(
+                        f"train.trainer.precision={self.atft_settings['precision']}"
+                    )
                 if "train.trainer.check_val_every_n_epoch" not in cli_override_keys:
-                    overrides.append(f"train.trainer.check_val_every_n_epoch={os.getenv('TRAIN_VAL_EVERY', '1')}")
+                    overrides.append(
+                        f"train.trainer.check_val_every_n_epoch={os.getenv('TRAIN_VAL_EVERY', '1')}"
+                    )
                 if "train.trainer.enable_progress_bar" not in cli_override_keys:
                     overrides.append("train.trainer.enable_progress_bar=true")
                 cmd.extend(overrides)
@@ -632,8 +710,14 @@ class CompleteATFTTrainingPipeline:
                             i += 1
                             continue
                         # Skip unsupported flag and consume its value if it looks like one
-                        if i + 1 < n and not self.extra_overrides[i + 1].startswith("--"):
-                            logger.debug("Dropping unsupported flag+value: %s %s", tok, self.extra_overrides[i + 1])
+                        if i + 1 < n and not self.extra_overrides[i + 1].startswith(
+                            "--"
+                        ):
+                            logger.debug(
+                                "Dropping unsupported flag+value: %s %s",
+                                tok,
+                                self.extra_overrides[i + 1],
+                            )
                             i += 2
                         else:
                             logger.debug("Dropping unsupported flag: %s", tok)
@@ -653,10 +737,15 @@ class CompleteATFTTrainingPipeline:
             # GPU必須モード（REQUIRE_GPU=1 or ACCELERATOR=gpu 等）の場合、
             # CUDAが利用不可なら即エラーで停止（CPUフォールバック禁止）。
             acc_env = os.getenv("ACCELERATOR", "").lower()
-            require_gpu = os.getenv("REQUIRE_GPU", "0").lower() in ("1", "true", "yes") or acc_env == "gpu"
+            require_gpu = (
+                os.getenv("REQUIRE_GPU", "0").lower() in ("1", "true", "yes")
+                or acc_env == "gpu"
+            )
             has_gpu = torch.cuda.is_available()
             if require_gpu and not has_gpu:
-                logger.error("GPU required but not available (torch.cuda.is_available=False). Aborting.")
+                logger.error(
+                    "GPU required but not available (torch.cuda.is_available=False). Aborting."
+                )
                 return False, {"error": "GPU required but not available"}
 
             # DataLoader最適化は実GPU可否に依存
@@ -695,8 +784,11 @@ class CompleteATFTTrainingPipeline:
             # Detect optimized config to avoid passing loader overrides that may conflict
             optimized_mode = False
             try:
-                for tok in (self.extra_overrides or []):
-                    if tok.strip().endswith("config_production_optimized") or "production_improved" in tok:
+                for tok in self.extra_overrides or []:
+                    if (
+                        tok.strip().endswith("config_production_optimized")
+                        or "production_improved" in tok
+                    ):
                         optimized_mode = True
                         break
             except Exception:
@@ -715,11 +807,17 @@ class CompleteATFTTrainingPipeline:
                 # ローダー設定はHydra構成に委譲（最適化プロファイル使用時の衝突回避）
                 # persistent_workers は明示指定がある場合のみ尊重（デフォルトは付与しない）
                 env.setdefault("ACCELERATOR", "gpu")
-                env.setdefault("CUDA_VISIBLE_DEVICES", os.getenv("CUDA_VISIBLE_DEVICES", "0"))
+                env.setdefault(
+                    "CUDA_VISIBLE_DEVICES", os.getenv("CUDA_VISIBLE_DEVICES", "0")
+                )
                 if not optimized_mode:
-                    logger.info("[pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)")
+                    logger.info(
+                        "[pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)"
+                    )
                 else:
-                    logger.info("[pipeline] Using GPU execution plan (loader settings from optimized config)")
+                    logger.info(
+                        "[pipeline] Using GPU execution plan (loader settings from optimized config)"
+                    )
             else:
                 # CPU 実行: DataLoader を単純化（ここでは設定を追加しない）
                 # ローダー設定はHydra構成に委譲
@@ -756,6 +854,7 @@ class CompleteATFTTrainingPipeline:
                     "USE_DAY_BATCH=0 MIN_NODES_PER_DAY=4 DATASET_STRIDE=2 "
                     "NUM_WORKERS=0 SHARPE_EPS=1e-8"
                 )
+
             # OOM 自動リトライ: CUDA OOM を検知したらバッチ半減 + 勾配蓄積倍増で最大2回まで再試行
             def _last_override_int(args: list[str], key: str, default: int) -> int:
                 pref = f"{key}="
@@ -764,8 +863,8 @@ class CompleteATFTTrainingPipeline:
                     if isinstance(s, str) and s.startswith(pref):
                         try:
                             val = int(float(s.split("=", 1)[1]))
-                        except Exception:
-                            pass
+                        except Exception:  # noqa: S110
+                            pass  # Int parsing failure - returns default
                 return val if val is not None else int(default)
 
             max_retries = 2
@@ -777,7 +876,7 @@ class CompleteATFTTrainingPipeline:
                 # Stream child output live to console and to logs for real-time monitoring
                 combined_lines: list[str] = []
                 try:
-                    proc = subprocess.Popen(
+                    proc = subprocess.Popen(  # noqa: S603
                         cmd,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
@@ -799,27 +898,27 @@ class CompleteATFTTrainingPipeline:
                     _lf = None
 
                 try:
-                    assert proc.stdout is not None
+                    assert proc.stdout is not None  # noqa: S101
                     for line in proc.stdout:
                         # Echo to console (captured by wrapper log) and append to file
                         try:
                             print(line, end="", flush=True)
-                        except Exception:
-                            pass
+                        except Exception:  # noqa: S110
+                            pass  # Print failure during streaming - non-critical
                         try:
                             if _lf is not None:
                                 _lf.write(line)
                                 _lf.flush()
-                        except Exception:
-                            pass
+                        except Exception:  # noqa: S110
+                            pass  # Log file write failure - non-critical
                         combined_lines.append(line)
                 finally:
                     try:
                         if _lf is not None:
                             _lf.flush()
                             _lf.close()
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: S110
+                        pass  # Log file close failure - non-critical
 
                 proc.wait()
                 last_combined_output = "".join(combined_lines)
@@ -830,7 +929,9 @@ class CompleteATFTTrainingPipeline:
                     break
 
                 combined_err = last_combined_output
-                if ("CUDA out of memory" in combined_err) or ("torch.OutOfMemoryError" in combined_err):
+                if ("CUDA out of memory" in combined_err) or (
+                    "torch.OutOfMemoryError" in combined_err
+                ):
                     if attempt > max_retries:
                         logger.error(
                             f"Training failed after {max_retries} OOM retries. Last error excerpt: {combined_err[-400:]}"
@@ -839,14 +940,20 @@ class CompleteATFTTrainingPipeline:
 
                     # 現在値を取得（存在しなければ既定値から）
                     cur_bs = _last_override_int(
-                        cmd, "train.batch.train_batch_size", self.atft_settings.get("batch_size", 1024)
+                        cmd,
+                        "train.batch.train_batch_size",
+                        self.atft_settings.get("batch_size", 1024),
                     )
                     cur_vbs = _last_override_int(
                         cmd, "train.batch.val_batch_size", max(1024, int(cur_bs * 1.5))
                     )
-                    cur_ga = _last_override_int(cmd, "train.batch.gradient_accumulation_steps", 1)
+                    cur_ga = _last_override_int(
+                        cmd, "train.batch.gradient_accumulation_steps", 1
+                    )
                     cur_workers = _last_override_int(cmd, "train.batch.num_workers", 8)
-                    cur_prefetch = _last_override_int(cmd, "train.batch.prefetch_factor", 4)
+                    cur_prefetch = _last_override_int(
+                        cmd, "train.batch.prefetch_factor", 4
+                    )
 
                     # 新しい値を決定
                     new_bs = max(64, cur_bs // 2)
@@ -865,9 +972,8 @@ class CompleteATFTTrainingPipeline:
 
                     # 勾配蓄積は、未指定なら + で追加、既に存在するなら通常上書き
                     has_ga = any(
-                        s.startswith("train.batch.gradient_accumulation_steps=") or s.startswith(
-                            "+train.batch.gradient_accumulation_steps="
-                        )
+                        s.startswith("train.batch.gradient_accumulation_steps=")
+                        or s.startswith("+train.batch.gradient_accumulation_steps=")
                         for s in cmd
                     )
                     ga_arg = (
@@ -892,7 +998,9 @@ class CompleteATFTTrainingPipeline:
 
                 # OOM以外の失敗は一度だけCPUローダー安全設定で再試行（Hydraオーバーライドは注入しない）
                 if attempt == 1:
-                    logger.warning("[retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings (env-only)")
+                    logger.warning(
+                        "[retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings (env-only)"
+                    )
                     # Enforce single-process loader via environment only
                     env["NUM_WORKERS"] = "0"
                     env["PERSISTENT_WORKERS"] = "0"
@@ -900,7 +1008,9 @@ class CompleteATFTTrainingPipeline:
                     env["PIN_MEMORY"] = "0"
                     continue
 
-                logger.error("Training failed (non-OOM). See logs/ml_training.log for details.")
+                logger.error(
+                    "Training failed (non-OOM). See logs/ml_training.log for details."
+                )
                 return False, {"error": combined_err[-2000:]}
 
             # 学習結果の解析（ストリーミングで収集した出力を解析）
@@ -928,11 +1038,13 @@ class CompleteATFTTrainingPipeline:
                                 payload = json.loads(pth.read_text())
                                 # 代表キーを可能な範囲でマッピング
                                 if "rank_ic" in payload:
-                                    metrics_payload["rank_ic"].update(payload["rank_ic"])  # type: ignore
+                                    metrics_payload["rank_ic"].update(
+                                        payload["rank_ic"]
+                                    )  # type: ignore
                                 if "sharpe" in payload:
                                     metrics_payload["sharpe"].update(payload["sharpe"])  # type: ignore
-                            except Exception:
-                                pass
+                            except Exception:  # noqa: S110
+                                pass  # Metrics parsing failure - non-critical
                     # ログからSharpeを抽出（単一値の場合のフォールバック）
                     if not metrics_payload["sharpe"]:
                         sr = self._extract_sharpe_ratio(training_info.get("log", ""))
@@ -1008,7 +1120,11 @@ class CompleteATFTTrainingPipeline:
                         for k in ("state_dict", "model_state_dict", "model", "weights"):
                             if k in obj and isinstance(obj[k], dict):
                                 sd = obj[k]
-                                return sum(int(p.numel()) for p in sd.values() if isinstance(p, torch.Tensor))
+                                return sum(
+                                    int(p.numel())
+                                    for p in sd.values()
+                                    if isinstance(p, torch.Tensor)
+                                )
                         # 直接 state_dict の場合
                         if all(isinstance(v, torch.Tensor) for v in obj.values()):
                             return sum(int(p.numel()) for p in obj.values())
@@ -1100,7 +1216,7 @@ class CompleteATFTTrainingPipeline:
                 "5",
             ]
             logger.info(f"Running portfolio optimization: {' '.join(cmd)}")
-            res = subprocess.run(cmd, capture_output=True, text=True)
+            res = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
             if res.returncode != 0:
                 logger.error(f"Portfolio optimization failed: {res.stderr}")
                 return False, {"error": res.stderr}
@@ -1110,7 +1226,9 @@ class CompleteATFTTrainingPipeline:
             report = {}
             try:
                 if out_dir.exists():
-                    latest = max(out_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime)
+                    latest = max(
+                        out_dir.glob("report_*.json"), key=lambda p: p.stat().st_mtime
+                    )
                     report = json.loads(latest.read_text())
                     logger.info(f"Portfolio report loaded: {latest}")
                 else:
@@ -1164,15 +1282,7 @@ class CompleteATFTTrainingPipeline:
     def _validate_ml_dataset(self, df: pl.DataFrame) -> dict:
         """MLデータセットの検証"""
         # 最小限必要なカラムのみチェック
-        essential_columns = [
-            "Code",
-            "Date",
-            "Open",
-            "High",
-            "Low",
-            "Close",
-            "Volume"
-        ]
+        essential_columns = ["Code", "Date", "Open", "High", "Low", "Close", "Volume"]
 
         # リターン系のカラムがあるかチェック（どれか1つあればOK）
         return_columns = ["returns_1d", "feat_ret_1d", "target", "returns"]
@@ -1184,10 +1294,12 @@ class CompleteATFTTrainingPipeline:
         has_enough_features = len(df.columns) >= 50
 
         # 検証結果
-        is_valid = (len(missing_essential) == 0 and
-                   has_return and
-                   has_enough_features and
-                   len(df) > 0)
+        is_valid = (
+            len(missing_essential) == 0
+            and has_return
+            and has_enough_features
+            and len(df) > 0
+        )
 
         return {
             "valid": is_valid,
@@ -1242,13 +1354,25 @@ class CompleteATFTTrainingPipeline:
 async def main():
     """メイン実行関数"""
     import argparse
-    parser = argparse.ArgumentParser(description="Complete ATFT-GAT-FAN Training Pipeline", add_help=True)
+
+    parser = argparse.ArgumentParser(
+        description="Complete ATFT-GAT-FAN Training Pipeline", add_help=True
+    )
     parser.add_argument("--data-path", type=str, help="Path to ML dataset parquet file")
-    parser.add_argument("--max-epochs", type=int, default=None, help="Maximum epochs (0 to skip training)")
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=None,
+        help="Maximum epochs (0 to skip training)",
+    )
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size")
-    parser.add_argument("--lr", type=float, default=None, help="Learning rate override (e.g., 2e-4)")
+    parser.add_argument(
+        "--lr", type=float, default=None, help="Learning rate override (e.g., 2e-4)"
+    )
     parser.add_argument("--sample-size", type=int, help="Sample size for testing")
-    parser.add_argument("--dry-run", action="store_true", help="Show planned steps and exit")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show planned steps and exit"
+    )
     parser.add_argument(
         "--adv-graph-train",
         action="store_true",
@@ -1321,7 +1445,7 @@ async def main():
 
     if success:
         print("🎉 Complete training pipeline succeeded!")
-        sr = result.get('validation_info', {}).get('sharpe_ratio', None)
+        sr = result.get("validation_info", {}).get("sharpe_ratio", None)
         if sr is not None:
             print(f"📊 Results: {sr}")
     else:
@@ -1336,4 +1460,5 @@ if __name__ == "__main__":
     ok, _ = asyncio.run(main())
     # 非0終了で呼び出し側スクリプトが成功/失敗を正しく検知できるようにする
     import sys
+
     sys.exit(0 if ok else 1)
