@@ -10,18 +10,19 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from ..components import (
-    FrequencyAdaptiveNorm,
-    FreqDropout1D,
-    MultiLayerGAT,
-    SliceAdaptiveNorm,
-    TemporalFusionTransformer,
-    VariableSelectionNetwork,
-)
 from src.training.curriculum import (
     CurriculumScheduler,
     create_research_curriculum,
     create_simple_curriculum,
+)
+
+from ..components import (
+    FreqDropout1D,
+    FrequencyAdaptiveNorm,
+    MultiLayerGAT,
+    SliceAdaptiveNorm,
+    TemporalFusionTransformer,
+    VariableSelectionNetwork,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
     """
 
     _TARGET_KEY_PATTERNS = [
-        re.compile(r"^(?:return|returns|ret|target|targets|tgt|y)_(\d+)(?:d)?$", re.IGNORECASE),
+        re.compile(
+            r"^(?:return|returns|ret|target|targets|tgt|y)_(\d+)(?:d)?$", re.IGNORECASE
+        ),
         re.compile(r"^label_ret_(\d+)_bps$", re.IGNORECASE),
         re.compile(r"^horizon_(\d+)(?:d)?$", re.IGNORECASE),
         re.compile(r"^point_horizon_(\d+)$", re.IGNORECASE),
@@ -61,7 +64,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # 損失関数
         self._setup_loss_functions()
 
-        logger.info(f"ATFT-GAT-FAN initialized with {self.n_dynamic_features} dynamic features")
+        logger.info(
+            f"ATFT-GAT-FAN initialized with {self.n_dynamic_features} dynamic features"
+        )
 
         # Curriculum scheduler (optional)
         self.curriculum_scheduler = self._build_curriculum()
@@ -81,7 +86,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                     return f"horizon_{int(match.group(1))}d"
         return None
 
-    def _extract_targets(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def _extract_targets(
+        self, batch: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
         """Collect target tensors keyed by canonical horizon name from the batch."""
 
         targets_map: dict[str, torch.Tensor] = {}
@@ -135,7 +142,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         if manual_dims is not None and hasattr(manual_dims, "total_features"):
             total_features = int(manual_dims.total_features)
-            historical_override = int(getattr(manual_dims, "historical_features", 0) or 0)
+            historical_override = int(
+                getattr(manual_dims, "historical_features", 0) or 0
+            )
 
             self.n_current_features = total_features - historical_override
             if self.n_current_features <= 0:
@@ -177,10 +186,30 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         self.tft = self._build_tft()
 
         # Graph Attention Network (銘柄間メッセージパッシング)
-        self.gat = self._build_gat() if getattr(self.config.model.gat, "enabled", False) else None
+        self.gat = (
+            self._build_gat()
+            if getattr(self.config.model.gat, "enabled", False)
+            else None
+        )
 
-        self.combined_feature_dim = self.hidden_size + (self.gat_output_dim if self.gat is not None else 0)
-        self.backbone_projection = nn.Linear(self.combined_feature_dim, self.hidden_size)
+        self.combined_feature_dim = self.hidden_size + (
+            self.gat_output_dim if self.gat is not None else 0
+        )
+        self.backbone_projection = nn.Linear(
+            self.combined_feature_dim, self.hidden_size
+        )
+
+        # GAT Residual Bypass修正 (Phase 2)
+        if self.gat is not None:
+            with torch.no_grad():
+                # GAT部分の重みを3倍スケーリング（勾配フロー保証）
+                gat_start_idx = self.hidden_size
+                self.backbone_projection.weight.data[:, gat_start_idx:] *= 3.0
+            # Residual接続用の学習可能なゲート（α初期値=0.5）
+            self.gat_residual_gate = nn.Parameter(torch.tensor(0.0))  # sigmoid(0)=0.5
+            logger.info(
+                "✅ [GAT-FIX] Applied 3x weight scaling + residual gate (α=0.5)"
+            )
 
         # 適応正規化 (FAN/SAN)
         self.adaptive_norm = self._build_adaptive_normalization()
@@ -199,11 +228,12 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         self._last_attention_weights = None
 
     def _get_training_config(self):
-        if hasattr(self.config, 'training') and self.config.training is not None:
+        if hasattr(self.config, "training") and self.config.training is not None:
             return self.config.training
-        if hasattr(self.config, 'train') and self.config.train is not None:
+        if hasattr(self.config, "train") and self.config.train is not None:
             return self.config.train
         from omegaconf import OmegaConf
+
         return OmegaConf.create({})
 
     def _build_variable_selection(self) -> VariableSelectionNetwork:
@@ -215,17 +245,41 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             tft_cfg = None
 
         # Handle None or non-dict values
-        if tft_cfg is None or not hasattr(tft_cfg, '__getitem__'):
+        if tft_cfg is None or not hasattr(tft_cfg, "__getitem__"):
             vsn_cfg = {}
         else:
             try:
-                vsn_cfg = tft_cfg.get("variable_selection", {}) if hasattr(tft_cfg, "get") else tft_cfg.get("variable_selection") if callable(getattr(tft_cfg, "get", None)) else {}
+                vsn_cfg = (
+                    tft_cfg.get("variable_selection", {})
+                    if hasattr(tft_cfg, "get")
+                    else tft_cfg.get("variable_selection")
+                    if callable(getattr(tft_cfg, "get", None))
+                    else {}
+                )
             except Exception:
                 vsn_cfg = {}
 
-        dropout = float(getattr(vsn_cfg, "dropout", 0.1) if hasattr(vsn_cfg, "__getattr__") else vsn_cfg.get("dropout", 0.1) if isinstance(vsn_cfg, dict) else 0.1)
-        use_sigmoid = bool(getattr(vsn_cfg, "use_sigmoid", True) if hasattr(vsn_cfg, "__getattr__") else vsn_cfg.get("use_sigmoid", True) if isinstance(vsn_cfg, dict) else True)
-        sparsity_coeff = float(getattr(vsn_cfg, "sparsity_coefficient", 0.0) if hasattr(vsn_cfg, "__getattr__") else vsn_cfg.get("sparsity_coefficient", 0.0) if isinstance(vsn_cfg, dict) else 0.0)
+        dropout = float(
+            getattr(vsn_cfg, "dropout", 0.1)
+            if hasattr(vsn_cfg, "__getattr__")
+            else vsn_cfg.get("dropout", 0.1)
+            if isinstance(vsn_cfg, dict)
+            else 0.1
+        )
+        use_sigmoid = bool(
+            getattr(vsn_cfg, "use_sigmoid", True)
+            if hasattr(vsn_cfg, "__getattr__")
+            else vsn_cfg.get("use_sigmoid", True)
+            if isinstance(vsn_cfg, dict)
+            else True
+        )
+        sparsity_coeff = float(
+            getattr(vsn_cfg, "sparsity_coefficient", 0.0)
+            if hasattr(vsn_cfg, "__getattr__")
+            else vsn_cfg.get("sparsity_coefficient", 0.0)
+            if isinstance(vsn_cfg, dict)
+            else 0.0
+        )
 
         self.vsn_sparsity_weight = sparsity_coeff
 
@@ -238,7 +292,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             sparsity_coefficient=sparsity_coeff,
         )
 
-    def _reconfigure_dynamic_feature_dim(self, new_dim: int, device: torch.device) -> None:
+    def _reconfigure_dynamic_feature_dim(
+        self, new_dim: int, device: torch.device
+    ) -> None:
         """Rebuild feature-dependent modules when runtime feature dimension differs."""
         if new_dim <= 0:
             raise ValueError("new_dim must be positive")
@@ -255,7 +311,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
     def _ensure_backbone_projection(self, input_dim: int, device: torch.device) -> None:
         """Resize backbone projection when combined features dimensionality shifts."""
-        if input_dim == self.combined_feature_dim and hasattr(self, "backbone_projection"):
+        if input_dim == self.combined_feature_dim and hasattr(
+            self, "backbone_projection"
+        ):
             return
         logger.warning(
             "Adjusting backbone projection input dim from %d to %d",
@@ -333,8 +391,11 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         # 🔧 DEBUG (2025-10-06): Log initialized GAT weights
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"[GAT-INIT] gat_entropy_weight={self.gat_entropy_weight}, gat_edge_weight={self.gat_edge_weight}, gat_output_dim={self.gat_output_dim}")
+        logger.info(
+            f"[GAT-INIT] gat_entropy_weight={self.gat_entropy_weight}, gat_edge_weight={self.gat_edge_weight}, gat_output_dim={self.gat_output_dim}"
+        )
 
         return MultiLayerGAT(
             num_layers=num_layers,
@@ -359,26 +420,36 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         fan_enabled = bool(getattr(fan_cfg, "enabled", True))
         san_enabled = bool(getattr(san_cfg, "enabled", True))
 
-        fan = FrequencyAdaptiveNorm(
-            num_features=self.hidden_size,
-            window_sizes=list(getattr(fan_cfg, "window_sizes", [5, 10, 20])),
-            aggregation=str(getattr(fan_cfg, "aggregation", "weighted_mean")),
-            learn_weights=bool(getattr(fan_cfg, "learn_weights", True)),
-        ) if fan_enabled else nn.Identity()
+        fan = (
+            FrequencyAdaptiveNorm(
+                num_features=self.hidden_size,
+                window_sizes=list(getattr(fan_cfg, "window_sizes", [5, 10, 20])),
+                aggregation=str(getattr(fan_cfg, "aggregation", "weighted_mean")),
+                learn_weights=bool(getattr(fan_cfg, "learn_weights", True)),
+            )
+            if fan_enabled
+            else nn.Identity()
+        )
 
-        san = SliceAdaptiveNorm(
-            num_features=self.hidden_size,
-            num_slices=int(getattr(san_cfg, "num_slices", 3)),
-            overlap=float(getattr(san_cfg, "overlap", 0.5)),
-            slice_aggregation=str(getattr(san_cfg, "slice_aggregation", "learned")),
-        ) if san_enabled else nn.Identity()
+        san = (
+            SliceAdaptiveNorm(
+                num_features=self.hidden_size,
+                num_slices=int(getattr(san_cfg, "num_slices", 3)),
+                overlap=float(getattr(san_cfg, "overlap", 0.5)),
+                slice_aggregation=str(getattr(san_cfg, "slice_aggregation", "learned")),
+            )
+            if san_enabled
+            else nn.Identity()
+        )
 
         return nn.Sequential(fan, san)
 
     def _build_freq_dropout(self) -> nn.Module | None:
         """周波数領域のDropout設定"""
         # Try to get freq_dropout_p from improvements section first, then from root
-        if hasattr(self.config, "improvements") and hasattr(self.config.improvements, "freq_dropout_p"):
+        if hasattr(self.config, "improvements") and hasattr(
+            self.config.improvements, "freq_dropout_p"
+        ):
             freq_dropout_p = self.config.improvements.freq_dropout_p
         else:
             freq_dropout_p = getattr(self.config, "freq_dropout_p", 0.0)
@@ -393,7 +464,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         # Try to get min/max width from improvements section first
         if hasattr(self.config, "improvements"):
-            min_width = getattr(self.config.improvements, "freq_dropout_min_width", 0.05)
+            min_width = getattr(
+                self.config.improvements, "freq_dropout_min_width", 0.05
+            )
             max_width = getattr(self.config.improvements, "freq_dropout_max_width", 0.2)
         else:
             min_width = getattr(self.config, "freq_dropout_min_width", 0.05)
@@ -427,44 +500,47 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
     def _build_prediction_head(self):
         """予測ヘッドの構築（Multi-horizon / RegimeMoE 対応）"""
         # Detect requested head type; default to multi-horizon for backward compatibility
-        head_type = getattr(self.config.model.prediction_head, 'type', 'multi_horizon')
+        head_type = getattr(self.config.model.prediction_head, "type", "multi_horizon")
 
-        if head_type == 'regime_moe':
+        if head_type == "regime_moe":
             # Lazy import to avoid circulars
             from .regime_moe import RegimeMoEPredictionHeads
 
             return RegimeMoEPredictionHeads(
-                hidden_size=self.config.model.hidden_size,
-                config=self.config.model
+                hidden_size=self.config.model.hidden_size, config=self.config.model
             )
 
         # Multi-horizon prediction head（従来）
         training_cfg = self._get_training_config()
-        use_multi_horizon = getattr(training_cfg, 'use_multi_horizon_heads', True)
+        use_multi_horizon = getattr(training_cfg, "use_multi_horizon_heads", True)
         if use_multi_horizon:
             return MultiHorizonPredictionHeads(
                 hidden_size=self.config.model.hidden_size,
                 config=self.config.model.prediction_head,
-                training_cfg=training_cfg
+                training_cfg=training_cfg,
             )
         else:
             # Backward compatibility: single horizon head
             return PredictionHead(
                 hidden_size=self.config.model.hidden_size,
-                config=self.config.model.prediction_head
+                config=self.config.model.prediction_head,
             )
 
     def _setup_loss_functions(self):
         """損失関数の設定"""
         # Quantile Loss（メイン）
-        quantiles = self.config.model.prediction_head.output.quantile_prediction.quantiles
+        quantiles = (
+            self.config.model.prediction_head.output.quantile_prediction.quantiles
+        )
         self.quantile_loss = QuantileLoss(quantiles)
 
         # 中央分位点のインデックス（Rank損失用のスコア抽出）
         try:
             # 最も0.5に近い分位点を採用
             q_list = list(float(q) for q in quantiles)
-            self._median_q_idx = min(range(len(q_list)), key=lambda i: abs(q_list[i] - 0.5))
+            self._median_q_idx = min(
+                range(len(q_list)), key=lambda i: abs(q_list[i] - 0.5)
+            )
         except Exception:
             self._median_q_idx = 0
 
@@ -473,11 +549,13 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         aux_cfg = getattr(loss_cfg, "auxiliary", None) if loss_cfg is not None else None
 
         # 補助損失
-        sharpe_cfg = getattr(aux_cfg, "sharpe_loss", None) if aux_cfg is not None else None
+        sharpe_cfg = (
+            getattr(aux_cfg, "sharpe_loss", None) if aux_cfg is not None else None
+        )
         if getattr(sharpe_cfg, "enabled", False):
             self.sharpe_loss = SharpeLoss(
                 weight=float(getattr(sharpe_cfg, "weight", 0.1)),
-                min_periods=int(getattr(sharpe_cfg, "min_periods", 20))
+                min_periods=int(getattr(sharpe_cfg, "min_periods", 20)),
             )
         else:
             self.sharpe_loss = None
@@ -485,13 +563,13 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # ランキング損失（任意）
         try:
             rk_cfg = getattr(aux_cfg, "ranking_loss", None)
-            if getattr(rk_cfg, 'enabled', False):
+            if getattr(rk_cfg, "enabled", False):
                 from ....losses.pairwise_rank_loss import PairwiseRankLoss
 
-                scale = float(getattr(rk_cfg, 'scale', getattr(rk_cfg, 'margin', 5.0)))
-                topk = int(getattr(rk_cfg, 'topk', 0))
+                scale = float(getattr(rk_cfg, "scale", getattr(rk_cfg, "margin", 5.0)))
+                topk = int(getattr(rk_cfg, "topk", 0))
                 self.rank_loss = PairwiseRankLoss(s=scale, topk=topk)
-                self.rank_loss_weight = float(getattr(rk_cfg, 'weight', 0.1))
+                self.rank_loss_weight = float(getattr(rk_cfg, "weight", 0.1))
             else:
                 self.rank_loss = None
                 self.rank_loss_weight = 0.0
@@ -502,24 +580,29 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # 意思決定層（任意）
         try:
             dl_cfg = getattr(aux_cfg, "decision_layer", None)
-            if getattr(dl_cfg, 'enabled', False):
+            if getattr(dl_cfg, "enabled", False):
                 from ....losses.decision_layer import DecisionLayer, DecisionLossConfig
 
-                self.decision_layer = DecisionLayer(DecisionLossConfig(
-                    alpha=float(getattr(dl_cfg, 'alpha', 2.0)),
-                    method=str(getattr(dl_cfg, 'method', 'tanh')),
-                    sharpe_weight=float(getattr(dl_cfg, 'sharpe_weight', 0.1)),
-                    pos_l2=float(getattr(dl_cfg, 'pos_l2', 1e-3)),
-                    fee_abs=float(getattr(dl_cfg, 'fee_abs', 0.0)),
-                    detach_signal=bool(getattr(dl_cfg, 'detach_signal', True)),
-                ))
+                self.decision_layer = DecisionLayer(
+                    DecisionLossConfig(
+                        alpha=float(getattr(dl_cfg, "alpha", 2.0)),
+                        method=str(getattr(dl_cfg, "method", "tanh")),
+                        sharpe_weight=float(getattr(dl_cfg, "sharpe_weight", 0.1)),
+                        pos_l2=float(getattr(dl_cfg, "pos_l2", 1e-3)),
+                        fee_abs=float(getattr(dl_cfg, "fee_abs", 0.0)),
+                        detach_signal=bool(getattr(dl_cfg, "detach_signal", True)),
+                    )
+                )
 
                 # Decision Layer スケジューラ（有効な場合）
                 sched_cfg = {}
                 if aux_cfg is not None:
-                    sched_cfg = getattr(aux_cfg, 'decision_layer_schedule', {})
-                if sched_cfg.get('enabled', False):
-                    from ....training.decision_scheduler import create_decision_scheduler_from_config
+                    sched_cfg = getattr(aux_cfg, "decision_layer_schedule", {})
+                if sched_cfg.get("enabled", False):
+                    from ....training.decision_scheduler import (
+                        create_decision_scheduler_from_config,
+                    )
+
                     self.decision_scheduler = create_decision_scheduler_from_config(
                         self.config, self.decision_layer
                     )
@@ -546,9 +629,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             )
 
         # 入力データの展開
-        dynamic_features = batch.get('dynamic_features')
-        if dynamic_features is None and 'features' in batch:
-            dynamic_features = batch['features']
+        dynamic_features = batch.get("dynamic_features")
+        if dynamic_features is None and "features" in batch:
+            dynamic_features = batch["features"]
         if dynamic_features is None:
             raise KeyError("Batch must contain 'dynamic_features' or 'features'")
         if dynamic_features.dim() == 2:
@@ -556,17 +639,21 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         dynamic_features = dynamic_features.to(torch.float32)
         current_feature_dim = dynamic_features.size(-1)
         if current_feature_dim != self.n_dynamic_features:
-            self._reconfigure_dynamic_feature_dim(current_feature_dim, dynamic_features.device)
-        static_features = batch.get('static_features', None)  # [batch, n_static]
-        edge_index = batch.get('edge_index', None)
-        edge_attr = batch.get('edge_attr', None)
+            self._reconfigure_dynamic_feature_dim(
+                current_feature_dim, dynamic_features.device
+            )
+        static_features = batch.get("static_features", None)  # [batch, n_static]
+        edge_index = batch.get("edge_index", None)
+        edge_attr = batch.get("edge_attr", None)
 
         # レジーム特徴量（J-UVX + KAMA/VIDYA + market regimes）
-        regime_features = batch.get('regime_features', None)  # [batch, regime_dim]
+        regime_features = batch.get("regime_features", None)  # [batch, regime_dim]
 
         # Variable Selection Network (feature gating)
         vsn_input = dynamic_features.unsqueeze(-1)
-        selected_features, feature_gates, sparsity_loss = self.variable_selection(vsn_input)
+        selected_features, feature_gates, sparsity_loss = self.variable_selection(
+            vsn_input
+        )
         self._vsn_sparsity_loss = sparsity_loss
         self._last_variable_gates = feature_gates.detach()
 
@@ -580,8 +667,11 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         # 🔧 DEBUG (2025-10-07): Log return_attention decision
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.debug(f"[RETURN-ATT] self.training={self.training}, gat_is_not_none={self.gat is not None}, entropy_weight={self.gat_entropy_weight} → return_attention={return_attention}")
+        logger.debug(
+            f"[RETURN-ATT] self.training={self.training}, gat_is_not_none={self.gat is not None}, entropy_weight={self.gat_entropy_weight} → return_attention={return_attention}"
+        )
 
         tft_output, attn_weights = self.tft(
             projected,
@@ -595,50 +685,72 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         self._gat_edge_reg_value = None
         if self.gat is not None and edge_index is not None:
             # 🔧 DEBUG (2025-10-06): Log GAT execution
-            logger.debug(f"[GAT-EXEC] GAT layer executing with edge_index.shape={edge_index.shape}")
+            logger.debug(
+                f"[GAT-EXEC] GAT layer executing with edge_index.shape={edge_index.shape}"
+            )
 
             last_step = tft_output[:, -1, :]  # [batch, hidden]
             if return_attention:
-                logger.debug(f"[RETURN-ATT] Taking return_attention=True branch - computing GAT loss metrics")
+                logger.debug(
+                    "[RETURN-ATT] Taking return_attention=True branch - computing GAT loss metrics"
+                )
                 gat_emb, attention_weights = self.gat(
                     last_step, edge_index, edge_attr, return_attention_weights=True
                 )
-                self._gat_attention_entropy = self.gat.get_attention_entropy(attention_weights)
+                self._gat_attention_entropy = self.gat.get_attention_entropy(
+                    attention_weights
+                )
                 # Use final layer attention weights for edge regularization proxy
                 _, att_tensor = attention_weights[-1]
                 self._gat_edge_reg_value = att_tensor.pow(2).mean()
                 self._last_attention_weights = attention_weights
-                logger.debug(f"[RETURN-ATT] Set _gat_attention_entropy={self._gat_attention_entropy.item():.6f}, _gat_edge_reg_value={self._gat_edge_reg_value.item():.6f}")
+                logger.debug(
+                    f"[RETURN-ATT] Set _gat_attention_entropy={self._gat_attention_entropy.item():.6f}, _gat_edge_reg_value={self._gat_edge_reg_value.item():.6f}"
+                )
             else:
-                logger.debug(f"[RETURN-ATT] Taking return_attention=False branch - GAT loss metrics will be None")
+                logger.debug(
+                    "[RETURN-ATT] Taking return_attention=False branch - GAT loss metrics will be None"
+                )
                 gat_emb = self.gat(last_step, edge_index, edge_attr)
                 self._last_attention_weights = None
 
             gat_features = gat_emb.unsqueeze(1).expand(-1, tft_output.size(1), -1)
-            logger.debug(f"[GAT-EXEC] GAT output shape={gat_emb.shape}, expanded={gat_features.shape}")
+            logger.debug(
+                f"[GAT-EXEC] GAT output shape={gat_emb.shape}, expanded={gat_features.shape}"
+            )
             # 🔧 DEBUG (2025-10-06): Verify gat_features status
             logger.debug(f"[GAT-DEBUG] gat_features is None: {gat_features is None}")
             if gat_features is not None:
-                logger.debug(f"[GAT-DEBUG] gat_features.shape={gat_features.shape}, requires_grad={gat_features.requires_grad}")
+                logger.debug(
+                    f"[GAT-DEBUG] gat_features.shape={gat_features.shape}, requires_grad={gat_features.requires_grad}"
+                )
 
         # Combine temporal and graph context
         # 🔧 FIX (2025-10-06): Always use consistent dimensions to prevent backbone_projection recreation
         # When GAT is skipped, pad with zeros to maintain dimension=hidden_size+gat_output_dim
         # 🔧 DEBUG (2025-10-06): Log which branch is taken
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.debug(f"[GAT-DEBUG] Checking concatenation: gat_features is not None = {gat_features is not None}")
+        logger.debug(
+            f"[GAT-DEBUG] Checking concatenation: gat_features is not None = {gat_features is not None}"
+        )
         if gat_features is not None:
-            logger.debug(f"[GAT-DEBUG] Using GAT features branch, combined shape will be {tft_output.size()[-1] + gat_features.size()[-1]}")
+            logger.debug(
+                f"[GAT-DEBUG] Using GAT features branch, combined shape will be {tft_output.size()[-1] + gat_features.size()[-1]}"
+            )
             combined_features = torch.cat([tft_output, gat_features], dim=-1)
         else:
-            logger.debug(f"[GAT-DEBUG] Using zero-padding branch")
+            logger.debug("[GAT-DEBUG] Using zero-padding branch")
             # GAT disabled or no edges: pad with zeros to match expected dimension
             if self.gat is not None:
                 # GAT exists but not executed: use gat_output_dim for padding
                 zero_pad = torch.zeros(
-                    tft_output.size(0), tft_output.size(1), self.gat_output_dim,
-                    device=tft_output.device, dtype=tft_output.dtype
+                    tft_output.size(0),
+                    tft_output.size(1),
+                    self.gat_output_dim,
+                    device=tft_output.device,
+                    dtype=tft_output.dtype,
                 )
                 combined_features = torch.cat([tft_output, zero_pad], dim=-1)
             else:
@@ -652,12 +764,39 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # Project back to hidden size and apply adaptive normalization
         # 🔧 FIX (2025-10-06): No longer need dynamic dimension check - dimensions are now fixed
         combined_features = self.backbone_projection(combined_features)
+
+        # GAT Residual Bypass適用 (Phase 2)
+        if (
+            self.gat is not None
+            and gat_features is not None
+            and hasattr(self, "gat_residual_gate")
+        ):
+            alpha = torch.sigmoid(self.gat_residual_gate)
+            # Residual bypass: α*projection + (1-α)*gat_features
+            combined_features = alpha * combined_features + (1 - alpha) * gat_features
+            # GAT勾配モニタリング（訓練時のみ）
+            if self.training and hasattr(gat_features, "register_hook"):
+
+                def log_gat_grad(grad):
+                    if grad is not None:
+                        grad_norm = grad.norm().item()
+                        if grad_norm < 1e-8:
+                            logger.warning(
+                                f"[GAT-GRAD] Low gradient detected: {grad_norm:.2e}"
+                            )
+
+                gat_features.register_hook(log_gat_grad)
         normalized_features = self.adaptive_norm(combined_features)
         # 🔧 DEBUG (2025-10-06): Check gradient flow
-        logger.debug(f"[GAT-DEBUG] combined_features.requires_grad={combined_features.requires_grad}, normalized.requires_grad={normalized_features.requires_grad}")
+        logger.debug(
+            f"[GAT-DEBUG] combined_features.requires_grad={combined_features.requires_grad}, normalized.requires_grad={normalized_features.requires_grad}"
+        )
 
         # 予測（Multi-horizon対応 + レジーム特徴量対応）
-        if hasattr(self.prediction_head, 'forward') and 'regime_features' in self.prediction_head.forward.__code__.co_varnames:
+        if (
+            hasattr(self.prediction_head, "forward")
+            and "regime_features" in self.prediction_head.forward.__code__.co_varnames
+        ):
             # Enhanced RegimeMoE prediction head
             predictions = self.prediction_head(normalized_features, regime_features)
         else:
@@ -667,27 +806,27 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # Multi-horizon vs single-horizon の結果統一
         if isinstance(predictions, dict):
             # Multi-horizon: {horizon_1d: tensor, horizon_5d: tensor, ...}
-            output_type = 'multi_horizon'
+            output_type = "multi_horizon"
         else:
             # Single-horizon (backward compatibility)
-            output_type = 'single_horizon'
-            predictions = {'single': predictions}
+            output_type = "single_horizon"
+            predictions = {"single": predictions}
 
         # 出力にレジーム特徴量も含める（分析用）
         output = {
-            'predictions': predictions,
-            'features': normalized_features,
-            'output_type': output_type
+            "predictions": predictions,
+            "features": normalized_features,
+            "output_type": output_type,
         }
 
         if regime_features is not None:
-            output['regime_features'] = regime_features
+            output["regime_features"] = regime_features
 
         # MoEゲート分析情報（利用可能な場合）
-        if hasattr(self.prediction_head, 'get_gate_analysis'):
+        if hasattr(self.prediction_head, "get_gate_analysis"):
             try:
                 gate_analysis = self.prediction_head.get_gate_analysis()
-                output['gate_analysis'] = gate_analysis
+                output["gate_analysis"] = gate_analysis
             except:
                 pass
 
@@ -701,7 +840,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
     #     self.curriculum_horizon_weights = phase.horizon_weights
     #     self.curriculum_active_horizons = {f'horizon_{h}d' for h in phase.prediction_horizons}
 
-    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int, current_epoch: int = 0):
+    def training_step(
+        self, batch: dict[str, torch.Tensor], batch_idx: int, current_epoch: int = 0
+    ):
         """学習ステップ（Multi-horizon対応）
 
         Args:
@@ -710,42 +851,74 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             current_epoch: Current training epoch (replaces self.current_epoch from Lightning)
         """
         # Decision Layer スケジューラ更新（エポック開始時に一度だけ）
-        if (hasattr(self, 'decision_scheduler') and self.decision_scheduler is not None and
-            batch_idx == 0):  # エポックの最初のバッチでのみ更新
-            scheduled_params = self.decision_scheduler.step(current_epoch, self.decision_layer)
+        if (
+            hasattr(self, "decision_scheduler")
+            and self.decision_scheduler is not None
+            and batch_idx == 0
+        ):  # エポックの最初のバッチでのみ更新
+            scheduled_params = self.decision_scheduler.step(
+                current_epoch, self.decision_layer
+            )
             # Note: scheduled_params logging removed (was Lightning self.log)
 
         outputs = self.forward(batch)
-        predictions = outputs['predictions']
-        output_type = outputs['output_type']
+        predictions = outputs["predictions"]
+        output_type = outputs["output_type"]
         targets_map = self._extract_targets(batch)
         if not targets_map and not self._target_warning_logged:
-            logger.warning("No target tensors were found in batch; training loss will be zero.")
+            logger.warning(
+                "No target tensors were found in batch; training loss will be zero."
+            )
             self._target_warning_logged = True
 
         total_loss = 0.0
         horizon_losses = {}
 
-        if output_type == 'multi_horizon':
+        if output_type == "multi_horizon":
             # Multi-horizon training: 各horizonでの損失計算
             # Horizon weights (curriculum優先)
             if self.curriculum_horizon_weights:
-                horizon_weights = {f'horizon_{h}d': w for h, w in self.curriculum_horizon_weights.items()}
-            elif hasattr(self.config.training, 'prediction') and hasattr(self.config.training.prediction, 'horizons'):
+                horizon_weights = {
+                    f"horizon_{h}d": w
+                    for h, w in self.curriculum_horizon_weights.items()
+                }
+            elif hasattr(self.config.training, "prediction") and hasattr(
+                self.config.training.prediction, "horizons"
+            ):
                 horizons_cfg = list(self.config.training.prediction.horizons)
-                weight_list = list(getattr(self.config.training.prediction, 'horizon_weights', [1.0] * len(horizons_cfg)))
-                horizon_weights = {f'horizon_{h}d': w for h, w in zip(horizons_cfg, weight_list)}
+                weight_list = list(
+                    getattr(
+                        self.config.training.prediction,
+                        "horizon_weights",
+                        [1.0] * len(horizons_cfg),
+                    )
+                )
+                horizon_weights = {
+                    f"horizon_{h}d": w for h, w in zip(horizons_cfg, weight_list)
+                }
             else:
                 # フォールバック: 従来の設定またはデフォルト
-                horizon_weights = getattr(self.config.training, 'horizon_weights', {
-                    'horizon_1d': 1.0, 'horizon_5d': 0.8, 'horizon_10d': 0.6, 'horizon_20d': 0.4
-                })
+                horizon_weights = getattr(
+                    self.config.training,
+                    "horizon_weights",
+                    {
+                        "horizon_1d": 1.0,
+                        "horizon_5d": 0.8,
+                        "horizon_10d": 0.6,
+                        "horizon_20d": 0.4,
+                    },
+                )
 
             for horizon_key, pred in predictions.items():
-                if self.curriculum_active_horizons and horizon_key not in self.curriculum_active_horizons:
+                if (
+                    self.curriculum_active_horizons
+                    and horizon_key not in self.curriculum_active_horizons
+                ):
                     continue
 
-                target_tensor = self._fetch_target_tensor(targets_map, horizon_key, pred)
+                target_tensor = self._fetch_target_tensor(
+                    targets_map, horizon_key, pred
+                )
                 if target_tensor is None:
                     continue
 
@@ -757,39 +930,61 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                 weighted_loss = horizon_loss * weight
 
                 total_loss += weighted_loss
-                horizon_losses[f'train_loss_{horizon_key}'] = horizon_loss
+                horizon_losses[f"train_loss_{horizon_key}"] = horizon_loss
                 # Note: horizon loss logging removed (was Lightning self.log)
 
         else:
             # Single-horizon training (backward compatibility)
             target_tensor = next(iter(targets_map.values()), None)
             if target_tensor is None:
-                raise RuntimeError("No target tensor available for single-horizon training")
-            target_tensor = target_tensor.to(predictions['single'].device, dtype=predictions['single'].dtype)
+                raise RuntimeError(
+                    "No target tensor available for single-horizon training"
+                )
+            target_tensor = target_tensor.to(
+                predictions["single"].device, dtype=predictions["single"].dtype
+            )
             if target_tensor.dim() > 1:
                 target_tensor = target_tensor.squeeze(-1)
-            main_loss = self.quantile_loss(predictions['single'], target_tensor)
+            main_loss = self.quantile_loss(predictions["single"], target_tensor)
             total_loss = main_loss
             # Note: main loss logging removed (was Lightning self.log)
 
         # Auxiliary losses (applied to all horizons)
-        if hasattr(self, 'sharpe_loss') and output_type == 'multi_horizon':
+        if hasattr(self, "sharpe_loss") and output_type == "multi_horizon":
             # Apply Sharpe loss to primary horizon (usually 1d or 5d)
-            primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
+            primary_horizon = getattr(
+                self.config.training, "primary_horizon", "horizon_1d"
+            )
             if primary_horizon in predictions:
-                target_tensor = self._fetch_target_tensor(targets_map, primary_horizon, predictions[primary_horizon])
+                target_tensor = self._fetch_target_tensor(
+                    targets_map, primary_horizon, predictions[primary_horizon]
+                )
                 if target_tensor is not None:
-                    sharpe_loss = self.sharpe_loss(predictions[primary_horizon], target_tensor)
+                    sharpe_loss = self.sharpe_loss(
+                        predictions[primary_horizon], target_tensor
+                    )
                     total_loss = total_loss + sharpe_loss
                     # Note: sharpe loss logging removed (was Lightning self.log)
 
         # Rank損失（主ホライズンの中央値スコアでペアワイズ）
-        if output_type == 'multi_horizon' and self.rank_loss is not None and self.rank_loss_weight > 0:
-            primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
+        if (
+            output_type == "multi_horizon"
+            and self.rank_loss is not None
+            and self.rank_loss_weight > 0
+        ):
+            primary_horizon = getattr(
+                self.config.training, "primary_horizon", "horizon_1d"
+            )
             if primary_horizon in predictions:
                 pred_q = predictions[primary_horizon]
-                target_tensor = self._fetch_target_tensor(targets_map, primary_horizon, pred_q)
-                if target_tensor is not None and pred_q.dim() == 2 and pred_q.size(1) > self._median_q_idx:
+                target_tensor = self._fetch_target_tensor(
+                    targets_map, primary_horizon, pred_q
+                )
+                if (
+                    target_tensor is not None
+                    and pred_q.dim() == 2
+                    and pred_q.size(1) > self._median_q_idx
+                ):
                     z = pred_q[:, self._median_q_idx]
                     y = target_tensor.view(-1)
                     rk = self.rank_loss(z.view(-1), y) * self.rank_loss_weight
@@ -797,18 +992,25 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                     # Note: rank loss logging removed (was Lightning self.log)
 
         # 意思決定層ロス（主ホライズンの分位点）
-        if output_type == 'multi_horizon' and self.decision_layer is not None:
-            primary_horizon = getattr(self.config.training, 'primary_horizon', 'horizon_1d')
+        if output_type == "multi_horizon" and self.decision_layer is not None:
+            primary_horizon = getattr(
+                self.config.training, "primary_horizon", "horizon_1d"
+            )
             if primary_horizon in predictions:
                 q = predictions[primary_horizon]
-                target_tensor = self._fetch_target_tensor(targets_map, primary_horizon, q)
+                target_tensor = self._fetch_target_tensor(
+                    targets_map, primary_horizon, q
+                )
                 if target_tensor is not None:
                     dl_total, comps = self.decision_layer(q, target_tensor.view(-1))
                     total_loss = total_loss + dl_total
                     # Note: decision layer metrics logging removed (was Lightning self.log)
 
         # Variable selection sparsity正則化
-        if isinstance(self._vsn_sparsity_loss, torch.Tensor) and self._vsn_sparsity_loss.numel() > 0:
+        if (
+            isinstance(self._vsn_sparsity_loss, torch.Tensor)
+            and self._vsn_sparsity_loss.numel() > 0
+        ):
             total_loss = total_loss + self._vsn_sparsity_loss
             # Note: VSN sparsity logging removed (was Lightning self.log)
 
@@ -816,44 +1018,66 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         if self.gat is not None:
             # 🔧 DEBUG (2025-10-07): Log condition checks
             import logging
-            logger = logging.getLogger(__name__)
-            logger.debug(f"[GAT-LOSS-CHECK] edge_reg_value is None: {self._gat_edge_reg_value is None}, is Tensor: {isinstance(self._gat_edge_reg_value, torch.Tensor) if self._gat_edge_reg_value is not None else 'N/A'}, weight > 0: {self.gat_edge_weight > 0}")
-            logger.debug(f"[GAT-LOSS-CHECK] attention_entropy is None: {self._gat_attention_entropy is None}, is Tensor: {isinstance(self._gat_attention_entropy, torch.Tensor) if self._gat_attention_entropy is not None else 'N/A'}, weight > 0: {self.gat_entropy_weight > 0}")
 
-            if (self._gat_edge_reg_value is not None and isinstance(self._gat_edge_reg_value, torch.Tensor)
-                    and self.gat_edge_weight > 0):
+            logger = logging.getLogger(__name__)
+            logger.debug(
+                f"[GAT-LOSS-CHECK] edge_reg_value is None: {self._gat_edge_reg_value is None}, is Tensor: {isinstance(self._gat_edge_reg_value, torch.Tensor) if self._gat_edge_reg_value is not None else 'N/A'}, weight > 0: {self.gat_edge_weight > 0}"
+            )
+            logger.debug(
+                f"[GAT-LOSS-CHECK] attention_entropy is None: {self._gat_attention_entropy is None}, is Tensor: {isinstance(self._gat_attention_entropy, torch.Tensor) if self._gat_attention_entropy is not None else 'N/A'}, weight > 0: {self.gat_entropy_weight > 0}"
+            )
+
+            if (
+                self._gat_edge_reg_value is not None
+                and isinstance(self._gat_edge_reg_value, torch.Tensor)
+                and self.gat_edge_weight > 0
+            ):
                 edge_reg = self.gat_edge_weight * self._gat_edge_reg_value
                 total_loss = total_loss + edge_reg
                 # Note: GAT edge penalty logging removed (was Lightning self.log)
                 # 🔧 DEBUG (2025-10-06): Log GAT edge regularization
-                logger.debug(f"[GAT-LOSS] Adding edge_reg={edge_reg.item():.6f} (weight={self.gat_edge_weight})")
+                logger.debug(
+                    f"[GAT-LOSS] Adding edge_reg={edge_reg.item():.6f} (weight={self.gat_edge_weight})"
+                )
             else:
-                logger.debug(f"[GAT-LOSS] Skipping edge_reg (condition not met)")
+                logger.debug("[GAT-LOSS] Skipping edge_reg (condition not met)")
 
-            if (self._gat_attention_entropy is not None and isinstance(self._gat_attention_entropy, torch.Tensor)
-                    and self.gat_entropy_weight > 0):
+            if (
+                self._gat_attention_entropy is not None
+                and isinstance(self._gat_attention_entropy, torch.Tensor)
+                and self.gat_entropy_weight > 0
+            ):
                 entropy_reg = -self.gat_entropy_weight * self._gat_attention_entropy
                 total_loss = total_loss + entropy_reg
                 # Note: GAT entropy logging removed (was Lightning self.log)
                 # 🔧 DEBUG (2025-10-06): Log GAT entropy regularization
-                logger.debug(f"[GAT-LOSS] Adding entropy_reg={entropy_reg.item():.6f} (weight={self.gat_entropy_weight})")
+                logger.debug(
+                    f"[GAT-LOSS] Adding entropy_reg={entropy_reg.item():.6f} (weight={self.gat_entropy_weight})"
+                )
             else:
-                logger.debug(f"[GAT-LOSS] Skipping entropy_reg (condition not met)")
+                logger.debug("[GAT-LOSS] Skipping entropy_reg (condition not met)")
 
         # Note: train_loss logging removed (was Lightning self.log)
 
         # MoE load-balance正則化（オプション）
         try:
-            moe_cfg = getattr(self.config.model.prediction_head, 'moe', None)
-            lb_lambda = float(getattr(moe_cfg, 'balance_lambda', 0.0)) if moe_cfg is not None else 0.0
+            moe_cfg = getattr(self.config.model.prediction_head, "moe", None)
+            lb_lambda = (
+                float(getattr(moe_cfg, "balance_lambda", 0.0))
+                if moe_cfg is not None
+                else 0.0
+            )
         except Exception:
             lb_lambda = 0.0
 
-        if lb_lambda > 0 and hasattr(self.prediction_head, 'last_gate_probs'):
+        if lb_lambda > 0 and hasattr(self.prediction_head, "last_gate_probs"):
             # Lazy import to avoid cost when not needed
             try:
                 from .regime_moe import moe_load_balance_penalty
-                lb_loss = lb_lambda * moe_load_balance_penalty(self.prediction_head.last_gate_probs)
+
+                lb_loss = lb_lambda * moe_load_balance_penalty(
+                    self.prediction_head.last_gate_probs
+                )
                 total_loss = total_loss + lb_loss
                 # Note: MoE load balance loss logging removed (was Lightning self.log)
             except Exception:
@@ -864,18 +1088,23 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
     def validation_step(self, batch: dict[str, torch.Tensor], batch_idx: int):
         """検証ステップ（Multi-horizon対応）"""
         outputs = self.forward(batch)
-        predictions = outputs['predictions']
-        output_type = outputs['output_type']
+        predictions = outputs["predictions"]
+        output_type = outputs["output_type"]
         targets_map = self._extract_targets(batch)
 
         total_loss = 0.0
 
-        if output_type == 'multi_horizon':
+        if output_type == "multi_horizon":
             # Multi-horizon validation
             for horizon_key, pred in predictions.items():
-                if self.curriculum_active_horizons and horizon_key not in self.curriculum_active_horizons:
+                if (
+                    self.curriculum_active_horizons
+                    and horizon_key not in self.curriculum_active_horizons
+                ):
                     continue
-                target_tensor = self._fetch_target_tensor(targets_map, horizon_key, pred)
+                target_tensor = self._fetch_target_tensor(
+                    targets_map, horizon_key, pred
+                )
                 if target_tensor is None:
                     continue
 
@@ -887,17 +1116,23 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             # Single-horizon validation
             target_tensor = next(iter(targets_map.values()), None)
             if target_tensor is None:
-                raise RuntimeError("No target tensor available for single-horizon validation")
-            target_tensor = target_tensor.to(predictions['single'].device, dtype=predictions['single'].dtype)
+                raise RuntimeError(
+                    "No target tensor available for single-horizon validation"
+                )
+            target_tensor = target_tensor.to(
+                predictions["single"].device, dtype=predictions["single"].dtype
+            )
             if target_tensor.dim() > 1:
                 target_tensor = target_tensor.squeeze(-1)
-            val_loss = self.quantile_loss(predictions['single'], target_tensor)
+            val_loss = self.quantile_loss(predictions["single"], target_tensor)
             total_loss = val_loss
 
         # Note: val_loss logging removed (was Lightning self.log)
         return total_loss
 
-    def _calculate_financial_metrics(self, predictions: torch.Tensor, targets: torch.Tensor):
+    def _calculate_financial_metrics(
+        self, predictions: torch.Tensor, targets: torch.Tensor
+    ):
         """金融指標の計算"""
         # Sharpe比
         returns = targets.mean(dim=-1)  # 各ホライズンの平均
@@ -918,9 +1153,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         hit_rate = (pred_direction == true_direction).float().mean()
 
         return {
-            'sharpe_ratio': sharpe,
-            'max_drawdown': max_drawdown,
-            'hit_rate': hit_rate
+            "sharpe_ratio": sharpe,
+            "max_drawdown": max_drawdown,
+            "hit_rate": hit_rate,
         }
 
     # NOTE: configure_optimizers was a Lightning-specific method.
@@ -930,9 +1165,18 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
     # def configure_optimizers(self):
     #     """オプティマイザーの設定 - DEPRECATED, moved to train_atft.py"""
     #     pass
+
+
 class PredictionHead(nn.Module):
     """改善版予測ヘッド（single-horizon用、backward compatibility）"""
-    def __init__(self, hidden_size: int, config: DictConfig, output_std: float = 0.01, layer_scale_gamma: float = 0.1):
+
+    def __init__(
+        self,
+        hidden_size: int,
+        config: DictConfig,
+        output_std: float = 0.01,
+        layer_scale_gamma: float = 0.1,
+    ):
         super().__init__()
         self.config = config
 
@@ -940,11 +1184,13 @@ class PredictionHead(nn.Module):
         layers = []
         current_size = hidden_size
         for hidden_dim in config.architecture.hidden_layers:
-            layers.extend([
-                nn.Linear(current_size, hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(config.architecture.dropout)
-            ])
+            layers.extend(
+                [
+                    nn.Linear(current_size, hidden_dim),
+                    nn.ReLU(),
+                    nn.Dropout(config.architecture.dropout),
+                ]
+            )
             current_size = hidden_dim
 
         # 出力層（改善版初期化）
@@ -974,6 +1220,7 @@ class PredictionHead(nn.Module):
 
 class MultiHorizonPredictionHeads(nn.Module):
     """Multi-horizon prediction heads - 各予測期間専用の出力層"""
+
     def __init__(
         self,
         hidden_size: int,
@@ -986,15 +1233,15 @@ class MultiHorizonPredictionHeads(nn.Module):
         self.config = config
 
         # 予測対象期間の設定 (新しいconfig構造をサポート)
-        self._training_cfg = training_cfg or getattr(config, 'training', None)
+        self._training_cfg = training_cfg or getattr(config, "training", None)
 
         def _extract_horizons(cfg: DictConfig | None) -> list[int] | None:
             if cfg is None:
                 return None
             try:
-                if hasattr(cfg, 'prediction') and hasattr(cfg.prediction, 'horizons'):
+                if hasattr(cfg, "prediction") and hasattr(cfg.prediction, "horizons"):
                     return list(int(h) for h in cfg.prediction.horizons)
-                if hasattr(cfg, 'prediction_horizons'):
+                if hasattr(cfg, "prediction_horizons"):
                     return list(int(h) for h in cfg.prediction_horizons)
             except Exception:
                 return None
@@ -1002,8 +1249,8 @@ class MultiHorizonPredictionHeads(nn.Module):
 
         horizons = _extract_horizons(self._training_cfg)
         if horizons is None:
-            horizons = _extract_horizons(getattr(config, 'training', None))
-        if horizons is None and hasattr(config, 'prediction_horizons'):
+            horizons = _extract_horizons(getattr(config, "training", None))
+        if horizons is None and hasattr(config, "prediction_horizons"):
             try:
                 horizons = list(int(h) for h in config.prediction_horizons)
             except Exception:
@@ -1018,7 +1265,7 @@ class MultiHorizonPredictionHeads(nn.Module):
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(),
             nn.Dropout(config.architecture.dropout),
-            nn.LayerNorm(hidden_size // 2)
+            nn.LayerNorm(hidden_size // 2),
         )
 
         # 各horizon専用の出力ヘッド
@@ -1033,20 +1280,28 @@ class MultiHorizonPredictionHeads(nn.Module):
             # Horizon専用の隠れ層（短期と長期で異なるarchitecture）
             if horizon <= 5:  # Short-term horizons (1d, 5d)
                 # より細かい特徴抽出 - ノイズが重要
-                horizon_layers.extend([
-                    nn.Linear(current_size, current_size),
-                    nn.ReLU(),
-                    nn.Dropout(config.architecture.dropout * 0.5),  # Lower dropout for short-term
-                ])
+                horizon_layers.extend(
+                    [
+                        nn.Linear(current_size, current_size),
+                        nn.ReLU(),
+                        nn.Dropout(
+                            config.architecture.dropout * 0.5
+                        ),  # Lower dropout for short-term
+                    ]
+                )
             else:  # Long-term horizons (10d, 20d)
                 # よりスムーズな特徴抽出 - トレンドが重要
-                horizon_layers.extend([
-                    nn.Linear(current_size, current_size // 2),
-                    nn.ReLU(),
-                    nn.Dropout(config.architecture.dropout * 1.5),  # Higher dropout for long-term
-                    nn.Linear(current_size // 2, current_size),
-                    nn.ReLU(),
-                ])
+                horizon_layers.extend(
+                    [
+                        nn.Linear(current_size, current_size // 2),
+                        nn.ReLU(),
+                        nn.Dropout(
+                            config.architecture.dropout * 1.5
+                        ),  # Higher dropout for long-term
+                        nn.Linear(current_size // 2, current_size),
+                        nn.ReLU(),
+                    ]
+                )
 
             # 最終出力層
             horizon_layers.append(nn.Linear(current_size, len(quantiles)))
@@ -1063,7 +1318,7 @@ class MultiHorizonPredictionHeads(nn.Module):
                     nn.init.trunc_normal_(layer.weight, std=std)
                     nn.init.zeros_(layer.bias)
 
-            self.horizon_heads[f'horizon_{horizon}d'] = head
+            self.horizon_heads[f"horizon_{horizon}d"] = head
 
         # Horizon-specific LayerScale parameters
         self.layer_scales = nn.ParameterDict()
@@ -1071,7 +1326,9 @@ class MultiHorizonPredictionHeads(nn.Module):
             # Short-term: smaller scale (less confident)
             # Long-term: larger scale (more trend confident)
             scale = layer_scale_gamma * (0.8 if horizon <= 5 else 1.2)
-            self.layer_scales[f'horizon_{horizon}d'] = nn.Parameter(torch.ones(len(quantiles)) * scale)
+            self.layer_scales[f"horizon_{horizon}d"] = nn.Parameter(
+                torch.ones(len(quantiles)) * scale
+            )
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         """
@@ -1101,7 +1358,7 @@ class MultiHorizonPredictionHeads(nn.Module):
         # 各horizon専用ヘッドで予測
         predictions = {}
         for horizon in self.prediction_horizons:
-            horizon_key = f'horizon_{horizon}d'
+            horizon_key = f"horizon_{horizon}d"
 
             # Horizon専用の処理
             horizon_output = self.horizon_heads[horizon_key](shared_features)
@@ -1113,14 +1370,18 @@ class MultiHorizonPredictionHeads(nn.Module):
 
         return predictions
 
-    def get_single_horizon_prediction(self, x: torch.Tensor, horizon: int) -> torch.Tensor:
+    def get_single_horizon_prediction(
+        self, x: torch.Tensor, horizon: int
+    ) -> torch.Tensor:
         """特定のhorizonの予測のみを取得（効率的）"""
         x = x[:, -1, :]
         shared_features = self.shared_encoder(x)
 
-        horizon_key = f'horizon_{horizon}d'
+        horizon_key = f"horizon_{horizon}d"
         if horizon_key not in self.horizon_heads:
-            raise ValueError(f"Horizon {horizon}d not supported. Available: {list(self.horizon_heads.keys())}")
+            raise ValueError(
+                f"Horizon {horizon}d not supported. Available: {list(self.horizon_heads.keys())}"
+            )
 
         horizon_output = self.horizon_heads[horizon_key](shared_features)
         return horizon_output * self.layer_scales[horizon_key]
@@ -1128,6 +1389,7 @@ class MultiHorizonPredictionHeads(nn.Module):
 
 class QuantileLoss(nn.Module):
     """Quantile Loss"""
+
     def __init__(self, quantiles: list[float]):
         super().__init__()
         self.quantiles = torch.tensor(quantiles)
@@ -1136,14 +1398,14 @@ class QuantileLoss(nn.Module):
         # 簡易的なQuantile Loss実装
         errors = targets.unsqueeze(-1) - predictions
         quantile_loss = torch.maximum(
-            self.quantiles * errors,
-            (self.quantiles - 1) * errors
+            self.quantiles * errors, (self.quantiles - 1) * errors
         )
         return quantile_loss.mean()
 
 
 class SharpeLoss(nn.Module):
     """Sharpe比最大化損失"""
+
     def __init__(self, weight: float = 0.1, min_periods: int = 20):
         super().__init__()
         self.weight = weight
