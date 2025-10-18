@@ -8,6 +8,7 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 
 ### 👨‍💻 **開発者**
 - [**📋 開発ガイド**](development/contributing.md) - コード規約・PR・開発フロー
+- [**🤖 Claude Code Skills**](SKILLS_GUIDE.md) - AI自動化スキル・タスク実行
 - [**🏗️ アーキテクチャ概要**](architecture/overview.md) - システム全体設計
 - [**🧪 テスト実行**](development/testing.md) - 単体・結合・スモークテスト
 - [**🐳 ローカル環境構築**](development/local-environment.md) - Docker・Make使用方法
@@ -16,9 +17,9 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 - [**🌟 はじめに**](getting-started.md) - セットアップ・最初の実行
 - [**📚 用語集**](glossary.md) - JQuants・JPX・金融ML用語
 - [**❓ FAQ**](faq.md) - よくある質問と回答
- 
 
-### 📊 **データサイエンティスト・アナリスト**  
+
+### 📊 **データサイエンティスト・アナリスト**
 - [**📈 機械学習モデル**](ml/model-training.md) - ATFT-GAT-FAN・学習戦略
 - [**🛡️ セーフガード**](ml/safety-guardrails.md) - embargo・データリーク防止
 - [**🏗️ データパイプライン**](architecture/data-pipeline.md) - 特徴量・正規化・品質管理
@@ -52,6 +53,7 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 
 ### 👨‍💻 **開発**
 - [**contributing.md**](development/contributing.md) - 開発フロー・PR規約・コード品質
+- [**SKILLS_GUIDE.md**](SKILLS_GUIDE.md) - Claude Code Skills・AI自動化
 - [**conventions.md**](development/conventions.md) - 命名・構成・コミット規約
 - [**testing.md**](development/testing.md) - テスト戦略・CI/CD
 - [**local-environment.md**](development/local-environment.md) - Docker・Make・デバッグ
@@ -69,7 +71,7 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 - [**sast.md**](security/sast.md) - SAST・漏洩防止・CI/CDセキュリティ
 - [**operational-security.md**](security/operational-security.md) - セキュリティ監視・対応手順
 
-### 📝 **リリース**  
+### 📝 **リリース**
 - [**changelog.md**](releases/changelog.md) - バージョン履歴・変更内容・マイグレーション
 
 ### 🏛️ **ガバナンス**
@@ -197,6 +199,6 @@ ls -la backups/            # バックアップ確認
 
 ---
 
- 
+
 
 *Gogooku3 - 壊れず・強く・速く 金融MLシステム*

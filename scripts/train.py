@@ -23,38 +23,42 @@ Usage:
 
 import argparse
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
-def main():
+
+def main() -> int:
     parser = argparse.ArgumentParser(description="Unified training entry point")
 
-    parser.add_argument("--data-path", type=str,
-                       default="output/ml_dataset_latest_full.parquet",
-                       help="Path to ML dataset")
-    parser.add_argument("--epochs", type=int, default=120,
-                       help="Number of epochs")
-    parser.add_argument("--batch-size", type=int, default=2048,
-                       help="Batch size")
-    parser.add_argument("--lr", type=float, default=2e-4,
-                       help="Learning rate")
-    parser.add_argument("--hidden-size", type=int, default=256,
-                       help="Model hidden size")
-    parser.add_argument("--mode", type=str,
-                       choices=["optimized", "safe", "standard"],
-                       default="optimized",
-                       help="Training mode")
-    parser.add_argument("--compile", action="store_true",
-                       help="Enable torch.compile")
-    parser.add_argument("--num-workers", type=int, default=8,
-                       help="DataLoader workers")
-    parser.add_argument("--validate-only", action="store_true",
-                       help="Only validate configuration")
-    parser.add_argument("--background", action="store_true",
-                       help="Run in background")
-    parser.add_argument("--no-background", action="store_true",
-                       help="Run in foreground")
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default="output/ml_dataset_latest_full.parquet",
+        help="Path to ML dataset",
+    )
+    parser.add_argument("--epochs", type=int, default=120, help="Number of epochs")
+    parser.add_argument("--batch-size", type=int, default=2048, help="Batch size")
+    parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
+    parser.add_argument(
+        "--hidden-size", type=int, default=256, help="Model hidden size"
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["optimized", "safe", "standard"],
+        default="optimized",
+        help="Training mode",
+    )
+    parser.add_argument("--compile", action="store_true", help="Enable torch.compile")
+    parser.add_argument("--num-workers", type=int, default=8, help="DataLoader workers")
+    parser.add_argument(
+        "--validate-only", action="store_true", help="Only validate configuration"
+    )
+    parser.add_argument("--background", action="store_true", help="Run in background")
+    parser.add_argument(
+        "--no-background", action="store_true", help="Run in foreground"
+    )
 
     args = parser.parse_args()
 
@@ -72,15 +76,17 @@ def main():
         env["PERSISTENT_WORKERS"] = "1"
         env["PREFETCH_FACTOR"] = "4"
         env["USE_RANKIC"] = "1"
-        env["RANKIC_WEIGHT"] = "0.2"
-        env["CS_IC_WEIGHT"] = "0.15"
-        env["SHARPE_WEIGHT"] = "0.3"
+        env["RANKIC_WEIGHT"] = "0.5"  # Increased from 0.2 for stronger RankIC focus
+        env["CS_IC_WEIGHT"] = "0.3"  # Increased from 0.15 for better IC learning
+        env["SHARPE_WEIGHT"] = "0.1"  # Reduced from 0.3 to prioritize RankIC/IC
     elif args.mode == "safe":
         env["ALLOW_UNSAFE_DATALOADER"] = "0"
         env["NUM_WORKERS"] = "0"
         env["FORCE_SINGLE_PROCESS"] = "1"
         env["USE_RANKIC"] = "1"
-        env["RANKIC_WEIGHT"] = "0.1"
+        env["RANKIC_WEIGHT"] = "0.5"  # Increased from 0.1 for stronger RankIC focus
+        env["CS_IC_WEIGHT"] = "0.3"  # Added for better IC learning
+        env["SHARPE_WEIGHT"] = "0.1"  # Added to complete loss function config
 
     # Validation only
     if args.validate_only:
@@ -100,11 +106,16 @@ def main():
     # Build command for integrated_ml_training_pipeline.py
     script_path = Path(__file__).parent / "integrated_ml_training_pipeline.py"
     cmd = [
-        "python", str(script_path),
-        "--data-path", args.data_path,
-        "--batch-size", str(args.batch_size),
-        "--lr", str(args.lr),
-        "--max-epochs", str(args.epochs),
+        "python",
+        str(script_path),
+        "--data-path",
+        args.data_path,
+        "--batch-size",
+        str(args.batch_size),
+        "--lr",
+        str(args.lr),
+        "--max-epochs",
+        str(args.epochs),
     ]
 
     if args.compile:
@@ -117,7 +128,7 @@ def main():
     print("")
 
     try:
-        result = subprocess.run(cmd, env=env, check=False)
+        result = subprocess.run(cmd, env=env, check=False)  # noqa: S603
         return result.returncode
     except KeyboardInterrupt:
         print("\n⚠️  Training interrupted")
@@ -125,6 +136,7 @@ def main():
     except Exception as e:
         print(f"❌ Training failed: {e}")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())
