@@ -17,13 +17,12 @@ Usage:
     python scripts/test_full_integration.py [--verbose] [--quick]
 """
 
-import sys
 import logging
-import warnings
-import tempfile
+import sys
 import time
+import warnings
 from pathlib import Path
-from typing import Dict, Any, Tuple, List
+
 import numpy as np
 
 # Add project root to path
@@ -32,169 +31,147 @@ sys.path.append(str(project_root))
 
 warnings.filterwarnings("ignore")
 
-import torch
-import torch.nn as nn
 import polars as pl
+import torch
 from omegaconf import DictConfig, OmegaConf
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
 def create_integration_config() -> DictConfig:
     """Create configuration for full integration test"""
-    config = OmegaConf.create({
-        # Data configuration
-        'data': {
-            'features': {
-                'basic': {
-                    'price_volume': ['close', 'volume'],
-                    'flags': []
-                },
-                'technical': {
-                    'momentum': ['rsi_14'],
-                    'volatility': ['atr_14'],
-                    'trend': ['macd'],
-                    'moving_averages': ['sma_20'],
-                    'macd': []
-                },
-                'returns': {
-                    'columns': ['feat_ret_1d']
-                }
-            }
-        },
-
-        # Model configuration with all enhancements
-        'model': {
-            'hidden_size': 128,
-            'input_projection': {
-                'use_layer_norm': True,
-                'dropout': 0.1
-            },
-            'tft': {
-                'lstm': {
-                    'layers': 2,
-                    'dropout': 0.1
+    config = OmegaConf.create(
+        {
+            # Data configuration
+            "data": {
+                "features": {
+                    "basic": {"price_volume": ["close", "volume"], "flags": []},
+                    "technical": {
+                        "momentum": ["rsi_14"],
+                        "volatility": ["atr_14"],
+                        "trend": ["macd"],
+                        "moving_averages": ["sma_20"],
+                        "macd": [],
+                    },
+                    "returns": {"columns": ["feat_ret_1d"]},
                 }
             },
-            'gat': {
-                'enabled': True,
-                'architecture': {'heads': [2]},
-                'layer_config': {'dropout': 0.1}
+            # Model configuration with all enhancements
+            "model": {
+                "hidden_size": 128,
+                "input_projection": {"use_layer_norm": True, "dropout": 0.1},
+                "tft": {"lstm": {"layers": 2, "dropout": 0.1}},
+                "gat": {
+                    "enabled": True,
+                    "architecture": {"heads": [2]},
+                    "layer_config": {"dropout": 0.1},
+                },
+                "adaptive_normalization": {
+                    "fan": {"enabled": False, "window_sizes": []},
+                    "san": {"enabled": False, "num_slices": 1},
+                },
+                # Enhanced Regime MoE configuration
+                "prediction_head": {
+                    "type": "regime_moe",
+                    "output": {
+                        "quantile_prediction": {
+                            "quantiles": [0.1, 0.25, 0.5, 0.75, 0.9]
+                        }
+                    },
+                    "architecture": {"hidden_layers": [64, 32], "dropout": 0.1},
+                    "moe": {
+                        "experts": 3,
+                        "temperature": 1.0,
+                        "dropout": 0.1,
+                        "use_regime_features": True,
+                        "regime_feature_dim": 12,  # J-UVX(6) + AMA(2) + Regime(4)
+                        "balance_lambda": 0.01,
+                    },
+                },
             },
-            'adaptive_normalization': {
-                'fan': {'enabled': False, 'window_sizes': []},
-                'san': {'enabled': False, 'num_slices': 1}
+            # Training configuration with Decision Layer
+            "training": {
+                "prediction": {"horizons": [1, 5, 10]},
+                "primary_horizon": "horizon_1d",
             },
-
-            # Enhanced Regime MoE configuration
-            'prediction_head': {
-                'type': 'regime_moe',
-                'output': {
-                    'quantile_prediction': {
-                        'quantiles': [0.1, 0.25, 0.5, 0.75, 0.9]
+            "train": {
+                "loss": {
+                    "auxiliary": {
+                        # Sharpe loss
+                        "sharpe_loss": {
+                            "enabled": True,
+                            "weight": 0.05,
+                            "min_periods": 10,
+                        },
+                        # Decision Layer with scheduling
+                        "decision_layer": {
+                            "enabled": True,
+                            "alpha": 2.0,
+                            "method": "tanh",
+                            "sharpe_weight": 0.1,
+                            "pos_l2": 1e-3,
+                            "fee_abs": 0.0,
+                            "detach_signal": True,
+                        },
+                        "decision_layer_schedule": {
+                            "enabled": True,
+                            "warmup_epochs": 3,
+                            "intermediate_epochs": 6,
+                            "warmup_sharpe_weight": 0.05,
+                            "intermediate_sharpe_weight": 0.1,
+                            "final_sharpe_weight": 0.15,
+                            "use_smooth_transitions": True,
+                            "log_parameter_changes": True,
+                        },
+                        # Ranking loss
+                        "ranking_loss": {
+                            "enabled": True,
+                            "weight": 0.05,
+                            "scale": 2.0,
+                            "topk": 100,
+                        },
                     }
                 },
-                'architecture': {
-                    'hidden_layers': [64, 32],
-                    'dropout': 0.1
+                # Optimizer
+                "optimizer": {
+                    "type": "AdamW",
+                    "lr": 1e-3,
+                    "weight_decay": 0.01,
+                    "betas": [0.9, 0.999],
+                    "eps": 1e-8,
                 },
-                'moe': {
-                    'experts': 3,
-                    'temperature': 1.0,
-                    'dropout': 0.1,
-                    'use_regime_features': True,
-                    'regime_feature_dim': 12,  # J-UVX(6) + AMA(2) + Regime(4)
-                    'balance_lambda': 0.01
-                }
-            }
-        },
-
-        # Training configuration with Decision Layer
-        'training': {
-            'prediction': {
-                'horizons': [1, 5, 10]
+                # Scheduler
+                "scheduler": {
+                    "type": "CosineAnnealingWarmRestarts",
+                    "T_0": 3,
+                    "T_mult": 1,
+                    "eta_min": 1e-6,
+                },
             },
-            'primary_horizon': 'horizon_1d'
-        },
-
-        'train': {
-            'loss': {
-                'auxiliary': {
-                    # Sharpe loss
-                    'sharpe_loss': {
-                        'enabled': True,
-                        'weight': 0.05,
-                        'min_periods': 10
-                    },
-
-                    # Decision Layer with scheduling
-                    'decision_layer': {
-                        'enabled': True,
-                        'alpha': 2.0,
-                        'method': 'tanh',
-                        'sharpe_weight': 0.1,
-                        'pos_l2': 1e-3,
-                        'fee_abs': 0.0,
-                        'detach_signal': True
-                    },
-
-                    'decision_layer_schedule': {
-                        'enabled': True,
-                        'warmup_epochs': 3,
-                        'intermediate_epochs': 6,
-                        'warmup_sharpe_weight': 0.05,
-                        'intermediate_sharpe_weight': 0.1,
-                        'final_sharpe_weight': 0.15,
-                        'use_smooth_transitions': True,
-                        'log_parameter_changes': True
-                    },
-
-                    # Ranking loss
-                    'ranking_loss': {
-                        'enabled': True,
-                        'weight': 0.05,
-                        'scale': 2.0,
-                        'topk': 100
-                    }
-                }
-            },
-
-            # Optimizer
-            'optimizer': {
-                'type': 'AdamW',
-                'lr': 1e-3,
-                'weight_decay': 0.01,
-                'betas': [0.9, 0.999],
-                'eps': 1e-8
-            },
-
-            # Scheduler
-            'scheduler': {
-                'type': 'CosineAnnealingWarmRestarts',
-                'T_0': 3,
-                'T_mult': 1,
-                'eta_min': 1e-6
-            }
         }
-    })
+    )
 
     return config
 
 
-def create_synthetic_financial_data(n_stocks: int = 30, n_days: int = 100, seq_len: int = 20) -> Tuple[pl.DataFrame, torch.Tensor]:
+def create_synthetic_financial_data(
+    n_stocks: int = 30, n_days: int = 100, seq_len: int = 20
+) -> tuple[pl.DataFrame, torch.Tensor]:
     """Create synthetic financial data with regime features"""
-    logger.info(f"Creating synthetic financial data: {n_stocks} stocks × {n_days} days × {seq_len} sequence")
+    logger.info(
+        f"Creating synthetic financial data: {n_stocks} stocks × {n_days} days × {seq_len} sequence"
+    )
 
     np.random.seed(42)
     torch.manual_seed(42)
 
     # Generate dates
     dates = pl.date_range(
-        start=pl.date(2023, 1, 1),
-        end=pl.date(2023, 4, 10),
-        interval="1d"
+        start=pl.date(2023, 1, 1), end=pl.date(2023, 4, 10), interval="1d"
     )[:n_days]
 
     # Generate stock codes
@@ -209,7 +186,9 @@ def create_synthetic_financial_data(n_stocks: int = 30, n_days: int = 100, seq_l
         trend = np.random.uniform(-0.001, 0.001)
 
         # Generate regime switching
-        regime_switches = np.random.choice([0, 1], n_days, p=[0.8, 0.2])  # 20% high vol regime
+        regime_switches = np.random.choice(
+            [0, 1], n_days, p=[0.8, 0.2]
+        )  # 20% high vol regime
 
         for day_idx, date in enumerate(dates):
             # Market regime
@@ -230,35 +209,37 @@ def create_synthetic_financial_data(n_stocks: int = 30, n_days: int = 100, seq_l
             macd = np.random.normal(0, 0.1)
             sma_20 = close * (1 + np.random.normal(0, 0.01))
 
-            data.append({
-                'code': code,
-                'date': date,
-                'close': close,
-                'volume': volume,
-                'feat_ret_1d': return_1d,
-                'rsi_14': rsi_14,
-                'atr_14': atr_14,
-                'macd': macd,
-                'sma_20': sma_20,
-                'high_vol_regime_true': high_vol_regime
-            })
+            data.append(
+                {
+                    "code": code,
+                    "date": date,
+                    "close": close,
+                    "volume": volume,
+                    "feat_ret_1d": return_1d,
+                    "rsi_14": rsi_14,
+                    "atr_14": atr_14,
+                    "macd": macd,
+                    "sma_20": sma_20,
+                    "high_vol_regime_true": high_vol_regime,
+                }
+            )
 
             # Generate regime features for each sample
             if day_idx >= seq_len:  # Only after we have enough history
                 # J-UVX components (6 features)
                 juvx_features = [
-                    daily_vol * 10,      # rv_short
-                    daily_vol * 15,      # rv_medium
-                    daily_vol * 12,      # rv_long
+                    daily_vol * 10,  # rv_short
+                    daily_vol * 15,  # rv_medium
+                    daily_vol * 12,  # rv_long
                     np.random.uniform(-0.1, 0.1),  # rv_slope
-                    daily_vol * 8,       # cross_dispersion
-                    np.random.uniform(0.1, 0.5)    # momentum_uncertainty
+                    daily_vol * 8,  # cross_dispersion
+                    np.random.uniform(0.1, 0.5),  # momentum_uncertainty
                 ]
 
                 # KAMA/VIDYA (2 features)
                 kama_vidya_features = [
                     close * (1 + np.random.normal(0, 0.005)),  # kama
-                    close * (1 + np.random.normal(0, 0.008))   # vidya
+                    close * (1 + np.random.normal(0, 0.008)),  # vidya
                 ]
 
                 # Market regime (4 features - one-hot)
@@ -279,7 +260,9 @@ def create_synthetic_financial_data(n_stocks: int = 30, n_days: int = 100, seq_l
     else:
         regime_tensor = torch.zeros(0, 12)
 
-    logger.info(f"✅ Synthetic data created: {len(df)} rows, regime features: {regime_tensor.shape}")
+    logger.info(
+        f"✅ Synthetic data created: {len(df)} rows, regime features: {regime_tensor.shape}"
+    )
     return df, regime_tensor
 
 
@@ -296,18 +279,23 @@ def test_regime_moe_creation():
         model = ATFT_GAT_FAN(config)
 
         # Check if regime MoE is enabled
-        if hasattr(model.prediction_head, 'use_regime_features'):
+        if hasattr(model.prediction_head, "use_regime_features"):
             regime_enabled = model.prediction_head.use_regime_features
-            logger.info(f"   Regime features: {'✅ enabled' if regime_enabled else '❌ disabled'}")
+            logger.info(
+                f"   Regime features: {'✅ enabled' if regime_enabled else '❌ disabled'}"
+            )
         else:
             logger.warning("   ⚠️ Regime MoE not detected, using standard head")
 
         # Check Decision Layer
-        if hasattr(model, 'decision_layer') and model.decision_layer is not None:
+        if hasattr(model, "decision_layer") and model.decision_layer is not None:
             logger.info("   ✅ Decision Layer enabled")
 
             # Check scheduler
-            if hasattr(model, 'decision_scheduler') and model.decision_scheduler is not None:
+            if (
+                hasattr(model, "decision_scheduler")
+                and model.decision_scheduler is not None
+            ):
                 logger.info("   ✅ Decision Layer scheduler enabled")
             else:
                 logger.warning("   ⚠️ Decision Layer scheduler not enabled")
@@ -339,11 +327,11 @@ def test_forward_pass_with_regimes():
 
         # Create test batch
         batch = {
-            'dynamic_features': torch.randn(batch_size, seq_len, n_features),
-            'regime_features': torch.randn(batch_size, regime_dim),
-            'horizon_1d': torch.randn(batch_size),
-            'horizon_5d': torch.randn(batch_size),
-            'horizon_10d': torch.randn(batch_size)
+            "dynamic_features": torch.randn(batch_size, seq_len, n_features),
+            "regime_features": torch.randn(batch_size, regime_dim),
+            "horizon_1d": torch.randn(batch_size),
+            "horizon_5d": torch.randn(batch_size),
+            "horizon_10d": torch.randn(batch_size),
         }
 
         # Forward pass
@@ -352,38 +340,43 @@ def test_forward_pass_with_regimes():
             outputs = model(batch)
 
         # Validate output structure
-        expected_keys = ['predictions', 'features', 'output_type']
+        expected_keys = ["predictions", "features", "output_type"]
         if all(key in outputs for key in expected_keys):
-            predictions = outputs['predictions']
+            predictions = outputs["predictions"]
             logger.info(f"   Output keys: {list(outputs.keys())}")
             logger.info(f"   Prediction keys: {list(predictions.keys())}")
 
             # Check shapes
-            if 'horizon_1d' in predictions:
-                pred_shape = predictions['horizon_1d'].shape
+            if "horizon_1d" in predictions:
+                pred_shape = predictions["horizon_1d"].shape
                 expected_shape = (batch_size, 5)  # 5 quantiles
                 if pred_shape == expected_shape:
                     logger.info(f"   Prediction shape: {pred_shape} ✅")
                 else:
-                    logger.warning(f"   Prediction shape mismatch: expected {expected_shape}, got {pred_shape}")
+                    logger.warning(
+                        f"   Prediction shape mismatch: expected {expected_shape}, got {pred_shape}"
+                    )
 
             # Check regime features propagation
-            if 'regime_features' in outputs:
+            if "regime_features" in outputs:
                 logger.info("   ✅ Regime features propagated through model")
 
             # Check gate analysis
-            if 'gate_analysis' in outputs:
+            if "gate_analysis" in outputs:
                 logger.info("   ✅ MoE gate analysis available")
 
             logger.info("   ✅ Forward pass with regime features successful")
             return True, model
         else:
-            logger.error(f"   ❌ Missing output keys: expected {expected_keys}, got {list(outputs.keys())}")
+            logger.error(
+                f"   ❌ Missing output keys: expected {expected_keys}, got {list(outputs.keys())}"
+            )
             return False, None
 
     except Exception as e:
         logger.error(f"   ❌ Forward pass test failed: {e}")
         import traceback
+
         logger.error(f"   Traceback: {traceback.format_exc()}")
         return False, None
 
@@ -404,11 +397,11 @@ def test_training_step():
         regime_dim = 12
 
         batch = {
-            'dynamic_features': torch.randn(batch_size, seq_len, n_features),
-            'regime_features': torch.randn(batch_size, regime_dim),
-            'horizon_1d': torch.randn(batch_size),
-            'horizon_5d': torch.randn(batch_size),
-            'horizon_10d': torch.randn(batch_size)
+            "dynamic_features": torch.randn(batch_size, seq_len, n_features),
+            "regime_features": torch.randn(batch_size, regime_dim),
+            "horizon_1d": torch.randn(batch_size),
+            "horizon_5d": torch.randn(batch_size),
+            "horizon_10d": torch.randn(batch_size),
         }
 
         # Training step
@@ -432,6 +425,7 @@ def test_training_step():
     except Exception as e:
         logger.error(f"   ❌ Training step test failed: {e}")
         import traceback
+
         logger.error(f"   Traceback: {traceback.format_exc()}")
         return False, None
 
@@ -441,8 +435,11 @@ def test_decision_scheduler():
     logger.info("🧪 Testing Decision Layer Scheduling...")
 
     try:
-        from src.training.decision_scheduler import DecisionScheduleConfig, DecisionScheduler
         from src.losses.decision_layer import DecisionLayer, DecisionLossConfig
+        from src.training.decision_scheduler import (
+            DecisionScheduleConfig,
+            DecisionScheduler,
+        )
 
         # Create decision layer
         decision_layer = DecisionLayer(DecisionLossConfig())
@@ -452,7 +449,7 @@ def test_decision_scheduler():
             warmup_epochs=2,
             intermediate_epochs=4,
             warmup_sharpe_weight=0.05,
-            final_sharpe_weight=0.15
+            final_sharpe_weight=0.15,
         )
 
         scheduler = DecisionScheduler(schedule_config, decision_layer)
@@ -464,11 +461,13 @@ def test_decision_scheduler():
         for epoch in epochs_to_test:
             params = scheduler.step(epoch)
             results.append((epoch, params))
-            logger.info(f"   Epoch {epoch}: sharpe_weight={params['sharpe_weight']:.3f}, "
-                       f"alpha={params['alpha']:.1f}, detach={params['detach_signal']}")
+            logger.info(
+                f"   Epoch {epoch}: sharpe_weight={params['sharpe_weight']:.3f}, "
+                f"alpha={params['alpha']:.1f}, detach={params['detach_signal']}"
+            )
 
         # Validate scheduling behavior
-        sharpe_weights = [r[1]['sharpe_weight'] for r in results]
+        sharpe_weights = [r[1]["sharpe_weight"] for r in results]
 
         # Should generally increase over time
         if sharpe_weights[-1] > sharpe_weights[0]:
@@ -496,13 +495,12 @@ def test_tent_adaptation():
 
         # Create TENT adapter
         tent_adapter = create_tent_adapter(
-            model=model,
-            steps=2,
-            lr=1e-4,
-            log_adaptation=True
+            model=model, steps=2, lr=1e-4, log_adaptation=True
         )
 
-        logger.info(f"   TENT adapter created: {tent_adapter._count_adaptable_params()} adaptable params")
+        logger.info(
+            f"   TENT adapter created: {tent_adapter._count_adaptable_params()} adaptable params"
+        )
 
         # Create test batch
         batch_size = 8
@@ -511,26 +509,32 @@ def test_tent_adaptation():
         regime_dim = 12
 
         batch = {
-            'dynamic_features': torch.randn(batch_size, seq_len, n_features),
-            'regime_features': torch.randn(batch_size, regime_dim)
+            "dynamic_features": torch.randn(batch_size, seq_len, n_features),
+            "regime_features": torch.randn(batch_size, regime_dim),
         }
 
         # Run adaptation
         adapted_outputs = tent_adapter.adapt_batch(batch)
 
         # Check outputs
-        if 'tent_stats' in adapted_outputs:
-            tent_stats = adapted_outputs['tent_stats']
+        if "tent_stats" in adapted_outputs:
+            tent_stats = adapted_outputs["tent_stats"]
             logger.info(f"   Adapted: {tent_stats.get('adapted', False)}")
             logger.info(f"   Adaptation steps: {tent_stats.get('adaptation_steps', 0)}")
-            logger.info(f"   Final entropy: {tent_stats.get('final_entropy_loss', 0.0):.6f}")
-            logger.info(f"   Final confidence: {tent_stats.get('final_confidence', 0.0):.3f}")
+            logger.info(
+                f"   Final entropy: {tent_stats.get('final_entropy_loss', 0.0):.6f}"
+            )
+            logger.info(
+                f"   Final confidence: {tent_stats.get('final_confidence', 0.0):.3f}"
+            )
 
-            if tent_stats.get('adapted', False):
+            if tent_stats.get("adapted", False):
                 logger.info("   ✅ TENT adaptation successful")
                 return True
             else:
-                logger.warning("   ⚠️ TENT adaptation not applied (might be due to confidence threshold)")
+                logger.warning(
+                    "   ⚠️ TENT adaptation not applied (might be due to confidence threshold)"
+                )
                 return True
 
         else:
@@ -540,6 +544,7 @@ def test_tent_adaptation():
     except Exception as e:
         logger.error(f"   ❌ TENT adaptation test failed: {e}")
         import traceback
+
         logger.error(f"   Traceback: {traceback.format_exc()}")
         return False
 
@@ -551,7 +556,7 @@ def test_performance_comparison():
     try:
         # Create base configuration (no enhancements)
         base_config = create_integration_config()
-        base_config.model.prediction_head.type = 'multi_horizon'  # Standard head
+        base_config.model.prediction_head.type = "multi_horizon"  # Standard head
         base_config.train.loss.auxiliary.decision_layer.enabled = False
         base_config.model.prediction_head.moe.use_regime_features = False
 
@@ -564,11 +569,11 @@ def test_performance_comparison():
         n_features = 6
 
         test_batch = {
-            'dynamic_features': torch.randn(batch_size, seq_len, n_features),
-            'regime_features': torch.randn(batch_size, 12),
-            'horizon_1d': torch.randn(batch_size),
-            'horizon_5d': torch.randn(batch_size),
-            'horizon_10d': torch.randn(batch_size)
+            "dynamic_features": torch.randn(batch_size, seq_len, n_features),
+            "regime_features": torch.randn(batch_size, 12),
+            "horizon_1d": torch.randn(batch_size),
+            "horizon_5d": torch.randn(batch_size),
+            "horizon_10d": torch.randn(batch_size),
         }
 
         results = {}
@@ -585,18 +590,18 @@ def test_performance_comparison():
                 base_outputs = base_model(test_batch)
             base_time = time.time() - start_time
 
-            results['base'] = {
-                'inference_time': base_time,
-                'has_regime_features': 'regime_features' in base_outputs,
-                'has_gate_analysis': 'gate_analysis' in base_outputs,
-                'prediction_keys': list(base_outputs.get('predictions', {}).keys())
+            results["base"] = {
+                "inference_time": base_time,
+                "has_regime_features": "regime_features" in base_outputs,
+                "has_gate_analysis": "gate_analysis" in base_outputs,
+                "prediction_keys": list(base_outputs.get("predictions", {}).keys()),
             }
 
             logger.info(f"   Base model inference: {base_time:.4f}s")
 
         except Exception as e:
             logger.warning(f"   Base model test failed: {e}")
-            results['base'] = {'error': str(e)}
+            results["base"] = {"error": str(e)}
 
         # Test enhanced model
         try:
@@ -608,26 +613,26 @@ def test_performance_comparison():
                 enhanced_outputs = enhanced_model(test_batch)
             enhanced_time = time.time() - start_time
 
-            results['enhanced'] = {
-                'inference_time': enhanced_time,
-                'has_regime_features': 'regime_features' in enhanced_outputs,
-                'has_gate_analysis': 'gate_analysis' in enhanced_outputs,
-                'prediction_keys': list(enhanced_outputs.get('predictions', {}).keys())
+            results["enhanced"] = {
+                "inference_time": enhanced_time,
+                "has_regime_features": "regime_features" in enhanced_outputs,
+                "has_gate_analysis": "gate_analysis" in enhanced_outputs,
+                "prediction_keys": list(enhanced_outputs.get("predictions", {}).keys()),
             }
 
             logger.info(f"   Enhanced model inference: {enhanced_time:.4f}s")
 
             # Performance comparison
-            if 'base' in results and 'error' not in results['base']:
-                speed_ratio = enhanced_time / results['base']['inference_time']
+            if "base" in results and "error" not in results["base"]:
+                speed_ratio = enhanced_time / results["base"]["inference_time"]
                 logger.info(f"   Speed ratio (enhanced/base): {speed_ratio:.2f}x")
 
         except Exception as e:
             logger.warning(f"   Enhanced model test failed: {e}")
-            results['enhanced'] = {'error': str(e)}
+            results["enhanced"] = {"error": str(e)}
 
         # Summary
-        if results.get('enhanced', {}).get('has_gate_analysis', False):
+        if results.get("enhanced", {}).get("has_gate_analysis", False):
             logger.info("   ✅ Performance comparison completed with enhanced features")
         else:
             logger.info("   ✅ Performance comparison completed (basic functionality)")
@@ -669,7 +674,10 @@ def main(quick: bool = False):
                 success, details = test_func()
                 results.append((test_name, success, details))
             else:
-                if test_func == test_regime_moe_creation or test_func == test_forward_pass_with_regimes:
+                if (
+                    test_func == test_regime_moe_creation
+                    or test_func == test_forward_pass_with_regimes
+                ):
                     success, _ = test_func()
                 else:
                     success = test_func()
@@ -683,7 +691,7 @@ def main(quick: bool = False):
 
         except Exception as e:
             logger.error(f"❌ {test_name} CRASHED: {e}")
-            results.append((test_name, False, {'error': str(e)}))
+            results.append((test_name, False, {"error": str(e)}))
 
     # Summary
     total_time = time.time() - start_time
@@ -695,7 +703,7 @@ def main(quick: bool = False):
         status = "✅ PASS" if success else "❌ FAIL"
         logger.info(f"  {test_name:<30} {status}")
 
-        if details.get('error'):
+        if details.get("error"):
             logger.info(f"    Error: {details['error']}")
 
     success_rate = passed / len(tests) * 100
@@ -709,7 +717,9 @@ def main(quick: bool = False):
         logger.info("  ✅ Decision Layer Scheduling - Ready for production")
         logger.info("  ✅ TENT Adaptation - Ready for production")
         logger.info("\n🚀 Next Steps:")
-        logger.info("  1. Run full training: configs/atft/train/decision_layer_scheduled.yaml")
+        logger.info(
+            "  1. Run full training: configs/atft/train/decision_layer_scheduled.yaml"
+        )
         logger.info("  2. Test TENT inference: gogooku3 infer --tta tent")
         logger.info("  3. Monitor Sharpe ratio and drawdown improvements")
         logger.info("  4. Consider distributed HPO for hyperparameter tuning")
@@ -727,9 +737,13 @@ def main(quick: bool = False):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Full Integration Test for Enhanced ATFT-GAT-FAN")
+    parser = argparse.ArgumentParser(
+        description="Full Integration Test for Enhanced ATFT-GAT-FAN"
+    )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
-    parser.add_argument("--quick", action="store_true", help="Skip performance comparison (faster)")
+    parser.add_argument(
+        "--quick", action="store_true", help="Skip performance comparison (faster)"
+    )
 
     args = parser.parse_args()
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from collections.abc import Mapping, Sequence
 
 import torch
 import torch.nn as nn
 
 
 class FeatureGroupDropout(nn.Module):
-    def __init__(self, groups: Mapping[str, Sequence[int]] | None, p: float = 0.2) -> None:
+    def __init__(
+        self, groups: Mapping[str, Sequence[int]] | None, p: float = 0.2
+    ) -> None:
         super().__init__()
         self.groups = dict(groups) if groups is not None else {}
         self.p = float(p)
@@ -45,11 +46,10 @@ class MultiHeadRegressor(nn.Module):
         )
         self.heads = nn.ModuleList([nn.Linear(hidden, o) for o in out_heads])
 
-    def forward(self, x: torch.Tensor) -> List[torch.Tensor]:  # type: ignore[override]
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:  # type: ignore[override]
         x = self.fgdrop(x)
         h = self.backbone(x)
         return [head(h) for head in self.heads]
 
 
 __all__ = ["FeatureGroupDropout", "MultiHeadRegressor"]
-

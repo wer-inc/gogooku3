@@ -17,7 +17,6 @@ Usage:
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class RankPreservingLoss(nn.Module):
@@ -125,7 +124,9 @@ class RankPreservingLoss(nn.Module):
         # argsort gives indices, argsort(argsort) gives ranks
         sorted_indices = torch.argsort(x)
         ranks = torch.empty_like(sorted_indices, dtype=torch.float32)
-        ranks[sorted_indices] = torch.arange(len(x), dtype=torch.float32, device=x.device)
+        ranks[sorted_indices] = torch.arange(
+            len(x), dtype=torch.float32, device=x.device
+        )
         return ranks
 
     def _pearson_correlation(
@@ -150,7 +151,7 @@ class RankPreservingLoss(nn.Module):
         # Compute correlation
         numerator = (x_centered * y_centered).sum()
         denominator = torch.sqrt(
-            (x_centered ** 2).sum() * (y_centered ** 2).sum() + self.eps
+            (x_centered**2).sum() * (y_centered**2).sum() + self.eps
         )
 
         return numerator / denominator
@@ -177,8 +178,15 @@ class MultiHorizonRankPreservingLoss(nn.Module):
         horizon_weights: dict[str, float] | None = None,
     ):
         super().__init__()
-        self.horizons = horizons or ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
-        self.rank_loss = RankPreservingLoss(base_loss=base_loss, rank_weight=rank_weight)
+        self.horizons = horizons or [
+            "horizon_1d",
+            "horizon_5d",
+            "horizon_10d",
+            "horizon_20d",
+        ]
+        self.rank_loss = RankPreservingLoss(
+            base_loss=base_loss, rank_weight=rank_weight
+        )
 
         # Default: uniform weights
         if horizon_weights is None:

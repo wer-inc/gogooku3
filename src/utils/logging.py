@@ -20,7 +20,9 @@ from typing import Any
 class JSKFormatter(logging.Formatter):
     """JST時刻・JSON Lines形式のカスタムフォーマッター"""
 
-    def __init__(self, service: str = "app", extra_fields: dict[str, Any] | None = None):
+    def __init__(
+        self, service: str = "app", extra_fields: dict[str, Any] | None = None
+    ):
         super().__init__()
         self.service = service
         self.hostname = socket.gethostname()
@@ -29,11 +31,15 @@ class JSKFormatter(logging.Formatter):
 
         # Git SHA取得（エラーでも継続）
         try:
-            self.git_sha = subprocess.check_output(
-                ["git", "rev-parse", "--short", "HEAD"],
-                cwd=Path(__file__).parent.parent.parent,
-                stderr=subprocess.DEVNULL
-            ).decode().strip()
+            self.git_sha = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=Path(__file__).parent.parent.parent,
+                    stderr=subprocess.DEVNULL,
+                )
+                .decode()
+                .strip()
+            )
         except:
             self.git_sha = "unknown"
 
@@ -44,7 +50,10 @@ class JSKFormatter(logging.Formatter):
         jst = timezone.utc.offset(datetime.fromtimestamp(record.created))
         dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
         jst_time = dt.replace(tzinfo=timezone.utc).astimezone(
-            timezone(offset=jst + timezone.utc.utcoffset(None) or timezone.utc.utcoffset(None))
+            timezone(
+                offset=jst + timezone.utc.utcoffset(None)
+                or timezone.utc.utcoffset(None)
+            )
         )
 
         # 基本フィールド
@@ -59,7 +68,7 @@ class JSKFormatter(logging.Formatter):
             "pid": self.pid,
             "tid": threading.get_ident(),
             "host": self.hostname,
-            "git_sha": self.git_sha
+            "git_sha": self.git_sha,
         }
 
         # 追加フィールド
@@ -67,7 +76,17 @@ class JSKFormatter(logging.Formatter):
 
         # レコード固有の属性
         for key, value in record.__dict__.items():
-            if key.startswith(('run_id', 'fold', 'horizon', 'ticker', 'seed', 'duration_ms', 'container_id')):
+            if key.startswith(
+                (
+                    "run_id",
+                    "fold",
+                    "horizon",
+                    "ticker",
+                    "seed",
+                    "duration_ms",
+                    "container_id",
+                )
+            ):
                 log_entry[key] = value
 
         # 例外情報
@@ -85,11 +104,11 @@ def setup_gogooku_logger(
     enable_file: bool = True,
     max_bytes: int = 50 * 1024 * 1024,  # 50MB
     backup_count: int = 5,
-    extra_fields: dict[str, Any] | None = None
+    extra_fields: dict[str, Any] | None = None,
 ) -> logging.Logger:
     """
     Gogooku3統一ロガーの設定
-    
+
     Args:
         service: サービス名 (app, dagster, mlflow, etc.)
         level: ログレベル (DEBUG, INFO, WARNING, ERROR)
@@ -99,7 +118,7 @@ def setup_gogooku_logger(
         max_bytes: ファイルローテーションサイズ
         backup_count: バックアップファイル数
         extra_fields: 追加フィールド辞書
-    
+
     Returns:
         設定済みLogger
     """
@@ -117,7 +136,7 @@ def setup_gogooku_logger(
     json_formatter = JSKFormatter(service=service, extra_fields=extra_fields)
     console_formatter = logging.Formatter(
         fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # ファイルハンドラー
@@ -126,7 +145,9 @@ def setup_gogooku_logger(
             # デフォルト: _logs/dev/{service}/YYYY/MM/DD/
             base_dir = Path(__file__).parent.parent.parent / "_logs" / "dev" / service
             today = datetime.now()
-            log_dir = base_dir / str(today.year) / f"{today.month:02d}" / f"{today.day:02d}"
+            log_dir = (
+                base_dir / str(today.year) / f"{today.month:02d}" / f"{today.day:02d}"
+            )
 
         log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +158,7 @@ def setup_gogooku_logger(
             filename=log_file,
             maxBytes=max_bytes,
             backupCount=backup_count,
-            encoding='utf-8'
+            encoding="utf-8",
         )
         file_handler.setFormatter(json_formatter)
         logger.addHandler(file_handler)
@@ -155,32 +176,23 @@ def setup_gogooku_logger(
 
 
 def get_ml_logger(
-    run_id: str | None = None,
-    experiment_name: str = "default",
-    **kwargs
+    run_id: str | None = None, experiment_name: str = "default", **kwargs
 ) -> logging.Logger:
     """
     ML実験用の拡張ロガー
-    
+
     Args:
         run_id: MLflow実行ID
         experiment_name: 実験名
         **kwargs: setup_gogooku_loggerへの追加引数
-    
+
     Returns:
         ML実験用Logger
     """
-    extra_fields = kwargs.pop('extra_fields', {})
-    extra_fields.update({
-        'run_id': run_id,
-        'experiment': experiment_name
-    })
+    extra_fields = kwargs.pop("extra_fields", {})
+    extra_fields.update({"run_id": run_id, "experiment": experiment_name})
 
-    return setup_gogooku_logger(
-        service="training",
-        extra_fields=extra_fields,
-        **kwargs
-    )
+    return setup_gogooku_logger(service="training", extra_fields=extra_fields, **kwargs)
 
 
 def get_dagster_logger(**kwargs) -> logging.Logger:
@@ -195,21 +207,20 @@ def get_feast_logger(**kwargs) -> logging.Logger:
 
 # 後方互換性のためのヘルパー関数
 def setup_logging(
-    level: str = "INFO",
-    service: str = "app",
-    **kwargs
+    level: str = "INFO", service: str = "app", **kwargs
 ) -> logging.Logger:
     """
     後方互換性のための旧形式サポート
-    
+
     Warning:
         この関数は非推奨です。setup_gogooku_loggerを直接使用してください。
     """
     import warnings
+
     warnings.warn(
         "setup_logging() is deprecated. Use setup_gogooku_logger() instead.",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     return setup_gogooku_logger(service=service, level=level, **kwargs)
 
@@ -219,11 +230,10 @@ if __name__ == "__main__":
     logger = setup_gogooku_logger(service="test", level="DEBUG")
 
     logger.debug("デバッグメッセージ")
-    logger.info("情報メッセージ", extra={
-        'run_id': 'test_run_123',
-        'fold': 1,
-        'duration_ms': 1500
-    })
+    logger.info(
+        "情報メッセージ",
+        extra={"run_id": "test_run_123", "fold": 1, "duration_ms": 1500},
+    )
     logger.warning("警告メッセージ")
     logger.error("エラーメッセージ")
 

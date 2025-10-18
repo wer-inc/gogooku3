@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable
+from collections.abc import Iterable
 
 import polars as pl
 
@@ -24,12 +24,14 @@ def winsorize(df: pl.DataFrame, cols: Iterable[str], k: float = 5.0) -> pl.DataF
     return out
 
 
-def fit_winsor_stats(df_train: pl.DataFrame, cols: Iterable[str], k: float = 5.0) -> Dict[str, tuple[float, float]]:
+def fit_winsor_stats(
+    df_train: pl.DataFrame, cols: Iterable[str], k: float = 5.0
+) -> dict[str, tuple[float, float]]:
     """Fit global (train-only) winsor thresholds per column.
 
     Returns a mapping col -> (lo, hi) computed from train distribution.
     """
-    stats: Dict[str, tuple[float, float]] = {}
+    stats: dict[str, tuple[float, float]] = {}
     for c in cols:
         s = df_train.select(pl.col(c)).to_series()
         mu = float(s.mean() or 0.0)
@@ -39,7 +41,9 @@ def fit_winsor_stats(df_train: pl.DataFrame, cols: Iterable[str], k: float = 5.0
     return stats
 
 
-def transform_winsor(df: pl.DataFrame, stats: Dict[str, tuple[float, float]]) -> pl.DataFrame:
+def transform_winsor(
+    df: pl.DataFrame, stats: dict[str, tuple[float, float]]
+) -> pl.DataFrame:
     """Apply pre-fit winsor thresholds to a dataframe (no leakage)."""
     out = df
     for c, (lo, hi) in stats.items():

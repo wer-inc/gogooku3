@@ -1,5 +1,5 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 import pytest
 
 from gogooku3.forecast import timesfm_predict
@@ -18,4 +18,3 @@ def test_timesfm_predict_baseline_shape():
     assert set(["id", "ts", "h", "y_hat"]).issubset(fc.columns)
     assert fc["h"].nunique() == 3
     assert fc.groupby("id").size().min() >= 3
-

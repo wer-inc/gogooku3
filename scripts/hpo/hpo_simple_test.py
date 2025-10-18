@@ -4,15 +4,11 @@ Simple HPO Test for ATFT-GAT-FAN
 Minimal implementation to validate the HPO concept before full integration
 """
 
-import json
-import os
-import sys
-import tempfile
 import logging
-from pathlib import Path
-from typing import Dict, Any
-import subprocess
+import sys
 import time
+from pathlib import Path
+from typing import Any
 
 import optuna
 from optuna.pruners import MedianPruner
@@ -34,7 +30,7 @@ class SimpleATFTHPO:
         self.max_epochs = max_epochs
         self.study_name = "atft_simple_hpo_test"
 
-    def run_smoke_training(self, hparams: Dict[str, Any]) -> Dict[str, float]:
+    def run_smoke_training(self, hparams: dict[str, Any]) -> dict[str, float]:
         """Run a quick smoke training with given hyperparameters"""
         try:
             # Create a simple synthetic score for testing
@@ -45,8 +41,8 @@ class SimpleATFTHPO:
 
             # Simulate metrics based on hyperparameters
             # Better learning rates and reasonable dropout should score higher
-            lr = hparams['lr']
-            dropout = hparams['dropout']
+            lr = hparams["lr"]
+            dropout = hparams["dropout"]
 
             # Simple heuristic: penalize extreme learning rates and high dropout
             lr_score = 1.0 - abs(lr - 0.001) * 100  # Optimal around 0.001
@@ -56,6 +52,7 @@ class SimpleATFTHPO:
 
             # Add some noise to simulate real training variability
             import random
+
             noise = random.gauss(0, 0.02)
 
             mock_metrics = {
@@ -72,10 +69,12 @@ class SimpleATFTHPO:
                     "20d": max(-2.0, min(2.0, base_score * 3 + noise)),
                 },
                 "training_time": 2.0,
-                "test_mode": True
+                "test_mode": True,
             }
 
-            logger.info(f"Mock training completed: RankIC_5d={mock_metrics['rank_ic']['5d']:.3f}")
+            logger.info(
+                f"Mock training completed: RankIC_5d={mock_metrics['rank_ic']['5d']:.3f}"
+            )
             return mock_metrics
 
         except Exception as e:
@@ -83,7 +82,7 @@ class SimpleATFTHPO:
             return {
                 "rank_ic": {"1d": -0.1, "5d": -0.1, "10d": -0.1, "20d": -0.1},
                 "sharpe": {"1d": -1.0, "5d": -1.0, "10d": -1.0, "20d": -1.0},
-                "training_failed": True
+                "training_failed": True,
             }
 
     def objective(self, trial: optuna.Trial) -> float:
@@ -109,8 +108,7 @@ class SimpleATFTHPO:
         weights = {"1d": 0.2, "5d": 0.35, "10d": 0.35, "20d": 0.1}
 
         weighted_score = sum(
-            weights[horizon] * rank_ic.get(horizon, -0.1)
-            for horizon in weights.keys()
+            weights[horizon] * rank_ic.get(horizon, -0.1) for horizon in weights.keys()
         )
 
         # Report for pruning (using 5d as primary metric)
@@ -129,15 +127,8 @@ class SimpleATFTHPO:
         study = optuna.create_study(
             study_name=self.study_name,
             direction="minimize",
-            sampler=TPESampler(
-                multivariate=True,
-                n_startup_trials=2,
-                seed=42
-            ),
-            pruner=MedianPruner(
-                n_startup_trials=2,
-                n_warmup_steps=1
-            ),
+            sampler=TPESampler(multivariate=True, n_startup_trials=2, seed=42),
+            pruner=MedianPruner(n_startup_trials=2, n_warmup_steps=1),
         )
 
         # Run optimization
@@ -149,14 +140,18 @@ class SimpleATFTHPO:
 
         # Report results
         best_trial = study.best_trial
-        logger.info(f"🎯 HPO Test Results:")
+        logger.info("🎯 HPO Test Results:")
         logger.info(f"   Best score: {-best_trial.value:.4f}")
         logger.info(f"   Best params: {best_trial.params}")
 
         # Test basic functionality
         all_trials = study.trials
-        completed_trials = [t for t in all_trials if t.state == optuna.trial.TrialState.COMPLETE]
-        failed_trials = [t for t in all_trials if t.state == optuna.trial.TrialState.FAIL]
+        completed_trials = [
+            t for t in all_trials if t.state == optuna.trial.TrialState.COMPLETE
+        ]
+        failed_trials = [
+            t for t in all_trials if t.state == optuna.trial.TrialState.FAIL
+        ]
 
         logger.info(f"   Completed trials: {len(completed_trials)}/{len(all_trials)}")
         logger.info(f"   Failed trials: {len(failed_trials)}")
@@ -185,13 +180,17 @@ class SimpleATFTHPO:
         logger.info("🔬 Demonstrating HPO Features:")
 
         # 1. TPE Sampler benefits
-        logger.info("1. TPE Sampler: Learns from previous trials to suggest better hyperparameters")
+        logger.info(
+            "1. TPE Sampler: Learns from previous trials to suggest better hyperparameters"
+        )
 
         # 2. Pruning benefits
         logger.info("2. MedianPruner: Stops unpromising trials early to save compute")
 
         # 3. Multi-horizon optimization
-        logger.info("3. Multi-horizon objective: Optimizes 1d, 5d, 10d, 20d predictions jointly")
+        logger.info(
+            "3. Multi-horizon objective: Optimizes 1d, 5d, 10d, 20d predictions jointly"
+        )
 
         # 4. GPU utilization
         logger.info("4. GPU optimization: Ready for bf16, GPU memory management")

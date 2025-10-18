@@ -36,11 +36,15 @@ def ensure_gcs_package():
     """Ensure google-cloud-storage is installed."""
     try:
         import google.cloud.storage  # noqa: F401
+
         logger.info("✅ google-cloud-storage package is available")
     except ImportError:
         logger.info("📦 Installing google-cloud-storage...")
         import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "google-cloud-storage", "--quiet"])
+
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "google-cloud-storage", "--quiet"]
+        )
         logger.info("✅ google-cloud-storage installed")
 
 
@@ -70,7 +74,9 @@ def upload_file(
         blob.upload_from_filename(str(local_path))
 
         file_size_mb = local_path.stat().st_size / (1024 * 1024)
-        logger.info(f"  ✅ {local_path.name} → gs://{bucket_name}/{gcs_path} ({file_size_mb:.2f} MB)")
+        logger.info(
+            f"  ✅ {local_path.name} → gs://{bucket_name}/{gcs_path} ({file_size_mb:.2f} MB)"
+        )
         return True
 
     except Exception as e:
@@ -130,7 +136,7 @@ def upload_output_to_gcs(
 
     total_size_gb = total_size / (1024**3)
 
-    logger.info(f"📦 Upload Summary:")
+    logger.info("📦 Upload Summary:")
     logger.info(f"  Local dir: {local_output_dir.absolute()}")
     logger.info(f"  GCS bucket: gs://{bucket_name}/{gcs_prefix}")
     logger.info(f"  Files to upload: {len(files_to_upload)}")

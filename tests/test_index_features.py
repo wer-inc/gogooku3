@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -10,9 +9,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.gogooku3.features.index_features import (
-    build_all_index_features,
     attach_index_features_to_equity,
     attach_sector_index_features,
+    build_all_index_features,
 )
 
 
@@ -38,15 +37,19 @@ def _toy_indices() -> pl.DataFrame:
             # Small drift by code to make spreads non-zero
             bump = 1.001 if code in ("8100", "0028", "0500") else 0.999
             px = px * bump
-            rows.append({
-                "Code": code,
-                "Date": d,
-                "Open": px * 0.99,
-                "High": px * 1.01,
-                "Low": px * 0.98,
-                "Close": px,
-            })
-    return pl.DataFrame(rows).with_columns(pl.col("Date").str.strptime(pl.Date, strict=False))
+            rows.append(
+                {
+                    "Code": code,
+                    "Date": d,
+                    "Open": px * 0.99,
+                    "High": px * 1.01,
+                    "Low": px * 0.98,
+                    "Close": px,
+                }
+            )
+    return pl.DataFrame(rows).with_columns(
+        pl.col("Date").str.strptime(pl.Date, strict=False)
+    )
 
 
 def _toy_quotes() -> pl.DataFrame:
@@ -55,7 +58,9 @@ def _toy_quotes() -> pl.DataFrame:
     for code in ["1001", "1002", "1003"]:
         for d in [f"2024-01-0{i}" for i in range(1, 7)]:
             rows.append({"Code": code, "Date": d})
-    return pl.DataFrame(rows).with_columns(pl.col("Date").str.strptime(pl.Date, strict=False))
+    return pl.DataFrame(rows).with_columns(
+        pl.col("Date").str.strptime(pl.Date, strict=False)
+    )
 
 
 def test_build_all_index_features_basic():
@@ -67,7 +72,9 @@ def test_build_all_index_features_basic():
     for c in ["idx_r_1d", "idx_r_5d", "idx_vol_20d", "idx_z_close_20"]:
         assert c in per_idx.columns
     # Check spreads present
-    assert any(c.startswith("spread_") for c in daily.columns), "expected at least one spread series"
+    assert any(
+        c.startswith("spread_") for c in daily.columns
+    ), "expected at least one spread series"
     # Check breadth present
     assert "breadth_sector_gt_ma50" in daily.columns
 

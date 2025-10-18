@@ -3,9 +3,10 @@
 Reference: https://arxiv.org/abs/2009.03294
 """
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
-from typing import Optional
 
 
 class GraphNorm(nn.Module):

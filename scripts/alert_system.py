@@ -4,19 +4,19 @@ ATFT-GAT-FAN Alert System
 監視アラート通知システム
 """
 
-import os
-import sys
-import logging
 import json
+import logging
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from pathlib import Path
-from typing import Dict, List, Optional
+import sys
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+from typing import Optional
 
 try:
     from slack_sdk import WebClient
+
     SLACK_AVAILABLE = True
 except ImportError:
     SLACK_AVAILABLE = False
@@ -26,7 +26,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # ロギング設定
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -34,45 +36,60 @@ class AlertSystem:
     """アラートシステムクラス"""
 
     def __init__(self, config_path: Optional[str] = None):
-        self.config_path = config_path or (project_root / "configs" / "monitoring" / "monitoring.yaml")
+        self.config_path = config_path or (
+            project_root / "configs" / "monitoring" / "monitoring.yaml"
+        )
         self.config = self._load_config()
         self.alert_history = []
 
-    def _load_config(self) -> Dict:
+    def _load_config(self) -> dict:
         """設定ファイルを読み込み"""
         try:
             import yaml
-            with open(self.config_path, 'r', encoding='utf-8') as f:
+
+            with open(self.config_path, encoding="utf-8") as f:
                 return yaml.safe_load(f)
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
             return {}
 
-    def send_alert(self, alert_type: str, title: str, message: str, details: Optional[Dict] = None):
+    def send_alert(
+        self, alert_type: str, title: str, message: str, details: Optional[dict] = None
+    ):
         """アラートを送信"""
         alert = {
             "timestamp": datetime.now().isoformat(),
             "type": alert_type,
             "title": title,
             "message": message,
-            "details": details or {}
+            "details": details or {},
         }
 
         self.alert_history.append(alert)
         logger.warning(f"🚨 ALERT: {title} - {message}")
 
         # Slack通知
-        if self.config.get("monitoring", {}).get("notifications", {}).get("slack", {}).get("enabled", False):
+        if (
+            self.config.get("monitoring", {})
+            .get("notifications", {})
+            .get("slack", {})
+            .get("enabled", False)
+        ):
             self._send_slack_alert(alert)
 
         # メール通知
-        if self.config.get("monitoring", {}).get("notifications", {}).get("email", {}).get("enabled", False):
+        if (
+            self.config.get("monitoring", {})
+            .get("notifications", {})
+            .get("email", {})
+            .get("enabled", False)
+        ):
             self._send_email_alert(alert)
 
         # アラート履歴を保存（最新100件）
         self._save_alert_history()
 
-    def _send_slack_alert(self, alert: Dict):
+    def _send_slack_alert(self, alert: dict):
         """Slackにアラートを送信"""
         if not SLACK_AVAILABLE:
             logger.warning("Slack SDK not available")
@@ -86,13 +103,15 @@ class AlertSystem:
             message = f"{icon} *{alert['title']}*\n{alert['message']}"
 
             if alert["details"]:
-                details_text = "\n".join([f"• {k}: {v}" for k, v in alert["details"].items()])
+                details_text = "\n".join(
+                    [f"• {k}: {v}" for k, v in alert["details"].items()]
+                )
                 message += f"\n\n{details_text}"
 
             client.chat_postMessage(
                 channel=slack_config["channel"],
                 text=message,
-                username="ATFT-GAT-FAN Monitor"
+                username="ATFT-GAT-FAN Monitor",
             )
 
             logger.info("Slack alert sent successfully")
@@ -100,7 +119,7 @@ class AlertSystem:
         except Exception as e:
             logger.error(f"Failed to send Slack alert: {e}")
 
-    def _send_email_alert(self, alert: Dict):
+    def _send_email_alert(self, alert: dict):
         """メールでアラートを送信"""
         try:
             email_config = self.config["monitoring"]["notifications"]["email"]
@@ -108,9 +127,9 @@ class AlertSystem:
             recipients = email_config["recipients"]
 
             msg = MIMEMultipart()
-            msg['From'] = "monitor@atft-gat-fan.com"
-            msg['To'] = ", ".join(recipients)
-            msg['Subject'] = f"ATFT-GAT-FAN Alert: {alert['title']}"
+            msg["From"] = "monitor@atft-gat-fan.com"
+            msg["To"] = ", ".join(recipients)
+            msg["Subject"] = f"ATFT-GAT-FAN Alert: {alert['title']}"
 
             body = f"""
 ATFT-GAT-FAN Monitoring Alert
@@ -124,7 +143,7 @@ Details:
 {json.dumps(alert['details'], indent=2, ensure_ascii=False) if alert['details'] else 'None'}
             """
 
-            msg.attach(MIMEText(body, 'plain'))
+            msg.attach(MIMEText(body, "plain"))
 
             server = smtplib.SMTP(smtp_server)
             server.send_message(msg)
@@ -143,23 +162,25 @@ Details:
             # 最新100件のみ保持
             recent_alerts = self.alert_history[-100:]
 
-            with open(history_file, 'w', encoding='utf-8') as f:
+            with open(history_file, "w", encoding="utf-8") as f:
                 json.dump(recent_alerts, f, indent=2, ensure_ascii=False)
 
         except Exception as e:
             logger.error(f"Failed to save alert history: {e}")
 
-    def get_alert_summary(self) -> Dict:
+    def get_alert_summary(self) -> dict:
         """アラート要約を取得"""
         total_alerts = len(self.alert_history)
-        critical_alerts = len([a for a in self.alert_history if a["type"] == "critical"])
+        critical_alerts = len(
+            [a for a in self.alert_history if a["type"] == "critical"]
+        )
         warning_alerts = len([a for a in self.alert_history if a["type"] == "warning"])
 
         return {
             "total_alerts": total_alerts,
             "critical_alerts": critical_alerts,
             "warning_alerts": warning_alerts,
-            "last_alert": self.alert_history[-1] if self.alert_history else None
+            "last_alert": self.alert_history[-1] if self.alert_history else None,
         }
 
 
@@ -181,7 +202,7 @@ def main():
             "warning",
             "Test Alert",
             "This is a test alert from the monitoring system",
-            {"test": True, "timestamp": datetime.now().isoformat()}
+            {"test": True, "timestamp": datetime.now().isoformat()},
         )
         print("✅ Test alert sent")
 
@@ -192,8 +213,10 @@ def main():
         print(f"Total Alerts: {summary['total_alerts']}")
         print(f"Critical: {summary['critical_alerts']}")
         print(f"Warning: {summary['warning_alerts']}")
-        if summary['last_alert']:
-            print(f"Last Alert: {summary['last_alert']['title']} ({summary['last_alert']['timestamp']})")
+        if summary["last_alert"]:
+            print(
+                f"Last Alert: {summary['last_alert']['title']} ({summary['last_alert']['timestamp']})"
+            )
 
     else:
         parser.print_help()

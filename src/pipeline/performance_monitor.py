@@ -5,13 +5,13 @@ from __future__ import annotations
 import contextlib
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 
 @dataclass
 class PipelineProfiler:
-    timers: Dict[str, float] = field(default_factory=dict)
-    memory_mb: Dict[str, float] = field(default_factory=dict)
+    timers: dict[str, float] = field(default_factory=dict)
+    memory_mb: dict[str, float] = field(default_factory=dict)
 
     @contextlib.contextmanager
     def timer(self, name: str):
@@ -23,6 +23,7 @@ class PipelineProfiler:
             # capture memory rss if available
             try:
                 import psutil  # type: ignore
+
                 rss = psutil.Process().memory_info().rss / 1024 / 1024
                 self.memory_mb[name] = rss
             except Exception:
@@ -32,6 +33,5 @@ class PipelineProfiler:
         with self.timer(name):
             return func(*args, **kwargs)
 
-    def generate_report(self) -> Dict[str, Any]:
+    def generate_report(self) -> dict[str, Any]:
         return {"timers_sec": self.timers, "memory_mb": self.memory_mb}
-

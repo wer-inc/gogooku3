@@ -3,23 +3,22 @@
 Test RDBStorage functionality for HPO system
 """
 
-import sys
-import os
 import logging
-from pathlib import Path
+import os
+import sys
 import tempfile
+from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
 # Set environment for package imports
-os.environ['PYTHONPATH'] = str(project_root)
+os.environ["PYTHONPATH"] = str(project_root)
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -40,18 +39,15 @@ def test_sqlite_storage():
 
             # Test 1: Create new study
             optimizer1 = ATFTHPOOptimizer(
-                study_name="test_storage",
-                storage=storage_url,
-                n_trials=2,
-                timeout=10
+                study_name="test_storage", storage=storage_url, n_trials=2, timeout=10
             )
 
             # Mock optimization (simplified)
             import optuna
 
             def mock_objective(trial):
-                lr = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
-                batch_size = trial.suggest_categorical('batch_size', [64, 128, 256])
+                lr = trial.suggest_float("learning_rate", 1e-5, 1e-2, log=True)
+                batch_size = trial.suggest_categorical("batch_size", [64, 128, 256])
                 # Simple score based on parameters
                 score = (lr * 1000) + (batch_size / 1000)
                 return score
@@ -60,8 +56,8 @@ def test_sqlite_storage():
             study1 = optuna.create_study(
                 study_name="test_storage",
                 storage=storage_url,
-                direction='maximize',
-                load_if_exists=False
+                direction="maximize",
+                load_if_exists=False,
             )
             study1.optimize(mock_objective, n_trials=2)
 
@@ -69,10 +65,7 @@ def test_sqlite_storage():
             logger.info(f"   Best score: {study1.best_value:.6f}")
 
             # Test 2: Load existing study
-            study2 = optuna.load_study(
-                study_name="test_storage",
-                storage=storage_url
-            )
+            study2 = optuna.load_study(study_name="test_storage", storage=storage_url)
 
             logger.info(f"   Loaded study: {len(study2.trials)} trials found")
 
@@ -84,7 +77,9 @@ def test_sqlite_storage():
 
             # Test 4: Get study status via optimizer
             status = optimizer1.get_study_status()
-            logger.info(f"   Status check: {status['completed_trials']} completed trials")
+            logger.info(
+                f"   Status check: {status['completed_trials']} completed trials"
+            )
 
             # Verify database file exists
             if db_path.exists():
@@ -105,8 +100,9 @@ def test_study_persistence():
     try:
         logger.info("🧪 Testing study persistence...")
 
-        from src.gogooku3.hpo import ATFTHPOOptimizer
         import optuna
+
+        from src.gogooku3.hpo import ATFTHPOOptimizer
 
         # Use temporary database
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -115,13 +111,11 @@ def test_study_persistence():
 
             # Session 1: Create and run trials
             def simple_objective(trial):
-                x = trial.suggest_float('x', -10, 10)
-                return -(x - 2) ** 2  # Maximum at x=2
+                x = trial.suggest_float("x", -10, 10)
+                return -((x - 2) ** 2)  # Maximum at x=2
 
             study1 = optuna.create_study(
-                study_name="persistence_test",
-                storage=storage_url,
-                direction='maximize'
+                study_name="persistence_test", storage=storage_url, direction="maximize"
             )
             study1.optimize(simple_objective, n_trials=3)
 
@@ -133,8 +127,7 @@ def test_study_persistence():
 
             # Session 2: Load and continue
             study2 = optuna.load_study(
-                study_name="persistence_test",
-                storage=storage_url
+                study_name="persistence_test", storage=storage_url
             )
 
             # Verify data persisted
@@ -154,15 +147,19 @@ def test_study_persistence():
             optimizer = ATFTHPOOptimizer(
                 study_name="persistence_test",
                 storage=storage_url,
-                n_trials=0  # No trials, just status
+                n_trials=0,  # No trials, just status
             )
 
             status = optimizer.get_study_status()
 
-            if status['completed_trials'] != 5:
-                raise ValueError(f"Expected 5 trials in status, got {status['completed_trials']}")
+            if status["completed_trials"] != 5:
+                raise ValueError(
+                    f"Expected 5 trials in status, got {status['completed_trials']}"
+                )
 
-            logger.info(f"   Optimizer status: {status['completed_trials']} trials, success_rate={status['success_rate']:.1f}%")
+            logger.info(
+                f"   Optimizer status: {status['completed_trials']} trials, success_rate={status['success_rate']:.1f}%"
+            )
 
             logger.info("✅ Study persistence test passed")
             return True
@@ -177,8 +174,9 @@ def test_resume_functionality():
     try:
         logger.info("🧪 Testing resume functionality...")
 
-        from src.gogooku3.hpo import ATFTHPOOptimizer
         import optuna
+
+        from src.gogooku3.hpo import ATFTHPOOptimizer
 
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "resume_test.db"
@@ -186,21 +184,16 @@ def test_resume_functionality():
 
             # Initial optimizer
             optimizer1 = ATFTHPOOptimizer(
-                study_name="resume_test",
-                storage=storage_url,
-                n_trials=3,
-                timeout=5
+                study_name="resume_test", storage=storage_url, n_trials=3, timeout=5
             )
 
             # Mock some initial trials
             def simple_objective(trial):
-                x = trial.suggest_float('x', 0, 1)
-                return x ** 2
+                x = trial.suggest_float("x", 0, 1)
+                return x**2
 
             study = optuna.create_study(
-                study_name="resume_test",
-                storage=storage_url,
-                direction='maximize'
+                study_name="resume_test", storage=storage_url, direction="maximize"
             )
             study.optimize(simple_objective, n_trials=2)
 
@@ -210,7 +203,7 @@ def test_resume_functionality():
             optimizer2 = ATFTHPOOptimizer(
                 study_name="resume_test",
                 storage=storage_url,
-                n_trials=5  # Will run 3 additional trials (5 - 2)
+                n_trials=5,  # Will run 3 additional trials (5 - 2)
             )
 
             # Test resume_study method
@@ -219,7 +212,9 @@ def test_resume_functionality():
             logger.info(f"   After resume: {len(resumed_study.trials)} trials")
 
             if len(resumed_study.trials) != 3:
-                raise ValueError(f"Expected 3 trials after resume, got {len(resumed_study.trials)}")
+                raise ValueError(
+                    f"Expected 3 trials after resume, got {len(resumed_study.trials)}"
+                )
 
             # Check status
             status = optimizer2.get_study_status()
@@ -240,7 +235,7 @@ def main():
     tests = [
         ("SQLite Storage", test_sqlite_storage),
         ("Study Persistence", test_study_persistence),
-        ("Resume Functionality", test_resume_functionality)
+        ("Resume Functionality", test_resume_functionality),
     ]
 
     results = []
@@ -250,9 +245,9 @@ def main():
         results.append((test_name, result))
 
     # Summary
-    logger.info("\n" + "="*50)
+    logger.info("\n" + "=" * 50)
     logger.info("🎯 RDBStorage Test Results")
-    logger.info("="*50)
+    logger.info("=" * 50)
 
     passed = 0
     for test_name, result in results:
@@ -262,7 +257,9 @@ def main():
             passed += 1
 
     success_rate = passed / len(results) * 100
-    logger.info(f"\nOverall: {passed}/{len(results)} tests passed ({success_rate:.1f}%)")
+    logger.info(
+        f"\nOverall: {passed}/{len(results)} tests passed ({success_rate:.1f}%)"
+    )
 
     if passed == len(results):
         logger.info("🎉 All RDBStorage tests passed!")

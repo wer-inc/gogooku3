@@ -6,11 +6,13 @@ Phase 2 DataLoader拡張の簡易テスト
 
 import os
 import sys
-import torch
 from pathlib import Path
+
+import torch
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
+
 
 def main():
     """Test Phase 2 DataLoader extensions with real data."""
@@ -25,14 +27,19 @@ def main():
     print("=" * 60)
 
     try:
-        from src.gogooku3.training.atft.data_module import StreamingParquetDataset
         import polars as pl
+
+        from src.gogooku3.training.atft.data_module import StreamingParquetDataset
 
         # Use existing ML dataset - try multiple possible paths
         possible_paths = [
-            Path("/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet"),
+            Path(
+                "/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet"
+            ),
             Path("/home/ubuntu/gogooku3-standalone/tmp_train.parquet"),
-            Path("/home/ubuntu/gogooku3-standalone/output/ml_dataset_20250928_084147_full.parquet"),
+            Path(
+                "/home/ubuntu/gogooku3-standalone/output/ml_dataset_20250928_084147_full.parquet"
+            ),
         ]
 
         dataset_path = None
@@ -70,20 +77,26 @@ def main():
             exposure_cols.append("sector")
             print("   ✓ Found sector (as alternative)")
 
-        print(f"\n📊 Testing StreamingParquetDataset with exposure features...")
+        print("\n📊 Testing StreamingParquetDataset with exposure features...")
 
         # Feature columns (exclude special columns)
         exclude_cols = ["code", "date", "datetime", "Code", "Date"]
         feature_cols = []
 
         for col in all_columns:
-            if (col not in exclude_cols and
-                not col.startswith('target_') and
-                not col.startswith('Target_')):
+            if (
+                col not in exclude_cols
+                and not col.startswith("target_")
+                and not col.startswith("Target_")
+            ):
                 feature_cols.append(col)
 
         # Target columns
-        target_cols = [col for col in all_columns if col.startswith('target_') or col.startswith('Target_')]
+        target_cols = [
+            col
+            for col in all_columns
+            if col.startswith("target_") or col.startswith("Target_")
+        ]
         if not target_cols:
             # If no explicit target columns, try to find return-like columns
             target_cols = ["returns_1d"] if "returns_1d" in all_columns else []
@@ -101,7 +114,7 @@ def main():
             sequence_length=60,
             normalize_online=False,  # Disable for testing
             cache_size=10,
-            exposure_columns=exposure_cols if exposure_cols else None
+            exposure_columns=exposure_cols if exposure_cols else None,
         )
 
         print(f"\n📦 Dataset created: {len(dataset)} samples")
@@ -128,19 +141,31 @@ def main():
             for field in phase2_fields:
                 if field in sample:
                     if field == "exposures":
-                        print(f"     ✓ {field}: shape {sample[field].shape}, dtype {sample[field].dtype}")
+                        print(
+                            f"     ✓ {field}: shape {sample[field].shape}, dtype {sample[field].dtype}"
+                        )
                     else:
-                        print(f"     ✓ {field}: value {sample[field].item()}, dtype {sample[field].dtype}")
+                        print(
+                            f"     ✓ {field}: value {sample[field].item()}, dtype {sample[field].dtype}"
+                        )
                 else:
-                    print(f"     ✗ {field}: not found (check USE_EXPOSURE_FEATURES={os.getenv('USE_EXPOSURE_FEATURES')})")
+                    print(
+                        f"     ✗ {field}: not found (check USE_EXPOSURE_FEATURES={os.getenv('USE_EXPOSURE_FEATURES')})"
+                    )
 
             # Verify data types
             if "group_day" in sample:
-                assert sample["group_day"].dtype == torch.long, f"group_day wrong dtype: {sample['group_day'].dtype}"
+                assert (
+                    sample["group_day"].dtype == torch.long
+                ), f"group_day wrong dtype: {sample['group_day'].dtype}"
             if "sid" in sample:
-                assert sample["sid"].dtype == torch.long, f"sid wrong dtype: {sample['sid'].dtype}"
+                assert (
+                    sample["sid"].dtype == torch.long
+                ), f"sid wrong dtype: {sample['sid'].dtype}"
             if "exposures" in sample:
-                assert sample["exposures"].dtype == torch.float32, f"exposures wrong dtype: {sample['exposures'].dtype}"
+                assert (
+                    sample["exposures"].dtype == torch.float32
+                ), f"exposures wrong dtype: {sample['exposures'].dtype}"
 
             print("\n✅ Phase 2 DataLoader Extension Test PASSED")
 
@@ -169,6 +194,7 @@ def main():
     except Exception as e:
         print(f"\n❌ Test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

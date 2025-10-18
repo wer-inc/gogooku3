@@ -2,9 +2,10 @@
 Unit tests for Quality Checks
 """
 
-import pytest
-import polars as pl
 import pandas as pd
+import polars as pl
+import pytest
+
 from quality.price_checks import PolarsValidator, PriceDataValidator
 
 

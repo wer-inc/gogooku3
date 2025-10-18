@@ -3,19 +3,19 @@ API Smoke Tests - E2E基本動作確認
 """
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.gogooku3.api.server import app, forecast_models, detection_engine, esvi_calculator
+from src.gogooku3.api.server import app, forecast_models
+
 
 # Mock the global models for testing
 @pytest.fixture(scope="module")
 def test_app():
     """Create a test FastAPI app with mocked models"""
-    from src.gogooku3.forecast.timesfm_adapter import TimesFMAdapter
-    from src.gogooku3.forecast.tft_adapter import TFTAdapter
-    from src.gogooku3.detect.ensemble import DetectionEnsemble
     from src.gogooku3.decide.pseudo_vix import ESVICalculator
+    from src.gogooku3.detect.ensemble import DetectionEnsemble
+    from src.gogooku3.forecast.tft_adapter import TFTAdapter
+    from src.gogooku3.forecast.timesfm_adapter import TimesFMAdapter
 
     # Mock initialization
     forecast_models["champion"] = TimesFMAdapter(horizons=[1, 5, 10, 20], context=512)
@@ -27,11 +27,13 @@ def test_app():
 
     return app
 
+
 @pytest.fixture(scope="module")
 def client(test_app):
     """Create test client"""
     with TestClient(test_app) as client:
         yield client
+
 
 class TestAPISmoke:
     """API基本動作のスモークテスト"""
@@ -51,7 +53,7 @@ class TestAPISmoke:
             "symbol": "7203",
             "horizons": [1, 5],
             "model": "champion",
-            "quantiles": [0.1, 0.5, 0.9]
+            "quantiles": [0.1, 0.5, 0.9],
         }
         response = client.post("/forecast/predict", json=request_data)
         assert response.status_code == 200
@@ -68,10 +70,10 @@ class TestAPISmoke:
             "data": [
                 {"timestamp": 1640995200, "value": 100.0},
                 {"timestamp": 1641081600, "value": 105.0},
-                {"timestamp": 1641168000, "value": 95.0}
+                {"timestamp": 1641168000, "value": 95.0},
             ],
             "method": "ensemble",
-            "threshold": 0.25
+            "threshold": 0.25,
         }
         response = client.post("/detect/score", json=request_data)
         assert response.status_code == 200
@@ -86,7 +88,7 @@ class TestAPISmoke:
         request_data = {
             "symbols": ["7203", "6758", "8306"],
             "window": 30,
-            "method": "esvi"
+            "method": "esvi",
         }
         response = client.post("/index/esvi", json=request_data)
         assert response.status_code == 200
@@ -106,12 +108,10 @@ class TestAPISmoke:
 
     def test_invalid_model(self, client):
         """Invalid model handling"""
-        request_data = {
-            "symbol": "7203",
-            "model": "nonexistent"
-        }
+        request_data = {"symbol": "7203", "model": "nonexistent"}
         response = client.post("/forecast/predict", json=request_data)
         assert response.status_code == 404
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

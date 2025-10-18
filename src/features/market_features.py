@@ -60,79 +60,142 @@ class MarketFeaturesGenerator:
         # Normalize Date dtype and cast price columns to numeric to avoid string math
         df = ensure_date(df, "Date")
         numeric_cols = ["Open", "High", "Low", "Close", "Volume"]
-        cast_exprs = [pl.col(col).cast(pl.Float64, strict=False).alias(col) for col in numeric_cols if col in df.columns]
+        cast_exprs = [
+            pl.col(col).cast(pl.Float64, strict=False).alias(col)
+            for col in numeric_cols
+            if col in df.columns
+        ]
         if cast_exprs:
             df = df.with_columns(cast_exprs)
 
         # ========== リターン・トレンド ==========
-        df = df.with_columns([
-            pl.col("Close").pct_change().alias("mkt_ret_1d"),
-            pl.col("Close").pct_change(n=5).alias("mkt_ret_5d"),
-            pl.col("Close").pct_change(n=10).alias("mkt_ret_10d"),
-            pl.col("Close").pct_change(n=20).alias("mkt_ret_20d"),
-            pl.col("Close").ewm_mean(span=5, adjust=False).alias("mkt_ema_5"),
-            pl.col("Close").ewm_mean(span=20, adjust=False).alias("mkt_ema_20"),
-            pl.col("Close").ewm_mean(span=60, adjust=False).alias("mkt_ema_60"),
-            pl.col("Close").ewm_mean(span=200, adjust=False).alias("mkt_ema_200"),
-        ])
+        df = df.with_columns(
+            [
+                pl.col("Close").pct_change().alias("mkt_ret_1d"),
+                pl.col("Close").pct_change(n=5).alias("mkt_ret_5d"),
+                pl.col("Close").pct_change(n=10).alias("mkt_ret_10d"),
+                pl.col("Close").pct_change(n=20).alias("mkt_ret_20d"),
+                pl.col("Close").ewm_mean(span=5, adjust=False).alias("mkt_ema_5"),
+                pl.col("Close").ewm_mean(span=20, adjust=False).alias("mkt_ema_20"),
+                pl.col("Close").ewm_mean(span=60, adjust=False).alias("mkt_ema_60"),
+                pl.col("Close").ewm_mean(span=200, adjust=False).alias("mkt_ema_200"),
+            ]
+        )
 
-        df = df.with_columns([
-            ((pl.col("Close") - pl.col("mkt_ema_20")) / pl.col("mkt_ema_20")).alias("mkt_dev_20"),
-            ((pl.col("mkt_ema_5") - pl.col("mkt_ema_20")) / pl.col("mkt_ema_20")).alias("mkt_gap_5_20"),
-            pl.col("mkt_ema_20").pct_change(n=3).alias("mkt_ema20_slope_3"),
-        ])
+        df = df.with_columns(
+            [
+                ((pl.col("Close") - pl.col("mkt_ema_20")) / pl.col("mkt_ema_20")).alias(
+                    "mkt_dev_20"
+                ),
+                (
+                    (pl.col("mkt_ema_5") - pl.col("mkt_ema_20")) / pl.col("mkt_ema_20")
+                ).alias("mkt_gap_5_20"),
+                pl.col("mkt_ema_20").pct_change(n=3).alias("mkt_ema20_slope_3"),
+            ]
+        )
 
         # ========== ボラティリティ・レンジ ==========
-        df = df.with_columns([
-            (pl.col("mkt_ret_1d").rolling_std(20) * np.sqrt(252)).alias("mkt_vol_20d"),
-        ])
+        df = df.with_columns(
+            [
+                (pl.col("mkt_ret_1d").rolling_std(20) * np.sqrt(252)).alias(
+                    "mkt_vol_20d"
+                ),
+            ]
+        )
 
         # ATR/NATR (Open, High, Low必須)
         if all(col in df.columns for col in ["Open", "High", "Low"]):
-            df = df.with_columns([
-                # True Range
-                pl.max_horizontal(
-                    pl.col("High") - pl.col("Low"),
-                    (pl.col("High") - pl.col("Close").shift(1)).abs(),
-                    (pl.col("Low") - pl.col("Close").shift(1)).abs()
-                ).alias("TR")
-            ]).with_columns([
-                pl.col("TR").rolling_mean(window_size=14).alias("mkt_atr_14")
-            ]).with_columns([
-                (pl.col("mkt_atr_14") / pl.col("Close")).alias("mkt_natr_14")
-            ]).drop("TR")
+            df = (
+                df.with_columns(
+                    [
+                        # True Range
+                        pl.max_horizontal(
+                            pl.col("High") - pl.col("Low"),
+                            (pl.col("High") - pl.col("Close").shift(1)).abs(),
+                            (pl.col("Low") - pl.col("Close").shift(1)).abs(),
+                        ).alias("TR")
+                    ]
+                )
+                .with_columns(
+                    [pl.col("TR").rolling_mean(window_size=14).alias("mkt_atr_14")]
+                )
+                .with_columns(
+                    [(pl.col("mkt_atr_14") / pl.col("Close")).alias("mkt_natr_14")]
+                )
+                .drop("TR")
+            )
         else:
             # Open/High/Lowがない場合はCloseのみから簡易版
-            df = df.with_columns([
-                pl.col("Close").pct_change().abs().rolling_mean(14).alias("mkt_atr_14"),
-                pl.col("Close").pct_change().abs().rolling_mean(14).alias("mkt_natr_14"),
-            ])
+            df = df.with_columns(
+                [
+                    pl.col("Close")
+                    .pct_change()
+                    .abs()
+                    .rolling_mean(14)
+                    .alias("mkt_atr_14"),
+                    pl.col("Close")
+                    .pct_change()
+                    .abs()
+                    .rolling_mean(14)
+                    .alias("mkt_natr_14"),
+                ]
+            )
 
         # Bollinger Bands (20, 2σ)
-        df = df.with_columns([
-            pl.col("Close").rolling_mean(20).alias("bb_mid"),
-            pl.col("Close").rolling_std(20).alias("bb_std")
-        ]).with_columns([
-            (pl.col("bb_mid") + 2 * pl.col("bb_std")).alias("bb_up"),
-            (pl.col("bb_mid") - 2 * pl.col("bb_std")).alias("bb_dn"),
-        ]).with_columns([
-            ((pl.col("Close") - pl.col("bb_dn")) / (pl.col("bb_up") - pl.col("bb_dn") + 1e-12)).clip(0, 1).alias("mkt_bb_pct_b"),
-            ((pl.col("bb_up") - pl.col("bb_dn")) / (pl.col("bb_mid") + 1e-12)).alias("mkt_bb_bw")
-        ]).drop(["bb_mid", "bb_std", "bb_up", "bb_dn"])
+        df = (
+            df.with_columns(
+                [
+                    pl.col("Close").rolling_mean(20).alias("bb_mid"),
+                    pl.col("Close").rolling_std(20).alias("bb_std"),
+                ]
+            )
+            .with_columns(
+                [
+                    (pl.col("bb_mid") + 2 * pl.col("bb_std")).alias("bb_up"),
+                    (pl.col("bb_mid") - 2 * pl.col("bb_std")).alias("bb_dn"),
+                ]
+            )
+            .with_columns(
+                [
+                    (
+                        (pl.col("Close") - pl.col("bb_dn"))
+                        / (pl.col("bb_up") - pl.col("bb_dn") + 1e-12)
+                    )
+                    .clip(0, 1)
+                    .alias("mkt_bb_pct_b"),
+                    (
+                        (pl.col("bb_up") - pl.col("bb_dn")) / (pl.col("bb_mid") + 1e-12)
+                    ).alias("mkt_bb_bw"),
+                ]
+            )
+            .drop(["bb_mid", "bb_std", "bb_up", "bb_dn"])
+        )
 
         # ========== ドローダウン・インパルス ==========
-        df = df.with_columns([
-            pl.col("Close").cum_max().alias("cum_peak")
-        ]).with_columns([
-            ((pl.col("Close") - pl.col("cum_peak")) / pl.col("cum_peak")).alias("mkt_dd_from_peak")
-        ]).drop("cum_peak")
+        df = (
+            df.with_columns([pl.col("Close").cum_max().alias("cum_peak")])
+            .with_columns(
+                [
+                    ((pl.col("Close") - pl.col("cum_peak")) / pl.col("cum_peak")).alias(
+                        "mkt_dd_from_peak"
+                    )
+                ]
+            )
+            .drop("cum_peak")
+        )
 
         # Big move flags
-        df = df.with_columns([
-            pl.col("mkt_ret_1d").rolling_std(60).alias("ret_std_60")
-        ]).with_columns([
-            (pl.col("mkt_ret_1d").abs() >= 2.0 * pl.col("ret_std_60")).cast(pl.Int8).alias("mkt_big_move_flag"),
-        ]).drop("ret_std_60")
+        df = (
+            df.with_columns([pl.col("mkt_ret_1d").rolling_std(60).alias("ret_std_60")])
+            .with_columns(
+                [
+                    (pl.col("mkt_ret_1d").abs() >= 2.0 * pl.col("ret_std_60"))
+                    .cast(pl.Int8)
+                    .alias("mkt_big_move_flag"),
+                ]
+            )
+            .drop("ret_std_60")
+        )
 
         # ========== 時系列Z-score (252日、min_periods=252) ==========
         def z_score(col_name: str, window: int = 252, min_periods: int = 60) -> pl.Expr:
@@ -141,33 +204,43 @@ class MarketFeaturesGenerator:
             sd = pl.col(col_name).rolling_std(window, min_periods=min_periods) + 1e-12
             return ((pl.col(col_name) - mu) / sd).alias(f"{col_name}_z")
 
-        df = df.with_columns([
-            z_score("mkt_ret_1d", self.z_score_window, 252),
-            z_score("mkt_vol_20d", self.z_score_window, 252),
-            z_score("mkt_bb_bw", self.z_score_window, 252),
-            z_score("mkt_dd_from_peak", self.z_score_window, 252)
-        ])
+        df = df.with_columns(
+            [
+                z_score("mkt_ret_1d", self.z_score_window, 252),
+                z_score("mkt_vol_20d", self.z_score_window, 252),
+                z_score("mkt_bb_bw", self.z_score_window, 252),
+                z_score("mkt_dd_from_peak", self.z_score_window, 252),
+            ]
+        )
 
         # ========== レジームフラグ ==========
-        df = df.with_columns([
-            (pl.col("Close") > pl.col("mkt_ema_200")).cast(pl.Int8).alias("mkt_bull_200"),
-            (pl.col("mkt_gap_5_20") > 0).cast(pl.Int8).alias("mkt_trend_up"),
-            (pl.col("mkt_vol_20d_z") > 1.0).cast(pl.Int8).alias("mkt_high_vol"),
-            (pl.col("mkt_bb_bw_z") < -1.0).cast(pl.Int8).alias("mkt_squeeze"),
-        ])
+        df = df.with_columns(
+            [
+                (pl.col("Close") > pl.col("mkt_ema_200"))
+                .cast(pl.Int8)
+                .alias("mkt_bull_200"),
+                (pl.col("mkt_gap_5_20") > 0).cast(pl.Int8).alias("mkt_trend_up"),
+                (pl.col("mkt_vol_20d_z") > 1.0).cast(pl.Int8).alias("mkt_high_vol"),
+                (pl.col("mkt_bb_bw_z") < -1.0).cast(pl.Int8).alias("mkt_squeeze"),
+            ]
+        )
 
         # 必要な列のみ選択（Open, High, Low, Closeは除外）
-        keep_cols = [c for c in df.columns if c not in ["Open", "High", "Low", "Close", "Volume"]]
+        keep_cols = [
+            c for c in df.columns if c not in ["Open", "High", "Low", "Close", "Volume"]
+        ]
 
         logger.info(f"✅ Generated {len(keep_cols) - 1} market features from TOPIX")
 
-        return df.select([pl.col("Date")] + [pl.col(c) for c in keep_cols if c != "Date"])
+        return df.select(
+            [pl.col("Date")] + [pl.col(c) for c in keep_cols if c != "Date"]
+        )
 
 
 class CrossMarketFeaturesGenerator:
     """
     銘柄×市場のクロス特徴量生成器
-    
+
     8個のクロス特徴量を生成:
     - beta_60d: 60日ベータ
     - alpha_1d: 1日アルファ（残差リターン）
@@ -187,17 +260,15 @@ class CrossMarketFeaturesGenerator:
         self.beta_lag = int(beta_lag) if beta_lag is not None else 1
 
     def attach_market_and_cross(
-        self,
-        stock_df: pl.DataFrame,
-        market_df: pl.DataFrame
+        self, stock_df: pl.DataFrame, market_df: pl.DataFrame
     ) -> pl.DataFrame:
         """
         銘柄データに市場特徴量を結合し、クロス特徴量を生成
-        
+
         Args:
             stock_df: 銘柄データ (Code, Date, returns_1d, returns_5d等が必要)
             market_df: 市場特徴量 (Date, mkt_ret_1d, mkt_ret_5d等)
-        
+
         Returns:
             市場特徴量とクロス特徴量を含むDataFrame
         """
@@ -214,97 +285,218 @@ class CrossMarketFeaturesGenerator:
         if "returns_1d" in df.columns and "mkt_ret_1d" in df.columns:
             # 市場リターンをラグ（0でラグなし、1でt-1）
             lag = max(0, self.beta_lag)
-            df = df.with_columns([
-                (pl.col("mkt_ret_1d").shift(lag).over("Code") if lag > 0 else pl.col("mkt_ret_1d")).alias("mkt_ret_lag1")
-            ])
+            df = df.with_columns(
+                [
+                    (
+                        pl.col("mkt_ret_1d").shift(lag).over("Code")
+                        if lag > 0
+                        else pl.col("mkt_ret_1d")
+                    ).alias("mkt_ret_lag1")
+                ]
+            )
 
-            df = df.with_columns([
-                # 各銘柄ごとに計算（t-1ラグ付き）
-                (pl.col("returns_1d") * pl.col("mkt_ret_lag1")).alias("xy_prod"),
-            ])
+            df = df.with_columns(
+                [
+                    # 各銘柄ごとに計算（t-1ラグ付き）
+                    (pl.col("returns_1d") * pl.col("mkt_ret_lag1")).alias("xy_prod"),
+                ]
+            )
 
             # 60日ローリング統計（min_periods適用）
-            df = df.with_columns([
-                # E[X], E[Y], E[XY], E[X^2], E[Y^2]
-                pl.col("returns_1d").rolling_mean(60, min_periods=60).over("Code").alias("x_mean"),
-                pl.col("mkt_ret_lag1").rolling_mean(60, min_periods=60).over("Code").alias("y_mean"),
-                pl.col("xy_prod").rolling_mean(60, min_periods=60).over("Code").alias("xy_mean"),
-                (pl.col("returns_1d") ** 2).rolling_mean(60, min_periods=60).over("Code").alias("x2_mean"),
-                (pl.col("mkt_ret_lag1") ** 2).rolling_mean(60, min_periods=60).over("Code").alias("y2_mean"),
-            ])
+            df = df.with_columns(
+                [
+                    # E[X], E[Y], E[XY], E[X^2], E[Y^2]
+                    pl.col("returns_1d")
+                    .rolling_mean(60, min_periods=60)
+                    .over("Code")
+                    .alias("x_mean"),
+                    pl.col("mkt_ret_lag1")
+                    .rolling_mean(60, min_periods=60)
+                    .over("Code")
+                    .alias("y_mean"),
+                    pl.col("xy_prod")
+                    .rolling_mean(60, min_periods=60)
+                    .over("Code")
+                    .alias("xy_mean"),
+                    (pl.col("returns_1d") ** 2)
+                    .rolling_mean(60, min_periods=60)
+                    .over("Code")
+                    .alias("x2_mean"),
+                    (pl.col("mkt_ret_lag1") ** 2)
+                    .rolling_mean(60, min_periods=60)
+                    .over("Code")
+                    .alias("y2_mean"),
+                ]
+            )
 
             # Cov, Var計算
-            df = df.with_columns([
-                (pl.col("xy_mean") - pl.col("x_mean") * pl.col("y_mean")).alias("cov_xy"),
-                (pl.col("y2_mean") - pl.col("y_mean") ** 2).alias("var_y")
-            ])
+            df = df.with_columns(
+                [
+                    (pl.col("xy_mean") - pl.col("x_mean") * pl.col("y_mean")).alias(
+                        "cov_xy"
+                    ),
+                    (pl.col("y2_mean") - pl.col("y_mean") ** 2).alias("var_y"),
+                ]
+            )
 
             # β = Cov(X,Y) / Var(Y) with t-1 lag
-            df = df.with_columns([
-                (pl.col("cov_xy") / (pl.col("var_y") + 1e-12)).alias("beta_60d_raw")
-            ])
+            df = df.with_columns(
+                [(pl.col("cov_xy") / (pl.col("var_y") + 1e-12)).alias("beta_60d_raw")]
+            )
             # フォールバック(beta_20d)を併用しcoalesce列を提供
-            df = df.with_columns([
-                pl.col("returns_1d").rolling_mean(20, min_periods=20).over("Code").alias("x_mean20"),
-                pl.col("mkt_ret_lag1").rolling_mean(20, min_periods=20).over("Code").alias("y_mean20"),
-                (pl.col("returns_1d") * pl.col("mkt_ret_lag1")).rolling_mean(20, min_periods=20).over("Code").alias("xy_mean20"),
-                (pl.col("returns_1d")**2).rolling_mean(20, min_periods=20).over("Code").alias("x2_mean20"),
-                (pl.col("mkt_ret_lag1")**2).rolling_mean(20, min_periods=20).over("Code").alias("y2_mean20"),
-            ]).with_columns([
-                (pl.col("xy_mean20") - pl.col("x_mean20") * pl.col("y_mean20")).alias("cov_xy20"),
-                (pl.col("y2_mean20") - pl.col("y_mean20")**2).alias("var_y20")
-            ]).with_columns([
-                (pl.col("cov_xy20") / (pl.col("var_y20") + 1e-12)).alias("beta_20d_raw")
-            ]).with_columns([
-                pl.coalesce([pl.col("beta_60d_raw"), pl.col("beta_20d_raw")]).alias("beta_rolling")
-            ]).with_columns([
-                # 仕様名に合わせた列（互換のためbeta_rollingも残す）
-                pl.col("beta_rolling").alias("beta_60d")
-            ]).drop(["x_mean20","y_mean20","xy_mean20","x2_mean20","y2_mean20","cov_xy20","var_y20"])
+            df = (
+                df.with_columns(
+                    [
+                        pl.col("returns_1d")
+                        .rolling_mean(20, min_periods=20)
+                        .over("Code")
+                        .alias("x_mean20"),
+                        pl.col("mkt_ret_lag1")
+                        .rolling_mean(20, min_periods=20)
+                        .over("Code")
+                        .alias("y_mean20"),
+                        (pl.col("returns_1d") * pl.col("mkt_ret_lag1"))
+                        .rolling_mean(20, min_periods=20)
+                        .over("Code")
+                        .alias("xy_mean20"),
+                        (pl.col("returns_1d") ** 2)
+                        .rolling_mean(20, min_periods=20)
+                        .over("Code")
+                        .alias("x2_mean20"),
+                        (pl.col("mkt_ret_lag1") ** 2)
+                        .rolling_mean(20, min_periods=20)
+                        .over("Code")
+                        .alias("y2_mean20"),
+                    ]
+                )
+                .with_columns(
+                    [
+                        (
+                            pl.col("xy_mean20")
+                            - pl.col("x_mean20") * pl.col("y_mean20")
+                        ).alias("cov_xy20"),
+                        (pl.col("y2_mean20") - pl.col("y_mean20") ** 2).alias(
+                            "var_y20"
+                        ),
+                    ]
+                )
+                .with_columns(
+                    [
+                        (pl.col("cov_xy20") / (pl.col("var_y20") + 1e-12)).alias(
+                            "beta_20d_raw"
+                        )
+                    ]
+                )
+                .with_columns(
+                    [
+                        pl.coalesce(
+                            [pl.col("beta_60d_raw"), pl.col("beta_20d_raw")]
+                        ).alias("beta_rolling")
+                    ]
+                )
+                .with_columns(
+                    [
+                        # 仕様名に合わせた列（互換のためbeta_rollingも残す）
+                        pl.col("beta_rolling").alias("beta_60d")
+                    ]
+                )
+                .drop(
+                    [
+                        "x_mean20",
+                        "y_mean20",
+                        "xy_mean20",
+                        "x2_mean20",
+                        "y2_mean20",
+                        "cov_xy20",
+                        "var_y20",
+                    ]
+                )
+            )
 
             # 中間変数を削除
-            df = df.drop(["mkt_ret_lag1", "xy_prod", "x_mean", "y_mean", "xy_mean", "x2_mean", "y2_mean", "cov_xy", "var_y"])
+            df = df.drop(
+                [
+                    "mkt_ret_lag1",
+                    "xy_prod",
+                    "x_mean",
+                    "y_mean",
+                    "xy_mean",
+                    "x2_mean",
+                    "y2_mean",
+                    "cov_xy",
+                    "var_y",
+                ]
+            )
 
             # ========== 残差・相対強さ・整合性 ==========
-            df = df.with_columns([
-                # α (残差リターン)
-                (pl.col("returns_1d") - pl.col("beta_60d") * pl.col("mkt_ret_1d")).alias("alpha_1d"),
-            ])
+            df = df.with_columns(
+                [
+                    # α (残差リターン)
+                    (
+                        pl.col("returns_1d") - pl.col("beta_60d") * pl.col("mkt_ret_1d")
+                    ).alias("alpha_1d"),
+                ]
+            )
 
             # 5日リターンが存在する場合
             if "returns_5d" in df.columns and "mkt_ret_5d" in df.columns:
-                df = df.with_columns([
-                    (pl.col("returns_5d") - pl.col("beta_60d") * pl.col("mkt_ret_5d")).alias("alpha_5d"),
-                    (pl.col("returns_5d") - pl.col("mkt_ret_5d")).alias("rel_strength_5d"),
-                ])
+                df = df.with_columns(
+                    [
+                        (
+                            pl.col("returns_5d")
+                            - pl.col("beta_60d") * pl.col("mkt_ret_5d")
+                        ).alias("alpha_5d"),
+                        (pl.col("returns_5d") - pl.col("mkt_ret_5d")).alias(
+                            "rel_strength_5d"
+                        ),
+                    ]
+                )
 
             # トレンド整合性（ema_gap_5_20が銘柄側の特徴）
             if "ma_gap_5_20" in df.columns and "mkt_gap_5_20" in df.columns:
-                df = df.with_columns([
-                    # 仕様準拠: sign 同士の一致で整合性フラグを作る
-                    (pl.col("ma_gap_5_20").sign() == pl.col("mkt_gap_5_20").sign())
-                    .cast(pl.Int8)
-                    .alias("trend_align_mkt"),
-                    # 仕様準拠: alpha_vs_regime = alpha_1d * mkt_bull_200
-                    (pl.col("alpha_1d") * pl.col("mkt_bull_200").cast(pl.Float64)).alias("alpha_vs_regime"),
-                ])
+                df = df.with_columns(
+                    [
+                        # 仕様準拠: sign 同士の一致で整合性フラグを作る
+                        (pl.col("ma_gap_5_20").sign() == pl.col("mkt_gap_5_20").sign())
+                        .cast(pl.Int8)
+                        .alias("trend_align_mkt"),
+                        # 仕様準拠: alpha_vs_regime = alpha_1d * mkt_bull_200
+                        (
+                            pl.col("alpha_1d") * pl.col("mkt_bull_200").cast(pl.Float64)
+                        ).alias("alpha_vs_regime"),
+                    ]
+                )
 
             # アイディオシンクラティック・ボラティリティ比
             # DATASET.md定義: idio_vol_ratio = volatility_20d/(mkt_vol_20d+1e-12)
             if "volatility_20d" in df.columns and "mkt_vol_20d" in df.columns:
-                df = df.with_columns([
-                    (pl.col("volatility_20d") /
-                     (pl.col("mkt_vol_20d") + 1e-12)).alias("idio_vol_ratio"),
-                ])
+                df = df.with_columns(
+                    [
+                        (
+                            pl.col("volatility_20d") / (pl.col("mkt_vol_20d") + 1e-12)
+                        ).alias("idio_vol_ratio"),
+                    ]
+                )
 
             # β安定性（仕様準拠: 1/(std(beta_60d, 20) + 1e-12)）
-            df = df.with_columns([
-                (1.0 / (pl.col("beta_60d").rolling_std(20, min_periods=20).over("Code") + 1e-12))
-                .alias("beta_stability_60d")
-            ])
+            df = df.with_columns(
+                [
+                    (
+                        1.0
+                        / (
+                            pl.col("beta_60d")
+                            .rolling_std(20, min_periods=20)
+                            .over("Code")
+                            + 1e-12
+                        )
+                    ).alias("beta_stability_60d")
+                ]
+            )
 
             logger.info("✅ Generated cross features (beta, alpha, relative strength)")
         else:
-            logger.warning("⚠️ Required columns for cross features not found (returns_1d, mkt_ret_1d)")
+            logger.warning(
+                "⚠️ Required columns for cross features not found (returns_1d, mkt_ret_1d)"
+            )
 
         return df
