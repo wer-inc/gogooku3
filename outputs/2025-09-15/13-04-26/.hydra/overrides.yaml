@@ -1,7 +1,0 @@
-- pipeline.output_dir=/home/ubuntu/gogooku3-standalone/quality_gate_test
-- pipeline.start_date=2025-09-01
-- pipeline.end_date=2025-09-05
-- pipeline.jquants=false
-- pipeline.quality_checks.enabled=true
-- pipeline.resilience.enabled=true
-- pipeline.profiling.enabled=true

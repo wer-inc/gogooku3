@@ -1,4 +1,0 @@
-- pipeline.start_date=2025-09-01
-- pipeline.end_date=2025-09-30
-- pipeline.output_dir=/home/ubuntu/gogooku3-standalone/benchmark_output/scaling_test_4
-- pipeline.jquants=false

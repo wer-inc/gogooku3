@@ -1,4 +1,0 @@
-- pipeline.update_mode=incremental
-- pipeline.since_date=2025-09-09
-- pipeline.output_dir=/home/ubuntu/gogooku3-standalone/benchmark_output/incremental_comparison
-- pipeline.jquants=false

@@ -1,9 +1,0 @@
-- data.source.data_dir=output/atft_data
-- train.batch.train_batch_size=256
-- train.batch.num_workers=0
-- train.optimizer.lr=0.0002
-- train.trainer.max_epochs=120
-- train.trainer.precision=16-mixed
-- train.trainer.check_val_every_n_epoch=1
-- train.trainer.enable_progress_bar=true
-- model.hidden_size=256
