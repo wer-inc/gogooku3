@@ -196,9 +196,9 @@ lsof -i :9001  # MinIO
 
 ## 📚 詳細ドキュメント
 
-- [実装状況レポート](IMPLEMENTATION_STATUS.md)
+- [実装状況レポート](../_archive/reports_original/IMPLEMENTATION_STATUS.md)
 - [設計仕様書](docs/archive/gogooku3-spec.md)
-- [MLデータセット仕様](docs/ML_DATASET_COLUMNS.md)
+- [MLデータセット仕様](../_archive/specifications_original/ML_DATASET_COLUMNS.md)
 
 ## 💡 便利なコマンド
 
@@ -223,4 +223,4 @@ docker exec -it gogooku3-redis redis-cli -a gogooku123
 ```
 
 ---
-*サポートが必要な場合は、[docs/brain.md](docs/brain.md)を参照*
+*サポートが必要な場合は、[docs/brain.md](../_archive/legacy/brain.md)を参照*
