@@ -136,3 +136,4 @@ DISPOSITION.csv
 cleanup_execution_report.md
 logs/
 outputs/
+.env
