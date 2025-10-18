@@ -1,0 +1,237 @@
+# RankIC Progressive Training Configuration (Phase 1)
+# Designed to improve RankIC from 0.0014 to 0.040+
+# Progressive shift: RankIC重視 → IC/Sharpe バランス
+
+# Training configuration
+trainer:
+  max_epochs: 20  # Phase 1 validation
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  log_every_n_steps: 50
+
+# Optimizer configuration
+optimizer:
+  type: AdamW
+  lr: 2e-4
+  weight_decay: 1e-5
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+# Learning rate scheduler
+scheduler:
+  type: ReduceLROnPlateau
+  monitor: val/rank_ic_5d  # Monitor RankIC for Phase 1
+  mode: max
+  patience: 5
+  factor: 0.5
+  min_lr: 1e-6
+  verbose: true
+
+# Batch configuration
+batch:
+  train_batch_size: 2048
+  val_batch_size: 4096
+  num_workers: 8
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+
+# Loss configuration (Phase 1: RankIC最優先)
+loss:
+  # Main prediction loss
+  main:
+    type: quantile
+    weight: 0.5  # Increased from 0.3 for better base prediction
+
+  # Auxiliary losses
+  auxiliary:
+    # RankIC loss (PRIMARY in Phase 1)
+    ranking_loss:
+      enabled: true
+      type: pairwise_rank
+      weight: 0.5  # MAXIMUM focus on RankIC
+      scale: 5.0
+      topk: 0
+
+    # Cross-sectional IC
+    cs_ic_loss:
+      enabled: true
+      weight: 0.3  # Increased from 0.15
+
+    # Sharpe loss (REDUCED in Phase 1)
+    sharpe_loss:
+      enabled: true
+      type: multi
+      sharpe_weight: 0.1  # Reduced from 0.4
+      sortino_weight: 0.0  # Disabled for Phase 1
+      calmar_weight: 0.0   # Disabled for Phase 1
+      min_periods: 30
+      annualization_factor: 252
+
+    # Transaction cost (minimal)
+    transaction_cost:
+      enabled: true
+      weight: 0.05  # Minimal during Phase 1
+      cost_bps: 10
+
+    # Temporal consistency
+    temporal_consistency:
+      enabled: true
+      weight: 0.05
+      use_squared: false
+
+# Multi-horizon configuration
+prediction:
+  use_multi_horizon_heads: true
+  horizons: [1, 5, 10, 20]
+  horizon_weights:
+    1: 1.0
+    5: 1.2  # Focus on 5-day for RankIC
+    10: 0.8
+    20: 0.5
+  primary_horizon: 5  # RankIC @5d is primary metric
+
+# Early stopping (monitor RankIC)
+early_stopping:
+  monitor: val/rank_ic_5d
+  mode: max
+  patience: 8  # More patient in Phase 1
+  min_delta: 0.005
+  verbose: true
+
+# Validation configuration
+validation:
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+
+# Logging configuration
+logging:
+  log_dir: logs/phase1_rankic_progressive
+  experiment_name: phase1_rankic_optimization
+  log_model_checkpoints: true
+
+  # Track critical Phase 1 metrics
+  metrics_to_track:
+    - train_loss
+    - val_loss
+    - val/rank_ic_1d
+    - val/rank_ic_5d
+    - val/rank_ic_10d
+    - val/ic_1d
+    - val/ic_5d
+    - val/sharpe_ratio
+    - ranking_loss
+    - cs_ic_loss
+
+# Checkpoint configuration
+checkpoint:
+  save_top_k: 3
+  monitor: val/rank_ic_5d  # Save best RankIC models
+  mode: max
+  save_last: true
+  filename: "phase1_epoch{epoch:02d}_rankic{val/rank_ic_5d:.4f}"
+  auto_insert_metric_name: false
+
+# Phase-based progressive loss weights
+# Gradual shift from pure RankIC → balanced IC/Sharpe
+phase_config:
+  enabled: true
+  phases:
+    # Phase 0: Pure RankIC focus (Epoch 0-5)
+    - name: rankic_baseline
+      epochs: 5
+      loss_weights:
+        quantile: 0.5
+        ranking: 0.5     # Maximum RankIC
+        cs_ic: 0.0       # Not yet
+        sharpe: 0.0      # Not yet
+        transaction_cost: 0.0
+        temporal_consistency: 0.0
+
+    # Phase 1: Introduce IC (Epoch 6-10)
+    - name: rankic_ic_intro
+      epochs: 5
+      loss_weights:
+        quantile: 0.5
+        ranking: 0.4
+        cs_ic: 0.3       # Introduce IC
+        sharpe: 0.0
+        transaction_cost: 0.05
+        temporal_consistency: 0.05
+
+    # Phase 2: Balance RankIC + IC (Epoch 11-15)
+    - name: balanced_ic
+      epochs: 5
+      loss_weights:
+        quantile: 0.4
+        ranking: 0.3
+        cs_ic: 0.3
+        sharpe: 0.1      # Minimal Sharpe
+        transaction_cost: 0.05
+        temporal_consistency: 0.05
+
+    # Phase 3: Introduce Sharpe (Epoch 16-20)
+    - name: sharpe_intro
+      epochs: 5
+      loss_weights:
+        quantile: 0.3
+        ranking: 0.3
+        cs_ic: 0.25
+        sharpe: 0.15     # Gradually increase Sharpe
+        transaction_cost: 0.05
+        temporal_consistency: 0.1
+
+# Regularization
+regularization:
+  dropout: 0.2
+  weight_decay: 1e-5
+  label_smoothing: 0.0
+
+  # Prediction consistency
+  prediction_smoothing:
+    enabled: false  # Disabled for Phase 1
+
+# Performance optimization
+performance:
+  compile_model: false  # Disabled for Phase 1 (easier debugging)
+  use_amp: true
+  amp_dtype: bf16
+  cudnn_benchmark: true
+  num_workers: 8
+  persistent_workers: true
+
+# Debugging
+debug:
+  enabled: false
+  fast_dev_run: false
+  detect_anomaly: false
+  profiler: false
+
+# Experiment tracking
+experiment:
+  tags:
+    - phase1
+    - rankic_optimization
+    - progressive_loss_weights
+  notes: |
+    Phase 1: RankIC Progressive Optimization
+
+    Goal: Improve Val RankIC from 0.0014 to 0.025-0.035
+    Strategy: Progressive loss weight adjustment
+
+    Phase 0 (0-5): Pure RankIC focus (weight=0.5)
+    Phase 1 (6-10): RankIC + IC (0.4 + 0.3)
+    Phase 2 (11-15): Balanced IC (0.3 + 0.3)
+    Phase 3 (16-20): Introduce Sharpe (0.3 + 0.25 + 0.15)
+
+    Expected outcomes after 20 epochs:
+    - Val RankIC: 0.0014 → 0.025-0.035 (18-25x improvement)
+    - Val IC: 0.0082 → 0.015-0.020 (2-2.5x improvement)
+    - Val Sharpe: -0.007 → 0.003-0.008 (positive territory)
+
+    Success criteria:
+    - Val RankIC @5d > 0.020
+    - Val IC @5d > 0.015
+    - Val Sharpe > 0
+    - No training instability
