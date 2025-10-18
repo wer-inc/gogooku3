@@ -128,13 +128,26 @@ class ATFTOptunaOptimizer:
 
             # DataLoader: ENHANCED parallel loading with spawn context (fixes CPU bottleneck)
             # spawn avoids fork() thread deadlock on 256-core systems
-            env["ALLOW_UNSAFE_DATALOADER"] = "1"
-            env["NUM_WORKERS"] = "4"  # INCREASED: 2→4 for better GPU utilization
-            env["MULTIPROCESSING_CONTEXT"] = "spawn"  # Avoid fork() deadlock
-            env["PREFETCH_FACTOR"] = "4"  # INCREASED: 2→4 for better prefetch
-            env["PIN_MEMORY"] = "1"
-            env["PIN_MEMORY_DEVICE"] = "cuda:0"  # Explicit device pinning
-            env["PERSISTENT_WORKERS"] = "1"
+            # IMPORTANT: Respect FORCE_SINGLE_PROCESS flag for Safe Mode
+            if env.get("FORCE_SINGLE_PROCESS") == "1":
+                # Safe Mode: single-process DataLoader (stability over speed)
+                env["ALLOW_UNSAFE_DATALOADER"] = env.get("ALLOW_UNSAFE_DATALOADER", "0")
+                env["NUM_WORKERS"] = env.get("NUM_WORKERS", "0")
+                env["PERSISTENT_WORKERS"] = env.get("PERSISTENT_WORKERS", "0")
+                # Keep other settings from parent environment
+            else:
+                # Optimized Mode: multi-worker DataLoader for better GPU utilization
+                env["ALLOW_UNSAFE_DATALOADER"] = env.get("ALLOW_UNSAFE_DATALOADER", "1")
+                env["NUM_WORKERS"] = env.get("NUM_WORKERS", "4")  # INCREASED: 2→4
+                env["MULTIPROCESSING_CONTEXT"] = env.get(
+                    "MULTIPROCESSING_CONTEXT", "spawn"
+                )
+                env["PREFETCH_FACTOR"] = env.get(
+                    "PREFETCH_FACTOR", "4"
+                )  # INCREASED: 2→4
+                env["PIN_MEMORY"] = env.get("PIN_MEMORY", "1")
+                env["PIN_MEMORY_DEVICE"] = env.get("PIN_MEMORY_DEVICE", "cuda:0")
+                env["PERSISTENT_WORKERS"] = env.get("PERSISTENT_WORKERS", "1")
 
             # Memory Optimization
             env["RMM_POOL_SIZE"] = "70GB"  # 70GB for A100 80GB (留余10GB)
@@ -161,8 +174,10 @@ class ATFTOptunaOptimizer:
             env["CS_IC_WEIGHT"] = "0.3"  # Cross-sectional IC
             env["SHARPE_WEIGHT"] = "0.1"  # Reduced Sharpe weight
 
-            # Phase training: Remove batch cap
-            env["PHASE_MAX_BATCHES"] = "0"  # No limit (full dataset)
+            # Phase training: Respect PHASE_MAX_BATCHES if set (for minimal testing)
+            # Default to full dataset (0 = no limit) if not explicitly set
+            if "PHASE_MAX_BATCHES" not in env or not env.get("PHASE_MAX_BATCHES"):
+                env["PHASE_MAX_BATCHES"] = "0"  # No limit (full dataset)
 
             # Validation logging: Reduce verbosity
             env["VAL_DEBUG_LOGGING"] = "0"  # Disable per-batch VAL-DEBUG logs
