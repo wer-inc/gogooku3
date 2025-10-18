@@ -70,10 +70,20 @@ train:
 	@echo "   Hidden size: $(HIDDEN_SIZE)"
 	@echo "   Dataset: $(DATA_PATH)"
 	@echo ""
+	@echo "   Loss weights (Phase 1 optimized):"
+	@echo "   - RANKIC_WEIGHT=0.5 (RankIC focus)"
+	@echo "   - CS_IC_WEIGHT=0.3 (IC optimization)"
+	@echo "   - SHARPE_WEIGHT=0.1 (Reduced Sharpe)"
+	@echo ""
 	@mkdir -p $(LOG_DIR)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
 	LOG_FILE="$(LOG_DIR)/train_$${TIMESTAMP}.log"; \
 	echo "📝 Log file: $$LOG_FILE"; \
+	USE_RANKIC=1 \
+	RANKIC_WEIGHT=0.5 \
+	CS_IC_WEIGHT=0.3 \
+	SHARPE_WEIGHT=0.1 \
+	VAL_DEBUG_LOGGING=0 \
 	nohup python scripts/train.py \
 		--data-path $(DATA_PATH) \
 		--epochs $(EPOCHS) \
@@ -93,7 +103,13 @@ train:
 train-quick:
 	@echo "⚡ Running quick validation (3 epochs)"
 	@echo "   This will run in foreground for immediate feedback"
-	@python scripts/train.py \
+	@echo "   Loss weights: RANKIC=0.5, CS_IC=0.3, SHARPE=0.1"
+	@USE_RANKIC=1 \
+	RANKIC_WEIGHT=0.5 \
+	CS_IC_WEIGHT=0.3 \
+	SHARPE_WEIGHT=0.1 \
+	VAL_DEBUG_LOGGING=0 \
+	python scripts/train.py \
 		--data-path $(DATA_PATH) \
 		--epochs 3 \
 		--batch-size $(BATCH_SIZE) \
