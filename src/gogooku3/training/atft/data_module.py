@@ -966,7 +966,7 @@ class StreamingParquetDataset(Dataset):
         all_features = []
         samples_per_file = max(1, max_samples // len(self.file_paths))
 
-        for file_path in self.file_paths[:5]:  # Use first 5 files for speed
+        for file_path in self.file_paths[: min(50, len(self.file_paths))]:  # Expanded from 5 to 50 for better statistics
             try:
                 df = pl.scan_parquet(file_path).select(self.feature_columns).head(samples_per_file).collect(streaming=True)
                 features = df.to_numpy().astype(np.float64)
