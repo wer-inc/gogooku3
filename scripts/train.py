@@ -106,7 +106,7 @@ def main() -> int:
     # Build command for integrated_ml_training_pipeline.py
     script_path = Path(__file__).parent / "integrated_ml_training_pipeline.py"
     cmd = [
-        "python",
+        sys.executable,
         str(script_path),
         "--data-path",
         args.data_path,

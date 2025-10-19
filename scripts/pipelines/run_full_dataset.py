@@ -72,6 +72,38 @@ DEFAULT_LOOKBACK_DAYS = 1826  # ~5 years
 FLOW_SUPPORT_LOOKBACK_DAYS = 420  # ensure >52w history for flow z-scores
 
 
+def _get_jquants_plan_tier() -> str:
+    """
+    Get J-Quants plan tier from environment variable.
+
+    Returns:
+        str: Plan tier ('standard' or 'premium'), defaults to 'standard'
+    """
+    return os.getenv("JQUANTS_PLAN_TIER", "standard").lower()
+
+
+def _is_futures_available() -> bool:
+    """
+    Check if futures API is available based on J-Quants plan tier.
+
+    Futures data (/derivatives/futures) is only available on Premium plan.
+
+    Returns:
+        bool: True if Premium plan (futures available), False otherwise
+    """
+    plan_tier = _get_jquants_plan_tier()
+    is_available = plan_tier == "premium"
+
+    if is_available:
+        logger.debug("Futures API enabled (Premium plan detected)")
+    else:
+        logger.debug(
+            f"Futures API disabled (plan tier: {plan_tier}, requires: premium)"
+        )
+
+    return is_available
+
+
 def _mask_email(value: str) -> str:
     """Return a masked representation of the J-Quants account email."""
     if "@" not in value:
@@ -587,6 +619,20 @@ async def main() -> int:
     creds_ok = True
     if args.jquants:
         creds_ok = _check_jquants_credentials(strict=args.check_env_only)
+
+    # Display J-Quants plan tier information
+    plan_tier = _get_jquants_plan_tier()
+    logger.info("=" * 80)
+    logger.info(f"📋 J-Quants Plan Tier: {plan_tier.upper()}")
+    if _is_futures_available():
+        logger.info("✅ Futures API enabled (Premium plan)")
+        logger.info("   → Full feature set available (~395 features)")
+    else:
+        logger.info("⚠️  Futures API disabled (Standard plan)")
+        logger.info("   → ~303-307 features available (88-92 futures features excluded)")
+        logger.info("   → To enable: Set JQUANTS_PLAN_TIER=premium in .env")
+    logger.info("=" * 80)
+
     # GPU graph check: only strict if --require-gpu-graph is explicitly set
     gpu_ready = _check_gpu_graph_support(strict=args.require_gpu_graph)
 
@@ -1167,12 +1213,12 @@ async def main() -> int:
                         f"❌ Authentication failed for short selling/futures fetch: {e}"
                     )
                     raise  # Re-raise to skip the rest of the block
-                # Futures data (disabled - API not available)
-                # NOTE: /derivatives/futures API is not currently available in J-Quants
-                # Implementation kept for future use but disabled by default
-                if False:  # Disabled: was `not args.disable_futures or (args.futures_parquet is not None)`
+                # Futures data (Premium plan only)
+                # NOTE: /derivatives/futures API is only available on Premium plan
+                # Automatically enabled when JQUANTS_PLAN_TIER=premium
+                if _is_futures_available():
                     try:
-                        logger.info("Fetching futures data for derivatives features")
+                        logger.info("Fetching futures data for derivatives features (Premium plan)")
                         futures_df = await fetcher.get_futures_daily(
                             _session_aux, start_date, end_date
                         )
@@ -1357,9 +1403,11 @@ async def main() -> int:
                 "No listed_info parquet provided/found; sector enrichment will be skipped"
             )
 
-        # Offline futures fallback (disabled - API not available)
-        # NOTE: Futures features are disabled as /derivatives/futures API is not available
-        if False:  # Disabled: was `(not getattr(args, "disable_futures", False)) or args.futures_parquet is not None`
+        # Offline futures fallback (Premium plan only)
+        # NOTE: Futures features are only available on Premium plan
+        # Automatically enabled when JQUANTS_PLAN_TIER=premium
+        futures_path: Path | None = None
+        if _is_futures_available():
             if args.futures_parquet is not None and args.futures_parquet.exists():
                 futures_path = args.futures_parquet
                 logger.info(f"Using provided futures parquet: {futures_path}")
@@ -1513,10 +1561,15 @@ async def main() -> int:
         or None,
         statements_parquet=args.statements_parquet,
         listed_info_parquet=listed_info_path,
-        enable_futures=False,  # Disabled: /derivatives/futures API not available
-        futures_parquet=None,  # Disabled: was futures_path
-        futures_categories=[],  # Disabled: no categories
-        futures_continuous=False,  # Disabled: was args.futures_continuous
+        # Futures features (Premium plan only - auto-enabled via JQUANTS_PLAN_TIER)
+        enable_futures=_is_futures_available(),
+        futures_parquet=futures_path if _is_futures_available() else None,
+        futures_categories=(
+            ["TOPIXF", "NK225F", "JN400F", "REITF"] if _is_futures_available() else []
+        ),
+        futures_continuous=(
+            getattr(args, "futures_continuous", False) if _is_futures_available() else False
+        ),
         nk225_parquet=getattr(args, "nk225_parquet", None),
         reit_parquet=getattr(args, "reit_parquet", None),
         jpx400_parquet=getattr(args, "jpx400_parquet", None),

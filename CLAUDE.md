@@ -172,6 +172,120 @@ make update-cache-silent       # Silent mode for cron execution
 # - With daily updates: 100% cache hit (no misses after 8am)
 ```
 
+## J-Quants Plan Management
+
+### Current Plan: Standard (10-year data)
+
+The project is configured for **J-Quants Standard plan** with automatic Premium migration support.
+
+**Features Available**:
+- ✅ All APIs except futures (~303-307 features)
+- ✅ 10-year historical data
+- ✅ Daily margin interest
+- ✅ Index options (NK225)
+- ✅ Short selling data
+- ✅ Earnings announcements
+
+**Futures API Status**: Disabled (Premium required)
+- 88-92 futures features excluded
+- Automatically enables when upgraded to Premium
+
+### Premium Migration (1-Minute Process)
+
+When you upgrade to J-Quants Premium plan:
+
+1. **Edit `.env`**:
+   ```bash
+   # Change this line:
+   JQUANTS_PLAN_TIER=standard
+
+   # To this:
+   JQUANTS_PLAN_TIER=premium
+   ```
+
+2. **Regenerate dataset**:
+   ```bash
+   make dataset-bg
+   ```
+
+3. **Verify**:
+   ```bash
+   # Check logs for:
+   # ✅ Futures API enabled (Premium plan)
+   # → Full feature set available (~395 features)
+   ```
+
+**What Changes**:
+- ✅ Futures API automatically enabled
+- ✅ +88-92 futures features added
+- ✅ Total features: ~395 (from ~307)
+- ✅ No code changes required
+
+### Plan Detection
+
+The system automatically detects your plan tier from `.env`:
+
+```bash
+# Standard plan (default)
+JQUANTS_PLAN_TIER=standard
+
+# Premium plan (after upgrade)
+JQUANTS_PLAN_TIER=premium
+```
+
+**Startup Logs**:
+```
+================================================================================
+📋 J-Quants Plan Tier: STANDARD
+⚠️  Futures API disabled (Standard plan)
+   → ~303-307 features available (88-92 futures features excluded)
+   → To enable: Set JQUANTS_PLAN_TIER=premium in .env
+================================================================================
+```
+
+### Testing Premium Migration
+
+Before actual migration, test the logic:
+
+```bash
+python scripts/test_premium_simulation.py
+```
+
+**Expected Output**:
+```
+================================================================================
+ALL TESTS PASSED ✅
+================================================================================
+
+Premium migration is ready:
+1. To enable futures API, set JQUANTS_PLAN_TIER=premium in .env
+2. Restart dataset generation: make dataset-bg
+3. Futures features will be automatically enabled
+```
+
+### Feature Comparison
+
+| Feature | Standard | Premium |
+|---------|----------|---------|
+| **Data Period** | 10 years | Unlimited |
+| **Price Data** | ✅ OHLCV (close) | ✅ OHLCV + AM/PM |
+| **Futures** | ❌ Disabled | ✅ Enabled |
+| **Options** | ✅ Enabled | ✅ Enabled |
+| **Margin Data** | ✅ Daily/Weekly | ✅ Daily/Weekly |
+| **Short Selling** | ✅ Enabled | ✅ Enabled |
+| **Total Features** | ~303-307 | ~395 |
+| **Futures Features** | 0 | 88-92 |
+
+### Implementation Details
+
+The plan management system uses:
+- **Environment variable**: `JQUANTS_PLAN_TIER` in `.env`
+- **Helper functions**: `_get_jquants_plan_tier()`, `_is_futures_available()`
+- **Auto-configuration**: Futures API, parquet paths, and categories
+- **Zero migration cost**: No code changes required
+
+See `JQUANTS_STANDARD_PLAN_API_REPORT.md` for detailed API availability analysis.
+
 ## High-Level Architecture
 
 ### Training Pipeline Flow
