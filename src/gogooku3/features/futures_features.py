@@ -386,5 +386,5 @@ def build_next_bday_expr_from_quotes(quotes: pl.DataFrame) -> pl.Expr:
     if dates:
         last = dates[-1]
         # For polars Date, adding 1 day via duration
-        # map_dict default handles others; here we set explicit default below
-    return pl.col("Date").map_dict(next_map, default=pl.col("Date") + pl.duration(days=1))
+        # Note: Polars 1.x uses replace() instead of map_dict()
+    return pl.col("Date").replace(next_map, default=pl.col("Date") + pl.duration(days=1))

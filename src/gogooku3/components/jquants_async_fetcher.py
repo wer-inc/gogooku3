@@ -1608,6 +1608,8 @@ class JQuantsAsyncFetcher:
 
         df = df.sort(date_cols) if date_cols else df
         print(f"Retrieved {len(df)} short selling records")
+        # Normalize to ensure consistent column structure (adds PublishedDate if missing)
+        df = self._normalize_short_selling_data(df)
         return df
 
     async def get_short_selling_positions(
@@ -1724,6 +1726,8 @@ class JQuantsAsyncFetcher:
 
         df = df.sort(date_cols + ["Code"]) if date_cols and "Code" in df.columns else df
         print(f"Retrieved {len(df)} short selling positions records")
+        # Normalize to ensure consistent column structure (adds PublishedDate if missing)
+        df = self._normalize_short_selling_positions_data(df)
         return df
 
     async def get_earnings_announcements(
@@ -2039,6 +2043,13 @@ class JQuantsAsyncFetcher:
             pl.col("Section").cast(pl.Utf8) if "Section" in cols else pl.lit(None, dtype=pl.Utf8).alias("Section"),
         ])
 
+        # If PublishedDate doesn't exist in API response, use Date as PublishedDate
+        # (Sector-level short selling data only has Date column)
+        if "PublishedDate" not in cols and "Date" in cols:
+            normalized = normalized.with_columns([
+                pl.col("Date").alias("PublishedDate")
+            ])
+
         # Remove duplicates by (Code, Date) keeping latest PublishedDate
         deduped = (
             normalized
@@ -2117,6 +2128,13 @@ class JQuantsAsyncFetcher:
             # Section information
             pl.col("Section").cast(pl.Utf8) if "Section" in cols else pl.lit(None, dtype=pl.Utf8).alias("Section"),
         ])
+
+        # If PublishedDate doesn't exist in API response, use Date as PublishedDate
+        # (Sector-level data only has Date column)
+        if "PublishedDate" not in cols and "Date" in cols:
+            normalized = normalized.with_columns([
+                pl.col("Date").alias("PublishedDate")
+            ])
 
         # Remove duplicates by (Code, Date) keeping latest PublishedDate
         deduped = (

@@ -21,7 +21,8 @@ def _next_bday_expr_from_equity(quotes: pl.DataFrame) -> pl.Expr:
     for i in range(len(dates) - 1):
         next_map[dates[i]] = dates[i + 1]
     # default: +1 day duration; Polars will handle Date + duration
-    return pl.col("Date").map_dict(next_map, default=pl.col("Date") + pl.duration(days=1))
+    # Note: Polars 1.x uses replace() instead of map_dict()
+    return pl.col("Date").replace(next_map, default=pl.col("Date") + pl.duration(days=1))
 
 
 def add_advanced_vol_block(

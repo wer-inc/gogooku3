@@ -53,12 +53,13 @@ class FlowFeaturesGeneratorV2:
         }
 
         # MarketCodeをSectionに変換
+        # Note: Polars 1.x uses replace() instead of map_dict()
         mapping_df = listed_info_df.select([
             "Code",
             "Date",
             "MarketCode"
         ]).with_columns(
-            pl.col("MarketCode").map_dict(market_to_section, default="Other").alias("Section")
+            pl.col("MarketCode").replace(market_to_section, default="Other").alias("Section")
         )
 
         # 最新の情報を取得（銘柄が市場を移動する場合があるため）

@@ -47,7 +47,8 @@ def build_earnings_schedule(announcement_df: pl.DataFrame) -> pl.DataFrame:
     """Build earnings announcement schedule with event dates.
 
     Args:
-        announcement_df: Raw earnings announcement data with Date, Code, AnnouncementDate
+        announcement_df: Raw earnings announcement data with Date, Code
+                        (Note: J-Quants API returns "Date" as the announcement date)
 
     Returns:
         DataFrame with structured announcement schedule
@@ -56,23 +57,23 @@ def build_earnings_schedule(announcement_df: pl.DataFrame) -> pl.DataFrame:
         return announcement_df
 
     # Clean and structure announcement data
+    # Note: J-Quants API returns "Date" column (not "AnnouncementDate")
     schedule = announcement_df.with_columns([
         # Ensure proper date formats
         pl.col("Date").cast(pl.Date),
-        pl.col("AnnouncementDate").cast(pl.Date),
 
         # Add fiscal period indicators if available
         pl.col("Code").cast(pl.Utf8),
 
         # Sort key for temporal ordering
-        pl.col("AnnouncementDate").alias("event_date")
+        pl.col("Date").alias("event_date")
     ])
 
     # Remove duplicates (same stock, same announcement date)
-    schedule = schedule.unique(["Code", "AnnouncementDate"])
+    schedule = schedule.unique(["Code", "Date"])
 
     # Sort by code and announcement date for proper temporal processing
-    schedule = schedule.sort(["Code", "AnnouncementDate"])
+    schedule = schedule.sort(["Code", "Date"])
 
     return schedule
 
@@ -99,9 +100,10 @@ def add_earnings_proximity_features(
         return quotes.with_columns(null_features)
 
     # Prepare announcement schedule for joins
+    # Note: Using "Date" column from J-Quants API (announcement date)
     earnings_events = announcement_schedule.select([
         "Code",
-        pl.col("AnnouncementDate").alias("event_date")
+        pl.col("Date").alias("event_date")
     ])
 
     # Create date grid for each stock to compute proximity features
@@ -199,9 +201,10 @@ def add_earnings_surprise_features(
         return quotes.with_columns(null_features)
 
     # Get announcement dates
+    # Note: Using "Date" column from J-Quants API (announcement date)
     announcements = announcement_df.select([
         "Code",
-        pl.col("AnnouncementDate").alias("earnings_date")
+        pl.col("Date").alias("earnings_date")
     ]).unique()
 
     # Join quotes with announcement dates to find earnings day returns

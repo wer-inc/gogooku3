@@ -99,36 +99,51 @@ def add_sector_cross_sectional_features(
             pl.when(cnt_v > 1).then((rk_v - 1.0) / (cnt_v - 1.0)).otherwise(0.5).alias("volume_rank_in_sec")
         ])
     if "realized_vol_20" in out.columns:
+        # Polars 1.x: Split into 2 passes to avoid same-expression reference
         out = out.with_columns([
             _sector_mean("realized_vol_20", "_sec_mean_rv20"),
             _sector_std("realized_vol_20", "_sec_std_rv20"),
+        ])
+        out = out.with_columns([
             ((pl.col("realized_vol_20") - pl.col("_sec_mean_rv20")) / (pl.col("_sec_std_rv20") + 1e-12)).alias("rv20_in_sec_z"),
         ])
     # RSI in sector z
     if "rsi_14" in out.columns:
+        # Polars 1.x: Split into 2 passes to avoid same-expression reference
         out = out.with_columns([
             _sector_mean("rsi_14", "_sec_mean_rsi14"),
             _sector_std("rsi_14", "_sec_std_rsi14"),
+        ])
+        out = out.with_columns([
             ((pl.col("rsi_14") - pl.col("_sec_mean_rsi14")) / (pl.col("_sec_std_rsi14") + 1e-12)).alias("rsi14_in_sec_z"),
         ])
     # MACD slope in sector z（存在時）
     if "macd_hist_slope" in out.columns:
+        # Polars 1.x: Split into 2 passes to avoid same-expression reference
         out = out.with_columns([
             _sector_mean("macd_hist_slope", "_sec_mean_mhs"),
             _sector_std("macd_hist_slope", "_sec_std_mhs"),
+        ])
+        out = out.with_columns([
             ((pl.col("macd_hist_slope") - pl.col("_sec_mean_mhs")) / (pl.col("_sec_std_mhs") + 1e-12)).alias("macd_slope_in_sec_z"),
         ])
     # Momentum×Volume, RSI×Vol interaction in sector z（存在時）
     if "vol_confirmed_mom" in out.columns:
+        # Polars 1.x: Split into 2 passes to avoid same-expression reference
         out = out.with_columns([
             _sector_mean("vol_confirmed_mom", "_sec_mean_vcm"),
             _sector_std("vol_confirmed_mom", "_sec_std_vcm"),
+        ])
+        out = out.with_columns([
             ((pl.col("vol_confirmed_mom") - pl.col("_sec_mean_vcm")) / (pl.col("_sec_std_vcm") + 1e-12)).alias("vcm_in_sec_z"),
         ])
     if "rsi_vol_interact" in out.columns:
+        # Polars 1.x: Split into 2 passes to avoid same-expression reference
         out = out.with_columns([
             _sector_mean("rsi_vol_interact", "_sec_mean_rvint"),
             _sector_std("rsi_vol_interact", "_sec_std_rvint"),
+        ])
+        out = out.with_columns([
             ((pl.col("rsi_vol_interact") - pl.col("_sec_mean_rvint")) / (pl.col("_sec_std_rvint") + 1e-12)).alias("rsi_vol_in_sec_z"),
         ])
 

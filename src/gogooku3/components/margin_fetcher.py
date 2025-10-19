@@ -66,22 +66,34 @@ class MarginFetcher:
         def _cast_if(name: str, dtype: pl.DataType) -> pl.Expr:
             return (pl.col(name).cast(dtype)) if name in cols else pl.lit(None, dtype)
 
+        # Polars 1.x: Check column types via schema instead of Expr.dtype
+        date_is_str = df.schema.get("Date") == pl.Utf8
+        pub_date_is_str = df.schema.get("PublishedDate") == pl.Utf8 if "PublishedDate" in df.schema else False
+
+        # Build date expressions based on actual schema types
+        date_expr = (
+            pl.col("Date").str.strptime(pl.Date, strict=False)
+            if date_is_str
+            else pl.col("Date").cast(pl.Date)
+        ).alias("Date")
+
+        pub_date_expr = (
+            pl.when(pl.col("PublishedDate").is_not_null())
+            .then(
+                pl.col("PublishedDate").str.strptime(pl.Date, strict=False)
+                if pub_date_is_str
+                else pl.col("PublishedDate").cast(pl.Date)
+            )
+            .otherwise(pl.lit(None, dtype=pl.Date))
+            .alias("PublishedDate")
+        )
+
         out = (
             df.with_columns(
                 [
                     _cast_if("Code", pl.Utf8),
-                    pl.when(pl.col("Date").dtype == pl.Utf8)
-                    .then(pl.col("Date").str.strptime(pl.Date, strict=False))
-                    .otherwise(pl.col("Date").cast(pl.Date))
-                    .alias("Date"),
-                    pl.when(pl.col("PublishedDate").is_not_null())
-                    .then(
-                        pl.when(pl.col("PublishedDate").dtype == pl.Utf8)
-                        .then(pl.col("PublishedDate").str.strptime(pl.Date, strict=False))
-                        .otherwise(pl.col("PublishedDate").cast(pl.Date))
-                    )
-                    .otherwise(pl.lit(None, dtype=pl.Date))
-                    .alias("PublishedDate"),
+                    date_expr,
+                    pub_date_expr,
                     _cast_if("LongMarginTradeVolume", pl.Float64),
                     _cast_if("ShortMarginTradeVolume", pl.Float64),
                     _cast_if("LongNegotiableMarginTradeVolume", pl.Float64),
@@ -114,13 +126,19 @@ class MarginFetcher:
         if df.is_empty():
             return df
         # Keep minimal normalization to ease optional reconciliation if used
+        # Polars 1.x: Check column type via schema instead of Expr.dtype
+        date_is_str = df.schema.get("Date") == pl.Utf8
+        date_expr = (
+            pl.col("Date").str.strptime(pl.Date, strict=False)
+            if date_is_str
+            else pl.col("Date").cast(pl.Date)
+        ).alias("Date")
+
         return (
             df.with_columns(
                 [
                     pl.col("Code").cast(pl.Utf8),
-                    pl.when(pl.col("Date").dtype == pl.Utf8)
-                    .then(pl.col("Date").str.strptime(pl.Date, strict=False))
-                    .otherwise(pl.col("Date")).alias("Date"),
+                    date_expr,
                 ]
             )
             .sort(["Code", "Date"])
