@@ -29,13 +29,13 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Awaitable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Awaitable
-from dotenv import load_dotenv
 
 import aiohttp
 import polars as pl
+from dotenv import load_dotenv
 
 # Ensure project root is on sys.path so that `scripts` is importable
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,9 +52,13 @@ except Exception:
     pass
 
 # Import JQuants fetcher to get trade-spec directly (moved out of _archive)
-from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+from scripts.components.trading_calendar_fetcher import (
+    TradingCalendarFetcher,  # type: ignore
+)
 from scripts.pipelines.run_pipeline_v4_optimized import JQuantsPipelineV4Optimized
-from scripts.components.trading_calendar_fetcher import TradingCalendarFetcher  # type: ignore
+from src.gogooku3.components.jquants_async_fetcher import (
+    JQuantsAsyncFetcher,  # type: ignore
+)
 from src.pipeline.full_dataset import enrich_and_save
 
 logging.basicConfig(
@@ -100,6 +104,7 @@ def _check_gpu_graph_support(*, strict: bool = False) -> bool:
     """Inspect whether CuPy GPU dependencies are ready (cuGraph not required)."""
     try:
         import cupy as cp  # type: ignore
+
         # cuGraph は不要（graph_builder_gpu.py が CuPy のみで動作）
 
         device_count = cp.cuda.runtime.getDeviceCount()  # type: ignore[attr-defined]
@@ -120,7 +125,6 @@ def _check_gpu_graph_support(*, strict: bool = False) -> bool:
         )
         logger.debug("GPU graph dependency check failed", exc_info=exc)
         return False
-
 
 
 def _find_latest(glob: str) -> Path | None:
@@ -197,14 +201,19 @@ def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
 
     try:
         import time
+
         file_age_seconds = time.time() - file_path.stat().st_mtime
         file_age_days = file_age_seconds / (24 * 3600)
         is_valid = file_age_days <= max_age_days
 
         if is_valid:
-            logger.info(f"✅ Cache valid: {file_path.name} (age: {file_age_days:.1f} days, limit: {max_age_days} days)")
+            logger.info(
+                f"✅ Cache valid: {file_path.name} (age: {file_age_days:.1f} days, limit: {max_age_days} days)"
+            )
         else:
-            logger.info(f"⏰ Cache stale: {file_path.name} (age: {file_age_days:.1f} days, limit: {max_age_days} days)")
+            logger.info(
+                f"⏰ Cache stale: {file_path.name} (age: {file_age_days:.1f} days, limit: {max_age_days} days)"
+            )
 
         return is_valid
     except Exception as e:
@@ -579,9 +588,7 @@ async def main() -> int:
     if args.jquants:
         creds_ok = _check_jquants_credentials(strict=args.check_env_only)
     # GPU graph check: only strict if --require-gpu-graph is explicitly set
-    gpu_ready = _check_gpu_graph_support(
-        strict=args.require_gpu_graph
-    )
+    gpu_ready = _check_gpu_graph_support(strict=args.require_gpu_graph)
 
     if args.check_env_only:
         # Relaxed mode: only fail if credentials are missing
@@ -625,7 +632,9 @@ async def main() -> int:
             ok = init_rmm(pool)
             if ok:
                 allocator = os.getenv("RMM_ALLOCATOR", "pool")
-                logger.info(f"RMM initialized (allocator={allocator}, pool_size={pool})")
+                logger.info(
+                    f"RMM initialized (allocator={allocator}, pool_size={pool})"
+                )
             else:
                 logger.info("RMM initialization skipped or failed (continuing)")
         except Exception:
@@ -634,34 +643,55 @@ async def main() -> int:
         os.environ.pop("USE_GPU_ETL", None)
 
     # Load YAML config if provided (CLI takes precedence)
-    if getattr(args, "config", None) is not None and args.config and args.config.exists():
+    if (
+        getattr(args, "config", None) is not None
+        and args.config
+        and args.config.exists()
+    ):
         try:
             import yaml  # type: ignore
-            with open(args.config, "r", encoding="utf-8") as f:
+
+            with open(args.config, encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             # Sector CS
             sec = cfg.get("sector_cs") or {}
             if isinstance(sec, dict):
                 if not args.enable_sector_cs and isinstance(sec.get("enable"), bool):
                     args.enable_sector_cs = bool(sec.get("enable"))
-                if not args.sector_cs_cols and isinstance(sec.get("include_cols"), (list, tuple)):
-                    args.sector_cs_cols = ",".join(str(s) for s in sec.get("include_cols") if s)
+                if not args.sector_cs_cols and isinstance(
+                    sec.get("include_cols"), (list, tuple)
+                ):
+                    args.sector_cs_cols = ",".join(
+                        str(s) for s in sec.get("include_cols") if s
+                    )
             # Graph
             g = cfg.get("graph") or {}
             if isinstance(g, dict):
                 if not args.enable_graph_features and isinstance(g.get("enable"), bool):
                     args.enable_graph_features = bool(g.get("enable"))
-                if getattr(args, "graph_window", None) in (None, 60) and isinstance(g.get("window"), int):
+                if getattr(args, "graph_window", None) in (None, 60) and isinstance(
+                    g.get("window"), int
+                ):
                     args.graph_window = int(g.get("window"))
-                if getattr(args, "graph_threshold", None) in (None, 0.3) and isinstance(g.get("threshold"), (float, int)):
+                if getattr(args, "graph_threshold", None) in (None, 0.3) and isinstance(
+                    g.get("threshold"), (float, int)
+                ):
                     args.graph_threshold = float(g.get("threshold"))
-                if getattr(args, "graph_max_k", None) in (None, 4) and isinstance(g.get("max_k"), int):
+                if getattr(args, "graph_max_k", None) in (None, 4) and isinstance(
+                    g.get("max_k"), int
+                ):
                     args.graph_max_k = int(g.get("max_k"))
-                if getattr(args, "graph_cache_dir", None) in (None,) and g.get("cache_dir"):
+                if getattr(args, "graph_cache_dir", None) in (None,) and g.get(
+                    "cache_dir"
+                ):
                     args.graph_cache_dir = Path(str(g.get("cache_dir")))
             # Option market attach
             om = cfg.get("option_market") or {}
-            if isinstance(om, dict) and not args.attach_nk225_option_market and isinstance(om.get("attach"), bool):
+            if (
+                isinstance(om, dict)
+                and not args.attach_nk225_option_market
+                and isinstance(om.get("attach"), bool)
+            ):
                 args.attach_nk225_option_market = bool(om.get("attach"))
             # Indices (market/sector) features
             ind = cfg.get("indices") or {}
@@ -672,7 +702,9 @@ async def main() -> int:
                 if not getattr(args, "indices_codes", None) and ind.get("codes"):
                     codes = ind.get("codes")
                     if isinstance(codes, (list, tuple)):
-                        args.indices_codes = ",".join(str(c).strip() for c in codes if str(c).strip())
+                        args.indices_codes = ",".join(
+                            str(c).strip() for c in codes if str(c).strip()
+                        )
                     elif isinstance(codes, str):
                         args.indices_codes = codes
                 # parquet path
@@ -680,7 +712,9 @@ async def main() -> int:
                     p = Path(str(ind.get("parquet")))
                     args.indices_parquet = p
                 # special day mask
-                if not getattr(args, "disable_halt_mask", False) and isinstance(ind.get("disable_halt_mask"), bool):
+                if not getattr(args, "disable_halt_mask", False) and isinstance(
+                    ind.get("disable_halt_mask"), bool
+                ):
                     args.disable_halt_mask = bool(ind.get("disable_halt_mask"))
         except Exception as e:
             logger.warning(f"Failed to load config YAML {args.config}: {e}")
@@ -693,10 +727,14 @@ async def main() -> int:
         print(" 0) Prepare trade-spec (JQuants optional or local fallback)")
         print(" 0.5) Fetch futures data (if not --disable-futures)")
         print(" 0.6) Fetch short selling data (if --enable-short-selling)")
-        print(" 0.7) Fetch sector short selling data (if --enable-sector-short-selling)")
+        print(
+            " 0.7) Fetch sector short selling data (if --enable-sector-short-selling)"
+        )
         print(" 0.8) Fetch Nikkei225 index options (if --enable-nk225-option-features)")
         print(" 1) Run base optimized pipeline (prices + TA + statements)")
-        print(" 2) Enrich with TOPIX, flow, sector, futures, short selling, sector short selling")
+        print(
+            " 2) Enrich with TOPIX, flow, sector, futures, short selling, sector short selling"
+        )
         print(" 2.5) Build and save Nikkei225 option features (separate parquet)")
         print(" 3) Save ml_dataset_latest_full.parquet (+ metadata)")
         print("=" * 60)
@@ -728,7 +766,9 @@ async def main() -> int:
     if subscription_start_str:
         # Explicit start date provided
         try:
-            subscription_start_dt = datetime.strptime(subscription_start_str, "%Y-%m-%d")
+            subscription_start_dt = datetime.strptime(
+                subscription_start_str, "%Y-%m-%d"
+            )
         except ValueError:
             logger.warning(
                 "Invalid JQUANTS_SUBSCRIPTION_START=%s; falling back to rolling contract",
@@ -739,7 +779,9 @@ async def main() -> int:
     if not subscription_start_str:
         # Dynamic rolling contract (e.g., last 10 years from today)
         contract_years = int(os.getenv("JQUANTS_CONTRACT_YEARS", "10"))
-        subscription_start_dt = datetime.now() - timedelta(days=365 * contract_years + 2)  # +2 for leap years
+        subscription_start_dt = datetime.now() - timedelta(
+            days=365 * contract_years + 2
+        )  # +2 for leap years
         logger.info(
             "Using rolling %d-year contract: subscription starts from %s (dynamic)",
             contract_years,
@@ -756,7 +798,10 @@ async def main() -> int:
                 subscription_start_dt.strftime("%Y-%m-%d"),
             )
             logger.error("   Please adjust --start-date or check your J-Quants plan")
-            logger.error("   Your subscription covers: %s ~ now", subscription_start_dt.strftime("%Y-%m-%d"))
+            logger.error(
+                "   Your subscription covers: %s ~ now",
+                subscription_start_dt.strftime("%Y-%m-%d"),
+            )
             return 1
 
         if end_dt < subscription_start_dt:
@@ -765,7 +810,10 @@ async def main() -> int:
                 end_date,
                 subscription_start_dt.strftime("%Y-%m-%d"),
             )
-            logger.error("   Your subscription covers: %s ~ now", subscription_start_dt.strftime("%Y-%m-%d"))
+            logger.error(
+                "   Your subscription covers: %s ~ now",
+                subscription_start_dt.strftime("%Y-%m-%d"),
+            )
             return 1
 
     # Calculate lookback start for technical indicators (420 days)
@@ -781,7 +829,9 @@ async def main() -> int:
             subscription_start_dt.strftime("%Y-%m-%d"),
             subscription_start_dt.strftime("%Y-%m-%d"),
         )
-        logger.warning("   (This is normal for early dates - technical indicators may have less history)")
+        logger.warning(
+            "   (This is normal for early dates - technical indicators may have less history)"
+        )
         flow_start_dt = subscription_start_dt
 
     flow_start_date = flow_start_dt.strftime("%Y-%m-%d")
@@ -823,19 +873,46 @@ async def main() -> int:
         cached_listed_info = _find_latest("listed_info_history_*.parquet")
         cached_weekly_margin = _find_latest("weekly_margin_interest_*.parquet")
         cached_daily_margin = _find_latest("daily_margin_interest_*.parquet")
+        cached_short_selling = (
+            _find_latest("short_selling_*.parquet")
+            if args.enable_short_selling
+            else None
+        )
+        cached_sector_short = (
+            _find_latest("sector_short_selling_*.parquet")
+            if args.enable_sector_short_selling
+            else None
+        )
 
         # Verify cache validity
         trades_valid = _is_cache_valid(cached_trades, max_age)
         listed_valid = _is_cache_valid(cached_listed_info, max_age)
         weekly_margin_valid = _is_cache_valid(cached_weekly_margin, max_age)
         daily_margin_valid = _is_cache_valid(cached_daily_margin, max_age)
+        short_selling_valid = (
+            _is_cache_valid(cached_short_selling, max_age)
+            if args.enable_short_selling
+            else True
+        )
+        sector_short_valid = (
+            _is_cache_valid(cached_sector_short, max_age)
+            if args.enable_sector_short_selling
+            else True
+        )
 
         # Use cache if all required files are valid
-        if trades_valid and listed_valid:
-            logger.info("✅ All cached data is valid, using cached files (skip API fetch)")
+        if trades_valid and listed_valid and short_selling_valid and sector_short_valid:
+            logger.info(
+                "✅ All cached data is valid, using cached files (skip API fetch)"
+            )
             use_cached = True
             trades_spec_path = cached_trades
             listed_info_path = cached_listed_info
+            if args.enable_short_selling and cached_short_selling:
+                short_selling_path = cached_short_selling
+            if args.enable_sector_short_selling and cached_sector_short:
+                # Note: sector_short_path will be set from cached_sector_short
+                pass  # Sector short uses different variable names in offline fallback
         else:
             logger.info("⚠️  Some cached data is missing or stale, will fetch from API")
 
@@ -869,7 +946,9 @@ async def main() -> int:
             sock_read=sock_read_timeout,
         )
 
-        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        async with aiohttp.ClientSession(
+            connector=connector, timeout=timeout
+        ) as session:
             await fetcher.authenticate(session)
 
             # Optional: use Trading Calendar API to enumerate business days
@@ -877,12 +956,18 @@ async def main() -> int:
             if args.use_calendar_api:
                 try:
                     cal_fetcher = TradingCalendarFetcher(api_client=fetcher)
-                    cal = await cal_fetcher.get_trading_calendar(start_date, end_date, session)
+                    cal = await cal_fetcher.get_trading_calendar(
+                        start_date, end_date, session
+                    )
                     all_bdays = cal.get("business_days", [])
                     business_days = [d for d in all_bdays if d >= start_date]
-                    logger.info("Trading calendar fetched: %s business days", len(all_bdays))
+                    logger.info(
+                        "Trading calendar fetched: %s business days", len(all_bdays)
+                    )
                 except Exception as e:
-                    logger.warning(f"Trading calendar fetch failed; fallback to weekday-only: {e}")
+                    logger.warning(
+                        f"Trading calendar fetch failed; fallback to weekday-only: {e}"
+                    )
             # Fallback to naive weekday-only calendar when API is disabled or failed
             if not business_days:
                 _bd = []
@@ -897,9 +982,15 @@ async def main() -> int:
 
             # Align flow start to first available business day
             if business_days:
-                _first = next((d for d in business_days if d >= flow_start_date), business_days[0])
+                _first = next(
+                    (d for d in business_days if d >= flow_start_date), business_days[0]
+                )
                 if _first > flow_start_date:
-                    logger.info("Flow start adjusted to first business day: %s -> %s", flow_start_date, _first)
+                    logger.info(
+                        "Flow start adjusted to first business day: %s -> %s",
+                        flow_start_date,
+                        _first,
+                    )
                     flow_start_date = _first
 
             fetch_coroutines: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
@@ -932,7 +1023,9 @@ async def main() -> int:
                 (
                     "daily_margin",
                     "daily margin interest",
-                    fetcher.get_daily_margin_interest(session, start_date, end_date, business_days=business_days),
+                    fetcher.get_daily_margin_interest(
+                        session, start_date, end_date, business_days=business_days
+                    ),
                 )
             )
 
@@ -990,19 +1083,30 @@ async def main() -> int:
             info_df = pl.DataFrame()
 
         if trades_df is None or trades_df.is_empty():
-            logger.warning("No trade-spec data fetched; will try local fallback for flow features")
+            logger.warning(
+                "No trade-spec data fetched; will try local fallback for flow features"
+            )
         else:
             from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-            output_dir = Path("output/raw/flow"); output_dir.mkdir(parents=True, exist_ok=True)
-            trades_spec_path = output_dir / f"trades_spec_history_{flow_start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+
+            output_dir = Path("output/raw/flow")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            trades_spec_path = (
+                output_dir
+                / f"trades_spec_history_{flow_start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+            )
             save_parquet_with_gcs(trades_df, trades_spec_path, auto_sync=False)
         # Save listed_info if fetched (even if trade-spec failed)
         if listed_info_path is None:
             # Name by end date for reproducibility
-            listed_info_path = (Path("output/raw/jquants") / f"listed_info_history_{end_dt.strftime('%Y%m%d')}.parquet")
+            listed_info_path = (
+                Path("output/raw/jquants")
+                / f"listed_info_history_{end_dt.strftime('%Y%m%d')}.parquet"
+            )
         if info_df is not None and not info_df.is_empty():
             try:
                 from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+
                 save_parquet_with_gcs(info_df, listed_info_path, auto_sync=False)
             except Exception as e:
                 logger.warning(f"Failed to save listed_info parquet: {e}")
@@ -1011,8 +1115,13 @@ async def main() -> int:
         if wmi_df is not None and not wmi_df.is_empty():
             try:
                 from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
-                wmi_path = outdir / f"weekly_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+
+                outdir = Path("output/raw/margin")
+                outdir.mkdir(parents=True, exist_ok=True)
+                wmi_path = (
+                    outdir
+                    / f"weekly_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                )
                 save_parquet_with_gcs(wmi_df, wmi_path, auto_sync=False)
             except Exception as e:
                 logger.warning(f"Failed to save weekly margin parquet: {e}")
@@ -1021,8 +1130,13 @@ async def main() -> int:
         if dmi_df is not None and not dmi_df.is_empty():
             try:
                 from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                outdir = Path("output/raw/margin"); outdir.mkdir(parents=True, exist_ok=True)
-                dmi_path = outdir / f"daily_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+
+                outdir = Path("output/raw/margin")
+                outdir.mkdir(parents=True, exist_ok=True)
+                dmi_path = (
+                    outdir
+                    / f"daily_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                )
                 save_parquet_with_gcs(dmi_df, dmi_path, auto_sync=False)
             except Exception as e:
                 logger.warning(f"Failed to save daily margin parquet: {e}")
@@ -1039,22 +1153,36 @@ async def main() -> int:
                 sock_connect=sock_connect_timeout,
                 sock_read=sock_read_timeout,
             )
-            async with aiohttp.ClientSession(connector=connector_aux, timeout=timeout_aux) as _session_aux:
+            async with aiohttp.ClientSession(
+                connector=connector_aux, timeout=timeout_aux
+            ) as _session_aux:
                 # Authenticate if needed (reuse token when available)
                 try:
                     await fetcher.authenticate(_session_aux)
-                except Exception:
-                    pass
+                    logger.info(
+                        "✅ Authenticated successfully for short selling/futures fetch"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"❌ Authentication failed for short selling/futures fetch: {e}"
+                    )
+                    raise  # Re-raise to skip the rest of the block
                 # Futures data (disabled - API not available)
                 # NOTE: /derivatives/futures API is not currently available in J-Quants
                 # Implementation kept for future use but disabled by default
                 if False:  # Disabled: was `not args.disable_futures or (args.futures_parquet is not None)`
                     try:
                         logger.info("Fetching futures data for derivatives features")
-                        futures_df = await fetcher.get_futures_daily(_session_aux, start_date, end_date)
+                        futures_df = await fetcher.get_futures_daily(
+                            _session_aux, start_date, end_date
+                        )
                         if futures_df is not None and not futures_df.is_empty():
-                            outdir = Path("output/raw/futures"); outdir.mkdir(parents=True, exist_ok=True)
-                            futures_path = outdir / f"futures_daily_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                            outdir = Path("output/raw/futures")
+                            outdir.mkdir(parents=True, exist_ok=True)
+                            futures_path = (
+                                outdir
+                                / f"futures_daily_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                            )
                             futures_df.write_parquet(futures_path)
                             logger.info(f"Saved futures data: {futures_path}")
                         else:
@@ -1066,42 +1194,69 @@ async def main() -> int:
                 fetch_aux: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
 
                 if args.enable_short_selling:
-                    logger.info(f"Fetching short selling ratio data from {start_date} to {end_date}")
+                    logger.info(
+                        f"Fetching short selling ratio data from {start_date} to {end_date}"
+                    )
                     if start_date and end_date:
                         fetch_aux.append(
                             (
                                 "short_selling",
                                 "short selling data",
-                                fetcher.get_short_selling(_session_aux, start_date, end_date, business_days=business_days),
+                                fetcher.get_short_selling(
+                                    _session_aux,
+                                    start_date,
+                                    end_date,
+                                    business_days=business_days,
+                                ),
                             )
                         )
                     else:
-                        logger.warning(f"Invalid date range for short selling: start={start_date}, end={end_date}")
+                        logger.warning(
+                            f"Invalid date range for short selling: start={start_date}, end={end_date}"
+                        )
 
-                    logger.info(f"Fetching short selling positions data from {start_date} to {end_date}")
+                    logger.info(
+                        f"Fetching short selling positions data from {start_date} to {end_date}"
+                    )
                     if start_date and end_date:
                         fetch_aux.append(
                             (
                                 "short_positions",
                                 "short selling positions data",
-                                fetcher.get_short_selling_positions(_session_aux, start_date, end_date, business_days=business_days),
+                                fetcher.get_short_selling_positions(
+                                    _session_aux,
+                                    start_date,
+                                    end_date,
+                                    business_days=business_days,
+                                ),
                             )
                         )
                     else:
-                        logger.warning(f"Invalid date range for short positions: start={start_date}, end={end_date}")
+                        logger.warning(
+                            f"Invalid date range for short positions: start={start_date}, end={end_date}"
+                        )
 
                 if args.enable_sector_short_selling:
-                    logger.info(f"Fetching sector-wise short selling data from {start_date} to {end_date}")
+                    logger.info(
+                        f"Fetching sector-wise short selling data from {start_date} to {end_date}"
+                    )
                     if start_date and end_date:
                         fetch_aux.append(
                             (
                                 "sector_short",
                                 "sector short selling data",
-                                fetcher.get_sector_short_selling(_session_aux, start_date, end_date, business_days=business_days),
+                                fetcher.get_sector_short_selling(
+                                    _session_aux,
+                                    start_date,
+                                    end_date,
+                                    business_days=business_days,
+                                ),
                             )
                         )
                     else:
-                        logger.warning(f"Invalid date range for sector short: start={start_date}, end={end_date}")
+                        logger.warning(
+                            f"Invalid date range for sector short: start={start_date}, end={end_date}"
+                        )
 
                 if fetch_aux:
                     aux_results = await asyncio.gather(
@@ -1115,30 +1270,72 @@ async def main() -> int:
 
                         if key == "short_selling":
                             if result is None or result.is_empty():
-                                logger.warning("No short selling data retrieved from API")
+                                logger.warning(
+                                    "No short selling data retrieved from API"
+                                )
                             else:
-                                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                                outdir = Path("output/raw/short_selling"); outdir.mkdir(parents=True, exist_ok=True)
-                                short_selling_path = outdir / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                                save_parquet_with_gcs(result, short_selling_path, auto_sync=False)
+                                from src.gogooku3.utils.gcs_storage import (
+                                    save_parquet_with_gcs,
+                                )
+
+                                outdir = Path("output/raw/short_selling")
+                                outdir.mkdir(parents=True, exist_ok=True)
+                                short_selling_path = (
+                                    outdir
+                                    / f"short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                                )
+                                save_parquet_with_gcs(
+                                    result, short_selling_path, auto_sync=False
+                                )
+                                logger.info(
+                                    f"✅ Saved short selling data: {short_selling_path} ({len(result)} records)"
+                                )
 
                         elif key == "short_positions":
                             if result is None or result.is_empty():
-                                logger.warning("No short selling positions data retrieved from API")
+                                logger.warning(
+                                    "No short selling positions data retrieved from API"
+                                )
                             else:
-                                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                                outdir = Path("output/raw/short_selling"); outdir.mkdir(parents=True, exist_ok=True)
-                                short_positions_path = outdir / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                                save_parquet_with_gcs(result, short_positions_path, auto_sync=False)
+                                from src.gogooku3.utils.gcs_storage import (
+                                    save_parquet_with_gcs,
+                                )
+
+                                outdir = Path("output/raw/short_selling")
+                                outdir.mkdir(parents=True, exist_ok=True)
+                                short_positions_path = (
+                                    outdir
+                                    / f"short_positions_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                                )
+                                save_parquet_with_gcs(
+                                    result, short_positions_path, auto_sync=False
+                                )
+                                logger.info(
+                                    f"✅ Saved short positions data: {short_positions_path} ({len(result)} records)"
+                                )
 
                         elif key == "sector_short":
                             if result is None or result.is_empty():
-                                logger.warning("No sector short selling data retrieved from API")
+                                logger.warning(
+                                    "No sector short selling data retrieved from API"
+                                )
                             else:
-                                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-                                outdir = Path("output/raw/short_selling"); outdir.mkdir(parents=True, exist_ok=True)
-                                sector_short_path = outdir / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
-                                save_parquet_with_gcs(result, sector_short_path, auto_sync=False)
+                                from src.gogooku3.utils.gcs_storage import (
+                                    save_parquet_with_gcs,
+                                )
+
+                                outdir = Path("output/raw/short_selling")
+                                outdir.mkdir(parents=True, exist_ok=True)
+                                sector_short_path = (
+                                    outdir
+                                    / f"sector_short_selling_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                                )
+                                save_parquet_with_gcs(
+                                    result, sector_short_path, auto_sync=False
+                                )
+                                logger.info(
+                                    f"✅ Saved sector short selling data: {sector_short_path} ({len(result)} records)"
+                                )
         except Exception as e:
             logger.warning(f"Aux session for futures/short features failed: {e}")
     else:
@@ -1147,14 +1344,18 @@ async def main() -> int:
         if trades_spec_path:
             logger.info(f"Using local trade-spec parquet: {trades_spec_path}")
         else:
-            logger.warning("No local trades_spec parquet found; flow features may be skipped")
+            logger.warning(
+                "No local trades_spec parquet found; flow features may be skipped"
+            )
         # Offline listed_info fallback
         if listed_info_path is None:
             listed_info_path = _find_latest("listed_info_history_*.parquet")
         if listed_info_path:
             logger.info(f"Using listed_info parquet: {listed_info_path}")
         else:
-            logger.warning("No listed_info parquet provided/found; sector enrichment will be skipped")
+            logger.warning(
+                "No listed_info parquet provided/found; sector enrichment will be skipped"
+            )
 
         # Offline futures fallback (disabled - API not available)
         # NOTE: Futures features are disabled as /derivatives/futures API is not available
@@ -1167,35 +1368,59 @@ async def main() -> int:
                 if futures_path:
                     logger.info(f"Using local futures parquet: {futures_path}")
                 else:
-                    logger.warning("No futures parquet found; futures features will be skipped")
+                    logger.warning(
+                        "No futures parquet found; futures features will be skipped"
+                    )
 
         # Offline short selling fallback
         if args.enable_short_selling:
             # Short selling ratio data
-            if args.short_selling_parquet is not None and args.short_selling_parquet.exists():
+            if (
+                args.short_selling_parquet is not None
+                and args.short_selling_parquet.exists()
+            ):
                 short_selling_path = args.short_selling_parquet
-                logger.info(f"Using provided short selling parquet: {short_selling_path}")
+                logger.info(
+                    f"Using provided short selling parquet: {short_selling_path}"
+                )
             else:
                 short_selling_path = _find_latest("short_selling_*.parquet")
                 if short_selling_path:
-                    logger.info(f"Using local short selling parquet: {short_selling_path}")
+                    logger.info(
+                        f"Using local short selling parquet: {short_selling_path}"
+                    )
                 else:
-                    logger.warning("No short selling parquet found; short selling features will be skipped")
+                    logger.warning(
+                        "No short selling parquet found; short selling features will be skipped"
+                    )
 
             # Short selling positions data
-            if args.short_positions_parquet is not None and args.short_positions_parquet.exists():
+            if (
+                args.short_positions_parquet is not None
+                and args.short_positions_parquet.exists()
+            ):
                 short_positions_path = args.short_positions_parquet
-                logger.info(f"Using provided short positions parquet: {short_positions_path}")
+                logger.info(
+                    f"Using provided short positions parquet: {short_positions_path}"
+                )
             else:
                 short_positions_path = _find_latest("short_positions_*.parquet")
                 if short_positions_path:
-                    logger.info(f"Using local short positions parquet: {short_positions_path}")
+                    logger.info(
+                        f"Using local short positions parquet: {short_positions_path}"
+                    )
                 else:
-                    logger.warning("No short positions parquet found; positions features will be skipped")
+                    logger.warning(
+                        "No short positions parquet found; positions features will be skipped"
+                    )
 
-    logger.info("=== STEP 1: Run base optimized pipeline (prices + TA + statements) ===")
+    logger.info(
+        "=== STEP 1: Run base optimized pipeline (prices + TA + statements) ==="
+    )
     pipeline = JQuantsPipelineV4Optimized()
-    df_base, metadata = await pipeline.run(use_jquants=args.jquants, start_date=start_date, end_date=end_date)
+    df_base, metadata = await pipeline.run(
+        use_jquants=args.jquants, start_date=start_date, end_date=end_date
+    )
     if df_base is None or metadata is None:
         logger.error("Base pipeline failed")
         return 1
@@ -1211,14 +1436,16 @@ async def main() -> int:
     # Save datasets under refactored folder
     output_dir = Path("output/datasets")
 
-    logger.info("=== STEP 2: Enrich with TOPIX + statements + flow (trade-spec) + margin weekly ===")
+    logger.info(
+        "=== STEP 2: Enrich with TOPIX + statements + flow (trade-spec) + margin weekly ==="
+    )
     # Resolve weekly margin parquet (existing style: auto-discover if not provided; skip gracefully if missing)
     margin_weekly_parquet: Path | None = None
     if args.weekly_margin_parquet is not None and args.weekly_margin_parquet.exists():
         margin_weekly_parquet = args.weekly_margin_parquet
     else:
         # prefer the one we just saved (if any)
-        if 'wmi_path' in locals() and wmi_path and wmi_path.exists():
+        if "wmi_path" in locals() and wmi_path and wmi_path.exists():
             margin_weekly_parquet = wmi_path
         else:
             margin_weekly_parquet = _find_latest("weekly_margin_interest_*.parquet")
@@ -1229,37 +1456,61 @@ async def main() -> int:
         daily_margin_parquet = args.daily_margin_parquet
     else:
         # prefer the one we just saved (if any)
-        if 'dmi_path' in locals() and dmi_path and dmi_path.exists():
+        if "dmi_path" in locals() and dmi_path and dmi_path.exists():
             daily_margin_parquet = dmi_path
         else:
             daily_margin_parquet = _find_latest("daily_margin_interest_*.parquet")
 
     # Resolve sector short selling parquet (similar to other data sources)
     sector_short_selling_parquet: Path | None = None
-    if args.sector_short_selling_parquet is not None and args.sector_short_selling_parquet.exists():
+    if (
+        args.sector_short_selling_parquet is not None
+        and args.sector_short_selling_parquet.exists()
+    ):
         sector_short_selling_parquet = args.sector_short_selling_parquet
     else:
         # prefer the one we just saved (if any)
-        if 'sector_short_path' in locals() and sector_short_path and sector_short_path.exists():
+        if (
+            "sector_short_path" in locals()
+            and sector_short_path
+            and sector_short_path.exists()
+        ):
             sector_short_selling_parquet = sector_short_path
         else:
-            sector_short_selling_parquet = _find_latest("sector_short_selling_*.parquet")
+            sector_short_selling_parquet = _find_latest(
+                "sector_short_selling_*.parquet"
+            )
 
-    te_targets = [s.strip() for s in (args.sector_te_targets or "").split(",") if s.strip()]
-    series_levels = [s.strip() for s in (getattr(args, 'sector_series_levels', '33') or "").split(",") if s.strip()]
-    te_levels = [s.strip() for s in (getattr(args, 'sector_te_levels', '33') or "").split(",") if s.strip()]
+    te_targets = [
+        s.strip() for s in (args.sector_te_targets or "").split(",") if s.strip()
+    ]
+    series_levels = [
+        s.strip()
+        for s in (getattr(args, "sector_series_levels", "33") or "").split(",")
+        if s.strip()
+    ]
+    te_levels = [
+        s.strip()
+        for s in (getattr(args, "sector_te_levels", "33") or "").split(",")
+        if s.strip()
+    ]
     pq_path, meta_path = await enrich_and_save(
         df_base,
         output_dir=output_dir,
         jquants=args.jquants,
         start_date=start_date,
         end_date=end_date,
-        business_days=locals().get('business_days', None),
+        business_days=locals().get("business_days", None),
         trades_spec_path=trades_spec_path,
         topix_parquet=args.topix_parquet,
         enable_indices=args.enable_indices,
         indices_parquet=args.indices_parquet,
-        indices_codes=[s.strip() for s in (getattr(args, "indices_codes", None) or "").split(",") if s.strip()] or None,
+        indices_codes=[
+            s.strip()
+            for s in (getattr(args, "indices_codes", None) or "").split(",")
+            if s.strip()
+        ]
+        or None,
         statements_parquet=args.statements_parquet,
         listed_info_parquet=listed_info_path,
         enable_futures=False,  # Disabled: /derivatives/futures API not available
@@ -1270,14 +1521,21 @@ async def main() -> int:
         reit_parquet=getattr(args, "reit_parquet", None),
         jpx400_parquet=getattr(args, "jpx400_parquet", None),
         enable_advanced_vol=args.enable_advanced_vol,
-        adv_vol_windows=[int(s.strip()) for s in (args.adv_vol_windows or '').split(',') if s.strip()],
-        enable_margin_weekly=bool(margin_weekly_parquet is not None and margin_weekly_parquet.exists()),
+        adv_vol_windows=[
+            int(s.strip()) for s in (args.adv_vol_windows or "").split(",") if s.strip()
+        ],
+        enable_margin_weekly=bool(
+            margin_weekly_parquet is not None and margin_weekly_parquet.exists()
+        ),
         margin_weekly_parquet=margin_weekly_parquet,
         margin_weekly_lag=getattr(args, "margin_weekly_lag", 3),
         adv_window_days=getattr(args, "adv_window_days", 20),
         # Default behavior: auto-enable daily margin when JQuants is used or a parquet exists
-        enable_daily_margin=(args.jquants or args.enable_daily_margin 
-                             or bool(daily_margin_parquet is not None and daily_margin_parquet.exists())),
+        enable_daily_margin=(
+            args.jquants
+            or args.enable_daily_margin
+            or bool(daily_margin_parquet is not None and daily_margin_parquet.exists())
+        ),
         daily_margin_parquet=daily_margin_parquet,
         # Short selling parameters
         enable_short_selling=args.enable_short_selling,
@@ -1304,7 +1562,9 @@ async def main() -> int:
         enable_advanced_features=args.enable_advanced_features,
         # Sector cross-sectional features
         enable_sector_cs=args.enable_sector_cs,
-        sector_cs_cols=[s.strip() for s in (args.sector_cs_cols or '').split(',') if s.strip()],
+        sector_cs_cols=[
+            s.strip() for s in (args.sector_cs_cols or "").split(",") if s.strip()
+        ],
         # Graph features
         enable_graph_features=args.enable_graph_features,
         graph_window=getattr(args, "graph_window", 60),
@@ -1336,10 +1596,16 @@ async def main() -> int:
                 .sort("Date")
             )
             from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
-            out_topix = output_dir / f"topix_market_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+
+            out_topix = (
+                output_dir
+                / f"topix_market_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+            )
             save_parquet_with_gcs(topix_daily, out_topix)
         else:
-            logger.warning("No mkt_* columns found in saved dataset; TOPIX market artifact not written")
+            logger.warning(
+                "No mkt_* columns found in saved dataset; TOPIX market artifact not written"
+            )
     except Exception as e:
         logger.warning(f"TOPIX market features save skipped: {e}")
 
@@ -1351,7 +1617,9 @@ async def main() -> int:
             if args.index_option_parquet and args.index_option_parquet.exists():
                 try:
                     opt_raw = pl.read_parquet(args.index_option_parquet)
-                    logger.info(f"Loaded index_option parquet: {args.index_option_parquet}")
+                    logger.info(
+                        f"Loaded index_option parquet: {args.index_option_parquet}"
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to load index_option parquet: {e}")
 
@@ -1366,23 +1634,34 @@ async def main() -> int:
                             await fetcher.authenticate(session)
                             start_date = start_dt.strftime("%Y-%m-%d")
                             end_date = end_dt.strftime("%Y-%m-%d")
-                            logger.info(f"Fetching index options {start_date} → {end_date}")
-                            opt_raw = await fetcher.get_index_option(session, start_date, end_date)
+                            logger.info(
+                                f"Fetching index options {start_date} → {end_date}"
+                            )
+                            opt_raw = await fetcher.get_index_option(
+                                session, start_date, end_date
+                            )
                 except Exception as e:
                     logger.warning(f"Index option fetch failed: {e}")
 
             if opt_raw is not None and not opt_raw.is_empty():
                 try:
-                    from src.gogooku3.features.index_option import build_index_option_features
-
+                    from src.gogooku3.features.index_option import (
+                        build_index_option_features,
+                    )
                     from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+
                     opt_feats = build_index_option_features(opt_raw)
-                    out = output_dir / f"nk225_index_option_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                    out = (
+                        output_dir
+                        / f"nk225_index_option_features_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                    )
                     save_parquet_with_gcs(opt_feats, out)
                 except Exception as e:
                     logger.warning(f"Failed to build/save option features: {e}")
             else:
-                logger.info("No index_option data available; skipping option features build")
+                logger.info(
+                    "No index_option data available; skipping option features build"
+                )
     except Exception as e:
         logger.warning(f"Index option features step skipped: {e}")
     return 0
