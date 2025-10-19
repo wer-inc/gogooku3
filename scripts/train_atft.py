@@ -3543,19 +3543,25 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             f"[Scheduler] Using Warmup+Cosine (warmup_epochs={warmup_epochs_phase})"
         )
 
-    # Loss初期化 - Fixed to use correct constructor with RankIC/Sharpe
+    # Loss初期化 - 環境変数ベース（P0 Fix）
+    # 環境変数から損失重みを読み込み
+    use_rankic = os.getenv("USE_RANKIC", "0") == "1"
+    rankic_w = float(os.getenv("RANKIC_WEIGHT", "0.5")) if use_rankic else 0.0
+    use_cs_ic_env = os.getenv("USE_CS_IC", "1") == "1"
+    cs_ic_weight_env = float(os.getenv("CS_IC_WEIGHT", "0.05"))
+
     criterion = MultiHorizonLoss(
         horizons=config.data.time_series.prediction_horizons,
         use_huber=True,
         huber_delta=0.01,
         huber_weight=0.3,
-        # Add RankIC and CS-IC for financial metrics
-        use_rankic=True,
-        rankic_weight=0.2,  # RankIC重み
-        use_cs_ic=True,
-        cs_ic_weight=0.15,  # Cross-sectional IC重み
+        # Add RankIC and CS-IC for financial metrics (環境変数ベース)
+        use_rankic=use_rankic,
+        rankic_weight=rankic_w,  # 環境変数: RANKIC_WEIGHT (default=0.5)
+        use_cs_ic=use_cs_ic_env,
+        cs_ic_weight=cs_ic_weight_env,  # 環境変数: CS_IC_WEIGHT (default=0.05)
     )
-    logger.info("[Loss] Initialized with RankIC (weight=0.2) and CS-IC (weight=0.15)")
+    logger.info(f"[Loss] Initialized with RankIC (enabled={use_rankic}, weight={rankic_w}) and CS-IC (enabled={use_cs_ic_env}, weight={cs_ic_weight_env})")
 
     best_val_loss = float("inf")
     checkpoint_path = Path("output/checkpoints")
