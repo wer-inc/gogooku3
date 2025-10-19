@@ -3561,7 +3561,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         use_cs_ic=use_cs_ic_env,
         cs_ic_weight=cs_ic_weight_env,  # 環境変数: CS_IC_WEIGHT (default=0.05)
     )
-    logger.info(f"[Loss] Initialized with RankIC (enabled={use_rankic}, weight={rankic_w}) and CS-IC (enabled={use_cs_ic_env}, weight={cs_ic_weight_env})")
+    logger.info(
+        f"[Loss] Initialized with RankIC (enabled={use_rankic}, weight={rankic_w}) and CS-IC (enabled={use_cs_ic_env}, weight={cs_ic_weight_env})"
+    )
 
     best_val_loss = float("inf")
     checkpoint_path = Path("output/checkpoints")
