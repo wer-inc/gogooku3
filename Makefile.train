@@ -10,6 +10,9 @@
 #
 # ============================================================================
 
+# Python executable (always use venv to avoid ModuleNotFoundError)
+PYTHON := ./venv/bin/python
+
 .PHONY: help-train
 
 help-train:
@@ -84,7 +87,7 @@ train:
 	CS_IC_WEIGHT=0.3 \
 	SHARPE_WEIGHT=0.1 \
 	VAL_DEBUG_LOGGING=0 \
-	nohup python scripts/train.py \
+	nohup $(PYTHON) scripts/train.py \
 		--data-path $(DATA_PATH) \
 		--epochs $(EPOCHS) \
 		--batch-size $(BATCH_SIZE) \
@@ -109,7 +112,7 @@ train-quick:
 	CS_IC_WEIGHT=0.3 \
 	SHARPE_WEIGHT=0.1 \
 	VAL_DEBUG_LOGGING=0 \
-	python scripts/train.py \
+	$(PYTHON) scripts/train.py \
 		--data-path $(DATA_PATH) \
 		--epochs 3 \
 		--batch-size $(BATCH_SIZE) \
@@ -126,7 +129,7 @@ train-safe:
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
 	LOG_FILE="$(LOG_DIR)/train_safe_$${TIMESTAMP}.log"; \
 	echo "📝 Log file: $$LOG_FILE"; \
-	nohup python scripts/train.py \
+	nohup $(PYTHON) scripts/train.py \
 		--data-path $(DATA_PATH) \
 		--epochs $(EPOCHS) \
 		--batch-size 128 \
@@ -154,7 +157,7 @@ train-optimized:
 	@echo "   ✅ RankIC + Sharpe optimization"
 	@echo "   ✅ torch.compile enabled"
 	@echo "   ✅ Plateau scheduler"
-	@python scripts/train.py \
+	@$(PYTHON) scripts/train.py \
 		--data-path $(DATA_PATH) \
 		--epochs $(EPOCHS) \
 		--batch-size $(BATCH_SIZE) \
@@ -171,7 +174,7 @@ train-standard:
 	@echo "   ✅ Single-worker (stable)"
 	@echo "   ✅ Standard loss functions"
 	@echo "   ✅ No experimental features"
-	@python scripts/train.py \
+	@$(PYTHON) scripts/train.py \
 		--data-path $(DATA_PATH) \
 		--epochs $(EPOCHS) \
 		--batch-size 512 \
@@ -228,7 +231,7 @@ train-stop:
 
 train-validate:
 	@echo "🔍 Validating training configuration"
-	@python scripts/train.py --validate-only \
+	@$(PYTHON) scripts/train.py --validate-only \
 		--data-path $(DATA_PATH) \
 		--epochs $(EPOCHS) \
 		--batch-size $(BATCH_SIZE) \
