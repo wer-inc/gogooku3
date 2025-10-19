@@ -248,7 +248,9 @@ dataset-gpu:
 	  --attach-nk225-option-market \
 	  --sector-onehot33 \
 	  --enable-sector-cs \
-	  --enable-daily-margin
+	  --enable-daily-margin \
+	  --enable-short-selling \
+	  --enable-sector-short-selling
 
 # Force refresh from API (ignore cache)
 # Usage: make dataset-gpu-refresh START=YYYY-MM-DD END=YYYY-MM-DD
@@ -262,6 +264,8 @@ dataset-gpu-refresh:
 	./venv/bin/python scripts/pipelines/run_full_dataset.py \
 	  --jquants --force-refresh --start-date $(START) --end-date $(END) \
 	  --gpu-etl --enable-graph-features \
+	  --enable-short-selling \
+	  --enable-sector-short-selling \
 	  --graph-window $(GRAPH_WINDOW) \
 	  --graph-cache-dir $(CACHE_DIR) \
 	  --graph-threshold $(GRAPH_THRESHOLD) --graph-max-k $(GRAPH_MAX_K) \
