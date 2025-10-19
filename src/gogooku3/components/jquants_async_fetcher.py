@@ -1618,7 +1618,6 @@ class JQuantsAsyncFetcher:
 
         API Requirements:
         - Must specify either 'code', 'disclosed_date', or 'calculated_date'
-        - For date ranges, use 'disclosed_date_from'/'disclosed_date_to' (not 'from'/'to')
         - We iterate through each disclosed_date to get all data
 
         Args:
@@ -1797,15 +1796,16 @@ class JQuantsAsyncFetcher:
             return df
 
         # Standardize column names
+        # Note: API returns "Date" as the announcement date (not "AnnouncementDate")
         column_mapping = {
             "LocalCode": "Code",
             "Code": "Code",
             "Date": "Date",
-            "AnnouncementDate": "AnnouncementDate",
             "CompanyName": "CompanyName",
             "FiscalYear": "FiscalYear",
             "FiscalQuarter": "FiscalQuarter",
-            "AnnouncementTime": "AnnouncementTime",
+            "SectorName": "SectorName",
+            "Section": "Section",
         }
 
         # Rename columns if they exist
@@ -1818,13 +1818,11 @@ class JQuantsAsyncFetcher:
             print("Warning: No Code column in earnings announcement data")
             return pl.DataFrame()
 
-        # Convert date columns to proper format
-        date_columns = ["Date", "AnnouncementDate"]
-        for col in date_columns:
-            if col in df.columns:
-                df = df.with_columns([
-                    pl.col(col).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias(col)
-                ])
+        # Convert Date column to proper format (this is the announcement date)
+        if "Date" in df.columns:
+            df = df.with_columns([
+                pl.col("Date").str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("Date")
+            ])
 
         # Ensure Code is string
         df = df.with_columns([
@@ -1832,7 +1830,7 @@ class JQuantsAsyncFetcher:
         ])
 
         # Sort by announcement date and code
-        df = df.sort(["AnnouncementDate", "Code"])
+        df = df.sort(["Date", "Code"])
 
         return df
 
