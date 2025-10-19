@@ -7,7 +7,7 @@
 #
 # AUTONOMOUS FEATURES:
 #   - Automatic project health diagnosis on startup
-#   - Web search enabled (--search)
+#   - Web search enabled (--enable web_search_request)
 #   - Full auto mode (--full-auto: -a on-failure, workspace sandbox)
 #   - Project-aware system prompt
 #   - MCP servers: playwright, filesystem, git, brave-search
@@ -165,19 +165,20 @@ Be thorough, reason deeply, and autonomous.
 
 # Launch codex
 if [ -n "$USER_PROMPT" ]; then
-    echo "🚀 Launching Codex with user prompt"
+    echo "🚀 Launching Codex (non-interactive) with user prompt"
     echo ""
-    exec codex --search --full-auto "${SYSTEM_CONTEXT}${USER_PROMPT}"
+    exec codex exec --enable web_search_request --full-auto "${SYSTEM_CONTEXT}${USER_PROMPT}"
 elif [ -n "$AUTO_PROMPT" ]; then
     echo "🚀 Launching Codex (autonomous deep reasoning mode)"
-    echo "  - Web search enabled (--search)"
+    echo "  - Non-interactive mode (codex exec)"
+    echo "  - Web search enabled (--enable web_search_request)"
     echo "  - Full auto mode (--full-auto)"
     echo "  - Project-aware context"
     echo "  - MCP servers: playwright, filesystem, git, brave-search"
     echo ""
-    exec codex --search --full-auto "${SYSTEM_CONTEXT}${AUTO_PROMPT}"
+    exec codex exec --enable web_search_request --full-auto "${SYSTEM_CONTEXT}${AUTO_PROMPT}"
 else
-    echo "🚀 Launching Codex (default mode)"
+    echo "🚀 Launching Codex (interactive mode)"
     echo ""
-    exec codex --search --full-auto "$@"
+    exec codex --enable web_search_request --full-auto "$@"
 fi

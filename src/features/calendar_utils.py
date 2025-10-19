@@ -238,7 +238,8 @@ def create_next_bd_expr(calendar_df: pl.DataFrame) -> pl.Expr:
         next_bd_map[business_days[-1]] = last_date + timedelta(days=1)
 
     # Polars式として返す
-    return pl.col("Date").map_dict(next_bd_map, default=pl.col("Date") + pl.duration(days=1))
+    # Note: Polars 1.x uses replace() instead of map_dict()
+    return pl.col("Date").replace(next_bd_map, default=pl.col("Date") + pl.duration(days=1))
 
 
 # =============== New public helpers ===============
@@ -283,8 +284,9 @@ def build_next_bday_expr_from_dates(dates: list) -> callable:
 
     def _expr(col: pl.Expr) -> pl.Expr:
         # 入力列を一旦Utf8へ → Dateに正規化してからマッピング（出力もDate）
+        # Note: Polars 1.x uses replace() instead of map_dict()
         base = col.cast(pl.Utf8, strict=False).str.strptime(pl.Date, strict=False)
-        return base.map_dict(next_map, default=base + pl.duration(days=1)).cast(pl.Date)
+        return base.replace(next_map, default=base + pl.duration(days=1)).cast(pl.Date)
 
     return _expr
 

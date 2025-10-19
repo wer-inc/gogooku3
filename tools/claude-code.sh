@@ -140,6 +140,17 @@ Start by exploring the codebase for optimization opportunities."
     fi
 fi
 
+# Determine permission mode based on user
+if [ "$(id -u)" -eq 0 ]; then
+    # Running as root - use acceptEdits mode (bypassPermissions not allowed with root)
+    PERMISSION_MODE="acceptEdits"
+    PERMISSION_DESC="Auto-accept edits (root user)"
+else
+    # Non-root user - use full bypass
+    PERMISSION_MODE="bypassPermissions"
+    PERMISSION_DESC="Full bypass permissions"
+fi
+
 # Prepare system prompt
 SYSTEM_PROMPT="You are an autonomous AI developer working on the ATFT-GAT-FAN project (Japanese stock market prediction using Graph Attention Networks).
 
@@ -173,17 +184,19 @@ if [ "$INTERACTIVE_MODE" = true ]; then
     exec claude "$@"
 elif [ -n "$USER_PROMPT" ]; then
     echo "🚀 Launching Claude Code with user prompt"
+    echo "  - $PERMISSION_DESC"
     echo ""
-    exec claude --permission-mode bypassPermissions --append-system-prompt "$SYSTEM_PROMPT" "$USER_PROMPT"
+    exec claude --permission-mode "$PERMISSION_MODE" --append-system-prompt "$SYSTEM_PROMPT" "$USER_PROMPT"
 elif [ -n "$AUTO_PROMPT" ]; then
     echo "🚀 Launching Claude Code (autonomous mode)"
-    echo "  - Full bypass permissions"
+    echo "  - $PERMISSION_DESC"
     echo "  - Project-aware system prompt"
     echo "  - MCP servers: playwright, filesystem, git, brave-search"
     echo ""
-    exec claude --permission-mode bypassPermissions --append-system-prompt "$SYSTEM_PROMPT" "$AUTO_PROMPT"
+    exec claude --permission-mode "$PERMISSION_MODE" --append-system-prompt "$SYSTEM_PROMPT" "$AUTO_PROMPT"
 else
     echo "🚀 Launching Claude Code (default mode)"
+    echo "  - $PERMISSION_DESC"
     echo ""
-    exec claude --permission-mode bypassPermissions --append-system-prompt "$SYSTEM_PROMPT" "$@"
+    exec claude --permission-mode "$PERMISSION_MODE" --append-system-prompt "$SYSTEM_PROMPT" "$@"
 fi

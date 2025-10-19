@@ -47,22 +47,25 @@
 ### Codex（深い推論が必要な場合）
 
 ```bash
-# 完全自律モード：診断 → 深い分析 → 最適解を実装
+# 完全自律モード：診断 → 深い分析 → 最適解を実装（非対話）
 ./tools/codex.sh
 
-# ヘルスチェックをスキップ
+# ヘルスチェックをスキップ（非対話）
 ./tools/codex.sh --no-check
 
-# 複雑な問題を解決
+# 複雑な問題を解決（非対話）
 ./tools/codex.sh "Redesign the attention mechanism for better long-term predictions"
 ```
 
 **自動設定:**
+- ✅ **非対話モード**: `codex exec`で自律実行（プロンプトがある場合）
 - ✅ **深い推論**: o1モデルの推論能力を活用
 - ✅ **完全自律**: Web検索 + フルオート（`--search --full-auto`）
 - ✅ **自動診断**: 起動時に健全性チェック実行
 - ✅ **プロジェクト認識**: システムコンテキスト自動付与
 - ✅ **MCPサーバー**: playwright, filesystem, git, brave-search
+
+**注意**: 引数なしで実行すると対話モード、プロンプトありで実行すると非対話モード（`codex exec`）になります。
 
 ### 継続的自律監視
 

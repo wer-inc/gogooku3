@@ -25,10 +25,13 @@ logger = logging.getLogger(__name__)
 def _ensure_code_utf8(df: pl.DataFrame | None, source: str = "") -> pl.DataFrame | None:
     """Cast Code column to Utf8 if present; log where applied."""
     try:
-        if df is not None and not df.is_empty() and "Code" in df.columns and df["Code"].dtype != pl.Utf8:
-            df = df.with_columns(pl.col("Code").cast(pl.Utf8).alias("Code"))
-            if source:
-                logger.info(f"Normalized Code dtype to Utf8: {source}")
+        if df is not None and not df.is_empty() and "Code" in df.columns:
+            # Polars 1.x: Use df.schema instead of df["Code"].dtype
+            code_dtype = df.schema.get("Code")
+            if code_dtype is not None and code_dtype != pl.Utf8:
+                df = df.with_columns(pl.col("Code").cast(pl.Utf8).alias("Code"))
+                if source:
+                    logger.info(f"Normalized Code dtype to Utf8: {source}")
     except Exception as e:
         logger.warning(f"Failed to normalize Code dtype for {source or 'frame'}: {e}")
     return df
@@ -37,8 +40,9 @@ def _validate_code_type_consistency(df: pl.DataFrame, data_source: str) -> bool:
     """Validate Code dtype is Utf8; warn if not."""
     try:
         if "Code" in df.columns:
-            code_type = df["Code"].dtype
-            if code_type != pl.Utf8:
+            # Polars 1.x: Use df.schema instead of df["Code"].dtype
+            code_type = df.schema.get("Code")
+            if code_type is not None and code_type != pl.Utf8:
                 logger.warning(f"{data_source}: Code dtype is {code_type}, expected Utf8")
                 return False
     except Exception:

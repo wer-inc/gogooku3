@@ -136,7 +136,7 @@ def build_sector_short_features(
             pl.col("ss_sec33_short_share").diff().over("sec33").alias("ss_sec33_short_share_d1"),
             pl.col("ss_sec33_restrict_share").diff().over("sec33").alias("ss_sec33_restrict_share_d1"),
             (pl.col("ss_sec33_short_share") - pl.col("ss_sec33_short_share").rolling_mean(5).over("sec33")).alias("ss_sec33_short_mom5"),
-            (pl.col("ss_sec33_short_share").diff().over("sec33") - pl.col("ss_sec33_short_share").diff().over("sec33").shift(1).over("sec33")).alias("ss_sec33_short_accel"),
+            (pl.col("ss_sec33_short_share").diff().over("sec33") - pl.col("ss_sec33_short_share").diff().shift(1).over("sec33")).alias("ss_sec33_short_accel"),
         ])
     else:
         s = s.with_columns([
@@ -240,9 +240,11 @@ def attach_sector_short_to_quotes(
         return quotes.with_columns(null_exprs)
 
     # 2) セクター × effective_date での as-of 結合 (T+1 leak-safe)
+    # Drop 'Date' from sector_feats to avoid Date_right conflict
+    sf = sector_feats.drop("Date") if "Date" in sector_feats.columns else sector_feats
     q = (q.sort(["sec33", "Date"])
           .join_asof(
-             sector_feats.sort(["sec33", "effective_date"]),
+             sf.sort(["sec33", "effective_date"]),
              left_on="Date",
              right_on="effective_date",
              by="sec33",

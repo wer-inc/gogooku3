@@ -24,6 +24,17 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+humanize_seconds() {
+    local total=${1:-0}
+    local hours=$((total / 3600))
+    local minutes=$(((total % 3600) / 60))
+    local seconds=$((total % 60))
+    printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds"
+}
+
+# Thresholds (in seconds) used to classify long-running background jobs
+TRAINING_LOG_STALE_THRESHOLD=600
+
 # Initialize report arrays
 CRITICAL_ISSUES=()
 WARNINGS=()
@@ -112,7 +123,14 @@ echo -e "${BLUE}[3/8] Data pipeline status...${NC}"
 if [ -L "output/ml_dataset_latest_full.parquet" ]; then
     DATASET_PATH=$(readlink -f "output/ml_dataset_latest_full.parquet")
     DATASET_SIZE=$(du -h "$DATASET_PATH" 2>/dev/null | awk '{print $1}' || echo "unknown")
-    DATASET_AGE=$(find "$DATASET_PATH" -mtime +7 2>/dev/null && echo "old" || echo "recent")
+    # Check if dataset is >7 days old (604800 seconds = 7 days)
+    DATASET_TIMESTAMP=$(stat -c '%Y' "$DATASET_PATH" 2>/dev/null || echo "0")
+    CURRENT_TIME=$(date +%s)
+    DATASET_AGE_SECONDS=$((CURRENT_TIME - DATASET_TIMESTAMP))
+    DATASET_AGE="recent"
+    if [ "$DATASET_AGE_SECONDS" -gt 604800 ]; then
+        DATASET_AGE="old"
+    fi
 
     SUCCESSES+=("✓ Dataset exists: $DATASET_SIZE")
 
@@ -141,11 +159,51 @@ fi
 echo -e "${BLUE}[4/8] Training status...${NC}"
 
 # Check for running training processes
-if pgrep -f "train_atft.py" > /dev/null; then
-    TRAIN_PID=$(pgrep -f "train_atft.py" | head -1)
-    TRAIN_STAT=$(ps -p "$TRAIN_PID" -o stat,etime,%cpu --no-headers 2>/dev/null || echo "unknown")
-    WARNINGS+=("Training process running (PID: $TRAIN_PID, $TRAIN_STAT)")
-    RECOMMENDATIONS+=("Check training status: make train-status")
+if TRAIN_PID=$(pgrep -f "train_atft.py" | head -1 2>/dev/null); then
+    TRAIN_PID=${TRAIN_PID:-}
+    if [ -n "$TRAIN_PID" ]; then
+        read -r TRAIN_STATE TRAIN_ELAPSED TRAIN_CPU <<< "$(ps -p "$TRAIN_PID" -o state=,etimes=,pcpu= --no-headers 2>/dev/null || echo "unknown 0 0")"
+        TRAIN_LOG=""
+        if ls _logs/training/*.pid 1> /dev/null 2>&1; then
+            for PID_FILE in _logs/training/*.pid; do
+                if [ "$TRAIN_PID" = "$(cat "$PID_FILE" 2>/dev/null)" ]; then
+                    CANDIDATE_LOG="${PID_FILE%.pid}.log"
+                    if [ -f "$CANDIDATE_LOG" ]; then
+                        TRAIN_LOG="$CANDIDATE_LOG"
+                        break
+                    fi
+                fi
+            done
+        fi
+
+        if [ -z "$TRAIN_LOG" ]; then
+            if [ -f "logs/ml_training.log" ]; then
+                TRAIN_LOG="logs/ml_training.log"
+            elif [ -f "_logs/ml_training.log" ]; then
+                TRAIN_LOG="_logs/ml_training.log"
+            fi
+        fi
+
+        TRAIN_LOG_AGE=""
+        if [ -n "$TRAIN_LOG" ]; then
+            NOW_TS=$(date +%s)
+            LOG_TS=$(stat -c %Y "$TRAIN_LOG" 2>/dev/null || echo "")
+            if [ -n "$LOG_TS" ]; then
+                TRAIN_LOG_AGE=$((NOW_TS - LOG_TS))
+            fi
+        fi
+
+        if [ -n "$TRAIN_LOG_AGE" ] && [ "$TRAIN_LOG_AGE" -le "$TRAINING_LOG_STALE_THRESHOLD" ]; then
+            SUCCESSES+=("✓ Training in progress (PID: $TRAIN_PID, state $TRAIN_STATE, elapsed $(humanize_seconds "$TRAIN_ELAPSED"), CPU ${TRAIN_CPU}%, log updated ${TRAIN_LOG_AGE}s ago: $(basename "$TRAIN_LOG"))")
+        else
+            if [ -n "$TRAIN_LOG_AGE" ]; then
+                WARNINGS+=("Training process running (PID: $TRAIN_PID, state $TRAIN_STATE, elapsed $(humanize_seconds "$TRAIN_ELAPSED"), CPU ${TRAIN_CPU}%) - last log update ${TRAIN_LOG_AGE}s ago")
+            else
+                WARNINGS+=("Training process running (PID: $TRAIN_PID, state $TRAIN_STATE, elapsed $(humanize_seconds "$TRAIN_ELAPSED"), CPU ${TRAIN_CPU}%) - no associated log file found")
+            fi
+            RECOMMENDATIONS+=("Check training status: make train-status")
+        fi
+    fi
 else
     SUCCESSES+=("✓ No training processes running")
 fi
@@ -164,7 +222,8 @@ fi
 if ls output/models/*.pth 1> /dev/null 2>&1; then
     MODEL_COUNT=$(ls output/models/*.pth 2>/dev/null | wc -l)
     SUCCESSES+=("✓ $MODEL_COUNT trained models found")
-else
+elif [ -z "$TRAIN_PID" ]; then
+    # Only recommend training if no training is currently running
     RECOMMENDATIONS+=("No trained models found - start training: make train-quick")
 fi
 
@@ -190,7 +249,12 @@ fi
 if [ -d ".git" ]; then
     UNCOMMITTED=$(git status --porcelain 2>/dev/null | wc -l || echo "0")
     if [ "$UNCOMMITTED" -gt 0 ]; then
-        WARNINGS+=("$UNCOMMITTED uncommitted changes in working directory")
+        GIT_SUMMARY=$(git status --short 2>/dev/null | head -5 | tr '\n' ';' | sed 's/;$//' || echo "")
+        if [ -n "$GIT_SUMMARY" ]; then
+            WARNINGS+=("$UNCOMMITTED uncommitted changes in working directory (e.g. $GIT_SUMMARY)")
+        else
+            WARNINGS+=("$UNCOMMITTED uncommitted changes in working directory")
+        fi
     else
         SUCCESSES+=("✓ Working directory clean")
     fi

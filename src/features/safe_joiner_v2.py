@@ -690,7 +690,16 @@ class SafeJoinerV2:
 
         # 前年同期値を自己結合で取得（fiscal_yearが有効な場合のみ）
         # Check if fiscal_year column exists and has non-null values
-        if "fiscal_year" in s.columns and s["fiscal_year"].is_not_null().any():
+        # Polars 1.x: Use safer check for non-null values
+        has_fiscal_year = False
+        if "fiscal_year" in s.columns:
+            try:
+                non_null_count = s.select(pl.col("fiscal_year").is_not_null().sum()).item()
+                has_fiscal_year = non_null_count > 0
+            except Exception:
+                has_fiscal_year = False
+
+        if has_fiscal_year:
             try:
                 yoy_base = s.select([
                     pl.col("Code"),
