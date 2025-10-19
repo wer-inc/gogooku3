@@ -4230,6 +4230,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                             "train_loss": float(avg_train_loss),
                             "val_loss": float(avg_val_loss),
                             "avg_sharpe": float(avg_sharpe),
+                            "avg_ic": float(avg_val_ic),
+                            "avg_rank_ic": float(avg_val_rank_ic),
+                            "val_hit_rate": float(val_hit_rate),
                             "time": time.time(),
                             "timestamp": now_jst_iso(),
                         }
@@ -4245,6 +4248,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                             "train_loss": float(avg_train_loss),
                             "val_loss": float(avg_val_loss),
                             "avg_sharpe": float(avg_sharpe),
+                            "avg_ic": float(avg_val_ic),
+                            "avg_rank_ic": float(avg_val_rank_ic),
+                            "val_hit_rate": float(val_hit_rate),
                             "time": time.time(),
                             "timestamp": now_jst_iso(),
                         }
