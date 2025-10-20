@@ -7,7 +7,7 @@
 [![CUDA](https://img.shields.io/badge/CUDA-12.6+-green.svg)](https://developer.nvidia.com/cuda-toolkit)
 [![License](https://img.shields.io/badge/License-Private-black.svg)]()
 
-> Contributors: See the Repository Guidelines in [AGENTS.md](AGENTS.md). Enable hooks with `pre-commit install` and `pre-commit install -t commit-msg`.
+> Contributors: See the Repository Guidelines in [docs/development/agents.md](docs/development/agents.md). Enable hooks with `pre-commit install` and `pre-commit install -t commit-msg`.
 
 ## 🎯 概要
 
@@ -427,7 +427,7 @@ gogooku3-standalone/
 ├── 📦 requirements.txt                 # 統合依存関係
 ├── 📋 README.md                        # このファイル
 ├── 🔧 scripts/                         # コア処理
-│   ├── 🛡️ run_safe_training.py               # 7段階安全パイプライン  
+│   ├── 🛡️ run_safe_training.py               # 7段階安全パイプライン
 │   ├── 🎯 integrated_ml_training_pipeline.py  # ATFT完全統合（内製）
 │   ├── 📊 data/
 │   │   ├── ml_dataset_builder.py             # 強化データセット構築
@@ -440,7 +440,7 @@ gogooku3-standalone/
 │   ├── data/          # データ処理コンポーネント
 │   ├── models/        # モデルアーキテクチャ
 │   ├── graph/         # グラフニューラルネット
-│   └── features/      # 特徴量エンジニアリング  
+│   └── features/      # 特徴量エンジニアリング
 ├── 🧪 tests/                           # テストスイート
 ├── ⚙️ configs/                         # 設定ファイル
 └── 📈 output/                          # 結果・出力
@@ -533,7 +533,7 @@ python main.py complete-atft
 # 7段階安全パイプライン
 python scripts/run_safe_training.py
 
-# MLデータセット構築  
+# MLデータセット構築
 python scripts/data/ml_dataset_builder.py
 
 # 完全ATFT学習（内製ルート）
@@ -578,7 +578,7 @@ python scripts/integrated_ml_training_pipeline.py --adv-graph-train
 
 - **サイズ**: 605,618行 × 169列
 - **銘柄数**: 632
-- **期間**: 2021-01-04 ～ 2025-08-22  
+- **期間**: 2021-01-04 ～ 2025-08-22
 - **特徴量**: 155 (テクニカル + ファンダメンタル)
 - **ターゲット**: 回帰 (1d,5d,10d,20d) + 分類 (バイナリ)
 
@@ -588,7 +588,7 @@ python scripts/integrated_ml_training_pipeline.py --adv-graph-train
 2. **リターン**: 1d, 5d, 10d, 20d
 3. **テクニカル**: EMA, RSI, MACD, BB, ADX, ATR
 4. **ボラティリティ**: 20d, 60d, Sharpe比率
-5. **相関特徴量**: クロスセクション統計  
+5. **相関特徴量**: クロスセクション統計
 6. **ファンダメンタル**: PER, PBR, 時価総額
 
 ## 🚨 重要な制約

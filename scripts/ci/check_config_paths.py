@@ -8,15 +8,14 @@ Checked patterns (forbid):
 - safe_production.yaml (outside archive/)
 
 Scope:
-- docs/**, README.md, CLAUDE.md, MIGRATION.md, AGENTS.md, scripts/**, src/**
+- docs/**, README.md, CLAUDE.md, docs/architecture/migration.md, docs/development/agents.md, scripts/**, src/**
 - Excludes: archive/** and .git/**
 """
 from __future__ import annotations
 
 import re
-import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -34,8 +33,8 @@ SEARCH_ROOTS = [
     REPO / "src",
     REPO / "README.md",
     REPO / "CLAUDE.md",
-    REPO / "MIGRATION.md",
-    REPO / "AGENTS.md",
+    REPO / "docs" / "architecture" / "migration.md",
+    REPO / "docs" / "development" / "agents.md",
 ]
 
 EXCLUDES_DIRS = {".git", "archive", "_logs", "output", "runs", "mlruns", "wandb"}

@@ -105,10 +105,10 @@ Trial 20 complete:    2025-10-17 ~13:00 UTC
 ## 📁 Key Files & Documentation
 
 ### Reports (This Session)
-1. **IMPLEMENTATION_COMPLETE.md** - Original completion summary
-2. **HPO_STATUS_REPORT.md** - Detailed status report
-3. **GPU_INVESTIGATION_COMPLETE.md** - GPU utilization analysis
-4. **SESSION_STATUS.md** - This file (executive summary)
+1. [implementation_complete.md](../completion/implementation_complete.md) - Original completion summary
+2. [hpo_status_report_20251016.md](hpo_status_report_20251016.md) - Detailed status report
+3. [gpu_investigation_complete.md](../completion/gpu_investigation_complete.md) - GPU utilization analysis
+4. `production_hpo_session_status_20251016.md` - This file (executive summary)
 
 ### Logs
 - **HPO Log**: `/tmp/hpo_production.log`

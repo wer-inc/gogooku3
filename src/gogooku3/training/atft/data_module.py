@@ -14,11 +14,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset, Sampler
-import pandas as pd
 
 try:  # pragma: no cover - optional acceleration path
     import pyarrow.parquet as pq
@@ -33,6 +33,7 @@ try:  # pragma: no cover - runtime import guard
     from gogooku3.data.samplers.day_batch_sampler import (
         DayBatchSampler as ExtDayBatchSampler,
     )
+
     _USE_EXT_SAMPLER = True
 except Exception:  # pragma: no cover - fallback for environments without full package
     _USE_EXT_SAMPLER = False
@@ -90,7 +91,11 @@ def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
 
     # CRITICAL: Safe mode (FORCE_SINGLE_PROCESS=1) ALWAYS overrides multi-worker settings
     # This must be checked BEFORE any other guards to ensure proper single-process operation
-    is_safe_mode = os.getenv("FORCE_SINGLE_PROCESS", "0").lower() in ("1", "true", "yes")
+    is_safe_mode = os.getenv("FORCE_SINGLE_PROCESS", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     if is_safe_mode:
         logger.info(
             "[SAFE MODE] Enforcing single-process DataLoader (num_workers=0) due to FORCE_SINGLE_PROCESS=1"
@@ -109,8 +114,11 @@ def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
         # This leads to deadlock when iterating DataLoader in training loop
         try:
             import torch
+
             torch.set_num_threads(1)
-            logger.info("[SAFE MODE] Limited PyTorch threads to 1 (prevents 128-thread deadlock)")
+            logger.info(
+                "[SAFE MODE] Limited PyTorch threads to 1 (prevents 128-thread deadlock)"
+            )
         except Exception as e:
             logger.warning(f"[SAFE MODE] Failed to limit PyTorch threads: {e}")
 
@@ -129,14 +137,18 @@ def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
     # Global loader-guard (mirrors scripts/train_atft.py):
     # Unless ALLOW_UNSAFE_DATALOADER=1, force single-process mode to avoid
     # sporadic worker aborts seen with multi-process parquet loading.
-    loader_mode = (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
+    loader_mode = (
+        (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
+    )
     allow_multi = loader_mode in ("", "auto", "1", "true", "yes", "multi")
     try:
         requested = int(OmegaConf.select(config, "train.batch.num_workers") or 0)
     except Exception:
         requested = 0
     effective = max(int(params.get("num_workers", 0) or 0), requested)
-    if not allow_multi and (effective > 0 or bool(params.get("persistent_workers", False))):
+    if not allow_multi and (
+        effective > 0 or bool(params.get("persistent_workers", False))
+    ):
         logger.warning(
             "[loader-guard] Enforcing single-process DataLoader (num_workers=0). "
             "Set ALLOW_UNSAFE_DATALOADER=auto (default) or 1 to opt in to multi-process."
@@ -306,7 +318,9 @@ class StreamingParquetDataset(Dataset):
         self.normalize_online = normalize_online
         self.cache_size = cache_size
         # Engine selection: default to pyarrow for multi-worker safety if unspecified
-        self.reader_engine = (reader_engine or os.getenv("PARQUET_READER_ENGINE") or "").strip().lower()
+        self.reader_engine = (
+            (reader_engine or os.getenv("PARQUET_READER_ENGINE") or "").strip().lower()
+        )
         if not self.reader_engine:
             # Heuristic: prefer pyarrow in multi-worker scenarios for stability
             try:
@@ -315,7 +329,9 @@ class StreamingParquetDataset(Dataset):
                 _nw = 0
             self.reader_engine = "pyarrow" if _nw > 0 else "polars"
         if self.reader_engine not in ("polars", "pyarrow"):
-            logger.warning("Unknown reader_engine=%s; falling back to 'polars'", self.reader_engine)
+            logger.warning(
+                "Unknown reader_engine=%s; falling back to 'polars'", self.reader_engine
+            )
             self.reader_engine = "polars"
         try:
             self.feature_clip_value = float(os.getenv("FEATURE_CLIP_VALUE", "0"))
@@ -358,7 +374,9 @@ class StreamingParquetDataset(Dataset):
         if self.use_exposure_features:
             # 露出特徴量の列設定
             if exposure_columns is None:
-                exposure_cols_env = os.getenv("EXPOSURE_COLUMNS", "market_cap,beta,sector_code")
+                exposure_cols_env = os.getenv(
+                    "EXPOSURE_COLUMNS", "market_cap,beta,sector_code"
+                )
                 exposure_columns = exposure_cols_env.split(",")
 
             # Filter to only columns that actually exist in the data
@@ -371,9 +389,13 @@ class StreamingParquetDataset(Dataset):
                     logger.debug(f"[Phase2] Exposure column not found in data: {col}")
 
             if self.exposure_columns:
-                logger.info(f"[Phase2] Exposure features enabled with available columns: {self.exposure_columns}")
+                logger.info(
+                    f"[Phase2] Exposure features enabled with available columns: {self.exposure_columns}"
+                )
             else:
-                logger.warning("[Phase2] No exposure columns found in data, using placeholders")
+                logger.warning(
+                    "[Phase2] No exposure columns found in data, using placeholders"
+                )
                 # Keep the requested columns for placeholder generation
                 self.exposure_columns = exposure_columns
 
@@ -386,7 +408,9 @@ class StreamingParquetDataset(Dataset):
             self._next_sector_id = 0
         else:
             self.exposure_columns = []
-            logger.debug("[Phase2] Exposure features disabled (USE_EXPOSURE_FEATURES=0)")
+            logger.debug(
+                "[Phase2] Exposure features disabled (USE_EXPOSURE_FEATURES=0)"
+            )
 
         # Pre-compute per-file window offsets for fast index resolution
         # Only add exposure columns that actually exist in the data
@@ -436,7 +460,7 @@ class StreamingParquetDataset(Dataset):
     def _get_cache_path(self) -> Path:
         """Get the path to the metadata cache file."""
         if not self.file_paths:
-            return Path(".")  / ".metadata_cache.pkl"
+            return Path(".") / ".metadata_cache.pkl"
         # Place cache in the split directory (train/val/test specific)
         # e.g., output/atft_data/train/xxx.parquet -> output/atft_data/train/.metadata_cache.pkl
         return self.file_paths[0].parent / ".metadata_cache.pkl"
@@ -445,12 +469,12 @@ class StreamingParquetDataset(Dataset):
         """Validate that cached metadata is still valid."""
         try:
             # Check if file count matches
-            if cached.get('file_count') != len(self.file_paths):
+            if cached.get("file_count") != len(self.file_paths):
                 logger.debug("Cache invalid: file count mismatch")
                 return False
 
             # Check if cache is not too old (7 days)
-            cache_age_days = (time.time() - cached.get('created_at', 0)) / 86400
+            cache_age_days = (time.time() - cached.get("created_at", 0)) / 86400
             if cache_age_days > 7:
                 logger.debug("Cache invalid: too old (%.1f days)", cache_age_days)
                 return False
@@ -469,17 +493,17 @@ class StreamingParquetDataset(Dataset):
             return False
 
         try:
-            with open(cache_path, 'rb') as f:
+            with open(cache_path, "rb") as f:
                 cached = pickle.load(f)
 
             if not self._validate_cache(cached):
                 return False
 
             # Load cached metadata
-            self._file_window_counts = cached['window_counts']
-            self._cumulative_windows = cached['cumulative_windows']
-            self.sequence_dates = cached.get('sequence_dates')
-            self._length = cached['total_length']
+            self._file_window_counts = cached["window_counts"]
+            self._cumulative_windows = cached["cumulative_windows"]
+            self.sequence_dates = cached.get("sequence_dates")
+            self._length = cached["total_length"]
 
             logger.info("✅ Loaded metadata from cache (%d windows)", self._length)
             return True
@@ -496,15 +520,15 @@ class StreamingParquetDataset(Dataset):
             cache_path.parent.mkdir(parents=True, exist_ok=True)
 
             cache_data = {
-                'window_counts': self._file_window_counts,
-                'cumulative_windows': self._cumulative_windows,
-                'sequence_dates': self.sequence_dates,
-                'total_length': self._length,
-                'file_count': len(self.file_paths),
-                'created_at': time.time()
+                "window_counts": self._file_window_counts,
+                "cumulative_windows": self._cumulative_windows,
+                "sequence_dates": self.sequence_dates,
+                "total_length": self._length,
+                "file_count": len(self.file_paths),
+                "created_at": time.time(),
             }
 
-            with open(cache_path, 'wb') as f:
+            with open(cache_path, "wb") as f:
                 pickle.dump(cache_data, f)
 
             logger.debug("Saved metadata cache to %s", cache_path)
@@ -517,7 +541,9 @@ class StreamingParquetDataset(Dataset):
         # Try to load from cache first
         start_time = time.time()
         if self._load_metadata_cache():
-            logger.info("Metadata loading took %.2fs (from cache)", time.time() - start_time)
+            logger.info(
+                "Metadata loading took %.2fs (from cache)", time.time() - start_time
+            )
             return
 
         # Cache miss or invalid - build from scratch
@@ -579,7 +605,9 @@ class StreamingParquetDataset(Dataset):
         # 収集した sequence_dates を numpy 配列へ確定（長さが一致する場合のみ設定）
         try:
             if sequence_dates_list and len(sequence_dates_list) == self._length:
-                self.sequence_dates = np.array(sequence_dates_list, dtype="datetime64[D]")
+                self.sequence_dates = np.array(
+                    sequence_dates_list, dtype="datetime64[D]"
+                )
                 logger.info(
                     "Built sequence_dates metadata: %d windows across %d files",
                     len(self.sequence_dates),
@@ -605,14 +633,18 @@ class StreamingParquetDataset(Dataset):
 
         # Save metadata to cache for next run
         self._save_metadata_cache()
-        logger.info("Metadata building took %.2fs (from scratch)", time.time() - start_time)
+        logger.info(
+            "Metadata building took %.2fs (from scratch)", time.time() - start_time
+        )
 
     def _get_file_num_rows(self, file_path: Path) -> int:
         """Read the row count from parquet metadata (fast path)."""
         if _HAS_PQ:
             try:
                 return int(pq.ParquetFile(file_path).metadata.num_rows)
-            except Exception as exc:  # pragma: no cover - fall back if metadata read fails
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - fall back if metadata read fails
                 logger.debug(
                     "Falling back to Polars row count for %s due to: %s",
                     file_path,
@@ -735,7 +767,12 @@ class StreamingParquetDataset(Dataset):
         features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
 
         if self.feature_clip_value > 0:
-            np.clip(features, -self.feature_clip_value, self.feature_clip_value, out=features)
+            np.clip(
+                features,
+                -self.feature_clip_value,
+                self.feature_clip_value,
+                out=features,
+            )
             if not self._clip_logged:
                 logger.info(
                     "[feature-clip] Applied feature clipping at ±%.2f (set FEATURE_CLIP_VALUE to adjust)",
@@ -751,8 +788,12 @@ class StreamingParquetDataset(Dataset):
         targets_row = targets_window[-1]
         targets_row = np.nan_to_num(targets_row, nan=0.0, posinf=0.0, neginf=0.0)
 
-        code_series = window[self.code_column] if self.code_column in window.columns else None
-        date_series = window[self.date_column] if self.date_column in window.columns else None
+        code_series = (
+            window[self.code_column] if self.code_column in window.columns else None
+        )
+        date_series = (
+            window[self.date_column] if self.date_column in window.columns else None
+        )
 
         code_value: Any | None = code_series[-1] if code_series is not None else None
         date_value: Any | None = date_series[-1] if date_series is not None else None
@@ -810,7 +851,9 @@ class StreamingParquetDataset(Dataset):
                 if "beta" in window.columns:
                     beta_val = window["beta"][-1]
                     beta_scalar = self._to_python_scalar(beta_val)
-                    exposures.append(float(beta_scalar) if beta_scalar is not None else 0.0)
+                    exposures.append(
+                        float(beta_scalar) if beta_scalar is not None else 0.0
+                    )
                 else:
                     # Column requested but not available - use placeholder
                     exposures.append(0.0)
@@ -838,22 +881,30 @@ class StreamingParquetDataset(Dataset):
     # -----------------------
     # PyArrow reader backend
     # -----------------------
-    def _ensure_rg_meta(self, file_idx: int, file_path: Path) -> tuple[list[int], list[int]]:
+    def _ensure_rg_meta(
+        self, file_idx: int, file_path: Path
+    ) -> tuple[list[int], list[int]]:
         """Build (offsets, lengths) for row-groups of a parquet file lazily."""
         if file_idx in self._rg_meta:
             return self._rg_meta[file_idx]
         if not _HAS_PQ:
-            raise RuntimeError("PyArrow is not available but reader_engine='pyarrow' was selected")
+            raise RuntimeError(
+                "PyArrow is not available but reader_engine='pyarrow' was selected"
+            )
         pf = pq.ParquetFile(file_path)
         md = pf.metadata
-        rg_lens: list[int] = [md.row_group(i).num_rows for i in range(md.num_row_groups)]
+        rg_lens: list[int] = [
+            md.row_group(i).num_rows for i in range(md.num_row_groups)
+        ]
         offsets: list[int] = [0]
         for n in rg_lens[:-1]:
             offsets.append(offsets[-1] + n)
         self._rg_meta[file_idx] = (offsets, rg_lens)
         return self._rg_meta[file_idx]
 
-    def _load_window_pyarrow(self, file_idx: int, file_path: Path, relative_idx: int) -> pl.DataFrame:
+    def _load_window_pyarrow(
+        self, file_idx: int, file_path: Path, relative_idx: int
+    ) -> pl.DataFrame:
         """Read a [relative_idx : relative_idx+sequence_length) window via PyArrow.
 
         Safety choices:
@@ -911,14 +962,19 @@ class StreamingParquetDataset(Dataset):
             idx += self._length
 
         if idx < 0 or idx >= self._length:
-            raise IndexError(f"Index {idx} out of range for dataset with length {self._length}")
+            raise IndexError(
+                f"Index {idx} out of range for dataset with length {self._length}"
+            )
 
         file_idx = bisect_right(self._cumulative_windows, idx)
         prev_cumulative = 0 if file_idx == 0 else self._cumulative_windows[file_idx - 1]
         relative_idx = idx - prev_cumulative
 
         # Guard against empty files that contribute zero windows
-        while file_idx < len(self._file_window_counts) and self._file_window_counts[file_idx] == 0:
+        while (
+            file_idx < len(self._file_window_counts)
+            and self._file_window_counts[file_idx] == 0
+        ):
             file_idx += 1
             prev_cumulative = self._cumulative_windows[file_idx - 1]
             relative_idx = idx - prev_cumulative
@@ -941,10 +997,10 @@ class StreamingParquetDataset(Dataset):
         import re
 
         # Match target_Nd, feat_ret_Nd patterns
-        match = re.search(r'(?:target|feat_ret)_(\d+)d?', col_name)
+        match = re.search(r"(?:target|feat_ret)_(\d+)d?", col_name)
         if match:
             horizon_num = match.group(1)
-            return f'horizon_{horizon_num}'
+            return f"horizon_{horizon_num}"
 
         # Return original if no pattern matches
         return col_name
@@ -994,7 +1050,9 @@ class StreamingParquetDataset(Dataset):
 
         # Sample features from selected files
         all_features = []
-        samples_per_file = max(16, math.ceil(max_samples / max(1, len(candidate_indices))))
+        samples_per_file = max(
+            16, math.ceil(max_samples / max(1, len(candidate_indices)))
+        )
         total_samples = 0
         files_used = 0
 
@@ -1024,7 +1082,9 @@ class StreamingParquetDataset(Dataset):
                 continue
 
         if not all_features:
-            logger.warning("Failed to compute global statistics, falling back to per-sample normalization")
+            logger.warning(
+                "Failed to compute global statistics, falling back to per-sample normalization"
+            )
             self._stats_computed = True
             return
 
@@ -1082,7 +1142,9 @@ class StreamingParquetDataset(Dataset):
             mad = mad * 1.4826
             mad = np.clip(mad, 1e-8, None)
             normalized = (work_array - median) / mad
-            logger.warning("Using fallback per-sample normalization (global stats not available)")
+            logger.warning(
+                "Using fallback per-sample normalization (global stats not available)"
+            )
 
         # Final clipping to ±5 sigma
         np.clip(normalized, -5.0, 5.0, out=normalized)
@@ -1168,7 +1230,7 @@ class _InternalDayBatchSampler(Sampler):
 
             # Yield batches for this date
             for i in range(0, len(indices), self.batch_size):
-                batch_indices = indices[i:i + self.batch_size]
+                batch_indices = indices[i : i + self.batch_size]
                 if batch_indices:  # Skip empty batches
                     yield batch_indices
 
@@ -1214,7 +1276,9 @@ class ProductionDataModuleV2:
         if not train_files:
             raise FileNotFoundError(f"No training files found in {data_dir}/train/")
 
-        logger.info(f"📂 Found {len(train_files)} train, {len(val_files)} val, {len(test_files)} test files")
+        logger.info(
+            f"📂 Found {len(train_files)} train, {len(val_files)} val, {len(test_files)} test files"
+        )
 
         # Get feature and target columns
         feature_columns = self._get_feature_columns()
@@ -1223,7 +1287,9 @@ class ProductionDataModuleV2:
         # Phase 2: 露出特徴量の設定
         exposure_columns = None
         if os.getenv("USE_EXPOSURE_FEATURES", "0") == "1":
-            exposure_cols_env = os.getenv("EXPOSURE_COLUMNS", "market_cap,beta,sector_code")
+            exposure_cols_env = os.getenv(
+                "EXPOSURE_COLUMNS", "market_cap,beta,sector_code"
+            )
             exposure_columns = exposure_cols_env.split(",")
 
         # CRITICAL FIX (2025-10-04): Resolve cache_size based on num_workers
@@ -1293,12 +1359,12 @@ class ProductionDataModuleV2:
         self.train_dataset._compute_global_statistics()
 
         # Share train statistics with val/test datasets (train-only stats for data safety)
-        if hasattr(self, 'val_dataset') and self.val_dataset:
+        if hasattr(self, "val_dataset") and self.val_dataset:
             self.val_dataset._global_median = self.train_dataset._global_median
             self.val_dataset._global_mad = self.train_dataset._global_mad
             self.val_dataset._stats_computed = True
 
-        if hasattr(self, 'test_dataset') and self.test_dataset:
+        if hasattr(self, "test_dataset") and self.test_dataset:
             self.test_dataset._global_median = self.train_dataset._global_median
             self.test_dataset._global_mad = self.train_dataset._global_mad
             self.test_dataset._stats_computed = True
@@ -1320,19 +1386,19 @@ class ProductionDataModuleV2:
         """
         # Get num_workers from config
         batch_cfg = self.config.train.batch
-        num_workers = batch_cfg.get('num_workers', 0)
+        num_workers = batch_cfg.get("num_workers", 0)
 
         # Get dataset config if available
-        dataset_cfg = batch_cfg.get('dataset', {})
+        dataset_cfg = batch_cfg.get("dataset", {})
 
         if num_workers == 0:
             # Single worker: Large cache is safe in main process
-            cache_size = dataset_cfg.get('cache_size_single_worker', 10000)
+            cache_size = dataset_cfg.get("cache_size_single_worker", 10000)
             logger.info(f"🔧 Single-worker mode: cache_size={cache_size}")
         else:
             # Multi-worker: Small cache to avoid memory explosion
             # Memory: num_workers × cache_size × 73KB/sample
-            cache_size = dataset_cfg.get('cache_size', 256)
+            cache_size = dataset_cfg.get("cache_size", 256)
             total_memory_mb = num_workers * cache_size * 73 / 1024
             logger.info(
                 f"🔧 Multi-worker mode (workers={num_workers}): "
@@ -1350,13 +1416,19 @@ class ProductionDataModuleV2:
                 try:
                     import json
                     from pathlib import Path as _P
+
                     data = json.loads(_P(selected_path).read_text())
                     selected = set(data.get("selected_features", []))
                     if selected:
                         cols = [c for c in cols if c in selected]
-                        logger.info("[feature-selection] Applied selected features (%d)", len(cols))
+                        logger.info(
+                            "[feature-selection] Applied selected features (%d)",
+                            len(cols),
+                        )
                 except Exception as _e:
-                    logger.warning("[feature-selection] failed to apply %s: %s", selected_path, _e)
+                    logger.warning(
+                        "[feature-selection] failed to apply %s: %s", selected_path, _e
+                    )
             return cols
 
         # Auto-detect from first file
@@ -1388,9 +1460,10 @@ class ProductionDataModuleV2:
 
         # Exclude target columns (target_1d, target_5d, etc.) as well
         feature_cols = [
-            col for col in df.columns
+            col
+            for col in df.columns
             if col not in exclude_cols
-            and not col.startswith('target_')  # Exclude all target columns
+            and not col.startswith("target_")  # Exclude all target columns
             and df.schema[col] in numeric_dtypes
         ]
         # Optional: intersect with externally selected features (JSON list)
@@ -1398,13 +1471,19 @@ class ProductionDataModuleV2:
         if selected_path:
             try:
                 import json
+
                 data = json.loads(Path(selected_path).read_text())
                 selected = set(data.get("selected_features", []))
                 if selected:
                     feature_cols = [c for c in feature_cols if c in selected]
-                    logger.info("[feature-selection] Applied selected features (%d)", len(feature_cols))
+                    logger.info(
+                        "[feature-selection] Applied selected features (%d)",
+                        len(feature_cols),
+                    )
             except Exception as _e:
-                logger.warning("[feature-selection] failed to apply %s: %s", selected_path, _e)
+                logger.warning(
+                    "[feature-selection] failed to apply %s: %s", selected_path, _e
+                )
         logger.info(f"✅ Auto-detected {len(feature_cols)} feature columns")
 
         return feature_cols
@@ -1412,7 +1491,10 @@ class ProductionDataModuleV2:
     def _get_target_columns(self) -> list[str]:
         """Get target column names."""
         # First, check if explicit target_columns are provided in config
-        if hasattr(self.config.data.schema, 'target_columns') and self.config.data.schema.target_columns:
+        if (
+            hasattr(self.config.data.schema, "target_columns")
+            and self.config.data.schema.target_columns
+        ):
             target_cols = list(self.config.data.schema.target_columns)
             logger.info(f"✅ Using explicit target columns from config: {target_cols}")
             return target_cols
@@ -1498,7 +1580,9 @@ class ProductionDataModuleV2:
         return info
 
 
-def collate_fn(batch: list[tuple[torch.Tensor, torch.Tensor]]) -> tuple[torch.Tensor, torch.Tensor]:
+def collate_fn(
+    batch: list[tuple[torch.Tensor, torch.Tensor]]
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Custom collate function for batching."""
     features, targets = zip(*batch, strict=False)
     features = torch.stack(features)

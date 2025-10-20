@@ -15,15 +15,19 @@ from __future__ import annotations
 import concurrent.futures as cf
 import os
 import re
-import socket
-import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import requests
 
 REPO = Path(__file__).resolve().parents[2]
-MD_SOURCES = [REPO / "docs", REPO / "README.md", REPO / "AGENTS.md", REPO / "MIGRATION.md", REPO / "CLAUDE.md"]
+MD_SOURCES = [
+    REPO / "docs",
+    REPO / "README.md",
+    REPO / "CLAUDE.md",
+    REPO / "docs" / "development" / "agents.md",
+    REPO / "docs" / "architecture" / "migration.md",
+]
 
 LINK_RE = re.compile(r"\[(?P<text>[^\]]+)\]\((?P<link>[^)]+)\)")
 IMG_RE = re.compile(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)]+)\)")
@@ -85,7 +89,11 @@ def check_url(url: str) -> tuple[bool, int | None, str | None]:
                 if dom:
                     ALLOWLIST_DOMAINS.add(dom)
 
-        if h and (h in SKIP_HOSTS or h in ALLOWLIST_DOMAINS or (not any(ch.isalpha() for ch in h))):
+        if h and (
+            h in SKIP_HOSTS
+            or h in ALLOWLIST_DOMAINS
+            or (not any(ch.isalpha() for ch in h))
+        ):
             return True, None, None
         # HEAD first
         r = requests.head(url, allow_redirects=True, timeout=TIMEOUT)

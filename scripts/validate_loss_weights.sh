@@ -114,7 +114,7 @@ log_info "  ✅ VAL_DEBUG_LOGGING=0 (Performance)"
 
 print_header "📊 Baseline Metrics (Current State)"
 
-log_info "Expected baseline (from ISSUE.md):"
+log_info "Expected baseline (from docs/reports/issues/phase2_regression_status_20251019.md):"
 log_info "  - Val RankIC: 0.0014"
 log_info "  - Val IC: 0.0082"
 log_info "  - Val Sharpe: -0.007"

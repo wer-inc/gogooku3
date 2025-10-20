@@ -1,0 +1,72 @@
+{
+  "groups": [
+    {
+      "name": "docs_migration_oct2025",
+      "description": "Legacy markdown migration into docs/reports hierarchy",
+      "patterns": [
+        "AGENTS.md",
+        "GPU_INVESTIGATION_COMPLETE.md",
+        "HPO_STATUS_REPORT.md",
+        "IMPLEMENTATION_COMPLETE.md",
+        "ISSUE.md",
+        "JQUANTS_STANDARD_PLAN_API_REPORT.md",
+        "MIGRATION.md",
+        "NEXT_STEPS.md",
+        "OPTIMIZATIONS_APPLIED.md",
+        "OPTIMIZATION_SUMMARY.md",
+        "PHASE0_DECISION_FRAMEWORK.md",
+        "SESSION_STATUS.md",
+        "dataset_issue.md",
+        "docs/PHASE1_IMPLEMENTATION_COMPLETE.md",
+        "docs/architecture/migration.md",
+        "docs/development/*",
+        "docs/faq.md",
+        "docs/getting-started.md",
+        "docs/governance/adr/ADR-0001-modern-package-migration.md",
+        "docs/index.md",
+        "docs/releases/changelog.md",
+        "docs/reports/*",
+        "docs/reports/*/",
+        "docs/reports/*/*",
+        "docs/reports/*/*/*"
+      ]
+    },
+    {
+      "name": "short_selling_fix_oct2025",
+      "description": "Short selling normalization fixes in progress",
+      "patterns": [
+        "docs/fixes/short_selling_normalization_issue_20251020.md",
+        "scripts/pipelines/run_full_dataset.py",
+        "scripts/train_atft.py",
+        "scripts/validate_loss_weights.sh",
+        "scripts/cache_short_positions.py",
+        "scripts/debug_short_positions_api.py",
+        "scripts/debug_short_selling_api.py",
+        "scripts/test_short_selling_fix.py",
+        "src/gogooku3/components/jquants_async_fetcher.py",
+        "src/gogooku3/features/short_selling.py",
+        "src/gogooku3/training/atft/data_module.py",
+        "src/pipeline/full_dataset.py"
+      ]
+    },
+    {
+      "name": "tooling_updates_oct2025",
+      "description": "Tooling, CI, and roadmap updates awaiting review",
+      "patterns": [
+        "CLAUDE.md",
+        "CLEANUP_TASKS.json",
+        "README.md",
+        "TODO.md",
+        "rmm_log.txt",
+        "configs/quality/*",
+        "configs/quality/",
+        "scripts/ci/*",
+        "scripts/maintenance/cleanup_markdown_files.sh",
+        "tools/codex.sh",
+        "tools/quality/*",
+        "tools/quality/",
+        "tools/project-health-check.sh"
+      ]
+    }
+  ]
+}

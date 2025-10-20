@@ -86,11 +86,11 @@ python scripts/hpo/run_optuna_atft.py \
 
 ## 📁 Documentation Created
 
-1. `OPTIMIZATIONS_APPLIED.md` - Detailed technical changes
-2. `NEXT_STEPS.md` - Decision tree and timeline
-3. `OPTIMIZATION_SUMMARY.md` - This file
-4. `PHASE0_DECISION_FRAMEWORK.md` - Early stopping logic
-5. `GPU_INVESTIGATION_COMPLETE.md` - GPU analysis
+1. [optimizations_applied_20251016.md](optimizations_applied_20251016.md) - Detailed technical changes
+2. [next_steps_optimized_training_pipeline.md](../status/next_steps_optimized_training_pipeline.md) - Decision tree and timeline
+3. `optimization_summary_20251016.md` - This file
+4. [phase0_decision_framework_20251016.md](../status/phase0_decision_framework_20251016.md) - Early stopping logic
+5. [gpu_investigation_complete.md](../completion/gpu_investigation_complete.md) - GPU analysis
 
 ---
 

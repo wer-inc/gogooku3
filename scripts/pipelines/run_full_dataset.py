@@ -677,7 +677,9 @@ async def main() -> int:
         logger.info("   → Full feature set available (~395 features)")
     else:
         logger.info("⚠️  Futures API disabled (Standard plan)")
-        logger.info("   → ~303-307 features available (88-92 futures features excluded)")
+        logger.info(
+            "   → ~303-307 features available (88-92 futures features excluded)"
+        )
         logger.info("   → To enable: Set JQUANTS_PLAN_TIER=premium in .env")
     logger.info("=" * 80)
 
@@ -1266,7 +1268,9 @@ async def main() -> int:
                 # Automatically enabled when JQUANTS_PLAN_TIER=premium
                 if _is_futures_available():
                     try:
-                        logger.info("Fetching futures data for derivatives features (Premium plan)")
+                        logger.info(
+                            "Fetching futures data for derivatives features (Premium plan)"
+                        )
                         futures_df = await fetcher.get_futures_daily(
                             _session_aux, start_date, end_date
                         )
@@ -1616,7 +1620,9 @@ async def main() -> int:
             ["TOPIXF", "NK225F", "JN400F", "REITF"] if _is_futures_available() else []
         ),
         futures_continuous=(
-            getattr(args, "futures_continuous", False) if _is_futures_available() else False
+            getattr(args, "futures_continuous", False)
+            if _is_futures_available()
+            else False
         ),
         nk225_parquet=getattr(args, "nk225_parquet", None),
         reit_parquet=getattr(args, "reit_parquet", None),
@@ -1689,9 +1695,7 @@ async def main() -> int:
         _validate_enriched_dataset(pq_path, meta_path)
         meta_info = json.loads(meta_path.read_text())
         feature_total = meta_info.get("features", {}).get("count")
-        logger.info(
-            "✅ Enriched dataset schema validated (features=%s)", feature_total
-        )
+        logger.info("✅ Enriched dataset schema validated (features=%s)", feature_total)
     except RuntimeError as e:
         logger.error(str(e))
         return 2

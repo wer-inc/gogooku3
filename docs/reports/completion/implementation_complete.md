@@ -310,7 +310,7 @@ All infrastructure is ready for:
 5. `docs/REFINEMENT_PROGRESS.md` - Technical deep-dive
 6. `docs/SESSION_SUMMARY.md` - Executive summary
 7. `output/ml_dataset_cached.arrow` - 7.4GB Arrow cache
-8. `IMPLEMENTATION_COMPLETE.md` - This file
+8. `implementation_complete.md` - This file
 
 ### Modified Files (2)
 1. `scripts/train_atft.py` - AdaBelief + Cosine Restart integration

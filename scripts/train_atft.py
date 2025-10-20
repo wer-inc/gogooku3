@@ -35,7 +35,6 @@ import traceback
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Optional
 from zoneinfo import ZoneInfo
 
 import hydra
@@ -712,7 +711,7 @@ RUN_DIR = Path(os.getenv("RUN_DIR", "runs/last"))
 RUN_DIR.mkdir(parents=True, exist_ok=True)
 
 # Optional W&B logger (via our integrated monitoring utility)
-WBLogger: Optional[object] = None  # type: ignore
+WBLogger: object | None = None  # type: ignore
 try:
     from src.utils.monitoring import ComprehensiveLogger as _WBLogger  # type: ignore
 
@@ -952,7 +951,9 @@ def _enforce_safe_dataloader_config(cfg: DictConfig) -> None:
     aborts observed in production runs.
     """
 
-    loader_mode = (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
+    loader_mode = (
+        (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
+    )
     if loader_mode in ("", "auto", "1", "true", "yes", "multi"):
         return
     # Any other value (0/false/safe) enforces single-process mode

@@ -22,9 +22,13 @@ These reports document completed features, improvements, and major changes.
 - [Cache Fix Documentation](cache_fix_documentation.md)
 - [Root Cause Fix Complete](root_cause_fix_complete.md)
 - [Docs Reorganization](docs_reorganization_complete.md)
+- [Implementation Complete](implementation_complete.md)
+- [GPU Investigation Complete](gpu_investigation_complete.md)
 - [Feature Defaults Update](../features/feature_defaults_update.md)
 
 ## See Also
 
 - [Analysis Reports](../analysis/)
+- [Status Reports](../status/README.md)
+- [Issue Reports](../issues/README.md)
 - [Main Documentation Index](../../INDEX.md)

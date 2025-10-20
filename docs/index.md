@@ -74,6 +74,13 @@ Gogooku3は日本株式向けMLOpsシステムです。JQuants API → 特徴量
 ### 📝 **リリース**
 - [**changelog.md**](releases/changelog.md) - バージョン履歴・変更内容・マイグレーション
 
+### 📑 **レポート集**
+- [**analysis/**](reports/analysis/) - 最適化・性能分析レポート
+- [**completion/**](reports/completion/README.md) - 完了報告と改善記録
+- [**status/**](reports/status/README.md) - 進行中セッションのステータスログ
+- [**issues/**](reports/issues/README.md) - 既知課題と根本原因分析
+- [**features/**](reports/features/README.md) - 特徴量・データセットの検証レポート
+
 ### 🏛️ **ガバナンス**
 - [**adr/template.md**](governance/adr/template.md) - Architecture Decision Records テンプレート
 - [**adr/ADR-0001-modern-package-migration.md**](governance/adr/ADR-0001-modern-package-migration.md) - パッケージ現代化決定記録
@@ -194,7 +201,8 @@ ls -la backups/            # バックアップ確認
 | 2024-01-XX | Phase 3: 運用Runbook/バックアップ自動化/アーキテクチャドキュメント | Claude |
 | 2024-01-XX | Phase 1: セキュリティ/テスト/監視/ドキュメント基盤 | Claude |
 | 2025-08-28 | ドキュメント再編・統合ポータル作成 | Claude |
-| 2025-08-28 | v2.0.0 パッケージ移行完了・MIGRATION.md作成 | Claude |
+| 2025-08-28 | v2.0.0 パッケージ移行完了・docs/architecture/migration.md作成 | Claude |
+| 2025-10-20 | ルートMarkdown整理・reports/* 配下へ再配置 | Claude |
 | 2025-01-27 | 既存INDEX.md作成・分類整理 | Claude |
 
 ---
