@@ -1936,6 +1936,52 @@ async def enrich_and_save(
                 except Exception as e:
                     logger.warning(f"Failed to build option features from raw: {e}")
 
+            # 2.5) Before API fetch, check for cached Index Options features
+            if opt_feats_df is None or opt_feats_df.is_empty():
+                from datetime import timedelta
+                import glob
+
+                # Look for cached nk225_index_option_features files in multiple locations
+                search_dirs = [Path("output/datasets"), Path("output/raw"), Path("output")]
+                cache_files = []
+                for output_dir in search_dirs:
+                    if output_dir.exists():
+                        cache_pattern = str(output_dir / "nk225_index_option_features_*.parquet")
+                        cache_files.extend(glob.glob(cache_pattern))
+
+                if cache_files:
+                    cache_files = sorted(cache_files, reverse=True)
+                    try:
+                        cached_option = Path(cache_files[0])
+                        logger.info(f"📦 Found cached index options: {cached_option.name}")
+
+                        # Check if cache covers requested date range
+                        cache_name = cached_option.stem
+                        parts = cache_name.split('_')
+                        if len(parts) >= 5:
+                            cache_start = parts[-2]
+                            cache_end = parts[-1]
+                            cache_start_dt = datetime.strptime(cache_start, "%Y%m%d")
+                            cache_end_dt = datetime.strptime(cache_end, "%Y%m%d")
+
+                            # Parse requested dates
+                            start_dt = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
+                            end_dt = datetime.strptime(end_date, "%Y-%m-%d") if isinstance(end_date, str) else end_date
+
+                            # Check if cache covers our range (allow 1-day tolerance)
+                            if cache_start_dt <= start_dt and cache_end_dt >= (end_dt - timedelta(days=1)):
+                                # Load cached raw data and build features
+                                raw = pl.read_parquet(cached_option)
+                                from src.gogooku3.features.index_option import (
+                                    build_index_option_features,
+                                )
+                                opt_feats_df = build_index_option_features(raw)
+                                logger.info(f"✅ CACHE HIT: Index Options (saved 15-30 min)")
+                            else:
+                                logger.info(f"⚠️  Cache date range mismatch: cache={cache_start}→{cache_end}, requested={start_dt.strftime('%Y%m%d')}→{end_dt.strftime('%Y%m%d')}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load cached index options: {e}")
+
             # 3) Else, try API fetch and build features
             if (opt_feats_df is None or opt_feats_df.is_empty()) and jquants:
                 try:
