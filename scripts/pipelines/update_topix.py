@@ -97,7 +97,7 @@ class TopixUpdater:
 
         # Add TOPIX features
         df = self.builder.add_topix_features(df, topix_df)
-        # Finalize to match DATASET.md
+        # Finalize to match dataset_new.md spec
         try:
             df = self.builder.finalize_for_spec(df)
         except Exception:
