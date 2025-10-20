@@ -18,11 +18,10 @@ from __future__ import annotations
 
 import argparse
 import re
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import polars as pl
-
 
 CANONICAL_CROSS = [
     "beta_60d",
@@ -36,9 +35,16 @@ CANONICAL_CROSS = [
 ]
 
 REQUIRED_CORE = [
-    "Code", "LocalCode", "Date",
-    "Open", "High", "Low", "Close", "Volume",
-    "Section", "section_norm",
+    "Code",
+    "LocalCode",
+    "Date",
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+    "Section",
+    "section_norm",
 ]
 
 
@@ -78,7 +84,7 @@ def main():
     if missing_cross:
         errors.append(f"Missing cross features: {missing_cross}")
     # Ensure no helper betas shipped
-    helpers = [c for c in ["beta_60d_raw","beta_20d_raw","beta_rolling"] if c in cols]
+    helpers = [c for c in ["beta_60d_raw", "beta_20d_raw", "beta_rolling"] if c in cols]
     if helpers:
         errors.append(f"Helper beta columns should not be present: {helpers}")
 
@@ -98,7 +104,9 @@ def main():
 
     # 4) Validity flag naming must be normalized
     if "is_ema_5_valid" in cols:
-        errors.append("Found legacy flag name: is_ema_5_valid (should be is_ema5_valid)")
+        errors.append(
+            "Found legacy flag name: is_ema_5_valid (should be is_ema5_valid)"
+        )
 
     # 5) idio_vol_ratio presence
     if "idio_vol_ratio" not in cols:
@@ -106,7 +114,39 @@ def main():
 
     # 6) Extra names mentioned in dataset_new.md but absent (best effort)
     # Filter to those likely to be columns
-    md_col_like = [n for n in md_names if any(n.startswith(p) for p in ("mkt_","stmt_","flow_","returns_","log_returns_","volatility_","ema_","sma_","ma_gap_","price_to_","high_low_ratio","close_to_high","close_to_low","rsi_","macd","bb_","atr_","adx_","stoch_","target_")) or n in REQUIRED_CORE + CANONICAL_CROSS + ["TurnoverValue","row_idx","shares_outstanding"]]
+    md_col_like = [
+        n
+        for n in md_names
+        if any(
+            n.startswith(p)
+            for p in (
+                "mkt_",
+                "stmt_",
+                "flow_",
+                "returns_",
+                "log_returns_",
+                "volatility_",
+                "ema_",
+                "sma_",
+                "ma_gap_",
+                "price_to_",
+                "high_low_ratio",
+                "close_to_high",
+                "close_to_low",
+                "rsi_",
+                "macd",
+                "bb_",
+                "atr_",
+                "adx_",
+                "stoch_",
+                "target_",
+            )
+        )
+        or n
+        in REQUIRED_CORE
+        + CANONICAL_CROSS
+        + ["TurnoverValue", "row_idx", "shares_outstanding"]
+    ]
     missing_from_md = [n for n in md_col_like if n not in cols]
     # Only warn for optional ones; not all docs tokens are mandatory in every run
     # We keep it informative.
@@ -116,7 +156,9 @@ def main():
     print(f"Dataset: {args.dataset}")
     print(f"Columns: {len(cols)} | mkt={mkt_count} stmt={stmt_count} flow={flow_count}")
     if missing_from_md:
-        print(f"Note: {len(missing_from_md)} doc-listed names missing (informative): {missing_from_md[:10]} ...")
+        print(
+            f"Note: {len(missing_from_md)} doc-listed names missing (informative): {missing_from_md[:10]} ..."
+        )
     if ok:
         print("✅ Validation PASSED against dataset_new.md")
         sys.exit(0)
