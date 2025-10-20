@@ -1,16 +1,10 @@
 #!/bin/bash
-# Claude Code launcher with full autonomous mode
+# Enhanced Claude Code launcher with dynamic environment detection
 # Usage:
-#   ./claude-code.sh                    # Auto-diagnose and fix issues
-#   ./claude-code.sh --no-check         # Skip health check
-#   ./claude-code.sh --interactive      # Standard interactive mode
-#   ./claude-code.sh <prompt>           # Direct prompt
-#
-# AUTONOMOUS FEATURES:
-#   - Automatic project health diagnosis on startup
-#   - Full bypass permissions (all operations auto-approved)
-#   - Project-aware system prompt
-#   - MCP servers: playwright, filesystem, git, brave-search
+#   ./claude-code-enhanced.sh                    # Auto-diagnose and fix issues
+#   ./claude-code-enhanced.sh --no-check         # Skip health check
+#   ./claude-code-enhanced.sh --interactive      # Standard interactive mode
+#   ./claude-code-enhanced.sh <prompt>           # Direct prompt
 
 set -euo pipefail
 
@@ -52,7 +46,87 @@ JSON
     echo "✓ Created .mcp.json"
 fi
 
+# ============================================================================
+# 🚀 ENHANCED: Dynamic Environment Detection
+# ============================================================================
+
+echo "🔍 Detecting environment..."
+
+# Python environment
+PYTHON_VERSION="unknown"
+if command -v python &> /dev/null; then
+    PYTHON_VERSION=$(python --version 2>&1 | cut -d' ' -f2)
+fi
+
+# CUDA availability
+CUDA_AVAILABLE="unknown"
+TORCH_VERSION="unknown"
+if command -v python &> /dev/null; then
+    CUDA_AVAILABLE=$(python -c 'import torch; print(torch.cuda.is_available())' 2>/dev/null || echo 'unknown')
+    if [ "$CUDA_AVAILABLE" = "True" ]; then
+        TORCH_VERSION=$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'unknown')
+    fi
+fi
+
+# GPU information
+GPU_NAME="unknown"
+GPU_MEMORY="unknown"
+GPU_UTILIZATION="unknown"
+GPU_MEMORY_USED="unknown"
+CUDA_VERSION="unknown"
+
+if command -v nvidia-smi &> /dev/null; then
+    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo 'unknown')
+    GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 || echo 'unknown')
+    GPU_UTILIZATION=$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || echo 'unknown')
+    GPU_MEMORY_USED=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 || echo 'unknown')
+    CUDA_VERSION=$(nvidia-smi | grep "CUDA Version" | sed -n 's/.*CUDA Version: \([0-9.]*\).*/\1/p' || echo 'unknown')
+fi
+
+# CPU information
+CPU_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 'unknown')
+CPU_MODEL=$(lscpu 2>/dev/null | grep "Model name" | cut -d':' -f2 | xargs || echo 'unknown')
+
+# Memory information
+TOTAL_RAM="unknown"
+AVAILABLE_RAM="unknown"
+if command -v free &> /dev/null; then
+    TOTAL_RAM=$(free -h | awk '/^Mem:/ {print $2}')
+    AVAILABLE_RAM=$(free -h | awk '/^Mem:/ {print $7}')
+elif command -v vm_stat &> /dev/null; then
+    # macOS
+    TOTAL_RAM=$(sysctl -n hw.memsize | awk '{print $1/1024/1024/1024 "G"}')
+fi
+
+# Disk space
+DISK_USAGE=$(df -h "$PROJECT_ROOT" | awk 'NR==2 {print $5}')
+DISK_AVAILABLE=$(df -h "$PROJECT_ROOT" | awk 'NR==2 {print $4}')
+
+# Git information
+GIT_BRANCH="unknown"
+GIT_COMMIT="unknown"
+if command -v git &> /dev/null && [ -d .git ]; then
+    GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'unknown')
+    GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')
+fi
+
+# Display environment summary
+echo "📊 Environment Summary:"
+echo "  Python: $PYTHON_VERSION"
+echo "  PyTorch: $TORCH_VERSION"
+echo "  CUDA: $CUDA_VERSION (Available: $CUDA_AVAILABLE)"
+echo "  GPU: $GPU_NAME"
+echo "  GPU Memory: ${GPU_MEMORY_USED}MB / ${GPU_MEMORY}MB (Utilization: ${GPU_UTILIZATION}%)"
+echo "  CPU: $CPU_CORES cores ($CPU_MODEL)"
+echo "  RAM: $AVAILABLE_RAM available / $TOTAL_RAM total"
+echo "  Disk: $DISK_AVAILABLE available (${DISK_USAGE} used)"
+echo "  Git: $GIT_BRANCH @ $GIT_COMMIT"
+echo ""
+
+# ============================================================================
 # Parse arguments
+# ============================================================================
+
 SKIP_CHECK=false
 INTERACTIVE_MODE=false
 USER_PROMPT=""
@@ -142,42 +216,74 @@ fi
 
 # Determine permission mode based on user
 if [ "$(id -u)" -eq 0 ]; then
-    # Running as root - use acceptEdits mode (bypassPermissions not allowed with root)
     PERMISSION_MODE="acceptEdits"
     PERMISSION_DESC="Auto-accept edits (root user)"
 else
-    # Non-root user - use full bypass
     PERMISSION_MODE="bypassPermissions"
     PERMISSION_DESC="Full bypass permissions"
 fi
 
-# Prepare system prompt
+# ============================================================================
+# 🚀 ENHANCED: Prepare enriched system prompt
+# ============================================================================
+
 SYSTEM_PROMPT="You are an autonomous AI developer working on the ATFT-GAT-FAN project (Japanese stock market prediction using Graph Attention Networks).
 
-Key project details:
-- Hardware: NVIDIA A100 80GB, 24-core CPU, 216GB RAM
-- Main codebase: /workspace/gogooku3
+🖥️ CURRENT ENVIRONMENT:
+- Python: $PYTHON_VERSION
+- PyTorch: $TORCH_VERSION (CUDA: $CUDA_AVAILABLE)
+- GPU: $GPU_NAME
+  * CUDA Version: $CUDA_VERSION
+  * Memory: ${GPU_MEMORY_USED}MB used / ${GPU_MEMORY}MB total (${GPU_UTILIZATION}% utilization)
+  * Available Memory: $((GPU_MEMORY - GPU_MEMORY_USED))MB
+- CPU: $CPU_CORES cores ($CPU_MODEL)
+- RAM: $AVAILABLE_RAM available / $TOTAL_RAM total
+- Disk: $DISK_AVAILABLE available (${DISK_USAGE} used)
+- Git: $GIT_BRANCH @ $GIT_COMMIT
+
+📁 PROJECT STRUCTURE:
+- Main codebase: $PROJECT_ROOT
 - Training pipeline: scripts/integrated_ml_training_pipeline.py
 - Dataset builder: scripts/pipelines/run_full_dataset.py
 - See CLAUDE.md for full project documentation
 
-Your autonomous workflow:
+💡 OPTIMIZATION OPPORTUNITIES:
+$(if [ "$GPU_UTILIZATION" != "unknown" ] && [ "$GPU_UTILIZATION" -lt 50 ]; then
+    echo "- GPU utilization is ${GPU_UTILIZATION}% - consider increasing batch size or model complexity"
+fi)
+$(if [ "$GPU_MEMORY" != "unknown" ] && [ "$GPU_MEMORY_USED" != "unknown" ]; then
+    FREE_MEM=$((GPU_MEMORY - GPU_MEMORY_USED))
+    if [ $FREE_MEM -gt 20000 ]; then
+        echo "- ${FREE_MEM}MB GPU memory available - can support larger models or batch sizes"
+    fi
+fi)
+$(if [ "$CUDA_VERSION" != "unknown" ]; then
+    CUDA_MAJOR=$(echo "$CUDA_VERSION" | cut -d'.' -f1)
+    if [ "$CUDA_MAJOR" -ge 12 ]; then
+        echo "- CUDA $CUDA_VERSION detected - FlashAttention 2 and other optimizations available"
+    fi
+fi)
+
+🔧 YOUR AUTONOMOUS WORKFLOW:
 1. Use TodoWrite to track all tasks (REQUIRED - always create todos)
 2. Read relevant files before making changes
 3. Fix issues systematically (critical → warnings → optimizations)
 4. Verify fixes by running health checks or tests
 5. Report completion status clearly
 
-Tools at your disposal:
+🛠️ TOOLS AT YOUR DISPOSAL:
 - Read/Write/Edit for file operations
 - Bash for running commands (training, tests, health checks)
 - Grep/Glob for code exploration
 - Task tool for complex multi-step operations
 - MCP servers: playwright (web), filesystem, git, brave-search
 
-Be proactive, thorough, and autonomous. Fix all issues you discover."
+Be proactive, thorough, and autonomous. Use the environment information above to make data-driven optimization decisions."
 
-# Launch claude
+# ============================================================================
+# Launch claude with enhanced configuration
+# ============================================================================
+
 if [ "$INTERACTIVE_MODE" = true ]; then
     echo "🚀 Launching Claude Code (interactive mode)"
     echo ""
@@ -190,7 +296,7 @@ elif [ -n "$USER_PROMPT" ]; then
 elif [ -n "$AUTO_PROMPT" ]; then
     echo "🚀 Launching Claude Code (autonomous mode)"
     echo "  - $PERMISSION_DESC"
-    echo "  - Project-aware system prompt"
+    echo "  - Environment-aware system prompt"
     echo "  - MCP servers: playwright, filesystem, git, brave-search"
     echo ""
     exec claude --permission-mode "$PERMISSION_MODE" --append-system-prompt "$SYSTEM_PROMPT" "$AUTO_PROMPT"
