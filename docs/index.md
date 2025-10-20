@@ -101,7 +101,7 @@ gogooku3-standalone/
 │   └── index.md          # ドキュメントポータル
 ├── tests/                 # テストスイート
 │   ├── test_health_check.py       # ヘルスチェックテスト
-│   └── test_e2e_docker.py         # E2Eテスト
+│   └── integration/               # 統合テストスイート
 ├── data_quality/          # データ品質管理
 │   └── great_expectations_suite.py # Great Expectations統合
 ├── ops/                   # 運用ツール
@@ -127,8 +127,8 @@ gogooku3-standalone/
 ```bash
 # セットアップ
 make setup                 # 初期セットアップ
-make docker-up             # 全サービス起動
 cp .env.example .env       # セキュア環境設定
+make dev                   # 仮想環境と依存関係準備
 
 # システム検証
 python ops/health_check.py health           # ヘルスチェック
@@ -145,7 +145,6 @@ export PERF_MEMORY_OPTIMIZATION=1
 export PERF_CACHING_ENABLED=1
 
 # 開発
-make dev                   # 開発モード起動
 make test                  # テスト実行
 make lint                  # コード品質チェック
 pytest tests/ -k "performance" --benchmark-only  # パフォーマンステスト
@@ -156,8 +155,8 @@ python main.py ml-dataset                    # データセット構築
 python main.py complete-atft                 # ATFT完全学習
 
 # 運用
-make docker-logs           # ログ確認
-make docker-down           # 全サービス停止
+journalctl -u gogooku3.service --since "10 minutes ago"  # ログ確認
+systemctl stop gogooku3.service   # サービス停止
 make clean                 # 環境リセット
 
 # バックアップ検証

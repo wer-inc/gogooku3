@@ -1750,7 +1750,7 @@ async def main() -> int:
                         # Check if cache covers requested date range
                         cache_name = cached_option.stem
                         # Extract dates from filename: nk225_index_option_features_YYYYMMDD_YYYYMMDD
-                        parts = cache_name.split('_')
+                        parts = cache_name.split("_")
                         if len(parts) >= 5:
                             cache_start = parts[-2]
                             cache_end = parts[-1]
@@ -1758,11 +1758,17 @@ async def main() -> int:
                             cache_end_dt = datetime.strptime(cache_end, "%Y%m%d")
 
                             # Check if cache covers our range (allow 1-day tolerance)
-                            if cache_start_dt <= start_dt and cache_end_dt >= (end_dt - timedelta(days=1)):
+                            if cache_start_dt <= start_dt and cache_end_dt >= (
+                                end_dt - timedelta(days=1)
+                            ):
                                 opt_raw = pl.read_parquet(cached_option)
-                                logger.info(f"✅ CACHE HIT: Index Options (saved 15-30 min)")
+                                logger.info(
+                                    "✅ CACHE HIT: Index Options (saved 15-30 min)"
+                                )
                             else:
-                                logger.info(f"⚠️  Cache date range mismatch: cache={cache_start}→{cache_end}, requested={start_dt.strftime('%Y%m%d')}→{end_dt.strftime('%Y%m%d')}")
+                                logger.info(
+                                    f"⚠️  Cache date range mismatch: cache={cache_start}→{cache_end}, requested={start_dt.strftime('%Y%m%d')}→{end_dt.strftime('%Y%m%d')}"
+                                )
                     except Exception as e:
                         logger.warning(f"Failed to load cached index options: {e}")
 
