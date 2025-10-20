@@ -22,13 +22,12 @@ SAST scans are integrated into GitHub Actions workflows:
    - Configuration files: YAML, JSON, TOML
    - Dependencies: `requirements.txt`, `pyproject.toml`
 
-2. **Container Images**
-   - Docker images defined in `docker-compose.yml`
-   - Base images and their dependencies
+2. **Container Images (Legacy)**
+   - Docker Compose 定義は 2025-10 に廃止。コンテナスキャンはデフォルト無効
+   - 将来コンテナを再導入する場合は Trivy イメージスキャンを復活させること
 
 3. **Infrastructure as Code**
-   - Docker Compose configurations
-   - Kubernetes manifests (future)
+   - Kubernetes manifests（今後の拡張を想定）
 
 ## Tools Configuration
 

@@ -1,4 +1,4 @@
-.PHONY: help setup test clean docker-up docker-down docker-logs
+.PHONY: help setup test clean
 
 # Use bash for all recipes to support pipefail
 SHELL := /bin/bash
@@ -153,21 +153,6 @@ rapids-verify:
 	@python -c "import cudf; import cugraph; import rmm; print(f'✅ cuDF {cudf.__version__}, cuGraph {cugraph.__version__}, RMM {rmm.__version__}')"
 	@python -c "from src.utils.gpu_etl import init_rmm, to_cudf, to_polars; import polars as pl; df = pl.DataFrame({'x': [1,2,3]}); to_polars(to_cudf(df)); print('✅ GPU-ETL pipeline functional')"
 
-# Docker services
-docker-up:
-	docker-compose up -d
-	@echo "✅ Services started"
-	@echo "📊 MinIO Console: http://localhost:9001 (minioadmin/minioadmin123)"
-	@echo "📊 Dagster UI: http://localhost:3001"
-	@echo "📊 Grafana: http://localhost:3000 (admin/gogooku123)"
-	@echo "📊 Prometheus: http://localhost:9090"
-
-docker-down:
-	docker-compose down
-
-docker-logs:
-	docker-compose logs -f
-
 # Testing
 test:
 	pytest -m "not slow"
@@ -180,12 +165,11 @@ test-integration:
 
 
 # Development
-dev: setup docker-up
-	@echo "✅ Development environment ready"
+dev: setup
+	@echo "✅ Development environment ready (Docker stack removed)"
 
 # Clean up
 clean:
-	docker-compose -f docker/docker-compose.yml down -v
 	rm -rf venv __pycache__ .pytest_cache
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
@@ -402,15 +386,6 @@ update-cache:
 
 update-cache-silent:
 	@python scripts/cache/update_daily_cache.py --silent
-
-# Database operations
-db-init:
-	docker exec -i gogooku3-clickhouse clickhouse-client < docker/clickhouse-init.sql
-
-# MinIO operations
-minio-create-bucket:
-	docker exec gogooku3-minio mc alias set local http://localhost:9000 minioadmin minioadmin
-	docker exec gogooku3-minio mc mb local/gogooku3 --ignore-existing
 
 # ============================================================================
 # Training Commands (DEPRECATED - Use commands from Makefile.train instead)

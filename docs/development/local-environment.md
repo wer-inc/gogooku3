@@ -3,8 +3,8 @@
 Gogooku3 をローカルで動かすための手順です。
 
 ## 要件
-- Python 3.10+
-- Docker/Docker Compose（任意、フル環境向け）
+- Python 3.11+
+- CUDA 12.x 対応 GPU（任意）
 
 ## セットアップ
 ```bash
@@ -19,15 +19,9 @@ make test             # テスト実行
 make lint             # 品質チェック（ruff/mypy/bandit）
 ```
 
-## Docker 環境
-```bash
-docker-compose up -d   # 各種サービス起動（ClickHouse/MinIO/Redis等）
-make docker-logs       # ログ確認
-make docker-down       # 停止
-```
+# Docker ベースのローカル環境は 2025-10 時点で廃止しました。MinIO や ClickHouse が必要な場合は既存のクラウド/社内インフラへ接続してください。
 
 ## トラブルシューティング
 - `.env` の必須キー設定を確認（`JQUANTS_*`, `WANDB_API_KEY` 等）
 - 権限問題: `chown -R $USER:$USER output/` で修正
 - 依存問題: `pip install -U pip setuptools wheel` 実行
-

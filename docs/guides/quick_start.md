@@ -1,226 +1,77 @@
-# Gogooku3-standalone クイックスタートガイド
+# Gogooku3-standalone クイックスタート（コンテナレス版）
 
-## 🚀 10分で始める（セキュリティ強化版）
+> ℹ️ 2025-10 以降、Docker Compose スタックは廃止されました。本ガイドは GPU サーバ上で直接実行する前提の最短手順です。詳細は [`docs/getting-started.md`](../getting-started.md) を参照してください。
 
-### 前提条件
-- Docker & Docker Compose インストール済み
-- Python 3.10+
-- 最低16GB RAM、50GB ディスク空き容量
-- セキュリティ意識（環境変数管理）
+## ✅ 前提条件
+- Python 3.11 以上（推奨: 仮想環境）
+- CUDA 12.4 対応 GPU（A100 80GB 推奨）と最新ドライバ
+- 16GB 以上のシステムメモリ / 50GB 以上の空きストレージ
+- MinIO / ClickHouse / Redis など外部サービスへの接続権限
+- J-Quants API 資格情報
 
-### Step 1: クローン & セキュアセットアップ
+## 🚀 5 ステップでセットアップ
+
+### 1. リポジトリ準備
 ```bash
-cd /home/ubuntu/gogooku3-standalone
+git clone git@github.com:your-org/gogooku3-standalone.git
+cd gogooku3-standalone
+make setup              # venv + 依存関係
+```
 
-# .env.example をコピーして編集
+### 2. 環境変数設定
+```bash
 cp .env.example .env
-nano .env  # 必須の環境変数を設定
-
-# 必須環境変数（最低限）:
-# MINIO_ROOT_USER=your_secure_username
-# MINIO_ROOT_PASSWORD=your_secure_password
-# CLICKHOUSE_USER=default
-# CLICKHOUSE_PASSWORD=your_secure_ch_password
-# REDIS_PASSWORD=your_secure_redis_password
-# JQUANTS_AUTH_EMAIL=your_email@example.com
-# JQUANTS_AUTH_PASSWORD=your_secure_api_password
-
-# ディレクトリ初期化
-mkdir -p logs data/processed output results
+editor .env             # 認証情報・ホスト名を編集
 ```
 
-### Step 2: セキュアDocker起動
+主要変数:
+- `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`
+- `CLICKHOUSE_HOST`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`
+- `REDIS_HOST`, `REDIS_PASSWORD`
+- `MLFLOW_BASE_URL`, `DAGSTER_BASE_URL`
+- `JQUANTS_AUTH_EMAIL`, `JQUANTS_AUTH_PASSWORD`
+
+### 3. 周辺サービスの接続確認
 ```bash
-# セキュア設定で全サービス起動（推奨）
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+# MinIO (S3 API互換)
+aws --endpoint-url "$MLFLOW_S3_ENDPOINT_URL" s3 ls
 
-# または従来通り起動（開発用のみ）
-docker compose up -d
+# ClickHouse
+clickhouse-client --host "$CLICKHOUSE_HOST" --query "SELECT 1"
 
-# 起動確認（数分かかる場合があります）
-docker compose ps
+# Redis
+redis-cli -h "$REDIS_HOST" -a "$REDIS_PASSWORD" PING
 ```
 
-### Step 3: セキュリティ検証 & アクセス確認
+### 4. 動作確認
 ```bash
-# セキュリティ検証（必須）
-python ops/health_check.py health
-
-# サービス確認
-curl http://localhost:9001    # MinIO Console
-curl http://localhost:8123    # ClickHouse HTTP
-curl http://localhost:3000    # Grafana (監視)
-curl http://localhost:5000    # MLflow (実験管理)
-
-# 新機能確認
-curl http://localhost:8000/healthz   # ヘルスチェック
-curl http://localhost:8000/metrics   # Prometheusメトリクス
+make smoke                 # 1 epoch スモークテスト
+python ops/health_check.py ready
 ```
 
-## 📊 UIアクセス
-
-### MinIO（オブジェクトストレージ）
-- URL: http://localhost:9001
-- ユーザー: `${MINIO_ROOT_USER}` (.envで設定)
-- パスワード: `${MINIO_ROOT_PASSWORD}` (.envで設定)
-- バケット: gogooku, feast, mlflow, dagster
-
-### Grafana（監視ダッシュボード）
-- URL: http://localhost:3000
-- ユーザー: admin
-- パスワード: admin (初回ログイン後に変更推奨)
-- ダッシュボード: gogooku3-overview (自動作成)
-
-### MLflow（ML実験管理）
-- URL: http://localhost:5000
-- Experiments タブで実験確認
-- Models タブでモデル管理
-- ATFT-GAT-FANモデルが自動追跡
-
-### Prometheusメトリクス（監視）
-- メトリクスURL: http://localhost:8000/metrics
-- REDメトリクス: Rate, Error, Duration
-- SLAメトリクス: コンプライアンス監視
-- カスタムメトリクス: トレーニング/データ品質
-
-## 🎯 基本的な使い方
-
-### 1. システム検証（必須）
+### 5. 本番ワークフロー起動
 ```bash
-# 全体ヘルスチェック
-python ops/health_check.py health
-
-# データ品質チェック有効化
-export DATA_QUALITY_ENABLED=1
-
-# パフォーマンス最適化有効化（オプション）
-export PERF_POLARS_STREAM=1
-export PERF_MEMORY_OPTIMIZATION=1
+python scripts/pipelines/run_full_dataset.py --jquants
+python scripts/integrated_ml_training_pipeline.py
 ```
 
-### 2. データパイプライン実行
+## 🔍 運用に役立つコマンド
 ```bash
-# CLIから直接実行（推奨）
-python main.py ml-dataset
-
-# データ品質検証
-python data_quality/great_expectations_suite.py validate --input data/processed/dataset.parquet
-
-# 特徴量エンジニアリング
-python main.py direct-api-dataset
+make test                  # pytest (unit + integration)
+make lint                  # ruff + mypy
+python ops/metrics_exporter.py --once   # メトリクス確認
+journalctl -u gogooku3.service --since "10 minutes ago"  # ログ確認（systemd運用例）
 ```
 
-### 3. MLモデル学習
+## 🧹 クリーンアップ
 ```bash
-# 高速学習モード
-python main.py safe-training --mode quick
-
-# 本番学習モード（最適化適用）
-export PERF_POLARS_STREAM=1
-export PERF_CACHING_ENABLED=1
-python main.py safe-training --mode full
-
-# ATFT完全学習
-python main.py complete-atft
+systemctl stop gogooku3.service      # 運用プロセス停止（例）
+make clean                            # 仮想環境・キャッシュ削除
+rm -rf output/experiments/*          # 生成物を手動削除
 ```
 
-### 4. 監視・品質確認
-```bash
-# リアルタイムメトリクス
-python ops/metrics_exporter.py --once
+## 📚 追加リソース
+- [docs/getting-started.md](../getting-started.md): 詳細なセットアップとトラブルシューティング
+- [docs/operations/runbooks.md](../operations/runbooks.md): 本番運用手順
+- [docs/ml/model-training.md](../ml/model-training.md): 学習パイプライン全体像
 
-# パフォーマンスベンチマーク
-pytest tests/ -k "performance" --benchmark-only
-
-# ログ監視
-tail -f logs/main.log
-
-# バックアップ検証
-ls -la backups/
-```
-```
-
-### 3. 特徴量ストア利用
-```python
-from feast import FeatureStore
-
-# Feature Store接続
-store = FeatureStore(repo_path="scripts/feature_store")
-
-# 特徴量取得
-features = store.get_online_features(
-    features=["price_features:close", "price_features:returns_1d"],
-    entity_rows=[{"ticker": "7203"}]
-).to_dict()
-```
-
-## 🛑 停止 & クリーンアップ
-
-### サービス停止
-```bash
-docker-compose down
-```
-
-### 完全クリーンアップ
-```bash
-docker-compose down -v
-rm -rf dagster_home/storage/* output/*
-```
-
-## 🆘 トラブルシューティング
-
-### サービスが起動しない
-```bash
-# ログ確認
-docker-compose logs [service-name]
-
-# 再起動
-docker-compose restart [service-name]
-```
-
-### メモリ不足エラー
-```bash
-# Docker Desktop設定でメモリ増加
-# Settings → Resources → Memory → 16GB以上
-```
-
-### ポート競合
-```bash
-# 使用中のポート確認
-lsof -i :3001  # Dagster
-lsof -i :5000  # MLflow
-lsof -i :9001  # MinIO
-
-# 別プロセスを停止するか、docker-compose.ymlでポート変更
-```
-
-## 📚 詳細ドキュメント
-
-- [実装状況レポート](../_archive/reports_original/IMPLEMENTATION_STATUS.md)
-- [設計仕様書](docs/archive/gogooku3-spec.md)
-- [MLデータセット仕様](../_archive/specifications_original/ML_DATASET_COLUMNS.md)
-
-## 💡 便利なコマンド
-
-```bash
-# サービス状態確認
-docker-compose ps
-
-# ログ表示（リアルタイム）
-docker-compose logs -f --tail=100
-
-# 個別サービスログ
-docker-compose logs dagster-webserver
-docker-compose logs mlflow
-docker-compose logs feast-server
-
-# リソース使用状況
-docker stats
-
-# コンテナ内部アクセス
-docker exec -it gogooku3-clickhouse clickhouse-client
-docker exec -it gogooku3-redis redis-cli -a gogooku123
-```
-
----
-*サポートが必要な場合は、[docs/brain.md](../_archive/legacy/brain.md)を参照*

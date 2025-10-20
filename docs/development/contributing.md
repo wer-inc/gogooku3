@@ -23,7 +23,7 @@ Gogooku3は日本株式市場分析向け次世代MLOpsバッチシステムで�
 **MLOpsインフラ**:
 - **Dagster**: オーケストレーション（8 assets, 7 jobs, 6 schedules, 7 sensors）
 - **MLflow**: 実験追跡・モデルレジストリ
-- **Docker Compose**: マルチサービス展開（12+サービス）
+- **運用環境**: MinIO / ClickHouse / Redis などはマネージドサービス接続（Docker Compose スタックは廃止）
 - **監視**: Grafana + Prometheus + カスタムメトリクス
 
 **ストレージ層**:
@@ -41,13 +41,13 @@ make setup                    # Python venv作成・依存関係インストー�
 cp .env.example .env         # 環境変数設定
 vim .env                     # JQuants API認証情報編集
 
-# Dockerサービス
-make docker-up               # 全サービス起動（MinIO, ClickHouse等）
-make docker-down             # 全サービス停止
-make docker-logs             # 全サービスログ表示
+# 周辺サービス接続確認（必要に応じて）
+aws --endpoint-url "$MLFLOW_S3_ENDPOINT_URL" s3 ls     # MinIO
+clickhouse-client --host "$CLICKHOUSE_HOST" --query "SELECT 1"
+redis-cli -h "$REDIS_HOST" -a "$REDIS_PASSWORD" PING
 
 # 開発モード
-make dev                     # 環境セットアップ+サービス起動
+make dev                     # 依存関係セットアップ
 ```
 
 ### 🧪 テスト・検証
@@ -193,8 +193,7 @@ def test_safe_training_pipeline():
 #### メモリ不足
 ```bash
 # 解決策
-make docker-down              # サービス停止
-docker system prune -f        # 不要コンテナ削除
+nvidia-smi                    # GPUメモリ状況確認
 python scripts/train.py --memory-limit 4  # 制限設定
 ```
 
@@ -208,21 +207,18 @@ export PYTHONPATH=/path/to/gogooku3-standalone/src:$PYTHONPATH
 #### ポート競合
 ```bash
 # 確認
-make docker-logs | grep port
 netstat -tulpn | grep :8000
 
 # 解決
-make docker-down
-# docker-compose.ymlポート変更
-make docker-up
+# サービス構成でポート変更、または競合プロセス停止
 ```
 
 ### 🩺 ヘルスチェック
 ```bash
 # システム状態確認
 make check                    # 全体ヘルスチェック
-docker ps                     # コンテナ状態
-curl http://localhost:8000/health  # MLflow確認
+journalctl -u gogooku3.service --since "5 minutes ago"  # プロセス確認
+curl "$MLFLOW_BASE_URL/health"  # MLflow確認
 
 # コンポーネント個別確認
 python -c "import gogooku3; print('✅ Package OK')"

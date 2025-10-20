@@ -18,7 +18,7 @@
 ```bash
 # CPU・メモリ使用量
 htop
-docker stats
+nvidia-smi
 
 # ディスク使用量
 df -h
@@ -45,7 +45,7 @@ nvidia-smi -l 1
 tail -f logs/gogooku3.log
 
 # システムログ
-journalctl -fu docker
+journalctl -fu gogooku3.service
 
 # エラーログ検索
 grep -r "ERROR\|CRITICAL" logs/
@@ -117,7 +117,7 @@ Warning:
 ### システムレベル
 - CPU使用率・メモリ使用量
 - ディスクI/O・ネットワーク帯域
-- Docker コンテナ状態
+- 運用サービスプロセス状態
 - GPU使用率（学習時）
 
 ### アプリケーションレベル

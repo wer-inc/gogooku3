@@ -16,23 +16,23 @@
 ### 基本操作
 ```bash
 # システム起動
-make docker-up
+systemctl start gogooku3.service
 
 # 学習パイプライン実行
 gogooku3 train --config configs/atft/train/production.yaml
 
 # システム停止
-make docker-down
+systemctl stop gogooku3.service
 ```
 
 ### 監視・確認
 ```bash
 # システム状態確認
-docker ps
-make logs
+systemctl status gogooku3.service
+journalctl -u gogooku3.service --since "10 minutes ago"
 
 # メモリ・CPU使用量確認
-docker stats
+nvidia-smi
 htop
 ```
 

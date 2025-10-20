@@ -4,12 +4,11 @@
 # Repository: https://github.com/openai/codex
 #
 # Usage:
-#   ./codex.sh                          # Interactive with environment detection
+#   ./codex.sh                          # Interactive mode (default)
 #   ./codex.sh --no-check               # Skip health check
 #   ./codex.sh --quick                  # Quick mode (GPT-5, medium reasoning)
 #   ./codex.sh --max                    # Maximum power (GPT-5-Codex, high reasoning)
-#   ./codex.sh --exec <prompt>          # Non-interactive exec mode
-#   ./codex.sh <prompt>                 # Interactive mode with initial prompt
+#   ./codex.sh --exec <prompt>          # Non-interactive exec mode only
 #
 # FEATURES:
 #   ✅ Dynamic environment detection (GPU, CPU, Memory, CUDA)
@@ -21,6 +20,7 @@
 #   ✅ Session logging and debugging
 #   ✅ AGENTS.md instructions support
 #   ✅ Git integration awareness
+#   ✅ Interactive mode by default
 
 set -euo pipefail
 
@@ -277,7 +277,7 @@ SKIP_CHECK=false
 QUICK_MODE=false
 MAX_MODE=false
 EXEC_MODE=false
-USER_PROMPT=""
+INITIAL_PROMPT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -297,12 +297,13 @@ while [[ $# -gt 0 ]]; do
             EXEC_MODE=true
             shift
             if [[ $# -gt 0 ]]; then
-                USER_PROMPT="$*"
+                INITIAL_PROMPT="$*"
                 break
             fi
             ;;
         *)
-            USER_PROMPT="$*"
+            # Any other argument becomes initial prompt for interactive mode
+            INITIAL_PROMPT="$*"
             break
             ;;
     esac
@@ -312,8 +313,8 @@ done
 # PROJECT HEALTH CHECK
 # ============================================================================
 
-AUTO_PROMPT=""
-if [ "$SKIP_CHECK" = false ] && [ -z "$USER_PROMPT" ]; then
+HEALTH_CONTEXT=""
+if [ "$SKIP_CHECK" = false ]; then
     echo -e "${YELLOW}🔍 Running project health check...${NC}"
 
     if [ -x "${PROJECT_ROOT}/tools/project-health-check.sh" ]; then
@@ -328,50 +329,21 @@ if [ "$SKIP_CHECK" = false ] && [ -z "$USER_PROMPT" ]; then
             echo -e "${GREEN}📊 Health report:${NC} $LATEST_REPORT"
 
             if [ $HEALTH_EXIT -eq 2 ]; then
-                AUTO_PROMPT="🚨 AUTONOMOUS MODE: Critical issues detected.
-
-Health Report: $LATEST_REPORT
-
-Your mission:
-1. Read and deeply analyze the health check report
-2. Create a detailed todo list of all issues
-3. Fix critical issues systematically (P0 first)
-4. Address warnings and recommendations (P1-P2)
-5. Run verification: tools/project-health-check.sh
-6. Provide a summary of all fixes
-
-Start by reading the health report and creating a comprehensive todo list."
+                HEALTH_CONTEXT="
+🚨 CRITICAL ISSUES DETECTED in latest health check: $LATEST_REPORT
+Please review and address critical issues when appropriate."
+                echo -e "${RED}⚠️  Critical issues detected${NC}"
             elif [ $HEALTH_EXIT -eq 1 ]; then
-                AUTO_PROMPT="⚠️ AUTONOMOUS MODE: Warnings detected.
-
-Health Report: $LATEST_REPORT
-
-Your mission:
-1. Analyze all warnings in the health report
-2. Research best practices for identified issues
-3. Design and implement optimal solutions
-4. Verify improvements: tools/project-health-check.sh
-5. Document your reasoning
-
-Focus on sustainable, well-tested solutions."
+                HEALTH_CONTEXT="
+⚠️ WARNINGS DETECTED in latest health check: $LATEST_REPORT
+Consider reviewing and addressing warnings when convenient."
+                echo -e "${YELLOW}⚠️  Warnings detected${NC}"
             else
-                AUTO_PROMPT="✅ AUTONOMOUS MODE: Proactive optimization.
-
-Health Report: $LATEST_REPORT
-
-Your mission:
-1. Review recent git commits and codebase architecture
-2. Research latest ML/financial modeling techniques (use web search)
-3. Identify optimization opportunities (GPU utilization, code quality, performance)
-4. Design and implement improvements
-5. Run comprehensive tests
-6. Document technical decisions
-
-Look for non-obvious improvements that could enhance the system."
+                HEALTH_CONTEXT="
+✅ Project health check passed: $LATEST_REPORT
+System is healthy. Consider proactive optimization opportunities."
+                echo -e "${GREEN}✅ Project healthy${NC}"
             fi
-
-            echo ""
-            echo -e "${MAGENTA}🤖 Autonomous mode activated${NC}"
             echo ""
         fi
     fi
@@ -389,11 +361,6 @@ elif [ "$MAX_MODE" = true ]; then
     SELECTED_MODEL="gpt-5-codex"
     REASONING_LEVEL="high"
     echo -e "${MAGENTA}🚀 Maximum Power:${NC} GPT-5-Codex (high reasoning)"
-elif [ -n "$USER_PROMPT" ]; then
-    # Default for user prompts
-    SELECTED_MODEL="gpt-5-codex"
-    REASONING_LEVEL="medium"
-    echo -e "${BLUE}📝 User Prompt Mode:${NC} GPT-5-Codex (medium reasoning)"
 else
     # Interactive model selection
     echo -e "${CYAN}🤖 Select AI Model:${NC}"
@@ -409,27 +376,27 @@ else
     echo "  M) Medium (default) - Balanced speed/quality"
     echo "  H) High - Deep reasoning, complex tasks"
     echo ""
-
+    
     read -p "Choose model (1-3) [1]: " MODEL_CHOICE
     MODEL_CHOICE=${MODEL_CHOICE:-1}
-
+    
     case "$MODEL_CHOICE" in
         1) SELECTED_MODEL="gpt-5-codex" ;;
         2) SELECTED_MODEL="gpt-5" ;;
         3) SELECTED_MODEL="o3" ;;
         *) SELECTED_MODEL="gpt-5-codex" ;;
     esac
-
+    
     read -p "Choose reasoning level (L/M/H) [M]: " REASONING_CHOICE
     REASONING_CHOICE=${REASONING_CHOICE:-M}
-
+    
     case "${REASONING_CHOICE^^}" in
         L) REASONING_LEVEL="low" ;;
         M) REASONING_LEVEL="medium" ;;
         H) REASONING_LEVEL="high" ;;
         *) REASONING_LEVEL="medium" ;;
     esac
-
+    
     echo ""
     echo -e "${GREEN}✅ Selected:${NC} $SELECTED_MODEL (reasoning: $REASONING_LEVEL)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -437,120 +404,97 @@ else
 fi
 
 # ============================================================================
-# PREPARE ENHANCED SYSTEM CONTEXT
+# PREPARE ENVIRONMENT CONTEXT FOR AGENTS.MD
 # ============================================================================
 
-SYSTEM_CONTEXT="[SYSTEM CONTEXT - ATFT-GAT-FAN Project - Generated by Codex Launcher]
+# Create a temporary environment info file that AGENTS.md can reference
+ENV_INFO_FILE="${PROJECT_ROOT}/.codex-env-info.md"
+cat > "$ENV_INFO_FILE" <<EOF
+# Current Environment Information
+# Auto-generated by Codex Launcher - $(date)
 
-You are an autonomous AI developer working on a Japanese stock market prediction system using Graph Attention Networks.
-
-🖥️ CURRENT ENVIRONMENT:
-- Python: $PYTHON_VERSION
-- PyTorch: $TORCH_VERSION (CUDA: $CUDA_AVAILABLE)
-- GPU: $GPU_NAME"
+## Hardware & Software
+- **Python**: $PYTHON_VERSION
+- **PyTorch**: $TORCH_VERSION (CUDA Available: $CUDA_AVAILABLE)
+- **GPU**: $GPU_NAME
+- **CUDA Version**: $CUDA_VERSION
+EOF
 
 if [ "$GPU_MEMORY" != "unknown" ]; then
     FREE_GPU_MEM=$((GPU_MEMORY - GPU_MEMORY_USED))
-    SYSTEM_CONTEXT+="
-  * CUDA Version: $CUDA_VERSION
-  * Memory: ${GPU_MEMORY_USED}MB used / ${GPU_MEMORY}MB total (${GPU_UTILIZATION}% utilization)
-  * Available Memory: ${FREE_GPU_MEM}MB"
+    cat >> "$ENV_INFO_FILE" <<EOF
+- **GPU Memory**: ${GPU_MEMORY_USED}MB used / ${GPU_MEMORY}MB total (${GPU_UTILIZATION}% utilization)
+- **Available GPU Memory**: ${FREE_GPU_MEM}MB
+EOF
 fi
 
-SYSTEM_CONTEXT+="
-- CPU: $CPU_CORES cores ($CPU_MODEL)
-- RAM: $AVAILABLE_RAM available / $TOTAL_RAM total
-- Disk: $DISK_AVAILABLE available (${DISK_USAGE} used)"
+cat >> "$ENV_INFO_FILE" <<EOF
+- **CPU**: $CPU_CORES cores ($CPU_MODEL)
+- **RAM**: $AVAILABLE_RAM available / $TOTAL_RAM total
+- **Disk**: $DISK_AVAILABLE available (${DISK_USAGE} used)
+EOF
 
 if [ "$GIT_BRANCH" != "unknown" ]; then
-    SYSTEM_CONTEXT+="
-- Git: $GIT_BRANCH @ $GIT_COMMIT${GIT_DIRTY}"
+    cat >> "$ENV_INFO_FILE" <<EOF
+- **Git Branch**: $GIT_BRANCH @ $GIT_COMMIT${GIT_DIRTY}
+EOF
 fi
 
-SYSTEM_CONTEXT+="
+cat >> "$ENV_INFO_FILE" <<EOF
 
-📁 PROJECT STRUCTURE:
-- Main codebase: $PROJECT_ROOT
-- Training pipeline: scripts/integrated_ml_training_pipeline.py
-- Dataset builder: scripts/pipelines/run_full_dataset.py
-- Documentation: CLAUDE.md, AGENTS.md
-- Health checks: tools/project-health-check.sh
+## Optimization Opportunities
+EOF
 
-💡 OPTIMIZATION OPPORTUNITIES:"
-
-# Add optimization suggestions based on environment
+# Add optimization suggestions
 if [ "$GPU_UTILIZATION" != "unknown" ] && [ "$GPU_UTILIZATION" -lt 50 ]; then
-    SYSTEM_CONTEXT+="
-- GPU utilization is ${GPU_UTILIZATION}% - consider increasing batch size or model complexity"
+    echo "- GPU utilization is ${GPU_UTILIZATION}% - consider increasing batch size or model complexity" >> "$ENV_INFO_FILE"
 fi
 
 if [ "$GPU_MEMORY" != "unknown" ] && [ "$GPU_MEMORY_USED" != "unknown" ]; then
     FREE_MEM=$((GPU_MEMORY - GPU_MEMORY_USED))
     if [ $FREE_MEM -gt 20000 ]; then
-        SYSTEM_CONTEXT+="
-- ${FREE_MEM}MB GPU memory available - can support larger models or batch sizes"
+        echo "- ${FREE_MEM}MB GPU memory available - can support larger models or batch sizes" >> "$ENV_INFO_FILE"
     fi
 fi
 
 if [ "$CUDA_VERSION" != "unknown" ]; then
     CUDA_MAJOR=$(echo "$CUDA_VERSION" | cut -d'.' -f1)
     if [ "$CUDA_MAJOR" -ge 12 ]; then
-        SYSTEM_CONTEXT+="
-- CUDA $CUDA_VERSION detected - FlashAttention 2 and other optimizations available"
+        echo "- CUDA $CUDA_VERSION detected - FlashAttention 2 and other optimizations available" >> "$ENV_INFO_FILE"
     fi
 fi
 
-SYSTEM_CONTEXT+="
+cat >> "$ENV_INFO_FILE" <<EOF
+$HEALTH_CONTEXT
 
-🔧 AUTONOMOUS WORKFLOW:
-1. Read AGENTS.md for project-specific instructions
-2. Create detailed todo lists for complex tasks
-3. Read files before editing (understand context first)
-4. Run tests and validations after changes
-5. Explain your reasoning clearly
-
-🛠️ TOOLS AVAILABLE:
-- File operations: read, write, edit, search
-- Shell commands: bash, python, git, nvidia-smi
-- MCP servers: playwright (web), filesystem, git, brave-search
-
-Be thorough, reason deeply, and work autonomously. Use the environment information to make data-driven optimization decisions.
+## Project Structure
+- **Root**: $PROJECT_ROOT
+- **Training Pipeline**: scripts/integrated_ml_training_pipeline.py
+- **Dataset Builder**: scripts/pipelines/run_full_dataset.py
+- **Documentation**: CLAUDE.md, AGENTS.md
+- **Health Checks**: tools/project-health-check.sh
 
 ---
-
-"
+*Note: Read .codex-env-info.md for current environment details*
+EOF
 
 # ============================================================================
 # APPROVAL MODE SELECTION
 # ============================================================================
 
-# Default approval mode based on context
-if [ "$EXEC_MODE" = true ] || [ -n "$AUTO_PROMPT" ]; then
-    # Non-interactive or autonomous mode - use full-auto
-    APPROVAL_MODE="--full-auto"
-    APPROVAL_DESC="Full Auto (autonomous)"
+# Note: Codex CLI 0.47.0 doesn't support approval mode flags on command line
+# Use /approvals command during session to change modes
+# Default is "auto" mode (balanced)
+APPROVAL_MODE=""
+if [ "$EXEC_MODE" = true ]; then
+    APPROVAL_DESC="Auto (default, will prompt for risky operations)"
 else
-    # Interactive mode - use auto (balanced)
-    APPROVAL_MODE="--auto"
-    APPROVAL_DESC="Auto (edits auto-approved, commands require approval)"
+    APPROVAL_DESC="Auto (default) - Use /approvals in session to change"
 fi
 
 # ============================================================================
 # BUILD CODEX COMMAND
 # ============================================================================
-
-# Build base command
-CODEX_CMD="codex"
-
-# Add model and reasoning level
-CODEX_CMD+=" --model $SELECTED_MODEL"
-
-# Add reasoning level configuration
-# Note: Codex CLI uses /model command for reasoning level in interactive mode
-# For non-interactive, we can set via config or rely on defaults
-
-# Add approval mode
-CODEX_CMD+=" $APPROVAL_MODE"
 
 # Session logging
 SESSION_LOG="${LOG_DIR}/session-$(date +%Y%m%d-%H%M%S).log"
@@ -563,41 +507,50 @@ echo ""
 echo -e "${CYAN}🚀 Launching OpenAI Codex CLI${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "  Model: ${MAGENTA}$SELECTED_MODEL${NC} (reasoning: $REASONING_LEVEL)"
+echo -e "  Mode: ${GREEN}Interactive${NC}"
 echo -e "  Approval Mode: ${YELLOW}$APPROVAL_DESC${NC}"
 echo -e "  Session Log: ${BLUE}$SESSION_LOG${NC}"
 echo -e "  MCP Servers: ${GREEN}playwright, filesystem, git, brave-search${NC}"
 if [ -f "AGENTS.md" ]; then
-    echo -e "  Instructions: ${GREEN}AGENTS.md loaded${NC}"
+    echo -e "  Instructions: ${GREEN}AGENTS.md + .codex-env-info.md loaded${NC}"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
 if [ "$EXEC_MODE" = true ]; then
-    echo -e "${BLUE}Mode: Non-interactive (exec)${NC}"
-    echo -e "${BLUE}Prompt: ${USER_PROMPT}${NC}"
+    echo -e "${MAGENTA}⚠️  Exec Mode (Non-Interactive)${NC}"
+    if [ -n "$INITIAL_PROMPT" ]; then
+        echo -e "${BLUE}Prompt: ${INITIAL_PROMPT}${NC}"
+    fi
     echo ""
-    # Use codex exec for non-interactive mode
-    exec codex exec --model "$SELECTED_MODEL" $APPROVAL_MODE "${SYSTEM_CONTEXT}${USER_PROMPT}" 2>&1 | tee "$SESSION_LOG"
-elif [ -n "$AUTO_PROMPT" ]; then
-    echo -e "${MAGENTA}Mode: Autonomous (exec)${NC}"
-    echo ""
-    # Autonomous mode with health check context
-    exec codex exec --model "$SELECTED_MODEL" $APPROVAL_MODE "${SYSTEM_CONTEXT}${AUTO_PROMPT}" 2>&1 | tee "$SESSION_LOG"
-elif [ -n "$USER_PROMPT" ]; then
-    echo -e "${BLUE}Mode: Interactive with initial prompt${NC}"
-    echo ""
-    # Interactive mode with initial prompt
-    exec codex --model "$SELECTED_MODEL" $APPROVAL_MODE "${SYSTEM_CONTEXT}${USER_PROMPT}" 2>&1 | tee "$SESSION_LOG"
+    # Use codex exec for non-interactive mode (with logging)
+    if [ -n "$INITIAL_PROMPT" ]; then
+        codex exec --model "$SELECTED_MODEL" "$INITIAL_PROMPT" 2>&1 | tee "$SESSION_LOG"
+    else
+        echo -e "${RED}ERROR: --exec requires a prompt${NC}"
+        exit 1
+    fi
 else
-    echo -e "${GREEN}Mode: Interactive${NC}"
-    echo ""
     echo "💡 Tips:"
-    echo "  - Type your requests naturally"
-    echo "  - Use /model to change model or reasoning level"
-    echo "  - Use /approvals to change approval mode"
+    echo "  - Type your requests naturally in Japanese or English"
+    echo "  - Use /model to change model during session"
+    echo "  - Use /approvals to change approval mode (suggest/auto/full)"
+    echo "  - Type 'read .codex-env-info.md' to see current environment details"
+    if [ -n "$HEALTH_CONTEXT" ]; then
+        echo "  - Health check results are available - ask about them if needed"
+    fi
     echo "  - Press Ctrl+C to cancel current operation"
     echo "  - Type 'exit' to quit"
     echo ""
-    # Pure interactive mode
-    exec codex --model "$SELECTED_MODEL" $APPROVAL_MODE 2>&1 | tee "$SESSION_LOG"
+    echo -e "${CYAN}Note: Session will be logged to $SESSION_LOG${NC}"
+    echo ""
+    
+    # Interactive mode - direct execution without tee (tee breaks interactive mode)
+    if [ -n "$INITIAL_PROMPT" ]; then
+        echo -e "${BLUE}Starting with initial prompt: ${INITIAL_PROMPT}${NC}"
+        echo ""
+        exec codex --model "$SELECTED_MODEL" "$INITIAL_PROMPT"
+    else
+        exec codex --model "$SELECTED_MODEL"
+    fi
 fi

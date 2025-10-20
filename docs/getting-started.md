@@ -24,9 +24,10 @@ Gogooku3-standaloneは **「壊れず・強く・速く」** を実現する日�
 ### 📋 前提条件
 ```bash
 # 必要環境
-- Docker & Docker Compose
 - Python 3.11+
+- CUDA 12.4 対応GPU (A100 80GB 推奨)
 - 16GB+ RAM, 50GB+ disk
+- MinIO / ClickHouse / Redis など周辺サービスへアクセス可能な環境（クラウド・社内インフラ等）
 - JQuants API アカウント（データ取得用）
 ```
 
@@ -44,14 +45,16 @@ cp .env.example .env
 vim .env                          # JQuants認証情報を設定
 ```
 
-#### 2. サービス起動
+#### 2. 周辺サービスの接続確認
 ```bash
-# 全サービス起動（MinIO, ClickHouse, Redis等）
-make docker-up                    # 約60秒で全12サービス起動
+# MinIO接続確認（例）
+aws --endpoint-url $MLFLOW_S3_ENDPOINT_URL s3 ls
 
-# 起動確認
-make docker-logs                  # ログ確認
-curl http://localhost:8000/health # MLflow ヘルスチェック
+# ClickHouse接続確認（例）
+clickhouse-client --host $CLICKHOUSE_HOST --port ${CLICKHOUSE_PORT:-9000} --query "SELECT 1"
+
+# Redis接続確認（例）
+redis-cli -h $REDIS_HOST -p ${REDIS_PORT:-6379} -a $REDIS_PASSWORD PING
 ```
 
 #### 3. スモークテスト実行
@@ -67,19 +70,21 @@ make train-cv                     # 5-fold cross-validation学習
 
 ## 🖥️ Web UI アクセス
 
+> ℹ️ Docker Compose ベースのダッシュボードは廃止しました。各サービスを利用する場合はクラウドやオンプレでホストされている既存エンドポイントに接続してください。以下は参考構成です。
+
 ### 主要サービス
 | サービス | URL | 用途 | 認証 |
 |---------|-----|------|------|
-| **Dagster** | http://localhost:3001 | オーケストレーション | なし |
-| **MLflow** | http://localhost:5000 | 実験追跡・モデル管理 | なし |
-| **Grafana** | http://localhost:3000 | 監視ダッシュボード | admin / gogooku123 |
-| **MinIO** | http://localhost:9001 | オブジェクトストレージ | minioadmin / minioadmin123 |
+| **Dagster** | https://your-dagster.example.com | オーケストレーション | 環境に依存 |
+| **MLflow** | https://mlflow.your-domain.example | 実験追跡・モデル管理 | 環境に依存 |
+| **Grafana** | https://grafana.your-domain.example | 監視ダッシュボード | 環境に依存 |
+| **MinIO** | https://minio-console.your-domain.example | オブジェクトストレージ | 環境に依存 |
 
 ### 🔧 初回セットアップ確認
 
 #### Dagster（パイプライン管理）
 ```bash
-# アクセス: http://localhost:3001
+# アクセス: https://your-dagster.example.com
 # 1. "Assets" タブ確認
 # 2. "Materialize all" でパイプライン実行
 # 3. 実行ステータス確認
@@ -87,7 +92,7 @@ make train-cv                     # 5-fold cross-validation学習
 
 #### MLflow（実験管理）
 ```bash
-# アクセス: http://localhost:5000
+# アクセス: https://mlflow.your-domain.example
 # 1. "Experiments" タブで実験確認
 # 2. "Models" タブでモデル登録確認
 # 3. メトリクス・ログ表示確認
@@ -95,8 +100,8 @@ make train-cv                     # 5-fold cross-validation学習
 
 #### Grafana（監視）
 ```bash
-# アクセス: http://localhost:3000
-# admin / gogooku123 でログイン
+# アクセス: https://grafana.your-domain.example
+# 認証情報は組織ポリシーに従う
 # 1. ダッシュボード表示確認
 # 2. メトリクス収集確認
 # 3. アラート設定確認
@@ -106,34 +111,18 @@ make train-cv                     # 5-fold cross-validation学習
 
 ## 💻 開発環境セットアップ
 
-### 🐳 Docker開発環境
+### 🧰 ローカル開発環境（コンテナレス）
 
 #### 基本操作
 ```bash
-# 開発環境一括セットアップ
-make dev                          # setup + docker-up + smoke test
+# 依存関係と仮想環境セットアップ
+make dev
 
-# サービス制御
-make docker-up                    # 全サービス起動
-make docker-down                  # 全サービス停止
-make docker-logs                  # リアルタイムログ表示
-
-# クリーンアップ
-make clean                        # 環境リセット・全データ削除
+# 環境リセット（仮想環境・キャッシュ削除）
+make clean
 ```
 
-#### 個別サービス操作
-```bash
-# 個別サービス確認
-docker-compose ps                 # サービス状態
-docker-compose logs dagster-webserver  # 個別ログ
-docker stats                      # リソース使用状況
-
-# コンテナ内アクセス
-docker exec -it gogooku3-clickhouse clickhouse-client
-docker exec -it gogooku3-redis redis-cli -a gogooku123
-docker exec -it gogooku3-postgres psql -U dagster -d dagster
-```
+> ℹ️ 従来の `docker-up` / `docker-down` ターゲットは削除しました。必要な周辺サービスは既存のインフラに接続してください。
 
 ### 🧪 テスト・品質管理
 
@@ -401,21 +390,14 @@ Quick reference tables for index codes (Sector 33, Topix‑17, Market Segments, 
 
 ### 🚪 正常停止
 ```bash
-# サービス停止（データ保持）
-make docker-down
-
-# または
-docker-compose down
+# サービス停止（例：systemd）
+systemctl stop gogooku3.service
 ```
 
 ### 🧹 完全クリーンアップ
 ```bash
 # 全データ・ボリューム削除
 make clean
-
-# 手動削除
-docker-compose down -v           # ボリューム含む全削除
-docker system prune -f           # 不要コンテナ・イメージ削除
 rm -rf output/experiments/*      # 実験結果削除
 ```
 
@@ -428,11 +410,11 @@ rm -rf output/experiments/*      # 実験結果削除
 #### メモリ不足
 ```bash
 # 現在メモリ使用量確認
-docker stats
+nvidia-smi
 free -h
 
 # 解決策
-# 1. Docker Desktop メモリ設定: 16GB+
+# 1. GPU/システムメモリ割り当てを確認し必要に応じて調整
 # 2. メモリ制限パラメータ使用
 python scripts/run_safe_training.py --memory-limit 4
 ```
@@ -445,23 +427,20 @@ lsof -i :5000  # MLflow
 lsof -i :9001  # MinIO
 
 # 解決策
-# docker-compose.ymlでポート変更
-# または競合プロセス停止
+# サービス構成ファイルでポート変更、または競合プロセス停止
 ```
 
 #### サービス起動失敗
 ```bash
 # ログ確認
-make docker-logs
-docker-compose logs [service-name]
+journalctl -u gogooku3.service --since "5 minutes ago"
 
 # 個別サービス再起動
-docker-compose restart dagster-webserver
-docker-compose restart mlflow
+systemctl restart gogooku3.service
 
 # 完全再構築
-docker-compose down
-docker-compose up -d --build
+# 必要に応じて仮想環境再作成やキャッシュクリアを実施
+make clean && make setup
 ```
 
 #### データ・設定問題
@@ -483,9 +462,9 @@ chmod -R 755 output/
 make check                        # 全体システム確認
 
 # 個別確認
-curl http://localhost:5000/health # MLflow
-curl http://localhost:3001/health # Dagster
-docker-compose ps               # 全サービス状態
+# 事前に MLFLOW_BASE_URL / DAGSTER_BASE_URL を環境に設定
+curl "$MLFLOW_BASE_URL/health"   # MLflow
+curl "$DAGSTER_BASE_URL/health"  # Dagster
 
 # パッケージ確認
 python -c "import gogooku3; print('✅ Package OK')"
@@ -524,7 +503,7 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 
 ### 📞 問題解決
 1. **ドキュメント検索**: 該当セクション参照
-2. **ログ確認**: `make docker-logs` で詳細確認
+2. **ログ確認**: `journalctl -u gogooku3.service --since "10 minutes ago"` で詳細確認
 3. **設定確認**: `.env` と `configs/` 設定検証
 4. **システム再起動**: `make clean && make dev`
 

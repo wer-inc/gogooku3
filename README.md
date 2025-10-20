@@ -457,7 +457,7 @@ gogooku3-standalone/
 - data_optimizer.py → 代替: `python scripts/run_safe_training.py --memory-limit 6`、`python scripts/validate_data.py`
 - evaluate_atft_model.py → 代替: `python scripts/integrated_ml_training_pipeline.py`（評価内包）
 - generate_full_dataset.py → 代替: `python scripts/pipelines/run_full_dataset.py`
-- production_deployment.py → 代替: `make docker-up` + `gogooku3 train ...`（CLI運用）
+- production_deployment.py → 代替: `python scripts/integrated_ml_training_pipeline.py`（Dockerスタック廃止）
 - production_training.py → 代替: `python scripts/run_safe_training.py`
 - run_jquants_pipeline.py → 代替: `python scripts/pipelines/run_pipeline_v4_optimized.py`
 - test_optimized_pipeline.py → 代替: `pytest tests/integration/`、`python scripts/smoke_test.py`
@@ -618,8 +618,9 @@ python scripts/integrated_ml_training_pipeline.py --adv-graph-train
 
 1. **メモリ不足**
    ```bash
-   # Docker メモリ割り当て確認
-   docker stats
+   # GPU/CPUメモリ使用量確認
+   nvidia-smi
+   htop
    ```
 
 2. **API認証エラー**
@@ -710,15 +711,9 @@ JQUANTS_AUTH_EMAIL=your_email@example.com
 JQUANTS_AUTH_PASSWORD=your_secure_api_password_here
 ```
 
-#### 2. Docker Compose起動
+#### 2. 周辺サービスの準備
 
-```bash
-# セキュアな設定で起動（推奨）
-docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
-
-# 従来通り起動（開発用のみ）
-docker compose up -d
-```
+> ℹ️ 旧Docker Composeスタックは撤去済みです。MinIO、ClickHouse、Redis などの補助サービスが必要な場合は、既存の社内インフラやマネージドサービスへ接続してください。`.env` で指定したホスト/ポートが到達可能であることを確認してください。
 
 #### 3. セキュリティ検証
 
@@ -795,9 +790,6 @@ pytest tests/ -k "unit" -v
 # 統合テストのみ
 pytest tests/ -k "integration" -v
 
-# E2Eテストのみ
-pytest tests/test_e2e_docker.py -v
-
 # ヘルスチェックテスト
 pytest tests/test_health_check.py -v
 
@@ -828,6 +820,8 @@ python data_quality/great_expectations_suite.py validate --input data/processed/
 cat data_quality/results/validation_*.json
 ```
 
+> ℹ️ DockerベースのE2Eテストはスタック撤去に伴い廃止しました。E2E検証が必要な場合は実運用環境に合わせた新しいフローを構築してください。
+
 ### パフォーマンス最適化
 
 ```bash
@@ -850,7 +844,12 @@ python ops/metrics_exporter.py --once | grep -E "(optimization|performance)"
 
 ```bash
 # データベースバックアップ
-docker exec gogooku3-clickhouse clickhouse-client --query "BACKUP DATABASE gogooku3 TO Disk('backups', 'backup_$(date +%Y%m%d)')"
+clickhouse-client \
+  --host "$CLICKHOUSE_HOST" \
+  --port "${CLICKHOUSE_PORT:-9000}" \
+  --user "$CLICKHOUSE_USER" \
+  --password "$CLICKHOUSE_PASSWORD" \
+  --query "BACKUP DATABASE gogooku3 TO Disk('backups', 'backup_$(date +%Y%m%d)')"
 
 # ファイルシステムバックアップ
 tar -czf backups/data_$(date +%Y%m%d).tar.gz data/ output/
@@ -891,10 +890,12 @@ python -m memory_profiler main.py safe-training --mode quick
 
 ```bash
 # 緊急停止
-docker compose down
+# 例: systemctl stop gogooku3.service
+systemctl stop gogooku3.service
 
 # 安全再起動
-docker compose up -d --force-recreate
+# 例: systemctl start gogooku3.service
+systemctl start gogooku3.service
 
 # ログ確認
 tail -f logs/main.log
@@ -919,7 +920,7 @@ graph TB
     G --> J[PyTorch ATFT-GAT-FAN]
     H --> K[Cross-Sectional Validation]
 
-    L[Docker Services] --> M[MinIO]
+    L[External Services] --> M[Object Storage]
     L --> N[ClickHouse]
     L --> O[Redis]
     L --> P[MLflow]
