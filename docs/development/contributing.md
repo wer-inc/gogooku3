@@ -74,7 +74,7 @@ make check                   # ヘルスチェック
 ```bash
 # 推奨コミット形式
 feat: ATFT-GAT-FAN多期間予測対応
-fix: Walk-Forward分割での時系列リーク修正  
+fix: Walk-Forward分割での時系列リーク修正
 docs: ML評価指標ドキュメント更新
 refactor: 特徴量生成パフォーマンス最適化
 test: 交差検証スモークテスト追加
@@ -148,7 +148,7 @@ gogooku3-standalone/
 ### 重要ファイル
 - **pyproject.toml**: setuptools モダン設定
 - **.pre-commit-config.yaml**: コード品質自動化
-- **MIGRATION.md**: v2.0.0移行ガイド
+- **[移行ガイド](../architecture/migration.md)**: v2.0.0移行ガイド
 - **src/gogooku3/compat/**: 後方互換性レイヤー
 
 ## 🎯 開発ベストプラクティス
@@ -161,7 +161,7 @@ normalizer.fit(train_data)  # trainデータのみでfitting
 train_norm = normalizer.transform(train_data)
 test_norm = normalizer.transform(test_data)  # 同じ統計を適用
 
-# ❌ 危険な実装  
+# ❌ 危険な実装
 normalizer.fit(all_data)  # 未来情報リーク
 ```
 
@@ -181,7 +181,7 @@ pipeline.run_pipeline(memory_limit_gb=8.0)
 def test_safe_training_pipeline():
     pipeline = SafeTrainingPipeline(experiment_name="test")
     results = pipeline.run_pipeline(n_splits=1, embargo_days=20)
-    
+
     assert results['total_duration'] < 30.0  # 30秒以内
     assert len(results['warnings']) == 0     # 警告なし
 ```
@@ -239,7 +239,7 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 
 ### 技術負債管理
 1. **優先度P0**: セキュリティ・データリーク
-2. **優先度P1**: パフォーマンス劣化  
+2. **優先度P1**: パフォーマンス劣化
 3. **優先度P2**: コード保守性
 
 ### ロードマップ
@@ -262,10 +262,10 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 
 ---
 
-**📝 更新履歴**: 
+**📝 更新履歴**:
 - 2025-08-28: CLAUDE.md から移行・再構成
 - 2025-08-28: v2.0.0 モダンパッケージ対応
 
- 
+
 
 *Gogooku3 - 壊れず・強く・速く*

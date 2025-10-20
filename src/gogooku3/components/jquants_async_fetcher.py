@@ -21,11 +21,12 @@ import logging
 import math
 import os
 import time
-
+from collections.abc import Iterable
 from contextlib import nullcontext
+from typing import Any
+
 import aiohttp
 import polars as pl
-from typing import Any, Iterable, Tuple
 
 
 def enforce_code_column_types(df: pl.DataFrame) -> pl.DataFrame:
@@ -75,7 +76,14 @@ def clean_join_conflicts(df: pl.DataFrame) -> pl.DataFrame:
     conflict_suffixes = ["_right", "_left", "_y"]
 
     # Common base column names that cause conflicts
-    base_columns = ["Code", "Date", "Section", "effective_date", "effective_start", "effective_end"]
+    base_columns = [
+        "Code",
+        "Date",
+        "Section",
+        "effective_date",
+        "effective_start",
+        "effective_end",
+    ]
 
     columns_to_drop = []
 
@@ -91,7 +99,9 @@ def clean_join_conflicts(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def read_parquet_with_consistent_code_types(file_path: str | os.PathLike) -> pl.DataFrame:
+def read_parquet_with_consistent_code_types(
+    file_path: str | os.PathLike
+) -> pl.DataFrame:
     """
     Read parquet file and ensure Code column has consistent Utf8 type.
 
@@ -120,19 +130,25 @@ class JQuantsAsyncFetcher:
         self.password = password
         self.base_url = "https://api.jquants.com/v1"
         self.id_token: str | None = None
-        self.max_concurrent = max_concurrent or int(os.getenv("MAX_CONCURRENT_FETCH", 32))
+        self.max_concurrent = max_concurrent or int(
+            os.getenv("MAX_CONCURRENT_FETCH", 32)
+        )
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
 
         # Adaptive throttling configuration/state
         self._current_concurrency = self.max_concurrent
         self._max_concurrency_ceiling = self.max_concurrent
         self._min_concurrency = max(1, int(os.getenv("JQUANTS_MIN_CONCURRENCY", "4")))
-        self._min_concurrency = min(self._min_concurrency, self._max_concurrency_ceiling)
+        self._min_concurrency = min(
+            self._min_concurrency, self._max_concurrency_ceiling
+        )
         self._throttle_backoff = float(os.getenv("JQUANTS_THROTTLE_BACKOFF", "0.6"))
         self._throttle_sleep_seconds = float(os.getenv("JQUANTS_THROTTLE_SLEEP", "30"))
         self._recovery_step = int(os.getenv("JQUANTS_THROTTLE_STEP", "2"))
-        self._success_threshold = int(os.getenv("JQUANTS_THROTTLE_RECOVERY_SUCCESS", "180"))
-        self._retry_statuses: Tuple[int, ...] = (429, 503)
+        self._success_threshold = int(
+            os.getenv("JQUANTS_THROTTLE_RECOVERY_SUCCESS", "180")
+        )
+        self._retry_statuses: tuple[int, ...] = (429, 503)
         self._success_streak = 0
         self._throttle_hits = 0
         self._throttle_recoveries = 0
@@ -172,12 +188,16 @@ class JQuantsAsyncFetcher:
             return False
 
     def _apply_concurrency(self, new_limit: int, *, reason: str) -> None:
-        new_limit = max(self._min_concurrency, min(self._max_concurrency_ceiling, new_limit))
+        new_limit = max(
+            self._min_concurrency, min(self._max_concurrency_ceiling, new_limit)
+        )
         if new_limit == self._current_concurrency:
             return
         self._current_concurrency = new_limit
         self.semaphore = asyncio.Semaphore(new_limit)
-        self._logger.info("Adjusted JQuants concurrency → %s (reason=%s)", new_limit, reason)
+        self._logger.info(
+            "Adjusted JQuants concurrency → %s (reason=%s)", new_limit, reason
+        )
 
     def _record_success(self) -> None:
         self._success_streak += 1
@@ -249,7 +269,7 @@ class JQuantsAsyncFetcher:
         expected_statuses: Iterable[int] = (200,),
         decode_json: bool = True,
         use_semaphore: bool = True,
-    ) -> Tuple[int, Any]:
+    ) -> tuple[int, Any]:
         while True:
             cm = self.semaphore if use_semaphore else nullcontext()
             async with cm:
@@ -288,7 +308,9 @@ class JQuantsAsyncFetcher:
             "history": list(self._throttle_history),
         }
 
-    async def _safe_api_call(self, session: aiohttp.ClientSession, api_func, *args, **kwargs):
+    async def _safe_api_call(
+        self, session: aiohttp.ClientSession, api_func, *args, **kwargs
+    ):
         """
         Safely execute API call with session health checking.
 
@@ -362,9 +384,12 @@ class JQuantsAsyncFetcher:
                 return pl.DataFrame()
             if status != 200 or not isinstance(data, dict):
                 self._logger.error(
-                    "J-Quants trades_spec failed", extra={"status": status, "body": data}
+                    "J-Quants trades_spec failed",
+                    extra={"status": status, "body": data},
                 )
-                raise RuntimeError(f"J-Quants trades_spec request failed with status {status}")
+                raise RuntimeError(
+                    f"J-Quants trades_spec request failed with status {status}"
+                )
 
             items = data.get("info") or []
             if items:
@@ -383,7 +408,10 @@ class JQuantsAsyncFetcher:
         sentinel = {"", "-", "*", "null", "NULL", "None"}
         if "Date" in df.columns:
             df = df.with_columns(
-                pl.col("Date").cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias("Date")
+                pl.col("Date")
+                .cast(pl.Utf8)
+                .str.strptime(pl.Date, strict=False)
+                .alias("Date")
             )
         if "Code" in df.columns:
             df = df.with_columns(pl.col("Code").cast(pl.Utf8))
@@ -391,7 +419,13 @@ class JQuantsAsyncFetcher:
         str_columns = [
             c
             for c in df.columns
-            if c not in {"Date"} and ("Code" in c or c.endswith("Name") or c.endswith("Division") or c.endswith("Category"))
+            if c not in {"Date"}
+            and (
+                "Code" in c
+                or c.endswith("Name")
+                or c.endswith("Division")
+                or c.endswith("Category")
+            )
         ]
         if str_columns:
             df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in str_columns])
@@ -399,8 +433,7 @@ class JQuantsAsyncFetcher:
         numeric_columns = [
             c
             for c in df.columns
-            if c not in {"Date", "Code", "MarketCode"}
-            and c not in str_columns
+            if c not in {"Date", "Code", "MarketCode"} and c not in str_columns
         ]
         if numeric_columns:
             df = df.with_columns(
@@ -411,9 +444,12 @@ class JQuantsAsyncFetcher:
                     .alias(c)
                     for c in numeric_columns
                 ]
-            ).with_columns([
-                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_columns
-            ])
+            ).with_columns(
+                [
+                    pl.col(c).cast(pl.Float64, strict=False).alias(c)
+                    for c in numeric_columns
+                ]
+            )
 
         # Optional filter using scripts/components if available
         try:  # pragma: no cover - optional path
@@ -461,9 +497,13 @@ class JQuantsAsyncFetcher:
             if status != 200 or not isinstance(data, dict):
                 body_preview = str(data)[:256]
                 self._logger.error(
-                    "J-Quants trades_spec failed (status=%s, body=%s)", status, body_preview
+                    "J-Quants trades_spec failed (status=%s, body=%s)",
+                    status,
+                    body_preview,
                 )
-                raise RuntimeError(f"J-Quants trades_spec request failed with status {status}")
+                raise RuntimeError(
+                    f"J-Quants trades_spec request failed with status {status}"
+                )
 
             items = data.get("trades_spec") or []
             if items:
@@ -478,20 +518,21 @@ class JQuantsAsyncFetcher:
 
         df = pl.DataFrame(rows)
 
-        date_cols = [c for c in ("PublishedDate", "StartDate", "EndDate") if c in df.columns]
+        date_cols = [
+            c for c in ("PublishedDate", "StartDate", "EndDate") if c in df.columns
+        ]
         if date_cols:
-            df = df.with_columns([
-                pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c) for c in date_cols
-            ])
+            df = df.with_columns(
+                [
+                    pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c)
+                    for c in date_cols
+                ]
+            )
 
         if "Section" in df.columns:
             df = df.with_columns(pl.col("Section").cast(pl.Utf8))
 
-        numeric_cols = [
-            c
-            for c in df.columns
-            if c not in date_cols and c != "Section"
-        ]
+        numeric_cols = [c for c in df.columns if c not in date_cols and c != "Section"]
         if numeric_cols:
             df = df.with_columns(
                 [
@@ -501,9 +542,12 @@ class JQuantsAsyncFetcher:
                     .alias(c)
                     for c in numeric_cols
                 ]
-            ).with_columns([
-                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_cols
-            ])
+            ).with_columns(
+                [
+                    pl.col(c).cast(pl.Float64, strict=False).alias(c)
+                    for c in numeric_cols
+                ]
+            )
 
         if date_cols:
             df = df.sort(date_cols)
@@ -547,7 +591,7 @@ class JQuantsAsyncFetcher:
         keys: set[str] = set()
         for r in all_rows:
             keys.update(r.keys())
-        schema = {k: pl.Utf8 for k in keys}
+        schema = dict.fromkeys(keys, pl.Utf8)
         df = pl.DataFrame(all_rows, schema=schema, orient="row")
         if "Date" in df.columns:
             df = df.with_columns(pl.col("Date").str.strptime(pl.Date, strict=False))
@@ -604,7 +648,9 @@ class JQuantsAsyncFetcher:
                     for it in items:
                         it.setdefault("Code", code)
                     rows.extend(items)
-                pagination_key = data.get("pagination_key") if isinstance(data, dict) else None
+                pagination_key = (
+                    data.get("pagination_key") if isinstance(data, dict) else None
+                )
                 if not pagination_key:
                     break
             return rows
@@ -630,7 +676,9 @@ class JQuantsAsyncFetcher:
                 items = data.get("indices") or data.get("data") or []
                 if items:
                     rows.extend(items)
-                pagination_key = data.get("pagination_key") if isinstance(data, dict) else None
+                pagination_key = (
+                    data.get("pagination_key") if isinstance(data, dict) else None
+                )
                 if not pagination_key:
                     break
             return rows
@@ -678,16 +726,24 @@ class JQuantsAsyncFetcher:
                 return pl.lit(None, dtype=pl.Float64).alias(name)
             return pl.col(name).cast(pl.Float64, strict=False).alias(name)
 
-        out = df.with_columns([
-            pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
-            _dtcol("Date"),
-            _fcol("Open"),
-            _fcol("High"),
-            _fcol("Low"),
-            _fcol("Close"),
-        ])
+        out = df.with_columns(
+            [
+                pl.col("Code").cast(pl.Utf8)
+                if "Code" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+                _dtcol("Date"),
+                _fcol("Open"),
+                _fcol("High"),
+                _fcol("Low"),
+                _fcol("Close"),
+            ]
+        )
 
-        return enforce_code_column_types(out.sort(["Code", "Date"])) if {"Code", "Date"}.issubset(out.columns) else enforce_code_column_types(out)
+        return (
+            enforce_code_column_types(out.sort(["Code", "Date"]))
+            if {"Code", "Date"}.issubset(out.columns)
+            else enforce_code_column_types(out)
+        )
 
     async def get_weekly_margin_interest(
         self, session: aiohttp.ClientSession, from_date: str, to_date: str
@@ -755,22 +811,60 @@ class JQuantsAsyncFetcher:
         if not all_rows:
             return pl.DataFrame()
         df = pl.DataFrame(all_rows)
+
         # Normalize dtypes
         def _dtcol(name: str) -> pl.Expr:
             return pl.col(name).str.strptime(pl.Date, strict=False).alias(name)
+
         cols = df.columns
-        out = df.with_columns([
-            pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
-            _dtcol("Date") if "Date" in cols else pl.lit(None, dtype=pl.Date).alias("Date"),
-            _dtcol("PublishedDate") if "PublishedDate" in cols else pl.lit(None, dtype=pl.Date).alias("PublishedDate"),
-            pl.col("LongMarginTradeVolume").cast(pl.Float64) if "LongMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("LongMarginTradeVolume"),
-            pl.col("ShortMarginTradeVolume").cast(pl.Float64) if "ShortMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("ShortMarginTradeVolume"),
-            pl.col("LongNegotiableMarginTradeVolume").cast(pl.Float64) if "LongNegotiableMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("LongNegotiableMarginTradeVolume"),
-            pl.col("ShortNegotiableMarginTradeVolume").cast(pl.Float64) if "ShortNegotiableMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("ShortNegotiableMarginTradeVolume"),
-            pl.col("LongStandardizedMarginTradeVolume").cast(pl.Float64) if "LongStandardizedMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("LongStandardizedMarginTradeVolume"),
-            pl.col("ShortStandardizedMarginTradeVolume").cast(pl.Float64) if "ShortStandardizedMarginTradeVolume" in cols else pl.lit(None, dtype=pl.Float64).alias("ShortStandardizedMarginTradeVolume"),
-            (pl.col("IssueType").cast(pl.Int8) if "IssueType" in cols else pl.lit(None, dtype=pl.Int8)).alias("IssueType"),
-        ]).drop_nulls(subset=["Code", "Date"]).sort(["Code", "Date"])
+        out = (
+            df.with_columns(
+                [
+                    pl.col("Code").cast(pl.Utf8)
+                    if "Code" in cols
+                    else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+                    _dtcol("Date")
+                    if "Date" in cols
+                    else pl.lit(None, dtype=pl.Date).alias("Date"),
+                    _dtcol("PublishedDate")
+                    if "PublishedDate" in cols
+                    else pl.lit(None, dtype=pl.Date).alias("PublishedDate"),
+                    pl.col("LongMarginTradeVolume").cast(pl.Float64)
+                    if "LongMarginTradeVolume" in cols
+                    else pl.lit(None, dtype=pl.Float64).alias("LongMarginTradeVolume"),
+                    pl.col("ShortMarginTradeVolume").cast(pl.Float64)
+                    if "ShortMarginTradeVolume" in cols
+                    else pl.lit(None, dtype=pl.Float64).alias("ShortMarginTradeVolume"),
+                    pl.col("LongNegotiableMarginTradeVolume").cast(pl.Float64)
+                    if "LongNegotiableMarginTradeVolume" in cols
+                    else pl.lit(None, dtype=pl.Float64).alias(
+                        "LongNegotiableMarginTradeVolume"
+                    ),
+                    pl.col("ShortNegotiableMarginTradeVolume").cast(pl.Float64)
+                    if "ShortNegotiableMarginTradeVolume" in cols
+                    else pl.lit(None, dtype=pl.Float64).alias(
+                        "ShortNegotiableMarginTradeVolume"
+                    ),
+                    pl.col("LongStandardizedMarginTradeVolume").cast(pl.Float64)
+                    if "LongStandardizedMarginTradeVolume" in cols
+                    else pl.lit(None, dtype=pl.Float64).alias(
+                        "LongStandardizedMarginTradeVolume"
+                    ),
+                    pl.col("ShortStandardizedMarginTradeVolume").cast(pl.Float64)
+                    if "ShortStandardizedMarginTradeVolume" in cols
+                    else pl.lit(None, dtype=pl.Float64).alias(
+                        "ShortStandardizedMarginTradeVolume"
+                    ),
+                    (
+                        pl.col("IssueType").cast(pl.Int8)
+                        if "IssueType" in cols
+                        else pl.lit(None, dtype=pl.Int8)
+                    ).alias("IssueType"),
+                ]
+            )
+            .drop_nulls(subset=["Code", "Date"])
+            .sort(["Code", "Date"])
+        )
         return enforce_code_column_types(out)
 
     async def get_futures_daily(
@@ -809,7 +903,12 @@ class JQuantsAsyncFetcher:
                 )
                 if status != 200 or not isinstance(data, dict):
                     break
-                items = data.get("futures") or data.get("derivatives") or data.get("data") or []
+                items = (
+                    data.get("futures")
+                    or data.get("derivatives")
+                    or data.get("data")
+                    or []
+                )
                 if items:
                     rows.extend(items)
                 pagination_key = data.get("pagination_key")
@@ -823,7 +922,11 @@ class JQuantsAsyncFetcher:
             import datetime as _dt
 
             def _parse(d: str) -> _dt.date:
-                return _dt.datetime.strptime(d, "%Y-%m-%d").date() if "-" in d else _dt.datetime.strptime(d, "%Y%m%d").date()
+                return (
+                    _dt.datetime.strptime(d, "%Y-%m-%d").date()
+                    if "-" in d
+                    else _dt.datetime.strptime(d, "%Y%m%d").date()
+                )
 
             cur = _parse(from_date)
             end = _parse(to_date)
@@ -845,7 +948,12 @@ class JQuantsAsyncFetcher:
                     )
                     if status != 200 or not isinstance(data, dict):
                         break
-                    items = data.get("futures") or data.get("derivatives") or data.get("data") or []
+                    items = (
+                        data.get("futures")
+                        or data.get("derivatives")
+                        or data.get("data")
+                        or []
+                    )
                     if items:
                         rows.extend(items)
                     pagination_key = data.get("pagination_key")
@@ -878,7 +986,12 @@ class JQuantsAsyncFetcher:
         return out.sort(["Date"]) if "Date" in out.columns else out
 
     async def get_daily_margin_interest(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
+        self,
+        session: aiohttp.ClientSession,
+        from_date: str,
+        to_date: str,
+        *,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Fetch daily margin interest series with correction handling.
 
@@ -939,7 +1052,14 @@ class JQuantsAsyncFetcher:
                     # Normalize sentinels before creating DataFrame
                     for item in items:
                         for key, value in item.items():
-                            if isinstance(value, str) and value in ("-", "*", "", "null", "NULL", "None"):
+                            if isinstance(value, str) and value in (
+                                "-",
+                                "*",
+                                "",
+                                "null",
+                                "NULL",
+                                "None",
+                            ):
                                 item[key] = None
                     rows.extend(items)
                 pagination_key = data.get("pagination_key")
@@ -950,12 +1070,16 @@ class JQuantsAsyncFetcher:
         # Fetch data for each business day in range
         all_rows: list[dict] = []
         if business_days:
+
             def _canon(d: str) -> str:
                 return f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+
             for d in business_days:
                 d_str = _canon(d)
                 try:
-                    if not (start <= _dt.datetime.strptime(d_str, "%Y-%m-%d").date() <= end):
+                    if not (
+                        start <= _dt.datetime.strptime(d_str, "%Y-%m-%d").date() <= end
+                    ):
                         continue
                 except Exception:
                     continue
@@ -997,45 +1121,69 @@ class JQuantsAsyncFetcher:
                 return pl.col(name).cast(pl.Float64).alias(name)
             # Otherwise handle string conversion
             return (
-                pl.when(pl.col(name).cast(pl.Utf8).is_in(["-", "*", "", "null", "NULL", "None"]))
+                pl.when(
+                    pl.col(name)
+                    .cast(pl.Utf8)
+                    .is_in(["-", "*", "", "null", "NULL", "None"])
+                )
                 .then(None)
                 .otherwise(pl.col(name).cast(pl.Float64, strict=False))
                 .alias(name)
             )
 
-        out = df.with_columns([
-            pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
-            _dtcol("PublishedDate") if "PublishedDate" in cols else pl.lit(None, dtype=pl.Date).alias("PublishedDate"),
-            _dtcol("ApplicationDate") if "ApplicationDate" in cols else pl.lit(None, dtype=pl.Date).alias("ApplicationDate"),
-            # PublishReason はそのまま（dict/Null）
-            (pl.col("PublishReason")) if "PublishReason" in cols else pl.lit(None).alias("PublishReason"),
-            # Core margin balances
-            _float_col("ShortMarginOutstanding"),
-            _float_col("LongMarginOutstanding"),
-            _float_col("DailyChangeShortMarginOutstanding"),
-            _float_col("DailyChangeLongMarginOutstanding"),
-            _float_col("ShortMarginOutstandingListedShareRatio"),
-            _float_col("LongMarginOutstandingListedShareRatio"),
-            _float_col("ShortLongRatio"),
-            # Breakdown by negotiable/standardized
-            _float_col("ShortNegotiableMarginOutstanding"),
-            _float_col("ShortStandardizedMarginOutstanding"),
-            _float_col("LongNegotiableMarginOutstanding"),
-            _float_col("LongStandardizedMarginOutstanding"),
-            _float_col("DailyChangeShortNegotiableMarginOutstanding"),
-            _float_col("DailyChangeShortStandardizedMarginOutstanding"),
-            _float_col("DailyChangeLongNegotiableMarginOutstanding"),
-            _float_col("DailyChangeLongStandardizedMarginOutstanding"),
-            # Regulation classification
-            pl.col("TSEMarginBorrowingAndLendingRegulationClassification").cast(pl.Utf8) if "TSEMarginBorrowingAndLendingRegulationClassification" in cols else pl.lit(None, dtype=pl.Utf8).alias("TSEMarginBorrowingAndLendingRegulationClassification"),
-        ])
+        out = df.with_columns(
+            [
+                pl.col("Code").cast(pl.Utf8)
+                if "Code" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+                _dtcol("PublishedDate")
+                if "PublishedDate" in cols
+                else pl.lit(None, dtype=pl.Date).alias("PublishedDate"),
+                _dtcol("ApplicationDate")
+                if "ApplicationDate" in cols
+                else pl.lit(None, dtype=pl.Date).alias("ApplicationDate"),
+                # PublishReason はそのまま（dict/Null）
+                (pl.col("PublishReason"))
+                if "PublishReason" in cols
+                else pl.lit(None).alias("PublishReason"),
+                # Core margin balances
+                _float_col("ShortMarginOutstanding"),
+                _float_col("LongMarginOutstanding"),
+                _float_col("DailyChangeShortMarginOutstanding"),
+                _float_col("DailyChangeLongMarginOutstanding"),
+                _float_col("ShortMarginOutstandingListedShareRatio"),
+                _float_col("LongMarginOutstandingListedShareRatio"),
+                _float_col("ShortLongRatio"),
+                # Breakdown by negotiable/standardized
+                _float_col("ShortNegotiableMarginOutstanding"),
+                _float_col("ShortStandardizedMarginOutstanding"),
+                _float_col("LongNegotiableMarginOutstanding"),
+                _float_col("LongStandardizedMarginOutstanding"),
+                _float_col("DailyChangeShortNegotiableMarginOutstanding"),
+                _float_col("DailyChangeShortStandardizedMarginOutstanding"),
+                _float_col("DailyChangeLongNegotiableMarginOutstanding"),
+                _float_col("DailyChangeLongStandardizedMarginOutstanding"),
+                # Regulation classification
+                pl.col("TSEMarginBorrowingAndLendingRegulationClassification").cast(
+                    pl.Utf8
+                )
+                if "TSEMarginBorrowingAndLendingRegulationClassification" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias(
+                    "TSEMarginBorrowingAndLendingRegulationClassification"
+                ),
+            ]
+        )
 
         # Handle corrections: for each (Code, ApplicationDate), keep only the latest PublishedDate
         out = (
-            out.filter(pl.col("Code").is_not_null() & pl.col("ApplicationDate").is_not_null())
+            out.filter(
+                pl.col("Code").is_not_null() & pl.col("ApplicationDate").is_not_null()
+            )
             .sort(["Code", "ApplicationDate", "PublishedDate"])
             .group_by(["Code", "ApplicationDate"])
-            .agg(pl.all().last())  # Keep the latest PublishedDate for each (Code, ApplicationDate)
+            .agg(
+                pl.all().last()
+            )  # Keep the latest PublishedDate for each (Code, ApplicationDate)
             .sort(["Code", "ApplicationDate"])
         )
 
@@ -1057,11 +1205,14 @@ class JQuantsAsyncFetcher:
         """
         # Define priority categories for futures (TOPIX, Nikkei225, JPX400, REIT)
         priority_categories = [
-            "TOPIXF", "TOPIXMF",           # TOPIX futures
-            "NK225F", "NK225MF", "NK225MCF",  # Nikkei225 futures
-            "JN400F",                      # JPX400 futures
-            "REITF",                       # REIT futures
-            "MOTF",                        # Mothers futures (if available)
+            "TOPIXF",
+            "TOPIXMF",  # TOPIX futures
+            "NK225F",
+            "NK225MF",
+            "NK225MCF",  # Nikkei225 futures
+            "JN400F",  # JPX400 futures
+            "REITF",  # REIT futures
+            "MOTF",  # Mothers futures (if available)
         ]
 
         all_futures = []
@@ -1074,7 +1225,7 @@ class JQuantsAsyncFetcher:
             param_sets = [
                 {"from": from_date, "to": to_date},
                 {"from_date": from_date, "to_date": to_date},
-                {"start_date": from_date, "end_date": to_date}
+                {"start_date": from_date, "end_date": to_date},
             ]
 
             for params in param_sets:
@@ -1088,13 +1239,20 @@ class JQuantsAsyncFetcher:
                     headers=headers,
                 )
                 if status == 200 and isinstance(data, dict):
-                    for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                    for key in [
+                        "futures",
+                        "derivatives",
+                        "data",
+                        "derivatives_futures",
+                    ]:
                         if key in data and data[key]:
                             batch = data[key]
                             df_batch = pl.DataFrame(batch)
                             if not df_batch.is_empty():
                                 all_futures.append(df_batch)
-                                print(f"Retrieved {len(df_batch)} futures records with range query")
+                                print(
+                                    f"Retrieved {len(df_batch)} futures records with range query"
+                                )
                                 break
                     if all_futures:
                         break
@@ -1118,7 +1276,7 @@ class JQuantsAsyncFetcher:
                         params = {
                             "from": from_date,
                             "to": to_date,
-                            "DerivativesProductCategory": category
+                            "DerivativesProductCategory": category,
                         }
 
                         headers = {"Authorization": f"Bearer {self.id_token}"}
@@ -1134,14 +1292,21 @@ class JQuantsAsyncFetcher:
                             print(f"No data found for category {category}")
                             break
                         if status == 400:
-                            print(f"Bad request for range, trying date-by-date for {category}")
+                            print(
+                                f"Bad request for range, trying date-by-date for {category}"
+                            )
                             break
                         if status != 200 or not isinstance(data, dict):
                             print(f"API error for {category}: {status}")
                             break
 
                         batch = None
-                        for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                        for key in [
+                            "futures",
+                            "derivatives",
+                            "data",
+                            "derivatives_futures",
+                        ]:
                             if key in data and data[key]:
                                 batch = data[key]
                                 break
@@ -1151,9 +1316,9 @@ class JQuantsAsyncFetcher:
 
                         df_batch = pl.DataFrame(batch)
                         if not df_batch.is_empty():
-                            df_batch = df_batch.with_columns([
-                                pl.lit(category).alias("ProductCategory")
-                            ])
+                            df_batch = df_batch.with_columns(
+                                [pl.lit(category).alias("ProductCategory")]
+                            )
                             all_futures.append(df_batch)
 
                         if len(batch) < 1000:
@@ -1181,7 +1346,9 @@ class JQuantsAsyncFetcher:
             end = _parse(to_date)
             cur = start
 
-            while cur <= end and len(all_futures) < 100:  # Limit to prevent excessive API calls
+            while (
+                cur <= end and len(all_futures) < 100
+            ):  # Limit to prevent excessive API calls
                 if cur.weekday() < 5:  # Business days only
                     date_str = cur.strftime("%Y-%m-%d")
                     try:
@@ -1198,7 +1365,12 @@ class JQuantsAsyncFetcher:
                             headers=headers,
                         )
                         if status == 200 and isinstance(data, dict):
-                            for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                            for key in [
+                                "futures",
+                                "derivatives",
+                                "data",
+                                "derivatives_futures",
+                            ]:
                                 if key in data and data[key]:
                                     batch = data[key]
                                     df_batch = pl.DataFrame(batch)
@@ -1277,65 +1449,92 @@ class JQuantsAsyncFetcher:
             )
 
         # Normalize columns
-        normalized = df.with_columns([
-            # Basic identification
-            pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
-            _date_col("Date"),
-            pl.col("ProductCategory").cast(pl.Utf8) if "ProductCategory" in cols else pl.lit(None, dtype=pl.Utf8).alias("ProductCategory"),
-
-            # Contract details
-            pl.col("ContractMonth").cast(pl.Utf8) if "ContractMonth" in cols else pl.lit(None, dtype=pl.Utf8).alias("ContractMonth"),
-            pl.col("CentralContractMonthFlag").cast(pl.Utf8) if "CentralContractMonthFlag" in cols else pl.lit(None, dtype=pl.Utf8).alias("CentralContractMonthFlag"),
-
-            # OHLC prices
-            _float_col("Open"),
-            _float_col("High"),
-            _float_col("Low"),
-            _float_col("Close"),
-
-            # Trading data
-            _int_col("Volume"),
-            _int_col("OpenInterest"),
-            _float_col("TurnoverValue"),
-
-            # Emergency margin data
-            pl.col("EmergencyMarginTriggerDivision").cast(pl.Utf8) if "EmergencyMarginTriggerDivision" in cols else pl.lit(None, dtype=pl.Utf8).alias("EmergencyMarginTriggerDivision"),
-            _float_col("EmergencyMarginValue"),
-
-            # Session data (night/day)
-            _float_col("NightSessionOpen"),
-            _float_col("NightSessionHigh"),
-            _float_col("NightSessionLow"),
-            _float_col("NightSessionClose"),
-            _int_col("NightSessionVolume"),
-            _float_col("NightSessionTurnoverValue"),
-        ])
+        normalized = df.with_columns(
+            [
+                # Basic identification
+                pl.col("Code").cast(pl.Utf8)
+                if "Code" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+                _date_col("Date"),
+                pl.col("ProductCategory").cast(pl.Utf8)
+                if "ProductCategory" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias("ProductCategory"),
+                # Contract details
+                pl.col("ContractMonth").cast(pl.Utf8)
+                if "ContractMonth" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias("ContractMonth"),
+                pl.col("CentralContractMonthFlag").cast(pl.Utf8)
+                if "CentralContractMonthFlag" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias("CentralContractMonthFlag"),
+                # OHLC prices
+                _float_col("Open"),
+                _float_col("High"),
+                _float_col("Low"),
+                _float_col("Close"),
+                # Trading data
+                _int_col("Volume"),
+                _int_col("OpenInterest"),
+                _float_col("TurnoverValue"),
+                # Emergency margin data
+                pl.col("EmergencyMarginTriggerDivision").cast(pl.Utf8)
+                if "EmergencyMarginTriggerDivision" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias(
+                    "EmergencyMarginTriggerDivision"
+                ),
+                _float_col("EmergencyMarginValue"),
+                # Session data (night/day)
+                _float_col("NightSessionOpen"),
+                _float_col("NightSessionHigh"),
+                _float_col("NightSessionLow"),
+                _float_col("NightSessionClose"),
+                _int_col("NightSessionVolume"),
+                _float_col("NightSessionTurnoverValue"),
+            ]
+        )
 
         # Handle emergency margin duplicates: prefer 002 (clearing) over 001 (trigger)
         # Create emergency margin flag before deduplication
-        normalized = normalized.with_columns([
-            (pl.col("EmergencyMarginTriggerDivision") == "001").cast(pl.Int8).alias("emergency_margin_triggered")
-        ])
+        normalized = normalized.with_columns(
+            [
+                (pl.col("EmergencyMarginTriggerDivision") == "001")
+                .cast(pl.Int8)
+                .alias("emergency_margin_triggered")
+            ]
+        )
 
         # Deduplicate by keeping 002 (clearing) records when both 001 and 002 exist
         deduped = (
-            normalized
-            .sort(["Code", "Date", "ContractMonth", "EmergencyMarginTriggerDivision"])
+            normalized.sort(
+                ["Code", "Date", "ContractMonth", "EmergencyMarginTriggerDivision"]
+            )
             .group_by(["Code", "Date", "ContractMonth"])
-            .agg([
-                # Keep 002 if exists, otherwise 001 or null
-                pl.col("EmergencyMarginTriggerDivision").filter(pl.col("EmergencyMarginTriggerDivision") == "002").first().alias("EmergencyMarginTriggerDivision_tmp"),
-                pl.col("emergency_margin_triggered").max().alias("emergency_margin_triggered"), # 1 if any 001 exists
-                # For other columns, take last non-null value
-                pl.all().exclude(["EmergencyMarginTriggerDivision", "emergency_margin_triggered"]).last()
-            ])
-            .with_columns([
-                # Use 002 if available, otherwise use original
-                pl.when(pl.col("EmergencyMarginTriggerDivision_tmp").is_not_null())
-                .then(pl.col("EmergencyMarginTriggerDivision_tmp"))
-                .otherwise(pl.col("EmergencyMarginTriggerDivision"))
-                .alias("EmergencyMarginTriggerDivision")
-            ])
+            .agg(
+                [
+                    # Keep 002 if exists, otherwise 001 or null
+                    pl.col("EmergencyMarginTriggerDivision")
+                    .filter(pl.col("EmergencyMarginTriggerDivision") == "002")
+                    .first()
+                    .alias("EmergencyMarginTriggerDivision_tmp"),
+                    pl.col("emergency_margin_triggered")
+                    .max()
+                    .alias("emergency_margin_triggered"),  # 1 if any 001 exists
+                    # For other columns, take last non-null value
+                    pl.all()
+                    .exclude(
+                        ["EmergencyMarginTriggerDivision", "emergency_margin_triggered"]
+                    )
+                    .last(),
+                ]
+            )
+            .with_columns(
+                [
+                    # Use 002 if available, otherwise use original
+                    pl.when(pl.col("EmergencyMarginTriggerDivision_tmp").is_not_null())
+                    .then(pl.col("EmergencyMarginTriggerDivision_tmp"))
+                    .otherwise(pl.col("EmergencyMarginTriggerDivision"))
+                    .alias("EmergencyMarginTriggerDivision")
+                ]
+            )
             .drop("EmergencyMarginTriggerDivision_tmp")
             .sort(["Code", "Date", "ContractMonth"])
         )
@@ -1360,7 +1559,11 @@ class JQuantsAsyncFetcher:
         import datetime as _dt
 
         def _parse(d: str) -> _dt.date:
-            return _dt.datetime.strptime(d, "%Y-%m-%d").date() if "-" in d else _dt.datetime.strptime(d, "%Y%m%d").date()
+            return (
+                _dt.datetime.strptime(d, "%Y-%m-%d").date()
+                if "-" in d
+                else _dt.datetime.strptime(d, "%Y%m%d").date()
+            )
 
         start = _parse(from_date)
         end = _parse(to_date)
@@ -1391,7 +1594,14 @@ class JQuantsAsyncFetcher:
                     # Normalize sentinels before adding to rows
                     for item in items:
                         for key, value in item.items():
-                            if isinstance(value, str) and value in ("-", "*", "", "null", "NULL", "None"):
+                            if isinstance(value, str) and value in (
+                                "-",
+                                "*",
+                                "",
+                                "null",
+                                "NULL",
+                                "None",
+                            ):
                                 item[key] = None
                     rows.extend(items)
                 pagination_key = data.get("pagination_key")
@@ -1411,7 +1621,10 @@ class JQuantsAsyncFetcher:
             return df
 
         # Rename volume(only auction)
-        if "Volume(OnlyAuction)" in df.columns and "VolumeOnlyAuction" not in df.columns:
+        if (
+            "Volume(OnlyAuction)" in df.columns
+            and "VolumeOnlyAuction" not in df.columns
+        ):
             df = df.rename({"Volume(OnlyAuction)": "VolumeOnlyAuction"})
 
         def _dtcol(name: str) -> pl.Expr:
@@ -1430,20 +1643,43 @@ class JQuantsAsyncFetcher:
                 _dtcol("Date"),
                 _dtcol("LastTradingDay"),
                 _dtcol("SpecialQuotationDay"),
-                pl.col("Code").cast(pl.Utf8) if "Code" in df.columns else pl.lit(None, dtype=pl.Utf8).alias("Code"),
-                (pl.col("ContractMonth").cast(pl.Utf8) if "ContractMonth" in df.columns else pl.lit(None, dtype=pl.Utf8)).alias("ContractMonth"),
-                (pl.col("EmergencyMarginTriggerDivision").cast(pl.Utf8) if "EmergencyMarginTriggerDivision" in df.columns else pl.lit(None, dtype=pl.Utf8)).alias("EmergencyMarginTriggerDivision"),
-                (pl.col("PutCallDivision").cast(pl.Utf8) if "PutCallDivision" in df.columns else pl.lit(None, dtype=pl.Utf8)).alias("PutCallDivision"),
+                pl.col("Code").cast(pl.Utf8)
+                if "Code" in df.columns
+                else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+                (
+                    pl.col("ContractMonth").cast(pl.Utf8)
+                    if "ContractMonth" in df.columns
+                    else pl.lit(None, dtype=pl.Utf8)
+                ).alias("ContractMonth"),
+                (
+                    pl.col("EmergencyMarginTriggerDivision").cast(pl.Utf8)
+                    if "EmergencyMarginTriggerDivision" in df.columns
+                    else pl.lit(None, dtype=pl.Utf8)
+                ).alias("EmergencyMarginTriggerDivision"),
+                (
+                    pl.col("PutCallDivision").cast(pl.Utf8)
+                    if "PutCallDivision" in df.columns
+                    else pl.lit(None, dtype=pl.Utf8)
+                ).alias("PutCallDivision"),
             ]
         )
 
         def _num(col: str) -> pl.Expr:
             # Check if column is already numeric
-            if col in df.columns and df[col].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]:
+            if col in df.columns and df[col].dtype in [
+                pl.Float32,
+                pl.Float64,
+                pl.Int32,
+                pl.Int64,
+            ]:
                 return pl.col(col).cast(pl.Float64)
             # Otherwise handle string conversion with multiple sentinel values
             return (
-                pl.when(pl.col(col).cast(pl.Utf8).is_in(["-", "*", "", "null", "NULL", "None"]))
+                pl.when(
+                    pl.col(col)
+                    .cast(pl.Utf8)
+                    .is_in(["-", "*", "", "null", "NULL", "None"])
+                )
                 .then(None)
                 .otherwise(pl.col(col).cast(pl.Float64, strict=False))
             )
@@ -1477,11 +1713,20 @@ class JQuantsAsyncFetcher:
                 out = out.with_columns(_num(c).alias(c))
 
         # Sort for determinism
-        out = out.sort(["Date", "Code", "EmergencyMarginTriggerDivision"]) if "Date" in out.columns else out
+        out = (
+            out.sort(["Date", "Code", "EmergencyMarginTriggerDivision"])
+            if "Date" in out.columns
+            else out
+        )
         return out
 
     async def get_short_selling(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
+        self,
+        session: aiohttp.ClientSession,
+        from_date: str,
+        to_date: str,
+        *,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """
         Fetch short selling data from J-Quants API.
@@ -1507,6 +1752,7 @@ class JQuantsAsyncFetcher:
 
         # Iterate through each date to get all sectors' data
         import datetime
+
         current_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
         end_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
 
@@ -1516,7 +1762,11 @@ class JQuantsAsyncFetcher:
             if business_days:
                 out = []
                 for d in business_days:
-                    d_str = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+                    d_str = (
+                        f"{d[:4]}-{d[4:6]}-{d[6:]}"
+                        if len(d) == 8 and d.isdigit()
+                        else d
+                    )
                     if from_date <= d_str <= to_date:
                         out.append(d_str)
                 return out
@@ -1561,11 +1811,15 @@ class JQuantsAsyncFetcher:
                         self._logger.debug(f"No short selling data for {date_str}")
                         break
                     else:
-                        self._logger.warning(f"Failed to fetch short selling for {date_str}, status: {status}")
+                        self._logger.warning(
+                            f"Failed to fetch short selling for {date_str}, status: {status}"
+                        )
                         break
 
                 except Exception as e:
-                    self._logger.warning(f"Error fetching short selling for {date_str}: {e}")
+                    self._logger.warning(
+                        f"Error fetching short selling for {date_str}: {e}"
+                    )
                     break
 
         # end for date loop
@@ -1577,22 +1831,32 @@ class JQuantsAsyncFetcher:
 
         date_cols = [c for c in df.columns if c.endswith("Date") or c == "Date"]
         if date_cols:
-            df = df.with_columns([
-                pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c)
-                for c in date_cols
-            ])
+            df = df.with_columns(
+                [
+                    pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c)
+                    for c in date_cols
+                ]
+            )
 
         # Identify categorical columns by name heuristics
-        string_markers = ("Code", "Category", "Division", "Class", "Name", "Type", "Section")
+        string_markers = (
+            "Code",
+            "Category",
+            "Division",
+            "Class",
+            "Name",
+            "Type",
+            "Section",
+        )
         str_cols = [
-            c
-            for c in df.columns
-            if any(marker in c for marker in string_markers)
+            c for c in df.columns if any(marker in c for marker in string_markers)
         ]
         if str_cols:
             df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in str_cols])
 
-        numeric_cols = [c for c in df.columns if c not in date_cols and c not in str_cols]
+        numeric_cols = [
+            c for c in df.columns if c not in date_cols and c not in str_cols
+        ]
         if numeric_cols:
             df = df.with_columns(
                 [
@@ -1602,9 +1866,12 @@ class JQuantsAsyncFetcher:
                     .alias(c)
                     for c in numeric_cols
                 ]
-            ).with_columns([
-                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_cols
-            ])
+            ).with_columns(
+                [
+                    pl.col(c).cast(pl.Float64, strict=False).alias(c)
+                    for c in numeric_cols
+                ]
+            )
 
         df = df.sort(date_cols) if date_cols else df
         print(f"Retrieved {len(df)} short selling records")
@@ -1613,7 +1880,12 @@ class JQuantsAsyncFetcher:
         return df
 
     async def get_short_selling_positions(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
+        self,
+        session: aiohttp.ClientSession,
+        from_date: str,
+        to_date: str,
+        *,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """
         Fetch short selling positions data from J-Quants API.
@@ -1638,16 +1910,23 @@ class JQuantsAsyncFetcher:
 
         # Iterate through each date using disclosed_date parameter
         import datetime
+
         current_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
         end_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
 
-        self._logger.info(f"Fetching short selling positions from {from_date} to {to_date}")
+        self._logger.info(
+            f"Fetching short selling positions from {from_date} to {to_date}"
+        )
 
         def _iter_dates() -> list[str]:
             if business_days:
                 out = []
                 for d in business_days:
-                    d_str = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+                    d_str = (
+                        f"{d[:4]}-{d[4:6]}-{d[6:]}"
+                        if len(d) == 8 and d.isdigit()
+                        else d
+                    )
                     if from_date <= d_str <= to_date:
                         out.append(d_str)
                 return out
@@ -1663,7 +1942,9 @@ class JQuantsAsyncFetcher:
             # Use disclosed_date parameter for each date
             params = {"disclosed_date": formatted_date if formatted_date else date_str}
 
-            self._logger.debug(f"Fetching short positions for disclosed_date: {date_str}")
+            self._logger.debug(
+                f"Fetching short positions for disclosed_date: {date_str}"
+            )
 
             try:
                 status, data = await self._request_json(
@@ -1682,10 +1963,14 @@ class JQuantsAsyncFetcher:
                 elif status == 404:
                     self._logger.debug(f"No short positions data for {date_str}")
                 else:
-                    self._logger.warning(f"Failed to fetch short positions for {date_str}, status: {status}")
+                    self._logger.warning(
+                        f"Failed to fetch short positions for {date_str}, status: {status}"
+                    )
 
             except Exception as e:
-                self._logger.warning(f"Error fetching short positions for {date_str}: {e}")
+                self._logger.warning(
+                    f"Error fetching short positions for {date_str}: {e}"
+                )
 
         # end for date loop
 
@@ -1696,21 +1981,31 @@ class JQuantsAsyncFetcher:
 
         date_cols = [c for c in df.columns if c.endswith("Date") or c == "Date"]
         if date_cols:
-            df = df.with_columns([
-                pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c)
-                for c in date_cols
-            ])
+            df = df.with_columns(
+                [
+                    pl.col(c).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(c)
+                    for c in date_cols
+                ]
+            )
 
-        string_markers = ("Code", "Category", "Division", "Class", "Name", "Type", "Section")
+        string_markers = (
+            "Code",
+            "Category",
+            "Division",
+            "Class",
+            "Name",
+            "Type",
+            "Section",
+        )
         str_cols = [
-            c
-            for c in df.columns
-            if any(marker in c for marker in string_markers)
+            c for c in df.columns if any(marker in c for marker in string_markers)
         ]
         if str_cols:
             df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in str_cols])
 
-        numeric_cols = [c for c in df.columns if c not in date_cols and c not in str_cols]
+        numeric_cols = [
+            c for c in df.columns if c not in date_cols and c not in str_cols
+        ]
         if numeric_cols:
             df = df.with_columns(
                 [
@@ -1720,9 +2015,12 @@ class JQuantsAsyncFetcher:
                     .alias(c)
                     for c in numeric_cols
                 ]
-            ).with_columns([
-                pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in numeric_cols
-            ])
+            ).with_columns(
+                [
+                    pl.col(c).cast(pl.Float64, strict=False).alias(c)
+                    for c in numeric_cols
+                ]
+            )
 
         df = df.sort(date_cols + ["Code"]) if date_cols and "Code" in df.columns else df
         print(f"Retrieved {len(df)} short selling positions records")
@@ -1771,7 +2069,9 @@ class JQuantsAsyncFetcher:
             elif isinstance(data, list):
                 all_data.extend(data)
         except asyncio.TimeoutError:
-            print(f"Timeout fetching earnings announcements for {from_date} to {to_date}")
+            print(
+                f"Timeout fetching earnings announcements for {from_date} to {to_date}"
+            )
             return pl.DataFrame()
         except Exception as e:
             print(f"Error fetching earnings announcements: {e}")
@@ -1824,14 +2124,16 @@ class JQuantsAsyncFetcher:
 
         # Convert Date column to proper format (this is the announcement date)
         if "Date" in df.columns:
-            df = df.with_columns([
-                pl.col("Date").str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("Date")
-            ])
+            df = df.with_columns(
+                [
+                    pl.col("Date")
+                    .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+                    .alias("Date")
+                ]
+            )
 
         # Ensure Code is string
-        df = df.with_columns([
-            pl.col("Code").cast(pl.Utf8)
-        ])
+        df = df.with_columns([pl.col("Code").cast(pl.Utf8)])
 
         # Sort by announcement date and code
         df = df.sort(["Date", "Code"])
@@ -1839,7 +2141,12 @@ class JQuantsAsyncFetcher:
         return df
 
     async def get_sector_short_selling(
-        self, session: aiohttp.ClientSession, from_date: str, to_date: str, *, business_days: list[str] | None = None
+        self,
+        session: aiohttp.ClientSession,
+        from_date: str,
+        to_date: str,
+        *,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """
         Fetch sector-wise short selling data from J-Quants API (/markets/short_selling).
@@ -1863,16 +2170,23 @@ class JQuantsAsyncFetcher:
 
         # Since we don't have sector33code, iterate through each date
         import datetime
+
         current_date = datetime.datetime.strptime(from_date, "%Y-%m-%d")
         end_date = datetime.datetime.strptime(to_date, "%Y-%m-%d")
 
-        self._logger.info(f"Fetching sector short selling data from {from_date} to {to_date}")
+        self._logger.info(
+            f"Fetching sector short selling data from {from_date} to {to_date}"
+        )
 
         def _iter_dates() -> list[str]:
             if business_days:
                 out = []
                 for d in business_days:
-                    d_str = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 and d.isdigit() else d
+                    d_str = (
+                        f"{d[:4]}-{d[4:6]}-{d[6:]}"
+                        if len(d) == 8 and d.isdigit()
+                        else d
+                    )
                     if from_date <= d_str <= to_date:
                         out.append(d_str)
                 return out
@@ -1908,12 +2222,18 @@ class JQuantsAsyncFetcher:
                 elif status == 404:
                     self._logger.debug(f"No sector short selling data for {date_str}")
                 else:
-                    self._logger.warning(f"Failed to fetch sector short selling for {date_str}, status: {status}")
+                    self._logger.warning(
+                        f"Failed to fetch sector short selling for {date_str}, status: {status}"
+                    )
 
             except asyncio.TimeoutError:
-                self._logger.warning(f"Timeout fetching sector short selling for {date_str}")
+                self._logger.warning(
+                    f"Timeout fetching sector short selling for {date_str}"
+                )
             except Exception as e:
-                self._logger.warning(f"Error fetching sector short selling for {date_str}: {e}")
+                self._logger.warning(
+                    f"Error fetching sector short selling for {date_str}: {e}"
+                )
 
         # end for date loop
 
@@ -1954,26 +2274,39 @@ class JQuantsAsyncFetcher:
                 df = df.rename({old_name: new_name})
 
         # Ensure essential columns exist
-        required_cols = ["Date", "Sector33Code", "SellingExcludingShortSellingTurnoverValue",
-                        "ShortSellingWithRestrictionsTurnoverValue", "ShortSellingWithoutRestrictionsTurnoverValue"]
+        required_cols = [
+            "Date",
+            "Sector33Code",
+            "SellingExcludingShortSellingTurnoverValue",
+            "ShortSellingWithRestrictionsTurnoverValue",
+            "ShortSellingWithoutRestrictionsTurnoverValue",
+        ]
 
         missing_cols = [c for c in required_cols if c not in df.columns]
         if missing_cols:
-            print(f"Warning: Missing columns in sector short selling data: {missing_cols}")
+            print(
+                f"Warning: Missing columns in sector short selling data: {missing_cols}"
+            )
             return pl.DataFrame()
 
         # Convert date column to proper format
-        df = df.with_columns([
-            pl.col("Date").str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("Date")
-        ])
+        df = df.with_columns(
+            [
+                pl.col("Date")
+                .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+                .alias("Date")
+            ]
+        )
 
         # Ensure proper types
-        df = df.with_columns([
-            pl.col("Sector33Code").cast(pl.Utf8),
-            pl.col("SellingExcludingShortSellingTurnoverValue").cast(pl.Float64),
-            pl.col("ShortSellingWithRestrictionsTurnoverValue").cast(pl.Float64),
-            pl.col("ShortSellingWithoutRestrictionsTurnoverValue").cast(pl.Float64),
-        ])
+        df = df.with_columns(
+            [
+                pl.col("Sector33Code").cast(pl.Utf8),
+                pl.col("SellingExcludingShortSellingTurnoverValue").cast(pl.Float64),
+                pl.col("ShortSellingWithRestrictionsTurnoverValue").cast(pl.Float64),
+                pl.col("ShortSellingWithoutRestrictionsTurnoverValue").cast(pl.Float64),
+            ]
+        )
 
         # Sort by date and sector
         df = df.sort(["Date", "Sector33Code"])
@@ -2014,56 +2347,65 @@ class JQuantsAsyncFetcher:
 
         # Step 1: Rename Sector33Code to Code for consistency
         # Step 2: Calculate derived columns from API turnover values
-        normalized = df.with_columns([
-            # Rename Sector33Code to Code for consistency with other data sources
-            pl.col("Sector33Code").cast(pl.Utf8).alias("Code") if "Sector33Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
-            _date_col("Date"),
-
-            # Keep raw turnover values
-            _float_col("SellingExcludingShortSellingTurnoverValue"),
-            _float_col("ShortSellingWithRestrictionsTurnoverValue"),
-            _float_col("ShortSellingWithoutRestrictionsTurnoverValue"),
-        ])
+        normalized = df.with_columns(
+            [
+                # Rename Sector33Code to Code for consistency with other data sources
+                pl.col("Sector33Code").cast(pl.Utf8).alias("Code")
+                if "Sector33Code" in cols
+                else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+                _date_col("Date"),
+                # Keep raw turnover values
+                _float_col("SellingExcludingShortSellingTurnoverValue"),
+                _float_col("ShortSellingWithRestrictionsTurnoverValue"),
+                _float_col("ShortSellingWithoutRestrictionsTurnoverValue"),
+            ]
+        )
 
         # Step 3: Calculate derived metrics
         # ShortSellingVolume = sum of short selling turnover
         # TotalVolume = all selling turnover
         # ShortSellingRatio = short selling / total
-        normalized = normalized.with_columns([
-            (
-                pl.col("ShortSellingWithRestrictionsTurnoverValue").fill_null(0) +
-                pl.col("ShortSellingWithoutRestrictionsTurnoverValue").fill_null(0)
-            ).alias("ShortSellingVolume"),
-
-            (
-                pl.col("SellingExcludingShortSellingTurnoverValue").fill_null(0) +
-                pl.col("ShortSellingWithRestrictionsTurnoverValue").fill_null(0) +
-                pl.col("ShortSellingWithoutRestrictionsTurnoverValue").fill_null(0)
-            ).alias("TotalVolume"),
-        ])
+        normalized = normalized.with_columns(
+            [
+                (
+                    pl.col("ShortSellingWithRestrictionsTurnoverValue").fill_null(0)
+                    + pl.col("ShortSellingWithoutRestrictionsTurnoverValue").fill_null(
+                        0
+                    )
+                ).alias("ShortSellingVolume"),
+                (
+                    pl.col("SellingExcludingShortSellingTurnoverValue").fill_null(0)
+                    + pl.col("ShortSellingWithRestrictionsTurnoverValue").fill_null(0)
+                    + pl.col("ShortSellingWithoutRestrictionsTurnoverValue").fill_null(
+                        0
+                    )
+                ).alias("TotalVolume"),
+            ]
+        )
 
         # Calculate ratio (with safety check for division by zero)
-        normalized = normalized.with_columns([
-            pl.when(pl.col("TotalVolume") > 0)
-              .then(pl.col("ShortSellingVolume") / pl.col("TotalVolume"))
-              .otherwise(None)
-              .alias("ShortSellingRatio")
-        ])
+        normalized = normalized.with_columns(
+            [
+                pl.when(pl.col("TotalVolume") > 0)
+                .then(pl.col("ShortSellingVolume") / pl.col("TotalVolume"))
+                .otherwise(None)
+                .alias("ShortSellingRatio")
+            ]
+        )
 
         # Add PublishedDate (sector data only has Date)
-        normalized = normalized.with_columns([
-            pl.col("Date").alias("PublishedDate")
-        ])
+        normalized = normalized.with_columns([pl.col("Date").alias("PublishedDate")])
 
         # Add Section column (not present in sector aggregate data)
-        normalized = normalized.with_columns([
-            pl.lit(None, dtype=pl.Utf8).alias("Section")
-        ])
+        normalized = normalized.with_columns(
+            [pl.lit(None, dtype=pl.Utf8).alias("Section")]
+        )
 
         # Remove duplicates by (Code, Date) keeping latest PublishedDate
         deduped = (
-            normalized
-            .filter(pl.col("Code").is_not_null() & pl.col("Date").is_not_null())
+            normalized.filter(
+                pl.col("Code").is_not_null() & pl.col("Date").is_not_null()
+            )
             .sort(["Code", "Date", "PublishedDate"])
             .group_by(["Code", "Date"])
             .agg(pl.all().last())
@@ -2098,7 +2440,9 @@ class JQuantsAsyncFetcher:
             ).alias(name)
 
         # Helper to cast columns while gracefully handling missing inputs
-        def _cast_or_null(name: str, dtype: pl.DataType, alias: str | None = None) -> pl.Expr:
+        def _cast_or_null(
+            name: str, dtype: pl.DataType, alias: str | None = None
+        ) -> pl.Expr:
             target = alias or name
             if name not in cols:
                 return pl.lit(None, dtype=dtype).alias(target)
@@ -2129,34 +2473,49 @@ class JQuantsAsyncFetcher:
                 else pl.col(api_name).cast(pl.Date)
             ).alias(target_name)
 
-        normalized = df.with_columns([
-            # Basic identification
-            _cast_or_null("Code", pl.Utf8),
-            _map_date("DisclosedDate", "Date") if "DisclosedDate" in cols else _date_col("Date"),
-            _map_date("CalculatedDate", "PublishedDate") if "CalculatedDate" in cols else _date_col("PublishedDate"),
-
-            # Short selling positions (map API fields to our schema)
-            # Note: API returns numeric types directly (no "-" strings)
-            # LendingBalance and LendingBalanceRatio are NOT provided by J-Quants API
-            _cast_or_null("ShortPositionsInSharesNumber", pl.Float64, "ShortSellingBalance"),
-            _cast_or_null("ShortPositionsInTradingUnitsNumber", pl.Float64, "ShortSellingBalanceChange"),
-            _cast_or_null("ShortPositionsToSharesOutstandingRatio", pl.Float64, "ShortSellingBalanceRatio"),
-
-            # Section information
-            _cast_or_null("Section", pl.Utf8),
-        ])
+        normalized = df.with_columns(
+            [
+                # Basic identification
+                _cast_or_null("Code", pl.Utf8),
+                _map_date("DisclosedDate", "Date")
+                if "DisclosedDate" in cols
+                else _date_col("Date"),
+                _map_date("CalculatedDate", "PublishedDate")
+                if "CalculatedDate" in cols
+                else _date_col("PublishedDate"),
+                # Short selling positions (map API fields to our schema)
+                # Note: API returns numeric types directly (no "-" strings)
+                # LendingBalance and LendingBalanceRatio are NOT provided by J-Quants API
+                _cast_or_null(
+                    "ShortPositionsInSharesNumber", pl.Float64, "ShortSellingBalance"
+                ),
+                _cast_or_null(
+                    "ShortPositionsInTradingUnitsNumber",
+                    pl.Float64,
+                    "ShortSellingBalanceChange",
+                ),
+                _cast_or_null(
+                    "ShortPositionsToSharesOutstandingRatio",
+                    pl.Float64,
+                    "ShortSellingBalanceRatio",
+                ),
+                # Section information
+                _cast_or_null("Section", pl.Utf8),
+            ]
+        )
 
         # If PublishedDate doesn't exist in API response, use Date as PublishedDate
         # (Sector-level data only has Date column)
         if "PublishedDate" not in cols and "Date" in cols:
-            normalized = normalized.with_columns([
-                pl.col("Date").alias("PublishedDate")
-            ])
+            normalized = normalized.with_columns(
+                [pl.col("Date").alias("PublishedDate")]
+            )
 
         # Remove duplicates by (Code, Date) keeping latest PublishedDate
         deduped = (
-            normalized
-            .filter(pl.col("Code").is_not_null() & pl.col("Date").is_not_null())
+            normalized.filter(
+                pl.col("Code").is_not_null() & pl.col("Date").is_not_null()
+            )
             .sort(["Code", "Date", "PublishedDate"])
             .group_by(["Code", "Date"])
             .agg(pl.all().last())
@@ -2177,13 +2536,16 @@ class JQuantsAsyncFetcher:
         """
         try:
             if not await self._ensure_session_health(session):
-                raise RuntimeError("Session is closed - requires new session and re-authentication")
+                raise RuntimeError(
+                    "Session is closed - requires new session and re-authentication"
+                )
 
             return await self.get_futures_daily(session, from_date, to_date)
 
         except Exception as e:
             # Log specific error details for futures API
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(f"Futures API call failed: {e}")
             raise
@@ -2198,13 +2560,16 @@ class JQuantsAsyncFetcher:
         """
         try:
             if not await self._ensure_session_health(session):
-                raise RuntimeError("Session is closed - requires new session and re-authentication")
+                raise RuntimeError(
+                    "Session is closed - requires new session and re-authentication"
+                )
 
             return await self.get_short_selling(session, from_date, to_date)
 
         except Exception as e:
             # Log specific error details for short selling API
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(f"Short selling API call failed: {e}")
             raise
@@ -2219,13 +2584,16 @@ class JQuantsAsyncFetcher:
         """
         try:
             if not await self._ensure_session_health(session):
-                raise RuntimeError("Session is closed - requires new session and re-authentication")
+                raise RuntimeError(
+                    "Session is closed - requires new session and re-authentication"
+                )
 
             return await self.get_short_selling_positions(session, from_date, to_date)
 
         except Exception as e:
             # Log specific error details for short selling positions API
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(f"Short selling positions API call failed: {e}")
             raise
@@ -2240,13 +2608,16 @@ class JQuantsAsyncFetcher:
         """
         try:
             if not await self._ensure_session_health(session):
-                raise RuntimeError("Session is closed - requires new session and re-authentication")
+                raise RuntimeError(
+                    "Session is closed - requires new session and re-authentication"
+                )
 
             return await self.get_sector_short_selling(session, from_date, to_date)
 
         except Exception as e:
             # Log specific error details for sector short selling API
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(f"Sector short selling API call failed: {e}")
             raise

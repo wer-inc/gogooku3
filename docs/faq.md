@@ -69,7 +69,7 @@ JQUANTS_AUTH_PASSWORD=your_password
   処理時間: 数分 → 1.9秒 (100倍高速)
   過学習リスク: 高 → 低
   解釈しやすさ: 困難 → 容易
-  
+
 選択基準:
   - 実証的根拠のある指標のみ選択
   - 低相関（冗長性排除）
@@ -158,11 +158,11 @@ gogooku3 train --gradient-checkpointing
   特徴量生成: 0.2秒
   正規化: 0.2秒
   ML学習: 0.6秒
-  
+
 メモリ効率:
   ピーク使用量: 7.0GB ✅ (目標: <8GB)
   削減率: 59% (17GB→7GB)
-  
+
 ML性能:
   銘柄数: 632銘柄
   特徴量: 145列（+6品質向上）
@@ -272,11 +272,11 @@ pipeline = SafeTrainingPipeline()
 # 旧方式
 python scripts/run_safe_training.py --verbose
 
-# 新方式  
+# 新方式
 gogooku3 train --verbose
 ```
 
-詳細: [移行ガイド](../MIGRATION.md)
+-詳細: [移行ガイド](../architecture/migration.md)
 
 ### Q: 既存のスクリプトは動作し続けますか？
 
@@ -332,7 +332,7 @@ JQuants制限:
   リクエスト/秒: 10req/s
   リクエスト/日: 100,000req/day
   同時接続数: 5接続まで
-  
+
 Gogooku3最適化:
   並行接続: 5接続（上限遵守）
   リトライ機能: 指数バックオフ
@@ -347,7 +347,7 @@ Gogooku3最適化:
 
 **A:** GitHubイシュートラッカーをご利用ください：
 
-- **バグ報告**: [GitHub Issues](https://github.com/your-org/gogooku3/issues) 
+- **バグ報告**: [GitHub Issues](https://github.com/your-org/gogooku3/issues)
 - **機能要望**: Feature Request template使用
 - **質問**: Discussions板またはこのFAQ
 - **セキュリティ**: security@example.com に直接連絡
@@ -356,7 +356,7 @@ Gogooku3最適化:
 ```bash
 # システム情報収集
 gogooku3 --version
-python --version  
+python --version
 pip list | grep -E "(gogooku3|polars|torch)"
 ```
 
@@ -370,7 +370,7 @@ pip list | grep -E "(gogooku3|polars|torch)"
 - **🧠 [ML学習](ml/model-training.md)**: ATFT-GAT-FAN詳細
 - **🛡️ [安全性](ml/safety-guardrails.md)**: データリーク防止
 - **📚 [用語集](glossary.md)**: 技術用語解説
-- **🔄 [移行ガイド](../MIGRATION.md)**: アップグレード手順
+- **🔄 [移行ガイド](../architecture/migration.md)**: アップグレード手順
 
 ### Q: コードサンプル・チュートリアルはありますか？
 
@@ -385,11 +385,11 @@ results = pipeline.run_pipeline(n_splits=1, embargo_days=20)
 ```
 
 **カスタマイズ:**
-```python  
+```python
 # 本格学習（カスタム設定）
 pipeline = SafeTrainingPipeline(
     data_path="your_data.parquet",
-    experiment_name="custom_experiment", 
+    experiment_name="custom_experiment",
     verbose=True
 )
 

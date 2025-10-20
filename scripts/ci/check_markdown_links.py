@@ -12,18 +12,17 @@ Usage: python scripts/ci/check_markdown_links.py
 from __future__ import annotations
 
 import re
-import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 REPO = Path(__file__).resolve().parents[2]
 
 MD_SOURCES: list[Path] = [
     REPO / "docs",
     REPO / "README.md",
-    REPO / "AGENTS.md",
-    REPO / "MIGRATION.md",
     REPO / "CLAUDE.md",
+    REPO / "docs" / "development" / "agents.md",
+    REPO / "docs" / "architecture" / "migration.md",
 ]
 
 EXCLUDES_DIRS = {".git", "archive", "_logs", "output", "runs", "mlruns", "wandb"}

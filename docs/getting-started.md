@@ -8,7 +8,7 @@ Gogooku3-standaloneは **「壊れず・強く・速く」** を実現する日�
 
 ### 主要特徴
 - **🛡️ 壊れず (Unbreakable)**: Walk-Forward分割・embargo・データリーク防止
-- **💪 強く (Strong)**: ATFT-GAT-FAN（Sharpe 0.849目標）高性能モデル  
+- **💪 強く (Strong)**: ATFT-GAT-FAN（Sharpe 0.849目標）高性能モデル
 - **⚡ 速く (Fast)**: Polars最適化・1.9秒パイプライン実行
 
 ### 成果指標
@@ -44,7 +44,7 @@ cp .env.example .env
 vim .env                          # JQuants認証情報を設定
 ```
 
-#### 2. サービス起動  
+#### 2. サービス起動
 ```bash
 # 全サービス起動（MinIO, ClickHouse, Redis等）
 make docker-up                    # 約60秒で全12サービス起動
@@ -86,7 +86,7 @@ make train-cv                     # 5-fold cross-validation学習
 ```
 
 #### MLflow（実験管理）
-```bash  
+```bash
 # アクセス: http://localhost:5000
 # 1. "Experiments" タブで実験確認
 # 2. "Models" タブでモデル登録確認
@@ -95,7 +95,7 @@ make train-cv                     # 5-fold cross-validation学習
 
 #### Grafana（監視）
 ```bash
-# アクセス: http://localhost:3000 
+# アクセス: http://localhost:3000
 # admin / gogooku123 でログイン
 # 1. ダッシュボード表示確認
 # 2. メトリクス収集確認
@@ -115,7 +115,7 @@ make dev                          # setup + docker-up + smoke test
 
 # サービス制御
 make docker-up                    # 全サービス起動
-make docker-down                  # 全サービス停止  
+make docker-down                  # 全サービス停止
 make docker-logs                  # リアルタイムログ表示
 
 # クリーンアップ
@@ -281,7 +281,7 @@ loader = ProductionDatasetV3(
 )
 
 # 特徴量生成
-from gogooku3.features import QualityFinancialFeaturesGenerator  
+from gogooku3.features import QualityFinancialFeaturesGenerator
 generator = QualityFinancialFeaturesGenerator()
 enhanced_data = generator.generate_quality_features(loader.data)
 
@@ -327,7 +327,7 @@ print(f"銘柄数: {df['Code'].n_unique()}")   # 632銘柄
 ### 🔧 特徴量構成（145+列）
 - **識別子** (2列): Code, Date
 - **OHLCV** (6列): Open, High, Low, Close, Volume, row_idx
-- **技術指標** (131列): SMA, EMA, MACD, RSI, Stoch, BB, ADX, etc.  
+- **技術指標** (131列): SMA, EMA, MACD, RSI, Stoch, BB, ADX, etc.
 - **品質特徴量** (+6列): Cross-sectional quantiles, sigma-threshold features
 - **📊 Margin Weekly** (任意): 信用取引残高由来の需給特徴量（margin_short_to_adv20等）
 
@@ -441,7 +441,7 @@ python scripts/run_safe_training.py --memory-limit 4
 ```bash
 # ポート使用確認
 lsof -i :3001  # Dagster
-lsof -i :5000  # MLflow  
+lsof -i :5000  # MLflow
 lsof -i :9001  # MinIO
 
 # 解決策
@@ -469,7 +469,7 @@ docker-compose up -d --build
 # 環境設定確認
 cat .env                          # JQuants認証情報確認
 
-# データファイル確認  
+# データファイル確認
 ls -la data/raw/large_scale/      # MLデータセット存在確認
 
 # 権限問題修正
@@ -518,9 +518,9 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 
 ### 📖 ドキュメント
 - **[📋 メインポータル](index.md)** - 全体ナビゲーション
-- **[❓ FAQ](faq.md)** - よくある質問  
+- **[❓ FAQ](faq.md)** - よくある質問
 - **[📚 用語集](glossary.md)** - 専門用語解説
-- **[🔄 移行ガイド](../MIGRATION.md)** - v1→v2移行手順
+- **[🔄 移行ガイド](../architecture/migration.md)** - v1→v2移行手順
 
 ### 📞 問題解決
 1. **ドキュメント検索**: 該当セクション参照
@@ -530,9 +530,9 @@ python -c "from gogooku3.training import SafeTrainingPipeline; print('✅ Traini
 
 ---
 
-**🎉 セットアップ完了！**  
+**🎉 セットアップ完了！**
 **次は [👥 開発貢献ガイド](development/contributing.md) で詳細な開発フローを確認してください。**
 
- 
+
 
 *Gogooku3 - 壊れず・強く・速く*

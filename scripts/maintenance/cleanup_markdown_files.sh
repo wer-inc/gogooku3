@@ -75,6 +75,8 @@ do_mkdir "docs/guides"
 do_mkdir "docs/reports/completion"
 do_mkdir "docs/reports/analysis"
 do_mkdir "docs/reports/features"
+do_mkdir "docs/reports/status"
+do_mkdir "docs/reports/issues"
 echo ""
 
 # Phase 2: Move guides to docs/guides/

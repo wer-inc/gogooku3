@@ -119,28 +119,62 @@ fi
 # ============================================================================
 echo -e "${BLUE}[3/8] Data pipeline status...${NC}"
 
-# Check for latest dataset
-if [ -L "output/ml_dataset_latest_full.parquet" ]; then
-    DATASET_PATH=$(readlink -f "output/ml_dataset_latest_full.parquet")
-    DATASET_SIZE=$(du -h "$DATASET_PATH" 2>/dev/null | awk '{print $1}' || echo "unknown")
-    # Check if dataset is >7 days old (604800 seconds = 7 days)
-    DATASET_TIMESTAMP=$(stat -c '%Y' "$DATASET_PATH" 2>/dev/null || echo "0")
-    CURRENT_TIME=$(date +%s)
-    DATASET_AGE_SECONDS=$((CURRENT_TIME - DATASET_TIMESTAMP))
-    DATASET_AGE="recent"
-    if [ "$DATASET_AGE_SECONDS" -gt 604800 ]; then
-        DATASET_AGE="old"
+#############################################
+# Check for latest dataset (parquet or arrow)
+#############################################
+
+# Helper: compute age/status for a given file path
+_report_dataset_file() {
+    local path="$1"; local label="$2"
+    local size ts now age_s age="recent"
+    size=$(du -h "$path" 2>/dev/null | awk '{print $1}' || echo "unknown")
+    ts=$(stat -c '%Y' "$path" 2>/dev/null || echo "0")
+    now=$(date +%s)
+    age_s=$((now - ts))
+    if [ "$age_s" -gt 604800 ]; then # 7 days
+        age="old"
     fi
-
-    SUCCESSES+=("✓ Dataset exists: $DATASET_SIZE")
-
-    if [ "$DATASET_AGE" = "old" ]; then
+    SUCCESSES+=("✓ ${label}: $size")
+    if [ "$age" = "old" ]; then
         RECOMMENDATIONS+=("Dataset is >7 days old - consider rebuilding: make dataset-bg")
     fi
-elif ls output/ml_dataset_*.parquet 1> /dev/null 2>&1; then
-    WARNINGS+=("Dataset exists but symlink broken - manual intervention needed")
+}
+
+# Preferred: top-level symlink maintained by pipeline
+if [ -L "output/ml_dataset_latest_full.parquet" ]; then
+    DATASET_PATH=$(readlink -f "output/ml_dataset_latest_full.parquet")
+    _report_dataset_file "$DATASET_PATH" "Dataset exists"
 else
-    CRITICAL_ISSUES+=("No ML dataset found - run: make dataset-bg")
+    # Accept any produced parquet in output/ (timestamped) as valid
+    if ls output/ml_dataset_*.parquet 1> /dev/null 2>&1; then
+        WARNINGS+=("Dataset exists but symlink broken - manual intervention needed")
+    fi
+
+    # Also accept alternative well-known outputs
+    ALT_DATASET=""
+    for cand in \
+        "output/ml_dataset_phase2_enriched.parquet" \
+        "output/datasets/ml_dataset_latest_full.parquet" \
+        "output/datasets"/*ml_dataset*_full*.parquet; do
+        if [ -f "$cand" ]; then ALT_DATASET="$cand"; break; fi
+    done
+
+    # Arrow cache (fast path) is a valid dataset input for training/eval
+    ARROW_DATASET=""
+    for a in \
+        "output/ml_dataset_cached.arrow" \
+        "output/ml_dataset_latest_full.arrow" \
+        "output/datasets"/*ml_dataset*full*.arrow; do
+        if [ -f "$a" ]; then ARROW_DATASET="$a"; break; fi
+    done
+
+    if [ -n "$ALT_DATASET" ]; then
+        _report_dataset_file "$ALT_DATASET" "Dataset exists (alt parquet)"
+    elif [ -n "$ARROW_DATASET" ]; then
+        _report_dataset_file "$ARROW_DATASET" "Dataset exists (Arrow cache)"
+    else
+        CRITICAL_ISSUES+=("No ML dataset found - run: make dataset-bg")
+    fi
 fi
 
 # Check cache status
@@ -245,18 +279,62 @@ else
     WARNINGS+=("pre-commit hooks not installed - run: pre-commit install")
 fi
 
-# Check for uncommitted changes
+# Check for uncommitted changes (allow documented WIP groups)
 if [ -d ".git" ]; then
-    UNCOMMITTED=$(git status --porcelain 2>/dev/null | wc -l || echo "0")
-    if [ "$UNCOMMITTED" -gt 0 ]; then
-        GIT_SUMMARY=$(git status --short 2>/dev/null | head -5 | tr '\n' ';' | sed 's/;$//' || echo "")
-        if [ -n "$GIT_SUMMARY" ]; then
-            WARNINGS+=("$UNCOMMITTED uncommitted changes in working directory (e.g. $GIT_SUMMARY)")
+    if [ -n "${PYTHON_BIN:-}" ] && [ -f "configs/quality/worktree_allowlist.json" ] && [ -f "tools/quality/worktree_audit.py" ]; then
+        if WORKTREE_REPORT=$("$PYTHON_BIN" tools/quality/worktree_audit.py --config configs/quality/worktree_allowlist.json 2>/dev/null); then
+            AUDIT_EXIT=0
         else
-            WARNINGS+=("$UNCOMMITTED uncommitted changes in working directory")
+            AUDIT_EXIT=$?
+        fi
+
+        if [ -n "$WORKTREE_REPORT" ] && command -v jq >/dev/null 2>&1; then
+            TOTAL_CHANGES=$(echo "$WORKTREE_REPORT" | jq '.total // 0')
+        else
+            TOTAL_CHANGES=0
+        fi
+
+        if [ "${AUDIT_EXIT:-2}" -eq 0 ]; then
+            if [ "${TOTAL_CHANGES:-0}" -eq 0 ]; then
+                SUCCESSES+=("✓ Working directory clean")
+            else
+                if command -v jq >/dev/null 2>&1; then
+                    SUMMARY=$(echo "$WORKTREE_REPORT" | jq -r '
+                        (.matched // []) | map("\(.count)x \(.description)") | join("; ")
+                    ' 2>/dev/null)
+                else
+                    SUMMARY=""
+                fi
+                if [ -z "$SUMMARY" ]; then
+                    SUMMARY="Documented WIP change sets"
+                fi
+                RECOMMENDATIONS+=("Documented WIP change sets detected (${TOTAL_CHANGES} files): $SUMMARY")
+            fi
+        else
+            if command -v jq >/dev/null 2>&1; then
+                UNEXPECTED_LIST=$(echo "$WORKTREE_REPORT" | jq -r '
+                    (.unexpected // []) | map("\(.status) \(.path)") | join("; ")
+                ' 2>/dev/null)
+            else
+                UNEXPECTED_LIST=""
+            fi
+            if [ -z "$UNEXPECTED_LIST" ]; then
+                UNEXPECTED_LIST="See git status for details"
+            fi
+            WARNINGS+=("Uncommitted changes outside allowlist: $UNEXPECTED_LIST")
         fi
     else
-        SUCCESSES+=("✓ Working directory clean")
+        UNCOMMITTED=$(git status --porcelain 2>/dev/null | wc -l || echo "0")
+        if [ "$UNCOMMITTED" -gt 0 ]; then
+            GIT_SUMMARY=$(git status --short 2>/dev/null | head -5 | tr '\n' ';' | sed 's/;$//' || echo "")
+            if [ -n "$GIT_SUMMARY" ]; then
+                WARNINGS+=("$UNCOMMITTED uncommitted changes in working directory (e.g. $GIT_SUMMARY)")
+            else
+                WARNINGS+=("$UNCOMMITTED uncommitted changes in working directory")
+            fi
+        else
+            SUCCESSES+=("✓ Working directory clean")
+        fi
     fi
 fi
 

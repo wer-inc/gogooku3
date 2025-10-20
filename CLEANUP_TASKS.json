@@ -205,12 +205,12 @@
   },
   {
     "id": 18,
-    "title": "Create MIGRATION.md documentation",
+    "title": "Create docs/architecture/migration.md documentation",
     "rationale": "Document old->new path mappings for team coordination",
     "impact": "Smooth transition, reduced confusion",
     "risk": "low",
     "files_to_touch": 1,
-    "commands": "python tools/generate_migration_docs.py --disposition DISPOSITION.csv --output MIGRATION.md",
+    "commands": "python tools/generate_migration_docs.py --disposition DISPOSITION.csv --output docs/architecture/migration.md",
     "estimated_minutes": 15,
     "owner": "you",
     "status": "planned"

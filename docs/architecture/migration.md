@@ -7,7 +7,7 @@
 This document describes the comprehensive reorganization of the gogooku3-standalone repository from a script-based structure to a modern Python package architecture.
 
 ### Migration Goals
-- **壊れず (Unbreakable)**: Eliminate duplicates, improve maintainability  
+- **壊れず (Unbreakable)**: Eliminate duplicates, improve maintainability
 - **強く (Strong)**: Modern package structure with proper dependency management
 - **速く (Fast)**: Optimized imports, consolidated configurations
 
@@ -15,11 +15,53 @@ This document describes the comprehensive reorganization of the gogooku3-standal
 
 All 8 phases of the migration have been completed successfully.
 
+## 🚀 Quick Start (v1 → v2 Migration)
+
+### Key Changes
+
+1. **Package Structure**: Modern `src/gogooku3/` hierarchy replaces legacy script bundles.
+2. **Configuration**: Updated config entry points (see `CLAUDE.md`) and Hydra layout under `configs/atft/`.
+3. **Training Pipeline**: Seven-step `SafeTrainingPipeline` is now the default orchestrator.
+4. **Feature Generation**: Up to 395 engineered features (307 currently live) ship with the new dataset builders.
+
+### Migration Steps
+
+1. **Update Dependencies**
+   ```bash
+   pip install -e .
+   ```
+2. **Update Imports**
+   ```python
+   # Legacy (v1)
+   from scripts.run_safe_training import SafeTrainingPipeline
+
+   # Modern (v2)
+   from gogooku3.training import SafeTrainingPipeline
+   ```
+3. **Refresh Configs**
+   - Review `configs/atft/config_production_optimized.yaml`.
+   - Verify `.env` variables; required keys are listed in `CLAUDE.md`.
+4. **Rebuild Datasets**
+   ```bash
+   make dataset-bg  # Background rebuild with latest features
+   ```
+5. **Smoke-Test Training**
+   ```bash
+   make train-quick  # Three-epoch validation run
+   ```
+
+### Backward Compatibility & Support
+
+- Legacy `scripts/` entry points continue to function; migration can happen gradually.
+- Documentation hub: [CLAUDE.md](../../CLAUDE.md)
+- Troubleshooting: [FAQ](../faq.md)
+- Release notes: [Changelog](../releases/changelog.md)
+
 ## 📋 Migration Phases Completed
 
 ### Phase 1: ✅ Dependencies & Configuration Setup
 - **pyproject.toml**: Migrated from Poetry to setuptools with comprehensive dependencies
-- **.pre-commit-config.yaml**: Code quality automation (ruff, isort, mypy, bandit)  
+- **.pre-commit-config.yaml**: Code quality automation (ruff, isort, mypy, bandit)
 - **.env.example**: Environment configuration template
 
 ### Phase 2: ✅ Target Directory Structure Creation
@@ -27,7 +69,7 @@ All 8 phases of the migration have been completed successfully.
 - **Module Organization**: data, features, graph, models, training, inference, utils, compat
 - **Public APIs**: __init__.py files with proper exports
 
-### Phase 3: ✅ Scripts→Src Extraction  
+### Phase 3: ✅ Scripts→Src Extraction
 - **Core Components Migrated**:
   - `ProductionDatasetV3`: Data loading with Polars optimization
   - `CrossSectionalNormalizerV2` & `WalkForwardSplitterV2`: Safety components
@@ -38,7 +80,7 @@ All 8 phases of the migration have been completed successfully.
 
 ### Phase 4: ✅ Duplicate File Removal
 - **Deduplication Tool**: `gogooku3.utils.deduplication.SafeDeduplicator`
-- **Analysis**: 1,226 parquet files scanned, duplicates identified  
+- **Analysis**: 1,226 parquet files scanned, duplicates identified
 - **Space Saving**: ~23MB in duplicate ML datasets identified for cleanup
 
 ### Phase 5: ✅ Configuration Consolidation
@@ -51,7 +93,7 @@ All 8 phases of the migration have been completed successfully.
 - **script_wrappers.py**: Wrapper functions for existing scripts
 - **Automatic Setup**: Legacy import paths automatically configured
 
-### Phase 7: ✅ Test Enhancement  
+### Phase 7: ✅ Test Enhancement
 - **Smoke Tests**: `tests/integration/test_migration_smoke.py`
 - **Component Tests**: Import validation, instantiation tests
 - **Integration Tests**: End-to-end workflow validation
@@ -67,13 +109,13 @@ All 8 phases of the migration have been completed successfully.
 ```
 src/gogooku3/
 ├── __init__.py              # Main package exports
-├── cli.py                   # Command-line interface  
+├── cli.py                   # Command-line interface
 ├── utils/
 │   ├── settings.py          # Pydantic settings management
 │   └── deduplication.py     # Safe deduplication utility
 ├── data/
 │   ├── loaders/            # ProductionDatasetV3, MLDatasetBuilder
-│   └── scalers/            # CrossSectionalNormalizerV2, WalkForwardSplitterV2  
+│   └── scalers/            # CrossSectionalNormalizerV2, WalkForwardSplitterV2
 ├── features/
 │   └── quality_features.py # QualityFinancialFeaturesGenerator
 ├── models/
@@ -94,7 +136,7 @@ src/gogooku3/
 configs/
 ├── model/                  # Model configurations
 ├── data/                   # Data processing configs
-├── training/               # Training configurations  
+├── training/               # Training configurations
 └── hardware/               # Hardware-specific configs
 ```
 
@@ -109,7 +151,7 @@ from scripts.run_safe_training import SafeTrainingPipeline
 from src.data.loaders.production_loader_v3 import ProductionDatasetV3
 from src.data.safety.cross_sectional_v2 import CrossSectionalNormalizerV2
 
-# Old script execution  
+# Old script execution
 python scripts/run_safe_training.py --verbose
 ```
 
@@ -117,7 +159,7 @@ python scripts/run_safe_training.py --verbose
 ```python
 # New import style (recommended)
 from gogooku3.training import SafeTrainingPipeline
-from gogooku3.data.loaders import ProductionDatasetV3  
+from gogooku3.data.loaders import ProductionDatasetV3
 from gogooku3.data.scalers import CrossSectionalNormalizerV2
 
 # New CLI execution
@@ -212,7 +254,7 @@ normalized_data = normalizer.fit_transform(loader.data)
 ```
 
 ### 3. Model Training
-```python  
+```python
 from gogooku3.models import ATFTGATFANModel, LightGBMFinancialBaseline
 from gogooku3.graph import FinancialGraphBuilder
 
@@ -252,7 +294,7 @@ print(f"Features: {raw_data.shape[1]} → {enhanced_data.shape[1]}")
 # Train model with configuration
 gogooku3 train --config configs/training/walk_forward.yaml
 
-# Build dataset  
+# Build dataset
 gogooku3 data --build-dataset --output data/processed/
 
 # Run inference
@@ -330,10 +372,10 @@ pipeline.run_pipeline(memory_limit_gb=4.0)  # Reduce limit
 
 ### Code Organization
 - ✅ **Modular Structure**: Clear separation of concerns
-- ✅ **Import Optimization**: Reduced circular dependencies  
+- ✅ **Import Optimization**: Reduced circular dependencies
 - ✅ **Type Safety**: Full mypy compatibility with type hints
 
-### Maintainability  
+### Maintainability
 - ✅ **Dependency Management**: Modern pyproject.toml with organized dependencies
 - ✅ **Code Quality**: Pre-commit hooks with ruff, isort, mypy, bandit
 - ✅ **Documentation**: Comprehensive docstrings and type annotations
@@ -344,11 +386,11 @@ pipeline.run_pipeline(memory_limit_gb=4.0)  # Reduce limit
 - ✅ **Deduplication**: Tool created for managing duplicate files
 
 ### Reproducibility
-- ✅ **Environment Management**: Pydantic settings with .env support  
+- ✅ **Environment Management**: Pydantic settings with .env support
 - ✅ **Configuration Management**: Centralized and organized config structure
 - ✅ **Version Control**: Proper package versioning and dependency locking
 
-### Backward Compatibility  
+### Backward Compatibility
 - ✅ **Migration Path**: Gradual migration with compatibility layer
 - ✅ **Deprecation Warnings**: Clear guidance for migration
 - ✅ **Script Wrappers**: Existing scripts continue to work
@@ -362,7 +404,7 @@ pipeline.run_pipeline(memory_limit_gb=4.0)  # Reduce limit
 - Validate compatibility layer with existing workflows
 - Test CLI functionality
 
-#### Week 2: Gradual Migration  
+#### Week 2: Gradual Migration
 - Start using new import paths in new code
 - Update configuration paths gradually
 - Begin using CLI for new workflows
@@ -397,18 +439,18 @@ For questions or issues during migration:
 ## 📊 Migration Summary
 
 | Phase | Component | Status | Benefits |
-|-------|-----------|--------|----------|  
+|-------|-----------|--------|----------|
 | 1 | Dependencies & Config | ✅ Complete | Modern tooling, quality gates |
 | 2 | Package Structure | ✅ Complete | Clear organization, proper APIs |
 | 3 | Component Migration | ✅ Complete | Reusable components, better imports |
 | 4 | Deduplication | ✅ Complete | Space savings, cleaner structure |
 | 5 | Config Consolidation | ✅ Complete | Centralized configuration |
-| 6 | Compatibility Layer | ✅ Complete | Smooth migration path |  
+| 6 | Compatibility Layer | ✅ Complete | Smooth migration path |
 | 7 | Test Enhancement | ✅ Complete | Quality assurance, validation |
 | 8 | Documentation | ✅ Complete | Clear migration guidance |
 
 **Total Benefits:**
-- 🏗️ **Architecture**: Modern Python package structure  
+- 🏗️ **Architecture**: Modern Python package structure
 - 🧹 **Cleanup**: Duplicate identification and removal tools
 - 🔄 **Migration**: Safe, gradual migration with compatibility
 - 📚 **Documentation**: Comprehensive guides and examples

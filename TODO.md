@@ -49,11 +49,11 @@ env["VAL_DEBUG_LOGGING"] = "0"  # Disable per-batch logs
 ```
 
 ### 3. Comprehensive Documentation Created ✅
-- `OPTIMIZATIONS_APPLIED.md` - Technical details of all fixes
-- `NEXT_STEPS.md` - Decision tree and timeline
-- `OPTIMIZATION_SUMMARY.md` - Executive summary (12-minute session)
-- `PHASE0_DECISION_FRAMEWORK.md` - Early stopping logic
-- `GPU_INVESTIGATION_COMPLETE.md` - GPU utilization analysis
+- [optimizations_applied_20251016.md](docs/reports/analysis/optimizations_applied_20251016.md) - Technical details of all fixes
+- [next_steps_optimized_training_pipeline.md](docs/reports/status/next_steps_optimized_training_pipeline.md) - Decision tree and timeline
+- [optimization_summary_20251016.md](docs/reports/analysis/optimization_summary_20251016.md) - Executive summary (12-minute session)
+- [phase0_decision_framework_20251016.md](docs/reports/status/phase0_decision_framework_20251016.md) - Early stopping logic
+- [gpu_investigation_complete.md](docs/reports/completion/gpu_investigation_complete.md) - GPU utilization analysis
 - `TODO.md` - This file (updated)
 
 ### 4. Session Metrics & Decision
@@ -98,7 +98,7 @@ python scripts/hpo/run_optuna_atft.py \
 - ✅ Epoch time <6 minutes
 
 **If Successful** → Proceed to Step 2
-**If Failed** → Debug required (see `NEXT_STEPS.md` troubleshooting section)
+**If Failed** → Debug required (see [next_steps_optimized_training_pipeline.md](docs/reports/status/next_steps_optimized_training_pipeline.md) troubleshooting section)
 
 ---
 
@@ -355,8 +355,8 @@ tail -f logs/ml_training.log | grep -i "worker\|spawn\|fork"
 
 ## 📁 Related Documentation
 
-- `OPTIMIZATIONS_APPLIED.md` - Detailed technical changes
-- `NEXT_STEPS.md` - Full decision tree with troubleshooting
-- `OPTIMIZATION_SUMMARY.md` - 12-minute session summary
-- `PHASE0_DECISION_FRAMEWORK.md` - Early stopping criteria
-- `GPU_INVESTIGATION_COMPLETE.md` - GPU utilization analysis
+- [optimizations_applied_20251016.md](docs/reports/analysis/optimizations_applied_20251016.md) - Detailed technical changes
+- [next_steps_optimized_training_pipeline.md](docs/reports/status/next_steps_optimized_training_pipeline.md) - Full decision tree with troubleshooting
+- [optimization_summary_20251016.md](docs/reports/analysis/optimization_summary_20251016.md) - 12-minute session summary
+- [phase0_decision_framework_20251016.md](docs/reports/status/phase0_decision_framework_20251016.md) - Early stopping criteria
+- [gpu_investigation_complete.md](docs/reports/completion/gpu_investigation_complete.md) - GPU utilization analysis

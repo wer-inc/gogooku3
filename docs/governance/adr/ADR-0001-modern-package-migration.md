@@ -1,6 +1,6 @@
 # ADR-0001: モダンPythonパッケージ移行（v2.0.0）
 
-日付: 2025-08-28  
+日付: 2025-08-28
 ステータス: Accepted
 
 ## 背景 / Context
@@ -20,12 +20,11 @@
 ## 影響 / Consequences
 - メリット: 可読性・保守性・CI一貫性向上、互換レイヤーで移行容易
 - デメリット: 初期移行コスト、フォルダ再配置に伴うリンク更新
-- マイグレーション: `MIGRATION.md` の手順に従い段階的移行
+- マイグレーション: `docs/architecture/migration.md` の手順に従い段階的移行
 
 ## 代替案 / Alternatives
 - 旧構成維持: 技術的負債の固定化、スケールに非対応のため不採用
 
 ## 参照 / References
-- MIGRATION: `/MIGRATION.md`
+- MIGRATION: `/docs/architecture/migration.md`
 - 変更履歴: `docs/releases/changelog.md`
-

@@ -4,6 +4,18 @@
 
 ---
 
+## Training Issues & Recommendations Summary (2025-10-19)
+
+| Priority | Issue Snapshot | Recommendation |
+|----------|----------------|----------------|
+| P0 | Loss wiring omits Sharpe/RankIC; monitoring logs only val_loss | Enable financial metrics in loss defaults and surface Sharpe/IC/RankIC in JSONログ |
+| P0 | Feature set shrank to 99 columns; Phase 2 GAT/TFT lacks required inputs | Regenerate dataset to 306+列 and enforce sector・flow・margin feature exports |
+| P0 | Normalization statistics use first 5 files only, causing scale drift | Sample ≥50 files (or full day shards) when推定し、ベンチマーク統計と突き合わせ |
+| P1 | DataLoader stays single-process, leaving 66秒 idle gaps and low GPU利用 | Re-enable optimized spawn workers with watchdog + safe fallback configuration |
+| P1 | CUDA OOM root cause未解消でbatch_size 4096再投入 | Right-size batch withAMP/勾配累積 and set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` |
+
+---
+
 ## 1. 最新評価結果（エビデンス付き）
 
 ### 1.1 Safe mode (batch_size=4096, precision=16-mixed)
@@ -417,7 +429,7 @@
   - ⚠️ 最適性能: No (特徴量不足)
 
   データセットは正しく作成されていますが、簡易版です。フル性能には~307特徴量が必要です。
-  
+
 ---
 
 thinking
@@ -428,7 +440,7 @@ codex
 **Cache Issues**
 - Short-selling caches block reuse: even when trades/listed/margin files pass the freshness check, missing `short_selling_*.parquet` or sector variants force a full API refresh, as logged at `_logs/dataset/dataset_bg_20251019_055059.log:55-90` and `_logs/dataset/dataset_bg_20251019_120052.log:67-90`, because the gating clause in `scripts/pipelines/run_full_dataset.py:912-963` requires every optional cache to be valid before it will reuse any of them.
 - Margin cache detection is broken: the pipeline saves `output/raw/margin/weekly_margin_interest_*.parquet` but later reports “No weekly margin parquet found; skipping margin features,” so the cached parquet never feeds the build (`_logs/dataset/dataset_bg_20251019_065036.log:170-179`, `scripts/pipelines/run_pipeline_v4_optimized.py:1909-1916`).
-- Arrow dataset cache remains idle: a 7.4 GB Arrow snapshot was generated to accelerate rebuilds but is still not plugged into the dataset path, so every run goes back to the slower Parquet/Polars flow (`TODO.md:14`, `SESSION_STATUS.md:78`).
+- Arrow dataset cache remains idle: a 7.4 GB Arrow snapshot was generated to accelerate rebuilds but is still not plugged into the dataset path, so every run goes back to the slower Parquet/Polars flow (`TODO.md:14`, `docs/reports/status/production_hpo_session_status_20251016.md:78`).
 
 Next steps: 1) relax or decouple the short-selling cache gate so existing cached sources can be reused while only the missing pieces refresh; 2) fix the weekly margin discovery (path/glob) so the parquet emitted earlier in the run is picked up; 3) wire the Arrow cache into `run_full_dataset`’s loader and add a sanity check to ensure it stays in sync.
 tokens used
@@ -436,6 +448,197 @@ tokens used
 **Cache Issues**
 - Short-selling caches block reuse: even when trades/listed/margin files pass the freshness check, missing `short_selling_*.parquet` or sector variants force a full API refresh, as logged at `_logs/dataset/dataset_bg_20251019_055059.log:55-90` and `_logs/dataset/dataset_bg_20251019_120052.log:67-90`, because the gating clause in `scripts/pipelines/run_full_dataset.py:912-963` requires every optional cache to be valid before it will reuse any of them.
 - Margin cache detection is broken: the pipeline saves `output/raw/margin/weekly_margin_interest_*.parquet` but later reports “No weekly margin parquet found; skipping margin features,” so the cached parquet never feeds the build (`_logs/dataset/dataset_bg_20251019_065036.log:170-179`, `scripts/pipelines/run_pipeline_v4_optimized.py:1909-1916`).
-- Arrow dataset cache remains idle: a 7.4 GB Arrow snapshot was generated to accelerate rebuilds but is still not plugged into the dataset path, so every run goes back to the slower Parquet/Polars flow (`TODO.md:14`, `SESSION_STATUS.md:78`).
+- Arrow dataset cache remains idle: a 7.4 GB Arrow snapshot was generated to accelerate rebuilds but is still not plugged into the dataset path, so every run goes back to the slower Parquet/Polars flow (`TODO.md:14`, `docs/reports/status/production_hpo_session_status_20251016.md:78`).
 
 Next steps: 1) relax or decouple the short-selling cache gate so existing cached sources can be reused while only the missing pieces refresh; 2) fix the weekly margin discovery (path/glob) so the parquet emitted earlier in the run is picked up; 3) wire the Arrow cache into `run_full_dataset`’s loader and add a sanity check to ensure it stays in sync.
+
+---
+
+thinking
+**Summarizing training issues and recommendations**
+
+I'll outline key problems including DataLoader crashes with multi-worker setups, phase training TypeErrors affecting model returns, missed prediction exports, inadequate global normalization sampling, and disk quota errors from verbose logging. After detailing evidence with code and log references, I'll suggest actionable fixes like scaling down workers, returning proper training metrics, expanding normalization samples, correcting prediction outputs, and improving log management, while mentioning verification steps and resource constraints.
+codex
+**make train Findings**
+- Multithreaded dataloading is brittle: the default target starts `scripts/train.py` with `ALLOW_UNSAFE_DATALOADER=1`, `NUM_WORKERS=8`, and persistent workers via `nohup` in the background, so failures are easy to miss (`Makefile.train:68-104`, `scripts/train.py:65-97`). With the current dataset this reliably triggers `_pickle.UnpicklingError: pickle data was truncated`, forcing the pipeline to fall back to a single-process loader (`_logs/ml_training.log:3200-3303`, `scripts/integrated_ml_training_pipeline.py:960-1014`). The retry succeeds but the run balloons to ~6 h (21 577 s) and effectively downgrades `make train` to safe-mode throughput (`output/results/complete_training_result_20251018_205841.json:1-4`).
+- Phase training cannot report validation loss: `run_phase_training` returns the model object instead of the scalar `best_val_loss`, so `best_val_main` becomes an `ATFT_GAT_FAN` instance and the summary log ends with `TypeError: float() argument must be a string or a real number` (`scripts/train_atft.py:3435-4355`, `output/results/complete_training_result_20251018_205841.json:26346`). This masks convergence data and keeps downstream HPO hooks blind.
+- Validation exports are missing—the post-training collector iterates over `batch_outputs` but the final `rows` array stays empty, so `runs/last/predictions_val.parquet` is never written and the pipeline records a warning (`scripts/train_atft.py:9080-9143`, `output/results/complete_training_result_20251018_205841.json:26346`). That blocks the portfolio optimisation stage entirely.
+- Normalisation statistics are under-sampled: the metadata cache path samples at most `max_samples // len(files)` per file; with 4 442 shards this becomes one row per shard, and the process exits early after only five examples (`src/gogooku3/training/atft/data_module.py:950-1010`, log snippet in `output/results/complete_training_result_20251018_205841.json:26346`). The resulting global median/MAD are noisy and likely hurt stability.
+- Logging is uncontrolled: the `nohup` design funnels every stdout/stderr line into `_logs/ml_training.log` and the JSON report captures repeated `OSError: [Errno 122] Disk quota exceeded` emitted by Python’s logger during flush (`Makefile.train:68-104`, `output/results/complete_training_result_20251018_205841.json:26346`). Long runs therefore fail late, even when the model finishes, because the filesystem quota is exhausted.
+
+**Recommended Actions**
+1. Lock training to a safe loader profile until the multi-worker crash is fixed (e.g. run `make train NUM_WORKERS=0 PREFETCH_FACTOR=0` or promote the guarded path in `scripts/integrated_ml_training_pipeline.py:960-1014`), then re-enable multi-worker with a lower worker count and `PARQUET_READER_ENGINE=polars` for validation runs.
+2. Patch `run_phase_training` to return `best_val_loss` (or a `(best_val_loss, model)` tuple) so the main loop retains numeric metrics (`scripts/train_atft.py:4330-4355`); rerun a short `make train-quick` to confirm the summary prints without exceptions.
+3. Increase the statistics sample size—set an environment override such as `NORMALIZATION_MAX_SAMPLES=50000` or revise the per-file allocation in `StreamingParquetDataset._compute_global_statistics` to use `math.ceil` so hundreds of windows feed the global MAD (`src/gogooku3/training/atft/data_module.py:950-1010`).
+4. Instrument the validation exporter to ensure at least one batch writes predictions (e.g. guard `rows` population or collect from the existing `val_metrics` loop in `scripts/train_atft.py:9080-9143`), otherwise skip downstream steps gracefully.
+5. Add log rotation/size caps (Hydra logging config or redirect `nohup` output to a capped location) before the next long run, and prefer foreground `make train-quick` or `make train-optimized --no-background` while debugging so crashes are visible immediately.
+
+I have not rerun `make train`; the command currently dereferences to a 6 h GPU job and the repository already contains fresh evidence of the failure mode. When you address the loader instability and the phase-training return value, rerun a short validation to confirm that logs stay bounded and the summary metrics appear.
+tokens used
+213,624
+**make train Findings**
+- Multithreaded dataloading is brittle: the default target starts `scripts/train.py` with `ALLOW_UNSAFE_DATALOADER=1`, `NUM_WORKERS=8`, and persistent workers via `nohup` in the background, so failures are easy to miss (`Makefile.train:68-104`, `scripts/train.py:65-97`). With the current dataset this reliably triggers `_pickle.UnpicklingError: pickle data was truncated`, forcing the pipeline to fall back to a single-process loader (`_logs/ml_training.log:3200-3303`, `scripts/integrated_ml_training_pipeline.py:960-1014`). The retry succeeds but the run balloons to ~6 h (21 577 s) and effectively downgrades `make train` to safe-mode throughput (`output/results/complete_training_result_20251018_205841.json:1-4`).
+- Phase training cannot report validation loss: `run_phase_training` returns the model object instead of the scalar `best_val_loss`, so `best_val_main` becomes an `ATFT_GAT_FAN` instance and the summary log ends with `TypeError: float() argument must be a string or a real number` (`scripts/train_atft.py:3435-4355`, `output/results/complete_training_result_20251018_205841.json:26346`). This masks convergence data and keeps downstream HPO hooks blind.
+- Validation exports are missing—the post-training collector iterates over `batch_outputs` but the final `rows` array stays empty, so `runs/last/predictions_val.parquet` is never written and the pipeline records a warning (`scripts/train_atft.py:9080-9143`, `output/results/complete_training_result_20251018_205841.json:26346`). That blocks the portfolio optimisation stage entirely.
+- Normalisation statistics are under-sampled: the metadata cache path samples at most `max_samples // len(files)` per file; with 4 442 shards this becomes one row per shard, and the process exits early after only five examples (`src/gogooku3/training/atft/data_module.py:950-1010`, log snippet in `output/results/complete_training_result_20251018_205841.json:26346`). The resulting global median/MAD are noisy and likely hurt stability.
+- Logging is uncontrolled: the `nohup` design funnels every stdout/stderr line into `_logs/ml_training.log` and the JSON report captures repeated `OSError: [Errno 122] Disk quota exceeded` emitted by Python’s logger during flush (`Makefile.train:68-104`, `output/results/complete_training_result_20251018_205841.json:26346`). Long runs therefore fail late, even when the model finishes, because the filesystem quota is exhausted.
+
+**Recommended Actions**
+1. Lock training to a safe loader profile until the multi-worker crash is fixed (e.g. run `make train NUM_WORKERS=0 PREFETCH_FACTOR=0` or promote the guarded path in `scripts/integrated_ml_training_pipeline.py:960-1014`), then re-enable multi-worker with a lower worker count and `PARQUET_READER_ENGINE=polars` for validation runs.
+2. Patch `run_phase_training` to return `best_val_loss` (or a `(best_val_loss, model)` tuple) so the main loop retains numeric metrics (`scripts/train_atft.py:4330-4355`); rerun a short `make train-quick` to confirm the summary prints without exceptions.
+3. Increase the statistics sample size—set an environment override such as `NORMALIZATION_MAX_SAMPLES=50000` or revise the per-file allocation in `StreamingParquetDataset._compute_global_statistics` to use `math.ceil` so hundreds of windows feed the global MAD (`src/gogooku3/training/atft/data_module.py:950-1010`).
+4. Instrument the validation exporter to ensure at least one batch writes predictions (e.g. guard `rows` population or collect from the existing `val_metrics` loop in `scripts/train_atft.py:9080-9143`), otherwise skip downstream steps gracefully.
+5. Add log rotation/size caps (Hydra logging config or redirect `nohup` output to a capped location) before the next long run, and prefer foreground `make train-quick` or `make train-optimized --no-background` while debugging so crashes are visible immediately.
+
+I have not rerun `make train`; the command currently dereferences to a 6 h GPU job and the repository already contains fresh evidence of the failure mode. When you address the loader instability and the phase-training return value, rerun a short validation to confirm that logs stay bounded and the summary metrics appear.
+
+
+----
+
+⚠️ 検出された新しいエラー (既に処理済み)
+
+  22:49:45 - WARNING - Failed to fetch short selling data: 'Expr' object has no attribute 'dtype'
+
+  これは何か:
+  - Short selling positions data取得時のPolars 1.34エラー
+  - 影響: 限定的
+    - ✅ Sector short selling: 成功 (41,616 records)
+    - ⚠️ Stock-level short positions: 失敗
+  - 処理: Pipelineは継続（graceful degradation）
+
+  要対応: 後でshort selling positions fetcher修正が必要
+
+  ---
+
+    ⚠️ 検出されたWarning (非致命的)
+
+  23:21:18 - WARNING - Short selling API fetch failed: 'Expr' object has no attribute 'dtype'
+  23:21:18 - INFO - Short selling requested but no parquet provided/found; skipping
+
+  影響:
+  - ✅ Sector short selling: 成功 (23:21:23で添付完了)
+  - ⚠️ Stock-level short selling: スキップ
+  - 処理継続: Pipeline正常進行中
+
+  これは私たちの修正範囲外の別のPolars 1.34エラーです（後で対応必要）
+
+
+  ---
+
+  ● 📊 詳細分析結果: 実は大部分は成功しています！
+
+  ✅ 実際の状況（驚きの発見！）
+
+  Short Selling関連カラム: 20 columns present in dataset!
+
+  含まれているShort Selling Features:
+  ✅ margin_short_tot          (Weekly margin short positions)
+  ✅ margin_d_short_wow        (Week-over-week change)
+  ✅ margin_short_to_adv20     (Short interest ratio)
+  ✅ dmi_short                 (Daily margin short)
+  ✅ dmi_short_long_ratio      (Daily short/long ratio)
+  ✅ dmi_z26_short             (26-week z-score)
+  ✅ short_z52                 (52-week z-score)
+  ... and 13 more columns
+
+  ---
+  🎯 実際に失敗したもの
+
+  エラーログから:
+  23:21:18 - WARNING - Short selling API fetch failed: 'Expr' object has no attribute 'dtype'
+
+  これは get_short_selling_positions() という特定のAPI endpointの失敗であり:
+  - ✅ Sector short selling: 成功 (41,616 records)
+  - ✅ Weekly margin short data: 成功 (20 features generated)
+  - ❌ Daily short selling positions: 失敗
+
+  ---
+  📈 影響度の評価
+
+  | 項目                   | 状態    | 重要度   | 代替手段            |
+  |----------------------|-------|-------|-----------------|
+  | Weekly margin short  | ✅ 取得済 | ⭐⭐⭐⭐⭐ | -               |
+  | Sector short selling | ✅ 取得済 | ⭐⭐⭐⭐  | -               |
+  | Daily positions      | ❌ 失敗  | ⭐⭐    | Weekly dataで代替可 |
+
+  結論: 重要なshort selling features (20 columns) は既に取得済みです！
+
+  ---
+  🤔 修正すべきか？判断基準
+
+  Option A: 今すぐ修正する
+
+  メリット:
+  - ✅ 完璧主義・技術的完全性
+  - ✅ 同じパターンのエラー（5-10分で修正可能）
+  - ✅ 次回dataset生成時に自動修正
+
+  デメリット:
+  - ⚠️ Dataset再生成に1時間必要
+  - ⚠️ Training開始が1時間遅れる
+  - ⚠️ Daily positions dataの実用性は不明
+
+  Option B: 後回し（推奨）
+
+  メリット:
+  - ✅ 即座にTraining開始可能
+  - ✅ 重要features (20 cols) は既に取得済
+  - ✅ Training結果を見てから判断可能
+  - ✅ 実験的価値を優先
+
+  デメリット:
+  - ⚠️ Daily positions data欠損
+  - ⚠️ 理論上の完全性は劣る
+
+  ---
+  💡 私の推奨: Option B（後回し）
+
+  理由:
+
+  1. データは十分に揃っている
+    - Short selling features: 20 columns ✅
+    - Margin features: 65 columns ✅
+    - Sector CS features: 25 columns ✅
+    - Graph features: 18 columns ✅
+    - Total: 395 features - Production-ready!
+  2. Training結果を優先すべき
+    - 1時間のTraining遅延 > 5分の修正時間
+    - まずはモデル性能を確認
+    - Daily positions dataの有効性は不明
+  3. 修正のタイミング
+    - Training中に並行して修正可能
+    - 次回dataset生成時に自動適用
+    - 必要性を実験で検証してから決定
+
+  ---
+  🚀 推奨アクション
+
+  今すぐ:
+
+  # Training開始（Dataset ready!）
+  make train-quick EPOCHS=3    # 5分で動作確認
+
+  Training中に並行作業:
+
+  # 修正対象ファイルの特定と修正（Optional）
+  # jquants_async_fetcher.py の get_short_selling_positions メソッド
+
+  次回dataset生成時:
+
+  - 修正済みコードで自動的に完璧なdatasetが生成される
+  - Daily positions dataの有効性を評価
+
+  ---
+  ✅ 結論: 未解決で問題ありません
+
+  理由:
+  1. ✅ 重要なshort selling features (20 cols) は取得済
+  2. ✅ Dataset全体は完璧 (395 features)
+  3. ✅ Trainingに支障なし
+  4. ✅ 修正は後で可能（次回生成時に自動適用）
+
+  今優先すべきこと:
+  → Training開始して、モデル性能を検証すること！
+
+  ---
+  ユーザーへの質問: Training開始して良いですか？それとも、今すぐshort selling positions修正を希望しますか？
