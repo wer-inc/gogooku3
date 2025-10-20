@@ -779,6 +779,11 @@ class CompleteATFTTrainingPipeline:
             # 恒久運用ではValidatorを有効化
             env.pop("VALIDATE_CONFIG", None)
             env["HYDRA_FULL_ERROR"] = "1"  # 詳細なエラー情報を取得
+            env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            env.setdefault(
+                "ALLOW_UNSAFE_DATALOADER",
+                (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto"),
+            )
             # GPU/CPU の実行方針に応じて DataLoader 関連を調整（上の判定を再利用）
 
             # Detect optimized config to avoid passing loader overrides that may conflict
@@ -1002,6 +1007,7 @@ class CompleteATFTTrainingPipeline:
                         "[retry] Non-OOM failure. Retrying once with CPU-safe DataLoader settings (env-only)"
                     )
                     # Enforce single-process loader via environment only
+                    env["ALLOW_UNSAFE_DATALOADER"] = "0"
                     env["NUM_WORKERS"] = "0"
                     env["PERSISTENT_WORKERS"] = "0"
                     env["PREFETCH_FACTOR"] = "0"

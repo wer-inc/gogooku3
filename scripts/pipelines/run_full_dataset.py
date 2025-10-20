@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -251,6 +252,53 @@ def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
     except Exception as e:
         logger.warning(f"Failed to check cache validity for {file_path}: {e}")
         return False
+
+
+def _validate_enriched_dataset(parquet_path: Path, metadata_path: Path) -> None:
+    """Ensure that the enriched dataset keeps required feature families."""
+
+    try:
+        schema = pl.scan_parquet(parquet_path).schema
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError(f"Failed to inspect dataset schema: {exc}") from exc
+
+    columns = set(schema.keys())
+
+    try:
+        metadata = json.loads(metadata_path.read_text())
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read metadata {metadata_path}: {exc}") from exc
+
+    feature_count = int(metadata.get("features", {}).get("count", 0))
+    try:
+        min_features = int(os.getenv("MIN_ENRICHED_FEATURES", "300"))
+    except Exception:
+        min_features = 300
+
+    required_groups = {
+        "flow": {"flow_foreign_net_z", "flow_activity_ratio", "flow_smart_idx"},
+        "margin": {"margin_long_tot", "margin_short_tot", "margin_credit_ratio"},
+        "sector": {"ret_1d_vs_sec", "ret_1d_in_sec_z", "volume_in_sec_z"},
+    }
+
+    missing_groups = [
+        group
+        for group, candidates in required_groups.items()
+        if not any(col in columns for col in candidates)
+    ]
+
+    issues: list[str] = []
+    if feature_count < min_features:
+        issues.append(f"feature_count={feature_count} < required {min_features}")
+    if missing_groups:
+        issues.append("missing feature groups: " + ", ".join(sorted(missing_groups)))
+
+    if issues:
+        raise RuntimeError(
+            "Dataset enrichment incomplete: "
+            + "; ".join(issues)
+            + ". Re-run with --force-refresh or verify upstream fetchers."
+        )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1636,6 +1684,19 @@ async def main() -> int:
     logger.info(f"  Dataset : {pq_path}")
     logger.info(f"  Metadata: {meta_path}")
     logger.info(f"  Symlink : {Path('output') / 'ml_dataset_latest_full.parquet'}")
+
+    try:
+        _validate_enriched_dataset(pq_path, meta_path)
+        meta_info = json.loads(meta_path.read_text())
+        feature_total = meta_info.get("features", {}).get("count")
+        logger.info(
+            "✅ Enriched dataset schema validated (features=%s)", feature_total
+        )
+    except RuntimeError as e:
+        logger.error(str(e))
+        return 2
+    except Exception as e:
+        logger.warning(f"Dataset validation skipped: {e}")
 
     # Also save a day-level TOPIX market-features artifact for auditing/consumers
     try:

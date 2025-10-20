@@ -861,13 +861,13 @@ class JQuantsAsyncFetcher:
         def _dtcol(name: str) -> pl.Expr:
             if name not in df.columns:
                 return pl.lit(None, dtype=pl.Date).alias(name)
-            col = pl.col(name)
+            # Polars 1.x: Check column type via schema instead of Expr.dtype
+            date_is_str = df.schema.get(name) == pl.Utf8
             return (
-                pl.when(col.dtype == pl.Utf8)
-                .then(col.str.strptime(pl.Date, strict=False))
-                .otherwise(col.cast(pl.Date))
-                .alias(name)
-            )
+                pl.col(name).str.strptime(pl.Date, strict=False)
+                if date_is_str
+                else pl.col(name).cast(pl.Date)
+            ).alias(name)
 
         out = df.with_columns(
             [
@@ -1236,13 +1236,13 @@ class JQuantsAsyncFetcher:
         def _date_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Date).alias(name)
-            col = pl.col(name)
+            # Polars 1.x: Check column type via schema instead of Expr.dtype
+            date_is_str = df.schema.get(name) == pl.Utf8
             return (
-                pl.when(col.dtype == pl.Utf8)
-                .then(col.str.strptime(pl.Date, strict=False))
-                .otherwise(col.cast(pl.Date))
-                .alias(name)
-            )
+                pl.col(name).str.strptime(pl.Date, strict=False)
+                if date_is_str
+                else pl.col(name).cast(pl.Date)
+            ).alias(name)
 
         # Helper for numeric columns that may contain "-" or "*"
         def _float_col(name: str) -> pl.Expr:
@@ -1981,7 +1981,14 @@ class JQuantsAsyncFetcher:
         return df
 
     def _normalize_short_selling_data(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Normalize short selling data structure and types."""
+        """Normalize short selling data structure and types.
+
+        API returns sector-level aggregate data with:
+        - Sector33Code (str)
+        - SellingExcludingShortSellingTurnoverValue (float)
+        - ShortSellingWithRestrictionsTurnoverValue (float)
+        - ShortSellingWithoutRestrictionsTurnoverValue (float)
+        """
         if df.is_empty():
             return df
 
@@ -1991,64 +1998,67 @@ class JQuantsAsyncFetcher:
         def _date_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Date).alias(name)
-            col = pl.col(name)
+            # Polars 1.x: Check column type via schema instead of Expr.dtype
+            date_is_str = df.schema.get(name) == pl.Utf8
             return (
-                pl.when(col.dtype == pl.Utf8)
-                .then(col.str.strptime(pl.Date, strict=False))
-                .otherwise(col.cast(pl.Date))
-                .alias(name)
-            )
+                pl.col(name).str.strptime(pl.Date, strict=False)
+                if date_is_str
+                else pl.col(name).cast(pl.Date)
+            ).alias(name)
 
-        # Helper for float columns that may contain "-" or null
-        def _float_col(name: str) -> pl.Expr:
+        # Helper for float columns (API returns numeric types directly)
+        def _float_col(name: str, alias: str | None = None) -> pl.Expr:
             if name not in cols:
-                return pl.lit(None, dtype=pl.Float64).alias(name)
-            return (
-                pl.when(pl.col(name) == "-")
-                .then(None)
-                .when(pl.col(name).is_null())
-                .then(None)
-                .otherwise(pl.col(name))
-                .cast(pl.Float64)
-                .alias(name)
-            )
+                return pl.lit(None, dtype=pl.Float64).alias(alias or name)
+            return pl.col(name).cast(pl.Float64).alias(alias or name)
 
-        # Helper for integer columns
-        def _int_col(name: str) -> pl.Expr:
-            if name not in cols:
-                return pl.lit(None, dtype=pl.Int64).alias(name)
-            return (
-                pl.when(pl.col(name) == "-")
-                .then(None)
-                .when(pl.col(name).is_null())
-                .then(None)
-                .otherwise(pl.col(name))
-                .cast(pl.Int64)
-                .alias(name)
-            )
-
-        # Normalize columns
+        # Step 1: Rename Sector33Code to Code for consistency
+        # Step 2: Calculate derived columns from API turnover values
         normalized = df.with_columns([
-            # Basic identification
-            pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
+            # Rename Sector33Code to Code for consistency with other data sources
+            pl.col("Sector33Code").cast(pl.Utf8).alias("Code") if "Sector33Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
             _date_col("Date"),
-            _date_col("PublishedDate"),
 
-            # Short selling ratio and volume
-            _float_col("ShortSellingRatio"),
-            _int_col("ShortSellingVolume"),
-            _int_col("TotalVolume"),
-
-            # Section information
-            pl.col("Section").cast(pl.Utf8) if "Section" in cols else pl.lit(None, dtype=pl.Utf8).alias("Section"),
+            # Keep raw turnover values
+            _float_col("SellingExcludingShortSellingTurnoverValue"),
+            _float_col("ShortSellingWithRestrictionsTurnoverValue"),
+            _float_col("ShortSellingWithoutRestrictionsTurnoverValue"),
         ])
 
-        # If PublishedDate doesn't exist in API response, use Date as PublishedDate
-        # (Sector-level short selling data only has Date column)
-        if "PublishedDate" not in cols and "Date" in cols:
-            normalized = normalized.with_columns([
-                pl.col("Date").alias("PublishedDate")
-            ])
+        # Step 3: Calculate derived metrics
+        # ShortSellingVolume = sum of short selling turnover
+        # TotalVolume = all selling turnover
+        # ShortSellingRatio = short selling / total
+        normalized = normalized.with_columns([
+            (
+                pl.col("ShortSellingWithRestrictionsTurnoverValue").fill_null(0) +
+                pl.col("ShortSellingWithoutRestrictionsTurnoverValue").fill_null(0)
+            ).alias("ShortSellingVolume"),
+
+            (
+                pl.col("SellingExcludingShortSellingTurnoverValue").fill_null(0) +
+                pl.col("ShortSellingWithRestrictionsTurnoverValue").fill_null(0) +
+                pl.col("ShortSellingWithoutRestrictionsTurnoverValue").fill_null(0)
+            ).alias("TotalVolume"),
+        ])
+
+        # Calculate ratio (with safety check for division by zero)
+        normalized = normalized.with_columns([
+            pl.when(pl.col("TotalVolume") > 0)
+              .then(pl.col("ShortSellingVolume") / pl.col("TotalVolume"))
+              .otherwise(None)
+              .alias("ShortSellingRatio")
+        ])
+
+        # Add PublishedDate (sector data only has Date)
+        normalized = normalized.with_columns([
+            pl.col("Date").alias("PublishedDate")
+        ])
+
+        # Add Section column (not present in sector aggregate data)
+        normalized = normalized.with_columns([
+            pl.lit(None, dtype=pl.Utf8).alias("Section")
+        ])
 
         # Remove duplicates by (Code, Date) keeping latest PublishedDate
         deduped = (
@@ -2069,64 +2079,71 @@ class JQuantsAsyncFetcher:
 
         cols = df.columns
 
+        # Debug: Log available columns to identify the correct code column
+        if cols:
+            self._logger.info(f"Short selling positions columns: {cols}")
+        else:
+            self._logger.warning("Empty columns in short_selling_positions normalize")
+
         # Helper for date columns
         def _date_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Date).alias(name)
-            col = pl.col(name)
+            # Polars 1.x: Check column type via schema instead of Expr.dtype
+            date_is_str = df.schema.get(name) == pl.Utf8
             return (
-                pl.when(col.dtype == pl.Utf8)
-                .then(col.str.strptime(pl.Date, strict=False))
-                .otherwise(col.cast(pl.Date))
-                .alias(name)
-            )
+                pl.col(name).str.strptime(pl.Date, strict=False)
+                if date_is_str
+                else pl.col(name).cast(pl.Date)
+            ).alias(name)
 
-        # Helper for float columns
-        def _float_col(name: str) -> pl.Expr:
+        # Helper to cast columns while gracefully handling missing inputs
+        def _cast_or_null(name: str, dtype: pl.DataType, alias: str | None = None) -> pl.Expr:
+            target = alias or name
             if name not in cols:
-                return pl.lit(None, dtype=pl.Float64).alias(name)
-            return (
-                pl.when(pl.col(name) == "-")
-                .then(None)
-                .when(pl.col(name).is_null())
-                .then(None)
-                .otherwise(pl.col(name))
-                .cast(pl.Float64)
-                .alias(name)
-            )
+                return pl.lit(None, dtype=dtype).alias(target)
+            return pl.col(name).cast(dtype).alias(target)
 
-        # Helper for integer columns
-        def _int_col(name: str) -> pl.Expr:
-            if name not in cols:
-                return pl.lit(None, dtype=pl.Int64).alias(name)
-            return (
-                pl.when(pl.col(name) == "-")
-                .then(None)
-                .when(pl.col(name).is_null())
-                .then(None)
-                .otherwise(pl.col(name))
-                .cast(pl.Int64)
-                .alias(name)
-            )
+        # Normalize columns (map API field names to our schema)
+        # API provides: DisclosedDate, CalculatedDate
+        # We map: DisclosedDate -> Date, CalculatedDate -> PublishedDate
 
-        # Normalize columns
+        def _first_available(
+            names: tuple[str, ...], dtype: pl.DataType, alias: str
+        ) -> pl.Expr:
+            """Return first available column cast to dtype or null literal."""
+
+            for name in names:
+                if name in cols:
+                    return pl.col(name).cast(dtype).alias(alias)
+            return pl.lit(None, dtype=dtype).alias(alias)
+
+        # Helper to map and rename date columns
+        def _map_date(api_name: str, target_name: str) -> pl.Expr:
+            if api_name not in cols:
+                return pl.lit(None, dtype=pl.Date).alias(target_name)
+            date_is_str = df.schema.get(api_name) == pl.Utf8
+            return (
+                pl.col(api_name).str.strptime(pl.Date, strict=False)
+                if date_is_str
+                else pl.col(api_name).cast(pl.Date)
+            ).alias(target_name)
+
         normalized = df.with_columns([
             # Basic identification
-            pl.col("Code").cast(pl.Utf8) if "Code" in cols else pl.lit(None, dtype=pl.Utf8).alias("Code"),
-            _date_col("Date"),
-            _date_col("PublishedDate"),
+            _cast_or_null("Code", pl.Utf8),
+            _map_date("DisclosedDate", "Date") if "DisclosedDate" in cols else _date_col("Date"),
+            _map_date("CalculatedDate", "PublishedDate") if "CalculatedDate" in cols else _date_col("PublishedDate"),
 
-            # Short selling positions
-            _int_col("ShortSellingBalance"),
-            _int_col("ShortSellingBalanceChange"),
-            _float_col("ShortSellingBalanceRatio"),
-
-            # Additional position data
-            _int_col("LendingBalance"),
-            _float_col("LendingBalanceRatio"),
+            # Short selling positions (map API fields to our schema)
+            # Note: API returns numeric types directly (no "-" strings)
+            # LendingBalance and LendingBalanceRatio are NOT provided by J-Quants API
+            _cast_or_null("ShortPositionsInSharesNumber", pl.Float64, "ShortSellingBalance"),
+            _cast_or_null("ShortPositionsInTradingUnitsNumber", pl.Float64, "ShortSellingBalanceChange"),
+            _cast_or_null("ShortPositionsToSharesOutstandingRatio", pl.Float64, "ShortSellingBalanceRatio"),
 
             # Section information
-            pl.col("Section").cast(pl.Utf8) if "Section" in cols else pl.lit(None, dtype=pl.Utf8).alias("Section"),
+            _cast_or_null("Section", pl.Utf8),
         ])
 
         # If PublishedDate doesn't exist in API response, use Date as PublishedDate
