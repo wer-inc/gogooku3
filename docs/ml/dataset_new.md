@@ -327,13 +327,13 @@
 - マージン特徴の分離（週次45列＋日次41列）
 - その他の追加特徴（earnings, short selling, options, cross-features等）
 
-⚠️ **先物機能（88-92列）が J-Quants API の利用制限により無効化されているため、実際の生成列数は約303-307列となります。** その他、日次マージン（dmi_*）や空売りなど一部の特徴量はデータ存在に依存するため、実際の列数は環境により若干変動します。
+⚠️ **先物機能（88-92列）は J-Quants Premium プランがない環境ではデフォルト無効ですが、オフライン parquet を指定すれば Standard プランでも利用できます。** その他、日次マージン（dmi_*）や空売りなど一部の特徴量はデータ存在に依存するため、実際の列数は環境により若干変動します。
 
 ---
 
 ## 13.1) 先物特徴量の無効化状態
 
-現在、J-Quants `/derivatives/futures` APIの利用制限により、先物関連特徴量（88-92列）は無効化されています。
+現在、J-Quants `/derivatives/futures` API の利用には Premium プランが必要です。Premium 環境では自動的に先物特徴量（88-92列）が有効化されます。Standard プランでも、オフライン parquet を指定すれば同じ列を取り込めます。
 
 ### 欠落している先物特徴量
 
@@ -371,19 +371,12 @@
 - **JN400F**: JPX日経400先物
 - **REITF**: REIT指数先物
 
-### コード上の無効化箇所
-- `scripts/pipelines/run_full_dataset.py:665` - API fetch block: `if False:`
-- `scripts/pipelines/run_full_dataset.py:775` - Offline fallback: `if False:`
-- `scripts/pipelines/run_full_dataset.py:879-882` - enrich_and_save 呼び出し:
-  ```python
-  enable_futures=False,
-  futures_parquet=None,
-  futures_categories=[],
-  futures_continuous=False,
-  ```
+### コード上の有効化ロジック（2025-10 更新）
+- Premium プラン (`JQUANTS_PLAN_TIER=premium`) の場合、先物 API を自動取得し先物列が常時有効。
+- Standard プランでも、`--futures-parquet` で parquet を指定するか `output/` 配下に `futures_daily_*.parquet` を配置すると自動的に有効化（`--disable-futures` で明示的に無効化可能）。
+- 連続系列を出力したい場合は `--futures-continuous` を併用。
 
-### 再有効化方法（実験的）
-オフラインparquetデータ経由で再有効化可能:
+### オフライン再有効化例
 ```bash
 python scripts/pipelines/run_full_dataset.py \
   --futures-parquet output/futures_daily_YYYYMMDD_YYYYMMDD.parquet \

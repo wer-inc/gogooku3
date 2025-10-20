@@ -361,7 +361,7 @@ Options:
 - `--indices-parquet`: Use a pre-saved indices parquet (Date, Code, OHLC).
 - `--disable-halt-mask`: Disable 2020-10-01 halt-day masking for range features.
 
-Quick reference tables for index codes (Sector 33, Topix‑17, Market Segments, Style/Size, REIT) are available in `docs/DATASET.md` under “Indices (Market & Sector) Features”.
+Quick reference tables for index codes (Sector 33, Topix‑17, Market Segments, Style/Size, REIT) are available in `docs/ml/dataset_new.md` under “Indices (Market & Sector) Features”.
 
 #### 📝 Cheat Sheet — Common Index Codes
 

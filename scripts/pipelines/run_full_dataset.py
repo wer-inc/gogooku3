@@ -670,9 +670,10 @@ async def main() -> int:
 
     # Display J-Quants plan tier information
     plan_tier = _get_jquants_plan_tier()
+    futures_plan_available = _is_futures_available()
     logger.info("=" * 80)
     logger.info(f"📋 J-Quants Plan Tier: {plan_tier.upper()}")
-    if _is_futures_available():
+    if futures_plan_available:
         logger.info("✅ Futures API enabled (Premium plan)")
         logger.info("   → Full feature set available (~395 features)")
     else:
@@ -957,6 +958,16 @@ async def main() -> int:
     futures_path: Path | None = None
     short_selling_path: Path | None = None
     short_positions_path: Path | None = None
+
+    # Respect user-provided futures parquet regardless of plan tier
+    if args.futures_parquet is not None:
+        if args.futures_parquet.exists():
+            futures_path = args.futures_parquet
+            logger.info(f"Using provided futures parquet: {futures_path}")
+        else:
+            logger.warning(
+                "Specified futures parquet not found: %s", args.futures_parquet
+            )
 
     # Smart reuse: Check for cached data first (unless --force-refresh)
     use_cached = False
@@ -1266,7 +1277,7 @@ async def main() -> int:
                 # Futures data (Premium plan only)
                 # NOTE: /derivatives/futures API is only available on Premium plan
                 # Automatically enabled when JQUANTS_PLAN_TIER=premium
-                if _is_futures_available():
+                if futures_plan_available:
                     try:
                         logger.info(
                             "Fetching futures data for derivatives features (Premium plan)"
@@ -1459,15 +1470,12 @@ async def main() -> int:
         # NOTE: Futures features are only available on Premium plan
         # Automatically enabled when JQUANTS_PLAN_TIER=premium
         futures_path: Path | None = None
-        if _is_futures_available():
-            if args.futures_parquet is not None and args.futures_parquet.exists():
-                futures_path = args.futures_parquet
-                logger.info(f"Using provided futures parquet: {futures_path}")
+        if futures_path is None:
+            futures_path = _find_latest("futures_daily_*.parquet")
+            if futures_path:
+                logger.info(f"Using local futures parquet: {futures_path}")
             else:
-                futures_path = _find_latest("futures_daily_*.parquet")
-                if futures_path:
-                    logger.info(f"Using local futures parquet: {futures_path}")
-                else:
+                if futures_plan_available:
                     logger.warning(
                         "No futures parquet found; futures features will be skipped"
                     )
@@ -1594,6 +1602,37 @@ async def main() -> int:
         for s in (getattr(args, "sector_te_levels", "33") or "").split(",")
         if s.strip()
     ]
+    futures_categories_list = [
+        s.strip()
+        for s in (getattr(args, "futures_categories", "") or "").split(",")
+        if s.strip()
+    ] or ["TOPIXF", "NK225F", "JN400F", "REITF"]
+
+    futures_enabled: bool
+    if args.disable_futures:
+        futures_enabled = False
+        logger.info("ℹ️ Futures features disabled via --disable-futures")
+    elif futures_plan_available:
+        futures_enabled = True
+    elif futures_path is not None:
+        futures_enabled = True
+        logger.info(
+            "🧩 Futures features enabled via offline parquet (plan tier: %s)",
+            plan_tier,
+        )
+    else:
+        futures_enabled = False
+        logger.info(
+            "ℹ️ Futures features unavailable (plan tier: %s, no offline parquet detected)",
+            plan_tier,
+        )
+
+    if futures_enabled and not futures_plan_available and futures_path is None:
+        logger.warning(
+            "Futures features requested but no parquet available; disabling to continue."
+        )
+        futures_enabled = False
+
     pq_path, meta_path = await enrich_and_save(
         df_base,
         output_dir=output_dir,
@@ -1614,15 +1653,11 @@ async def main() -> int:
         statements_parquet=args.statements_parquet,
         listed_info_parquet=listed_info_path,
         # Futures features (Premium plan only - auto-enabled via JQUANTS_PLAN_TIER)
-        enable_futures=_is_futures_available(),
-        futures_parquet=futures_path if _is_futures_available() else None,
-        futures_categories=(
-            ["TOPIXF", "NK225F", "JN400F", "REITF"] if _is_futures_available() else []
-        ),
+        enable_futures=futures_enabled,
+        futures_parquet=futures_path if futures_enabled else None,
+        futures_categories=futures_categories_list if futures_enabled else [],
         futures_continuous=(
-            getattr(args, "futures_continuous", False)
-            if _is_futures_available()
-            else False
+            getattr(args, "futures_continuous", False) if futures_enabled else False
         ),
         nk225_parquet=getattr(args, "nk225_parquet", None),
         reit_parquet=getattr(args, "reit_parquet", None),

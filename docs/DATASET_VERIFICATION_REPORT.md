@@ -1,14 +1,14 @@
-# DATASET.MD VERIFICATION REPORT
+# dataset_new.md VERIFICATION REPORT
 
 **Generated**: 2025-09-06  
 **Dataset**: `ml_dataset_20200906_20250906_20250906_143623_full.parquet`  
-**Specification**: `/docs/ml/dataset.md`
+**Specification**: `docs/ml/dataset_new.md`
 
 ## Executive Summary
 
 ### ✅ 100% IMPLEMENTATION ACHIEVED
 
-All 145 required features from DATASET.md specification are successfully implemented in the latest dataset.
+All 145 required features from `docs/ml/dataset_new.md` specification are successfully implemented in the latest dataset.
 
 ## Dataset Overview
 
@@ -181,6 +181,8 @@ The dataset includes 103 additional features beyond the specification:
 
 These extra features provide enhanced modeling capabilities while maintaining full compatibility with the core specification.
 
+> ℹ️ この検証では J-Quants Standard プラン環境（オフライン先物データ未指定）で実行しました。`fut_*` 先物特徴量（最大88列）は `--futures-parquet` 等で先物データを提供すると自動的に追加・検証されます。
+
 ## Data Quality Metrics
 
 ### Coverage Analysis
@@ -212,7 +214,7 @@ These extra features provide enhanced modeling capabilities while maintaining fu
 
 ## Conclusion
 
-The latest dataset **fully implements 100% of the DATASET.md specification** with all 145 required features present and correctly calculated. The dataset is production-ready for machine learning model training with comprehensive coverage of price, technical, market, flow, and fundamental features.
+The latest dataset **fully implements 100% of the `docs/ml/dataset_new.md` specification** with all 145 required features present and correctly calculated. The dataset is production-ready for machine learning model training with comprehensive coverage of price, technical, market, flow, and fundamental features.
 
 ### Certification
 - **Specification Compliance**: ✅ 100%
@@ -223,4 +225,4 @@ The latest dataset **fully implements 100% of the DATASET.md specification** wit
 
 ---
 
-*This report confirms that the gogooku3-standalone ML dataset meets all requirements specified in DATASET.md and is ready for production use in financial machine learning applications.*
+*This report confirms that the gogooku3-standalone ML dataset meets all requirements specified in `docs/ml/dataset_new.md` and is ready for production use in financial machine learning applications.*

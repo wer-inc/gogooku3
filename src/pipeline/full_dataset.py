@@ -61,7 +61,7 @@ def save_with_symlinks(
 ) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Normalize column names to align with docs/DATASET.md (non-breaking rename)
+    # Normalize column names to align with docs/ml/dataset_new.md (non-breaking rename)
     try:
         rename_map = {
             "is_ema_5_valid": "is_ema5_valid",
@@ -378,7 +378,7 @@ async def enrich_and_save(
     except Exception as e:
         logger.warning(f"Advanced features attach skipped: {e}")
 
-    # Finalize to match DATASET.md
+    # Finalize to match dataset_new.md spec
     try:
         df = builder.finalize_for_spec(df)
     except Exception:
@@ -2143,7 +2143,7 @@ async def enrich_and_save(
     except Exception as e:
         logger.warning(f"Advanced volatility attach skipped: {e}")
 
-    # Align to DATASET.md (strict schema) just before saving
+    # Align to dataset_new.md (strict schema) just before saving
     try:
         eps = 1e-12
 
@@ -2153,7 +2153,7 @@ async def enrich_and_save(
         except Exception as e:
             logger.warning(f"Interaction features attach skipped: {e}")
 
-        # Canonical, ordered schema from docs/DATASET.md
+        # Canonical, ordered schema from docs/ml/dataset_new.md
         DOC_COLUMNS: list[str] = [
             # 0) Identifiers/Meta (expanded per docs/ml/dataset_new.md)
             "Code",
@@ -3022,7 +3022,7 @@ async def enrich_and_save(
         df = df.select(keep_cols)
         logger.info(f"Aligned dataset to docs schema (n={len(keep_cols)})")
     except Exception as _e:
-        logger.exception("DATASET.md strict alignment skipped: %s", _e)
+        logger.exception("dataset_new.md strict alignment skipped: %s", _e)
 
     # Ensure (Code, Date) uniqueness (keep last occurrence)
     try:

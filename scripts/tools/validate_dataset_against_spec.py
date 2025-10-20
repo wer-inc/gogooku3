@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate an ML dataset against docs/DATASET.md.
+Validate an ML dataset against docs/ml/dataset_new.md (canonical spec).
 
 - Verifies presence of canonical columns
 - Verifies cross features match exactly the spec's 8 columns
@@ -10,7 +10,7 @@ Validate an ML dataset against docs/DATASET.md.
 Usage:
   python scripts/tools/validate_dataset_against_spec.py \
     --dataset output/ml_dataset_YYYYMMDD_HHMMSS.parquet \
-    --docs docs/DATASET.md
+    --docs docs/ml/dataset_new.md
 Exit code is non-zero if validation fails.
 """
 
@@ -47,9 +47,9 @@ def extract_backticked_names(md_text: str) -> set[str]:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate dataset against DATASET.md")
+    ap = argparse.ArgumentParser(description="Validate dataset against dataset_new.md")
     ap.add_argument("--dataset", required=True, type=Path)
-    ap.add_argument("--docs", type=Path, default=Path("docs/DATASET.md"))
+    ap.add_argument("--docs", type=Path, default=Path("docs/ml/dataset_new.md"))
     args = ap.parse_args()
 
     if not args.dataset.exists():
@@ -92,7 +92,7 @@ def main():
         errors.append(f"stmt_* features too few: {stmt_count} < 17")
 
     flow_count = len([c for c in cols if c.startswith("flow_")])
-    # DATASET.md lists 17 flow features target; allow >= 12 to pass if partial, else enforce 17
+    # dataset_new.md lists 17 flow features target; allow >= 12 to pass if partial, else enforce 17
     if flow_count < 17:
         errors.append(f"flow_* features too few: {flow_count} < 17")
 
@@ -104,7 +104,7 @@ def main():
     if "idio_vol_ratio" not in cols:
         errors.append("Missing idio_vol_ratio")
 
-    # 6) Extra names mentioned in DATASET.md but absent (best effort)
+    # 6) Extra names mentioned in dataset_new.md but absent (best effort)
     # Filter to those likely to be columns
     md_col_like = [n for n in md_names if any(n.startswith(p) for p in ("mkt_","stmt_","flow_","returns_","log_returns_","volatility_","ema_","sma_","ma_gap_","price_to_","high_low_ratio","close_to_high","close_to_low","rsi_","macd","bb_","atr_","adx_","stoch_","target_")) or n in REQUIRED_CORE + CANONICAL_CROSS + ["TurnoverValue","row_idx","shares_outstanding"]]
     missing_from_md = [n for n in md_col_like if n not in cols]
@@ -118,7 +118,7 @@ def main():
     if missing_from_md:
         print(f"Note: {len(missing_from_md)} doc-listed names missing (informative): {missing_from_md[:10]} ...")
     if ok:
-        print("✅ Validation PASSED against DATASET.md")
+        print("✅ Validation PASSED against dataset_new.md")
         sys.exit(0)
     else:
         print("❌ Validation FAILED:")
@@ -129,4 +129,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
