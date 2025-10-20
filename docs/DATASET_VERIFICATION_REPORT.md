@@ -1,7 +1,7 @@
 # dataset_new.md VERIFICATION REPORT
 
-**Generated**: 2025-09-06  
-**Dataset**: `ml_dataset_20200906_20250906_20250906_143623_full.parquet`  
+**Generated**: 2025-09-06
+**Dataset**: `ml_dataset_20200906_20250906_20250906_143623_full.parquet`
 **Specification**: `docs/ml/dataset_new.md`
 
 ## Executive Summary

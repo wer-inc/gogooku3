@@ -4,15 +4,16 @@ TOPIX Feature Updater
 既存のデータセットにTOPIX相対特徴量を追加/更新するスクリプト
 """
 
+import argparse
+import asyncio
+import logging
 import os
 import sys
-import asyncio
-import aiohttp
-import polars as pl
 from datetime import datetime, timedelta
 from pathlib import Path
-import logging
-import argparse
+
+import aiohttp
+import polars as pl
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -21,8 +22,8 @@ if env_path.exists():
     load_dotenv(env_path)
 
 sys.path.append(str(Path(__file__).parent.parent))
-from pipelines.run_pipeline import JQuantsAsyncFetcher  # noqa: E402
 from core.ml_dataset_builder import MLDatasetBuilder  # noqa: E402
+from pipelines.run_pipeline import JQuantsAsyncFetcher  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

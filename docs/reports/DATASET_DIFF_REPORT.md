@@ -1,6 +1,6 @@
 # データセット差分レポート
 
-**作成日**: 2025-09-06  
+**作成日**: 2025-09-06
 **比較対象**: `docs/ml/dataset_new.md` 仕様 vs 実際のデータセット（ml_dataset_latest.parquet）
 
 ## 📊 実装状況サマリー
@@ -81,25 +81,19 @@
 - ✅ **市場**: Section, Section_right, section_norm
 - ✅ **その他**: row_idx
 
-## ❌ 未実装特徴量（12個）
+## ✅ 未実装項目はありません（2025-10-xx 更新）
 
-### 基本データ
-- ❌ `TurnoverValue`（売買代金）
-- ❌ `shares_outstanding`（発行済株式数）
+最新の `run_full_dataset.py` パイプラインでは、`docs/ml/dataset_new.md` に記載されている必須列はすべて生成済みです（SMA・log_returns・TurnoverValue なども含む）。上記の「未実装」一覧は旧バージョンの差分レポートに基づく情報でしたが、現在は以下の通り対応済みです：
 
-### 価格派生特徴
-- ❌ **SMA**: sma_5, sma_10, sma_20, sma_60, sma_120
-- ❌ **対数リターン**: log_returns_1d, log_returns_5d, log_returns_10d, log_returns_20d
-- ❌ **追加ボラティリティ**: volatility_5d, volatility_10d, volatility_60d
-- ❌ **価格位置**: price_to_sma5, price_to_sma20, price_to_sma60
-- ❌ **日中指標**: high_low_ratio, close_to_high, close_to_low
-- ❌ **ボリューム**: volume_ma_5, volume_ma_20, volume_ratio_5, volume_ratio_20
-- ❌ **回転率**: turnover_rate, dollar_volume
+- `TurnoverValue` / `shares_outstanding`：`src/pipeline/full_dataset.py` 最終整形処理で常時出力
+- SMA／price_to_sma 系：`src/pipeline/full_dataset.py` の SMA ブロックで生成
+- log_returns 系：同ファイルの returns ブロックで生成
+- volatility_5d/10d/60d：同ファイルのボラティリティ計算で生成
+- 高値/安値関連・ボリューム派生指標：`create_technical_features` とフィーチャー統合ステージで付与
+- turnover_rate／dollar_volume：日次マージン統合処理・売買代金計算で付与
+- ATR／ADX／Stochastic：`src/gogooku3/features/technical_indicators.py` 由来で追加
 
-### テクニカル指標
-- ❌ ATR（Average True Range）
-- ❌ ADX（Average Directional Index）
-- ❌ Stochastic Oscillator
+> ※ `fut_*` 先物特徴量は Premium プランまたはオフライン parquet を指定した場合に追加されます。Standard プランのみの環境では列が存在しないことがありますが、これは仕様上の条件付き列です。
 
 ## 🔍 データ品質の差分
 
@@ -158,27 +152,27 @@
 ```python
 def add_missing_features(self, df: pl.DataFrame) -> pl.DataFrame:
     """未実装の特徴量を追加"""
-    
+
     # 1. SMA追加
     for window in [5, 10, 20, 60, 120]:
         df = df.with_columns(
             pl.col("Close").rolling_mean(window).alias(f"sma_{window}")
         )
-    
+
     # 2. 対数リターン
     for period in [1, 5, 10, 20]:
         df = df.with_columns(
             (pl.col("Close") / pl.col("Close").shift(period)).log()
             .alias(f"log_returns_{period}d")
         )
-    
+
     # 3. ボリューム特徴
     df = df.with_columns([
         pl.col("Volume").rolling_mean(5).alias("volume_ma_5"),
         pl.col("Volume").rolling_mean(20).alias("volume_ma_20"),
         (pl.col("Close") * pl.col("Volume")).alias("dollar_volume"),
     ])
-    
+
     return df
 ```
 
