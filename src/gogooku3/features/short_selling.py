@@ -15,10 +15,12 @@ Key features generated:
 - ss_ratio: Short selling ratio (%)
 - ss_volume_ratio: Short selling volume / total volume
 - ss_balance_ratio: Short selling balance / shares outstanding
-- ss_lending_ratio: Securities lending ratio
 - ss_momentum_5d, ss_momentum_10d: Short selling momentum
 - ss_extreme_flag: Extreme short selling activity flag
 - ss_*_z52: 52-week Z-scores for mean reversion signals
+
+Note: LendingBalance features (ss_lending_ratio, ss_lending_balance, ss_net_pressure)
+are NOT provided by J-Quants API and have been removed as of 2025-10-20.
 
 Public API:
 - build_short_effective(df_ss, next_business_day_fn)
@@ -114,24 +116,20 @@ def add_short_positions_features(positions: pl.DataFrame) -> pl.DataFrame:
     - ss_balance: Short selling balance (shares)
     - ss_balance_ratio: Balance as percentage
     - ss_balance_change: Daily change in balance
-    - ss_lending_balance: Securities lending balance
-    - ss_lending_ratio: Lending ratio
+
+    Note:
+        LendingBalance, LendingBalanceRatio, and related features (ss_lending_balance,
+        ss_lending_ratio, ss_net_pressure) are NOT provided by J-Quants API as of 2025-10-20.
+        These features have been removed from the implementation.
     """
     if positions.is_empty():
         return positions
 
     return positions.with_columns([
-        # Balance features
+        # Short selling balance features
         pl.col("ShortSellingBalance").alias("ss_balance"),
         (pl.col("ShortSellingBalanceRatio") / 100.0).alias("ss_balance_ratio"),
         pl.col("ShortSellingBalanceChange").alias("ss_balance_change"),
-
-        # Lending features
-        pl.col("LendingBalance").alias("ss_lending_balance"),
-        (pl.col("LendingBalanceRatio") / 100.0).alias("ss_lending_ratio"),
-
-        # Net short pressure (balance relative to lending)
-        ((pl.col("ShortSellingBalance") / (pl.col("LendingBalance") + EPS)) - 1.0).alias("ss_net_pressure"),
     ])
 
 

@@ -1268,6 +1268,8 @@ async def enrich_and_save(
                     result = _ensure_code_utf8(positions_df, source="short_positions")
                     if result is not None:
                         positions_df = result
+                    # LendingBalance and LendingBalanceRatio are NOT provided by J-Quants API
+                    # No patching needed - removed as of 2025-10-20
                     logger.info(f"Loaded short positions data from: {pos_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load short positions data: {e}")

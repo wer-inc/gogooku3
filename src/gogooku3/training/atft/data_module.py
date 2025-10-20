@@ -4,6 +4,7 @@ ATFT Data Module
 """
 
 import logging
+import math
 import multiprocessing as mp
 import os
 import pickle
@@ -128,7 +129,8 @@ def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
     # Global loader-guard (mirrors scripts/train_atft.py):
     # Unless ALLOW_UNSAFE_DATALOADER=1, force single-process mode to avoid
     # sporadic worker aborts seen with multi-process parquet loading.
-    allow_multi = os.getenv("ALLOW_UNSAFE_DATALOADER", "0").lower() in ("1", "true", "yes")
+    loader_mode = (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
+    allow_multi = loader_mode in ("", "auto", "1", "true", "yes", "multi")
     try:
         requested = int(OmegaConf.select(config, "train.batch.num_workers") or 0)
     except Exception:
@@ -137,7 +139,7 @@ def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
     if not allow_multi and (effective > 0 or bool(params.get("persistent_workers", False))):
         logger.warning(
             "[loader-guard] Enforcing single-process DataLoader (num_workers=0). "
-            "Set ALLOW_UNSAFE_DATALOADER=1 to opt in to multi-process."
+            "Set ALLOW_UNSAFE_DATALOADER=auto (default) or 1 to opt in to multi-process."
         )
         params["num_workers"] = 0
         params["persistent_workers"] = False
@@ -962,20 +964,60 @@ class StreamingParquetDataset(Dataset):
 
         logger.info("Computing global normalization statistics from training data...")
 
-        # Sample features from multiple files
-        all_features = []
-        samples_per_file = max(1, max_samples // len(self.file_paths))
+        # Allow environment overrides for sample size / file coverage
+        try:
+            max_samples_env = os.getenv("NORMALIZATION_MAX_SAMPLES")
+            if max_samples_env:
+                max_samples = max(1, int(max_samples_env))
+        except Exception:
+            pass
+        try:
+            max_files_limit = int(os.getenv("NORMALIZATION_MAX_FILES", "64"))
+        except Exception:
+            max_files_limit = 64
+        max_files_limit = max(1, max_files_limit)
 
-        for file_path in self.file_paths[: min(50, len(self.file_paths))]:  # Expanded from 5 to 50 for better statistics
+        file_count = len(self.file_paths)
+        if file_count == 0:
+            logger.warning("No files available for normalization statistics.")
+            self._stats_computed = True
+            return
+
+        sample_file_count = min(max_files_limit, file_count)
+        if sample_file_count < file_count:
+            step = max(1, math.floor(file_count / sample_file_count))
+            candidate_indices = list(range(0, file_count, step))[:sample_file_count]
+            if len(candidate_indices) < sample_file_count:
+                candidate_indices = list(range(file_count))[-sample_file_count:]
+        else:
+            candidate_indices = list(range(file_count))
+
+        # Sample features from selected files
+        all_features = []
+        samples_per_file = max(16, math.ceil(max_samples / max(1, len(candidate_indices))))
+        total_samples = 0
+        files_used = 0
+
+        for file_idx in candidate_indices:
+            file_path = self.file_paths[file_idx]
             try:
-                df = pl.scan_parquet(file_path).select(self.feature_columns).head(samples_per_file).collect(streaming=True)
+                df = (
+                    pl.scan_parquet(file_path)
+                    .select(self.feature_columns)
+                    .head(samples_per_file)
+                    .collect(streaming=True)
+                )
                 features = df.to_numpy().astype(np.float64)
                 features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
                 # Clip before computing statistics
                 np.clip(features, -1e8, 1e8, out=features)
+                if features.size == 0:
+                    continue
                 all_features.append(features)
+                files_used += 1
+                total_samples += features.shape[0]
 
-                if sum(len(f) for f in all_features) >= max_samples:
+                if total_samples >= max_samples:
                     break
             except Exception as exc:
                 logger.warning("Failed to load features from %s: %s", file_path, exc)
@@ -998,8 +1040,9 @@ class StreamingParquetDataset(Dataset):
         self._stats_computed = True
 
         logger.info(
-            "Global statistics computed from %d samples: median range [%.2e, %.2e], MAD range [%.2e, %.2e]",
+            "Global statistics computed from %d samples across %d files: median range [%.2e, %.2e], MAD range [%.2e, %.2e]",
             len(combined),
+            files_used,
             self._global_median.min(),
             self._global_median.max(),
             self._global_mad.min(),

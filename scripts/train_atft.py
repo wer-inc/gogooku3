@@ -175,6 +175,17 @@ def _canonicalize_horizon_dict(tensor_dict):
     return canonical
 
 
+def _env_flag(key: str, default: bool) -> bool:
+    """Read boolean environment flag with support for 'auto' fallback."""
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    norm = raw.strip().lower()
+    if norm in ("", "auto"):
+        return default
+    return norm in ("1", "true", "yes", "on")
+
+
 def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
     """Reshape tensors to [B] format, taking last timestep if needed."""
     reshaped = {}
@@ -933,19 +944,18 @@ def _enforce_safe_dataloader_config(cfg: DictConfig) -> None:
     """Force single-process DataLoader unless explicitly opted out.
 
     Many upstream data transformations (pyarrow + large parquet merges) are unstable
-    under multi-process loading on our infra. Unless the user sets
-    `ALLOW_UNSAFE_DATALOADER=1`, we downshift to `num_workers=0` and disable
+    under multi-process loading on our infra. Unless the user explicitly sets
+    `ALLOW_UNSAFE_DATALOADER=0`, we attempt multi-worker and rely on the outer
+    pipeline retry to fall back when crashes occur. Explicit zero still downshifts
+    to `num_workers=0` and disables
     prefetch/persistent workers to avoid the recurrent "worker ... killed by signal"
     aborts observed in production runs.
     """
 
-    allow_multi = os.getenv("ALLOW_UNSAFE_DATALOADER", "0").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    if allow_multi:
+    loader_mode = (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
+    if loader_mode in ("", "auto", "1", "true", "yes", "multi"):
         return
+    # Any other value (0/false/safe) enforces single-process mode
 
     try:
         batch_cfg = cfg.train.batch
@@ -970,7 +980,7 @@ def _enforce_safe_dataloader_config(cfg: DictConfig) -> None:
     if effective > 0 or getattr(batch_cfg, "persistent_workers", False):
         logger.warning(
             "[loader-guard] Forcing DataLoader into single-process mode (num_workers=0) "
-            "to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=1 to bypass."
+            "to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=auto (default) or 1 to bypass."
         )
 
     batch_cfg.num_workers = 0
@@ -1054,8 +1064,8 @@ class MultiHorizonLoss(nn.Module):
     def __init__(
         self,
         horizons=[1, 5, 10, 20],
-        use_rankic: bool = False,
-        rankic_weight: float = 0.0,
+        use_rankic: bool = True,
+        rankic_weight: float = 0.3,
         # 追加: ペアワイズ順位学習（RankNet 型）
         use_pairwise_rank: bool = False,
         pairwise_rank_weight: float = 0.0,
@@ -1063,6 +1073,12 @@ class MultiHorizonLoss(nn.Module):
         # 追加: CS相関(IC)補助ロス
         use_cs_ic: bool = True,
         cs_ic_weight: float = 0.05,
+        # 追加: Sharpe比ベースの金融損失
+        use_sharpe: bool = True,
+        sharpe_weight: float = 0.1,
+        sharpe_center: str = "z",
+        sharpe_clip: float = 5.0,
+        sharpe_eps: float = 1e-6,
         # 追加: SoftRank Spearman近似
         use_soft_spearman: bool = False,
         spearman_weight: float = 0.0,
@@ -1117,6 +1133,12 @@ class MultiHorizonLoss(nn.Module):
         # CS-IC 補助ロス
         self.use_cs_ic = bool(use_cs_ic)
         self.cs_ic_weight = float(cs_ic_weight)
+        # Sharpe penalty
+        self.use_sharpe = bool(use_sharpe)
+        self.sharpe_weight = float(sharpe_weight)
+        self.sharpe_center = sharpe_center if sharpe_center in ("z", "raw") else "z"
+        self.sharpe_clip = float(sharpe_clip)
+        self.sharpe_eps = float(sharpe_eps)
         # Pairwise rank parameters
         self.use_pairwise_rank = bool(use_pairwise_rank)
         self.pairwise_rank_weight = float(pairwise_rank_weight)
@@ -1302,6 +1324,52 @@ class MultiHorizonLoss(nn.Module):
         denom = yhat_f.std(unbiased=False) * y_f.std(unbiased=False) + 1e-8
         corr = (yhat_f * y_f).mean() / denom
         return 1.0 - corr
+
+    def _sharpe_penalty(
+        self,
+        yhat: torch.Tensor,
+        y: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Sharpe-like penalty encouraging positive risk-adjusted returns."""
+        eps = self.sharpe_eps
+        device = yhat.device
+        dtype = yhat.dtype
+
+        preds = yhat.view(-1).float()
+        targets = y.view(-1).float()
+
+        if mask is not None and torch.is_tensor(mask):
+            m = mask.view(-1)
+            if m.dtype != torch.bool:
+                m = m.to(dtype=torch.bool)
+            min_size = min(preds.numel(), targets.numel(), m.numel())
+            preds = preds[:min_size]
+            targets = targets[:min_size]
+            m = m[:min_size]
+            if m.any():
+                preds = preds[m]
+                targets = targets[m]
+
+        finite = torch.isfinite(preds) & torch.isfinite(targets)
+        preds = preds[finite]
+        targets = targets[finite]
+
+        if preds.numel() < 4:
+            return torch.zeros((), device=device, dtype=dtype)
+
+        if self.sharpe_center == "z":
+            preds = (preds - preds.mean()) / (preds.std(unbiased=False) + eps)
+            targets = (targets - targets.mean()) / (targets.std(unbiased=False) + eps)
+
+        returns = preds * targets
+        mean_ret = returns.mean()
+        std_ret = returns.std(unbiased=False)
+        sharpe = mean_ret / (std_ret + eps)
+        if self.sharpe_clip > 0:
+            sharpe = torch.clamp(sharpe, -self.sharpe_clip, self.sharpe_clip)
+        # Negative Sharpe -> minimize to maximize raw Sharpe
+        return -sharpe.to(device=device, dtype=dtype)
 
     @staticmethod
     def _pairwise_rank_loss(
@@ -1637,6 +1705,13 @@ class MultiHorizonLoss(nn.Module):
                     e = y_expand - q_out
                     pinball = torch.maximum(quantiles * e, (quantiles - 1) * e)
                     loss = loss + self.pinball_weight * torch.mean(pinball)
+            if self.use_sharpe and self.sharpe_weight > 0.0:
+                try:
+                    sharpe_pen = self._sharpe_penalty(yhat, y, mask)
+                    if torch.isfinite(sharpe_pen):
+                        loss = loss + self.sharpe_weight * sharpe_pen
+                except Exception:
+                    pass
             # RankIC（任意）
             if self.use_rankic and self.rankic_weight > 0:
                 loss = loss + self.rankic_weight * self._rankic_penalty(yhat, y, mask)
@@ -3545,10 +3620,20 @@ def run_phase_training(model, train_loader, val_loader, config, device):
 
     # Loss初期化 - 環境変数ベース（P0 Fix）
     # 環境変数から損失重みを読み込み
-    use_rankic = os.getenv("USE_RANKIC", "0") == "1"
-    rankic_w = float(os.getenv("RANKIC_WEIGHT", "0.5")) if use_rankic else 0.0
-    use_cs_ic_env = os.getenv("USE_CS_IC", "1") == "1"
+    use_rankic = _env_flag("USE_RANKIC", True)
+    rankic_w = float(os.getenv("RANKIC_WEIGHT", "0.3"))
+    if not use_rankic:
+        rankic_w = 0.0
+    use_cs_ic_env = _env_flag("USE_CS_IC", True)
     cs_ic_weight_env = float(os.getenv("CS_IC_WEIGHT", "0.05"))
+    if not use_cs_ic_env:
+        cs_ic_weight_env = 0.0
+    use_sharpe_env = _env_flag("USE_SHARPE_LOSS", True)
+    sharpe_weight = float(os.getenv("SHARPE_WEIGHT", "0.1"))
+    if not use_sharpe_env:
+        sharpe_weight = 0.0
+    sharpe_clip = float(os.getenv("SHARPE_CLIP", "5.0"))
+    sharpe_center = os.getenv("SHARPE_CENTER", "z").strip().lower() or "z"
 
     criterion = MultiHorizonLoss(
         horizons=config.data.time_series.prediction_horizons,
@@ -3560,9 +3645,16 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         rankic_weight=rankic_w,  # 環境変数: RANKIC_WEIGHT (default=0.5)
         use_cs_ic=use_cs_ic_env,
         cs_ic_weight=cs_ic_weight_env,  # 環境変数: CS_IC_WEIGHT (default=0.05)
+        use_sharpe=use_sharpe_env,
+        sharpe_weight=sharpe_weight,
+        sharpe_clip=sharpe_clip,
+        sharpe_center="z" if sharpe_center not in ("raw", "z") else sharpe_center,
     )
     logger.info(
-        f"[Loss] Initialized with RankIC (enabled={use_rankic}, weight={rankic_w}) and CS-IC (enabled={use_cs_ic_env}, weight={cs_ic_weight_env})"
+        "[Loss] Initialized with "
+        f"Sharpe(enabled={use_sharpe_env}, weight={sharpe_weight}), "
+        f"RankIC(enabled={use_rankic}, weight={rankic_w}), "
+        f"CS-IC(enabled={use_cs_ic_env}, weight={cs_ic_weight_env})"
     )
 
     best_val_loss = float("inf")
@@ -4405,6 +4497,20 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
     dir_aux_weight = (
         float(os.getenv("DIR_AUX_WEIGHT", "0.1")) if dir_aux_enabled else 0.0
     )
+    use_rankic = _env_flag("USE_RANKIC", True)
+    rankic_weight = float(os.getenv("RANKIC_WEIGHT", "0.3"))
+    if not use_rankic:
+        rankic_weight = 0.0
+    use_cs_ic = _env_flag("USE_CS_IC", True)
+    cs_ic_weight = float(os.getenv("CS_IC_WEIGHT", "0.05"))
+    if not use_cs_ic:
+        cs_ic_weight = 0.0
+    use_sharpe = _env_flag("USE_SHARPE_LOSS", True)
+    sharpe_weight = float(os.getenv("SHARPE_WEIGHT", "0.1"))
+    if not use_sharpe:
+        sharpe_weight = 0.0
+    sharpe_clip = float(os.getenv("SHARPE_CLIP", "5.0"))
+    sharpe_center = os.getenv("SHARPE_CENTER", "z").strip().lower() or "z"
 
     criterion = MultiHorizonLoss(
         horizons=horizons,
@@ -4416,6 +4522,14 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
         use_t_nll=use_t_nll,
         nll_weight=nll_weight,
         direction_aux_weight=dir_aux_weight,
+        use_rankic=use_rankic,
+        rankic_weight=rankic_weight,
+        use_cs_ic=use_cs_ic,
+        cs_ic_weight=cs_ic_weight,
+        use_sharpe=use_sharpe,
+        sharpe_weight=sharpe_weight,
+        sharpe_clip=sharpe_clip,
+        sharpe_center="z" if sharpe_center not in ("raw", "z") else sharpe_center,
     )
 
     # Early-stop metric setup (same options as phase training)
@@ -4668,6 +4782,10 @@ def fix_seed(seed: int = 42, deterministic: bool = False):
 def train(config: DictConfig) -> None:
     """メイン学習関数"""
     logger.info("Starting production training...")
+
+    # Default to auto multi-worker mode unless explicitly overridden
+    if "ALLOW_UNSAFE_DATALOADER" not in os.environ:
+        os.environ["ALLOW_UNSAFE_DATALOADER"] = "auto"
 
     # ============================================================================
     # A100 GPU Optimizations
@@ -6382,9 +6500,17 @@ def train(config: DictConfig) -> None:
 
     # 最適化
     # 追加損失のON/OFFは簡易に環境変数で制御（必要ならHydraへ昇格）
-    use_rankic = os.getenv("USE_RANKIC", "0") == "1"
+    use_rankic = _env_flag("USE_RANKIC", True)
     use_pinball = os.getenv("USE_PINBALL", "0") == "1"
-    rankic_w = float(os.getenv("RANKIC_WEIGHT", "0.5")) if use_rankic else 0.0
+    rankic_w = float(os.getenv("RANKIC_WEIGHT", "0.3"))
+    if not use_rankic:
+        rankic_w = 0.0
+    use_sharpe_env = _env_flag("USE_SHARPE_LOSS", True)
+    sharpe_weight_env = float(os.getenv("SHARPE_WEIGHT", "0.1"))
+    if not use_sharpe_env:
+        sharpe_weight_env = 0.0
+    sharpe_clip_env = float(os.getenv("SHARPE_CLIP", "5.0"))
+    sharpe_center_env = os.getenv("SHARPE_CENTER", "z").strip().lower() or "z"
     # 追加: ペアワイズ順位ロスの制御
     use_pairwise_rank = os.getenv("USE_PAIRWISE_RANK", "0") == "1"
     pairwise_rank_w = (
@@ -6455,8 +6581,10 @@ def train(config: DictConfig) -> None:
     preset_w = _parse_weight_map(os.getenv("HWEIGHTS", None))
 
     # CS-IC 補助ロスの制御（デフォルトON, λ=0.05）
-    use_cs_ic_env = os.getenv("USE_CS_IC", "1") == "1"
+    use_cs_ic_env = _env_flag("USE_CS_IC", True)
     cs_ic_weight_env = float(os.getenv("CS_IC_WEIGHT", "0.05"))
+    if not use_cs_ic_env:
+        cs_ic_weight_env = 0.0
 
     # Horizon resolution and consistency (auto-fix by default)
     data_h_list = list(
@@ -6544,6 +6672,12 @@ def train(config: DictConfig) -> None:
         pairwise_sample_ratio=pairwise_sample_ratio,
         use_cs_ic=use_cs_ic_env,
         cs_ic_weight=cs_ic_weight_env,
+        use_sharpe=use_sharpe_env,
+        sharpe_weight=sharpe_weight_env,
+        sharpe_clip=sharpe_clip_env,
+        sharpe_center="z"
+        if sharpe_center_env not in ("raw", "z")
+        else sharpe_center_env,
         # 新規追加パラメータ
         use_soft_spearman=use_soft_spearman,
         spearman_weight=spearman_weight,
