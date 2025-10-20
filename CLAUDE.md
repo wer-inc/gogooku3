@@ -7,10 +7,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ATFT-GAT-FAN: Advanced financial ML system for Japanese stock market prediction. Multi-horizon forecasting using Graph Attention Networks with production-grade time-series safety protocols. Target Sharpe ratio: 0.849.
 
 ### Hardware Environment
-- **GPU**: NVIDIA A100 80GB PCIe
-- **CPU**: 24-core AMD EPYC 7V13
-- **Memory**: 216GB RAM
-- **Storage**: 291GB SSD
+- **GPU**: NVIDIA A100-SXM4-80GB (81920 MiB)
+- **CPU**: 255-core AMD EPYC 7763 64-Core Processor
+- **Memory**: 2.0Ti RAM
+- **Storage**: 214T available
+- **CUDA**: 12.4 (PyTorch 2.8.0+cu128)
+- **FlashAttention 2**: Compatible (CUDA 12+)
+
+### System State Detection
+
+The `tools/claude-code.sh` launcher automatically detects and reports real-time system state:
+
+**Auto-Detected Metrics**:
+- **GPU**: Name, memory (used/total), utilization %, CUDA version
+- **CPU**: Core count, model name
+- **RAM**: Available/total memory
+- **Disk**: Usage percentage, available space
+- **Git**: Current branch, latest commit hash
+- **Python/PyTorch**: Versions and CUDA availability
+
+**Intelligent Optimization Suggestions**:
+- Low GPU utilization → Suggests increasing batch size or model complexity
+- High free GPU memory → Recommends larger models or batch sizes
+- CUDA 12+ detected → Suggests FlashAttention 2 and advanced optimizations
+
+This ensures Claude Code always receives accurate hardware context for data-driven optimization decisions.
 
 ## Essential Commands
 
@@ -18,12 +39,16 @@ ATFT-GAT-FAN: Advanced financial ML system for Japanese stock market prediction.
 ```bash
 # Install and verify
 pip install -e .
-cp .env.example .env  # Configure JQUANTS_AUTH_EMAIL, JQUANTS_AUTH_PASSWORD
+cp .env.example .env  # Configure JQUANTS_AUTH_EMAIL, JQUANTS_AUTH_PASSWORD, JQUANTS_PLAN_TIER
 python -c "import gogooku3; print(f'✅ v{gogooku3.__version__}')"
 
 # Pre-commit setup
 pre-commit install
 pre-commit install -t commit-msg
+
+# Enhanced Claude Code launcher (auto-detects hardware, suggests optimizations)
+tools/claude-code.sh              # Autonomous mode with health check
+tools/claude-code.sh --no-check   # Skip health check
 ```
 
 ### Primary Training Commands
@@ -126,6 +151,31 @@ ruff check src/ --fix          # Auto-fix linting
 ruff format src/               # Format code
 mypy src/gogooku3             # Type checking
 pre-commit run --all-files     # Full quality check
+```
+
+### Health Diagnostics
+```bash
+# Comprehensive project health check (8-step validation)
+tools/project-health-check.sh
+
+# View latest health report (JSON format)
+cat _logs/health-checks/health-check-*.json | jq '.'
+
+# Expected output:
+# - Critical issues: 0
+# - Warnings: 0
+# - Healthy checks: 18+
+# - Report location: _logs/health-checks/health-check-YYYYMMDD-HHMMSS.json
+
+# Health check validates:
+# 1. Environment (.env, credentials, cache config)
+# 2. Dependencies (Python, gogooku3, GPU)
+# 3. Data pipeline (dataset, cache files)
+# 4. Training status (processes, models)
+# 5. Code quality (pre-commit hooks)
+# 6. Performance optimizations (multi-worker, torch.compile, RankIC)
+# 7. Disk space
+# 8. Configuration files
 ```
 
 ### Cache Management
@@ -284,7 +334,7 @@ The plan management system uses:
 - **Auto-configuration**: Futures API, parquet paths, and categories
 - **Zero migration cost**: No code changes required
 
-See `JQUANTS_STANDARD_PLAN_API_REPORT.md` for detailed API availability analysis.
+See `docs/reports/analysis/jquants_standard_plan_api_report_20251019.md` for detailed API availability analysis.
 
 ## High-Level Architecture
 
@@ -440,7 +490,8 @@ JQUANTS_AUTH_PASSWORD=xxx
 MAX_CONCURRENT_FETCH=75      # JQuants API parallel requests
 MAX_PARALLEL_WORKERS=20       # CPU parallel processing
 USE_GPU_ETL=1                # GPU-accelerated ETL (RAPIDS/cuDF)
-RMM_POOL_SIZE=70GB           # GPU memory pool for A100 80GB
+RMM_POOL_SIZE=40GB           # GPU memory pool for A100 80GB (stability-focused)
+                             # Reduced from 70GB to prevent OOM on complex graphs
 CUDA_VISIBLE_DEVICES=0       # GPU device selection
 
 # Cache optimization (REQUIRED - major performance impact)
@@ -513,7 +564,7 @@ The project uses a modular Makefile structure for better maintainability:
 **Key Features**:
 - Unified entry point: `scripts/train.py` wraps `integrated_ml_training_pipeline.py`
 - Environment variable-based configuration (mode-specific settings)
-- Updated `RMM_POOL_SIZE=40GB` (from 0) for OOM prevention
+- Optimized `RMM_POOL_SIZE=40GB` (stability-focused, reduced from 70GB)
 - Monthly cache sharding: `output/graph_cache/YYYYMM/w{WINDOW}-t{THRESHOLD}-k{K}/`
 - All legacy commands (`dataset-full-gpu`, `train-atft`, `smoke`, etc.) remain supported for backward compatibility
 
@@ -673,6 +724,19 @@ RuntimeWarning: invalid value encountered in divide
 
 **Note on data-dependent features**:
 Daily margin (`dmi_*`), short selling, and sector short selling features are enabled by default but **depend on actual data availability**. If data cannot be fetched or does not exist for the date range, these columns may be NULL or not generated. This is why the actual column count can vary slightly (~303-307) even excluding futures.
+
+**Short selling data normalization (FIXED 2025-10-20)**:
+- **Issue**: API field name mismatches caused 100% data loss for short selling endpoints
+- **Root causes**:
+  1. `short_positions`: Expected `Date` but API returns `DisclosedDate`/`CalculatedDate`
+  2. `short_selling`: Expected `Code` but API returns `Sector33Code` (sector-level data)
+  3. Type comparison errors: Code compared string `"-"` with Float64 numeric types
+- **Fix locations**: `src/gogooku3/components/jquants_async_fetcher.py`
+  - Lines 2065-2172: `_normalize_short_selling_positions_data()`
+  - Lines 1983-2073: `_normalize_short_selling_data()`
+- **Status**: ✅ Fixed and verified
+- **Test scripts**: `scripts/test_short_selling_fix.py`, `scripts/debug_short_selling_api.py`
+- **Details**: See `docs/fixes/short_selling_normalization_issue_20251020.md`
 
 ### Cache Issues
 
