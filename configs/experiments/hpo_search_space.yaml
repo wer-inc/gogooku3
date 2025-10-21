@@ -1,0 +1,314 @@
+# HPO Search Space Configuration
+# Based on experiment_design.md (Experiment 4.1 & 4.2)
+# For use with Optuna hyperparameter optimization
+
+# ============================================================================
+# Quick Probe Configuration (Experiment 4.1)
+# ============================================================================
+
+quick_probe:
+  description: "Fast 12-16 trial probe with 2 epochs each (~6 hours total)"
+  n_trials: 16
+  max_epochs_per_trial: 2
+  timeout_hours: 6
+
+  search_space:
+    # Optimizer parameters
+    learning_rate:
+      type: categorical
+      choices: [1.0e-4, 2.0e-4, 3.0e-4, 5.0e-4]
+      description: "Initial learning rate for AdamW"
+
+    weight_decay:
+      type: categorical
+      choices: [1.0e-5, 5.0e-5, 1.0e-4, 5.0e-4]
+      description: "L2 regularization strength"
+
+    # Loss function weights
+    sharpe_weight:
+      type: categorical
+      choices: [0.6, 0.7, 0.8, 0.9, 1.0]
+      description: "Sharpe ratio loss component weight"
+
+    rankic_weight:
+      type: float
+      low: 0.0
+      high: 0.3
+      step: 0.05
+      description: "RankIC loss component weight (0.05 increments)"
+
+    # Regularization
+    feature_dropout:
+      type: categorical
+      choices: [0.0, 0.1, 0.2, 0.3]
+      description: "Feature-level dropout rate"
+
+    # Training parameters
+    batch_size:
+      type: categorical
+      choices: [1024, 2048, 4096]
+      description: "Training batch size"
+
+  # Optimization metric (what to maximize/minimize)
+  objective:
+    metric: "val_sharpe_ratio"
+    direction: "maximize"
+
+  # Pruning configuration (stop bad trials early)
+  pruning:
+    enabled: true
+    warmup_epochs: 1  # Don't prune before this epoch
+    min_improvement: 0.01  # Minimum improvement to continue
+
+# ============================================================================
+# Full HPO Configuration (Experiment 4.2)
+# ============================================================================
+
+full_hpo:
+  description: "Comprehensive 50-100 trial optimization with 30 epochs each"
+  n_trials: 50
+  max_epochs_per_trial: 30
+  timeout_hours: 48
+
+  search_space:
+    # Optimizer parameters (expanded range)
+    learning_rate:
+      type: loguniform
+      low: 5.0e-5
+      high: 1.0e-3
+      description: "Log-uniform sampling for learning rate"
+
+    weight_decay:
+      type: loguniform
+      low: 1.0e-6
+      high: 1.0e-3
+      description: "Log-uniform sampling for weight decay"
+
+    # Loss function weights (continuous optimization)
+    sharpe_weight:
+      type: float
+      low: 0.5
+      high: 1.0
+      step: 0.05
+      description: "Sharpe ratio loss weight (continuous)"
+
+    rankic_weight:
+      type: float
+      low: 0.0
+      high: 0.4
+      step: 0.05
+      description: "RankIC loss weight (continuous)"
+
+    cs_ic_weight:
+      type: float
+      low: 0.0
+      high: 0.3
+      step: 0.05
+      description: "Cross-sectional IC loss weight"
+
+    # Model architecture
+    hidden_size:
+      type: categorical
+      choices: [64, 128, 256]
+      description: "Model hidden dimension"
+
+    gat_heads:
+      type: categorical
+      choices: [4, 8, 16]
+      description: "Number of GAT attention heads"
+
+    gat_dropout:
+      type: float
+      low: 0.0
+      high: 0.4
+      step: 0.1
+      description: "GAT layer dropout rate"
+
+    # Regularization
+    feature_dropout:
+      type: float
+      low: 0.0
+      high: 0.4
+      step: 0.1
+      description: "Feature-level dropout rate"
+
+    edge_dropout:
+      type: float
+      low: 0.0
+      high: 0.3
+      step: 0.05
+      description: "Graph edge dropout rate"
+
+    # Training parameters
+    batch_size:
+      type: categorical
+      choices: [1024, 2048, 4096, 8192]
+      description: "Training batch size"
+
+    gradient_clip_val:
+      type: categorical
+      choices: [0.5, 1.0, 2.0, 5.0]
+      description: "Gradient clipping threshold"
+
+    # Scheduler parameters
+    scheduler_patience:
+      type: int
+      low: 5
+      high: 15
+      step: 2
+      description: "Plateau scheduler patience (epochs)"
+
+    scheduler_factor:
+      type: categorical
+      choices: [0.3, 0.5, 0.7]
+      description: "Plateau scheduler reduction factor"
+
+  # Optimization objective
+  objective:
+    metric: "val_sharpe_ratio"
+    direction: "maximize"
+    secondary_metrics:
+      - "val_rank_ic_5d"
+      - "val_loss"
+
+  # Advanced pruning
+  pruning:
+    enabled: true
+    algorithm: "hyperband"  # More sophisticated than median pruning
+    warmup_epochs: 5
+    min_improvement: 0.005
+
+# ============================================================================
+# Sampler Configuration
+# ============================================================================
+
+sampler:
+  # TPE (Tree-structured Parzen Estimator) is recommended for most cases
+  algorithm: "tpe"
+  n_startup_trials: 10  # Random trials before TPE kicks in
+  seed: 42  # For reproducibility
+
+# ============================================================================
+# Study Configuration
+# ============================================================================
+
+study:
+  storage: "sqlite:///output/optuna_studies.db"
+  study_name_prefix: "atft_sharpe_optimization"
+  load_if_exists: true  # Resume existing studies
+
+# ============================================================================
+# Resource Constraints
+# ============================================================================
+
+resources:
+  gpu_memory_limit_gb: 70  # Leave 10GB headroom on A100 80GB
+  max_concurrent_trials: 1  # Sequential trials (can increase for multi-GPU)
+  checkpoint_freq_epochs: 5  # Save checkpoints every N epochs
+
+# ============================================================================
+# Logging and Tracking
+# ============================================================================
+
+logging:
+  wandb:
+    enabled: false  # Set to true if using Weights & Biases
+    project: "atft-hpo"
+    entity: null
+
+  tensorboard:
+    enabled: true
+    log_dir: "logs/hpo"
+
+  save_best_trials: 5  # Keep top 5 trial checkpoints
+  save_all_results: true  # Save JSON for all trials
+
+# ============================================================================
+# Example Optuna Objective Function
+# ============================================================================
+
+# This is pseudo-code for reference - actual implementation in scripts/hpo/
+objective_function_template: |
+  def objective(trial):
+      # Sample hyperparameters
+      lr = trial.suggest_loguniform('learning_rate', 5e-5, 1e-3)
+      wd = trial.suggest_loguniform('weight_decay', 1e-6, 1e-3)
+      sharpe_w = trial.suggest_float('sharpe_weight', 0.5, 1.0, step=0.05)
+      rankic_w = trial.suggest_float('rankic_weight', 0.0, 0.4, step=0.05)
+      batch_size = trial.suggest_categorical('batch_size', [1024, 2048, 4096])
+
+      # Run training with these hyperparameters
+      sharpe = train_and_evaluate(
+          lr=lr,
+          weight_decay=wd,
+          sharpe_weight=sharpe_w,
+          rankic_weight=rankic_w,
+          batch_size=batch_size,
+          max_epochs=2,  # For quick probe
+      )
+
+      return sharpe
+
+# ============================================================================
+# Launch Commands
+# ============================================================================
+
+launch_commands:
+  quick_probe: |
+    python scripts/hpo/run_optuna_hpo.py \
+      --config configs/experiments/hpo_search_space.yaml \
+      --mode quick_probe \
+      --n-trials 16 \
+      --max-epochs 2 \
+      --study-name atft_sharpe_optimization_quick
+
+  full_hpo: |
+    python scripts/hpo/run_optuna_hpo.py \
+      --config configs/experiments/hpo_search_space.yaml \
+      --mode full_hpo \
+      --n-trials 50 \
+      --max-epochs 30 \
+      --study-name atft_sharpe_optimization_full
+
+  resume_study: |
+    python scripts/hpo/run_optuna_hpo.py \
+      --config configs/experiments/hpo_search_space.yaml \
+      --mode full_hpo \
+      --study-name atft_sharpe_optimization_full \
+      --load-if-exists
+
+  visualize_results: |
+    python scripts/hpo/visualize_optuna_results.py \
+      --study-name atft_sharpe_optimization_full \
+      --output-dir output/hpo_analysis
+
+# ============================================================================
+# Expected Outcomes
+# ============================================================================
+
+expected_outcomes:
+  quick_probe:
+    runtime_hours: 6
+    expected_sharpe_improvement: "+5-10%"
+    target_sharpe: "0.61-0.64"
+    use_case: "Identify promising hyperparameter ranges"
+
+  full_hpo:
+    runtime_hours: 48
+    expected_sharpe_improvement: "+10-20%"
+    target_sharpe: "0.64-0.70"
+    use_case: "Find optimal hyperparameter configuration"
+
+# ============================================================================
+# Best Practices
+# ============================================================================
+
+best_practices:
+  - "Run quick_probe first to identify promising ranges"
+  - "Use full_hpo only if quick_probe shows improvement potential"
+  - "Monitor GPU memory usage - reduce batch_size if OOM"
+  - "Enable pruning to stop unpromising trials early"
+  - "Save checkpoints regularly (every 5 epochs)"
+  - "Use TPE sampler for better convergence"
+  - "Set random seed for reproducibility"
+  - "Track all trials in database (sqlite or postgres)"
