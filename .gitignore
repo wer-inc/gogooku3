@@ -137,3 +137,12 @@ cleanup_execution_report.md
 logs/
 outputs/
 .env
+
+# Archive files (experimental data, logs, old code)
+archive/
+archive/*.tar.gz
+archive/*/
+
+# Secrets directory (credentials, API keys)
+secrets/
+secrets.zip
