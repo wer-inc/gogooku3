@@ -2195,6 +2195,14 @@ async def enrich_and_save(
             "volatility_20d",
             "volatility_60d",
             "realized_volatility",
+            "pk_vol_20",
+            "pk_vol_60",
+            "rs_vol_20",
+            "rs_vol_60",
+            "yz_vol_20",
+            "yz_vol_60",
+            "vov_20",
+            "vov_60",
             # 1.4 SMA/EMA (10)
             "sma_5",
             "sma_10",
@@ -2222,6 +2230,7 @@ async def enrich_and_save(
             "volume_ratio_20",
             "turnover_rate",
             "dollar_volume",
+            "amihud_20",
             # 1.7 Technical (approx 10)
             "rsi_2",
             "rsi_14",
@@ -2968,6 +2977,13 @@ async def enrich_and_save(
             "stmt_",
             "sec17_onehot_",
             "sect_",
+            "pk_",
+            "rs_",
+            "yz_",
+            "vov_",
+            "amihud_",
+            "ss_",
+            "opt_",
         )
         allowed_exact = {
             # Flow compatibility names without flow_ prefix

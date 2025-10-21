@@ -98,6 +98,16 @@ feature_categories:
     - keltner_upper
     - keltner_lower
 
+    # Advanced volatility (Yang-Zhang, Parkinson, Rogers-Satchell)
+    - yz_vol_20
+    - yz_vol_60
+    - pk_vol_20
+    - pk_vol_60
+    - rs_vol_20
+    - rs_vol_60
+    - vov_20
+    - vov_60
+
     # Volume indicators
     - obv
     - obv_ma
@@ -205,6 +215,9 @@ feature_categories:
     - mkt_impact
     - mkt_liquidity
 
+    # Liquidity indicators (Amihud illiquidity)
+    - amihud_20
+
     # Market regime
     - mkt_trend_strength
     - mkt_volatility_regime
@@ -306,14 +319,14 @@ feature_categories:
 # ============================================================================
 expected_counts:
   basic: 46
-  technical: 50
+  technical: 58  # +8 advanced volatility features
   ma_derived: 20
   returns: 15
-  market: 26
+  market: 27  # +1 Amihud liquidity
   flows: 17
   statements: 15
   additional: 0  # Variable, will be calculated
-  total: 189  # Actual feature count from dataset
+  total: 198  # Actual feature count from dataset (+9 new features)
 
 # ============================================================================
 # Feature selection rules
