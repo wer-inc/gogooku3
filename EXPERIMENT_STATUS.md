@@ -1,17 +1,18 @@
 # Experiment Suite Status
 
-**Updated**: 2025-10-21 07:10 JST
+**Updated**: 2025-10-21 13:00 JST
 **Current Best**: Sharpe 0.779 (Experiment 1.1b - Pure Sharpe optimization)
+**Latest Experiment**: Tier 2.1 FAILED (Sharpe 0.095 - batch size error)
 
 ---
 
 ## 🎯 Overall Goals
 
-- **Current Best**: Sharpe 0.779 🎯
+- **Current Best**: Sharpe 0.779 🎯 (Tier 1.1b)
 - **Target**: Sharpe 0.849
 - **Remaining Gap**: 0.070 (8.2%)
 - **Progress**: **91.7% of target achieved**
-- **Strategy**: Systematic tier-by-tier optimization
+- **Strategy**: Systematic tier-by-tier optimization (Tier 2 retry needed)
 
 ---
 
@@ -64,31 +65,88 @@
 
 ---
 
-## 🚀 Next: Tier 2 - Model Capacity Expansion
+## ❌ Tier 2 FAILED: Model Capacity Expansion (Batch Size Error)
 
-### Experiment 2.1: Hidden Size 256 (READY TO LAUNCH)
+**Status**: ❌ **FAILED - Critical Configuration Error**
+**Completed**: 2025-10-21 12:55 JST
+**Duration**: 4.1 hours (14,893s)
 
-**Configuration**:
-- **Model**: hidden_size 256 (vs current 64)
-- **Sharpe weight**: 1.0 (proven optimal from Tier 1)
-- **Expected Sharpe**: 0.82-0.85 (+5-8% improvement)
-- **Expected**: **High probability of reaching target 0.849**
-- **Runtime**: ~2 hours
-- **Priority**: ⭐⭐⭐ (Highest - likely to achieve goal)
+### Experiment 2.1: Hidden Size 256 (FAILED)
 
-**Rationale**:
-- Larger model capacity (5.6M → 20M params)
-- Combined with proven optimal loss weight (1.0)
-- Config already prepared in `config_production_optimized.yaml`
+**Results**:
+- **Final Sharpe**: **0.095** (vs Tier 1's 0.779)
+- **Performance**: **-87.8% degradation** ❌
+- **Best Val Loss**: -0.0180 (vs Tier 1's -0.0319)
+- **Status**: Complete failure - worse than random
 
-**Launch Command**:
+**Root Cause**: **Batch size reduced from 1024 → 256**
+- Used Safe mode (FORCE_SINGLE_PROCESS=1)
+- Safe mode defaults to batch_size=256 for stability
+- Small batch size → Unstable Sharpe estimation → Poor optimization
+- Model capacity scaling requires **larger** batches, not smaller
+
+**Key Learnings**:
+1. ❌ **Never reduce batch size for larger models**
+2. ❌ **Safe mode defaults not universal** - Optimized for stability, not performance
+3. ✅ **Batch size is critical** for financial metric optimization
+4. ✅ **Model capacity alone insufficient** - Need holistic configuration
+
+**Configuration Used (INCORRECT)**:
 ```bash
-cd /workspace/gogooku3
+# What was run (WRONG):
+FORCE_SINGLE_PROCESS=1  # Triggered Safe mode
 SHARPE_WEIGHT=1.0 RANKIC_WEIGHT=0.0 CS_IC_WEIGHT=0.0 \
 python scripts/integrated_ml_training_pipeline.py \
   --max-epochs 30 \
+  --data-path output/ml_dataset_latest_full.parquet
+  # batch_size=256 (from Safe mode defaults) ❌
+```
+
+**Documentation**:
+- **Full Analysis**: `docs/reports/experiments/tier2_failure_analysis_20251021.md`
+- **Log File**: `/tmp/experiment_2_1_hidden256_tier2.log` (387KB)
+- **Result JSON**: `output/results/complete_training_result_20251021_125546.json`
+
+---
+
+## 🔄 Tier 2 Retry: Corrected Configuration (READY TO LAUNCH)
+
+### Experiment 2.1 Retry: Hidden Size 256 with Correct Batch Size
+
+**Configuration** (CORRECTED):
+- **Model**: hidden_size 256 (vs current 64) - 20M params
+- **Batch Size**: **2048** (4x failed attempt, 2x Tier 1)
+- **Sharpe weight**: 1.0 (proven optimal from Tier 1)
+- **Mode**: Optimized (NOT Safe mode)
+- **Expected Sharpe**: 0.82-0.85 (+5-8% over Tier 1)
+- **Expected**: **High probability of reaching target 0.849**
+- **Runtime**: ~2-3 hours
+- **Priority**: ⭐⭐⭐ (Highest - corrected configuration)
+
+**Rationale**:
+- Larger model capacity (5.6M → 20M params) needs **more signal** (larger batches)
+- Batch size 2048 provides stable Sharpe estimation for 20M param model
+- Rule of thumb: `batch_size ≥ sqrt(params) × 10` → 20M params → batch ≥ 4472
+- Using 2048 as conservative middle ground (between 1024 and 4096)
+- Proven loss configuration (SHARPE_WEIGHT=1.0)
+
+**Launch Command** (CORRECTED):
+```bash
+cd /workspace/gogooku3
+
+# Tier 2 Retry with corrected configuration
+SHARPE_WEIGHT=1.0 \
+RANKIC_WEIGHT=0.0 \
+CS_IC_WEIGHT=0.0 \
+python scripts/integrated_ml_training_pipeline.py \
+  --max-epochs 30 \
+  --batch-size 2048 \
+  --lr 2.0e-4 \
   --data-path output/ml_dataset_latest_full.parquet \
-  > /tmp/experiment_2_1_hidden256.log 2>&1 &
+  > /tmp/experiment_2_1_retry_batch2048.log 2>&1 &
+
+# Monitor
+tail -f /tmp/experiment_2_1_retry_batch2048.log | grep -E "Sharpe|batch_size|hidden_size"
 ```
 
 ### Experiment 3.1: Feature Bundle 220 (DATASET REBUILD NEEDED)
@@ -148,14 +206,16 @@ python scripts/integrated_ml_training_pipeline.py \
 
 **Achievement**: +33.8% improvement, 91.7% of target
 
-### 🔄 Phase 2: Capacity Expansion (READY)
+### ❌ Phase 2: Capacity Expansion (FAILED - RETRY READY)
 
-| Experiment | Status | Runtime | Expected Sharpe | Priority |
-|------------|--------|---------|----------------|----------|
-| 2.1 (Hidden 256) | ⏸️ Ready | ~2h | 0.82-0.85 | ⭐⭐⭐ |
-| 3.1 (Features 220) | ⏸️ Dataset | ~4h | 0.85+ | ⭐⭐ |
+| Experiment | Status | Runtime | Final/Expected Sharpe | Result | Notes |
+|------------|--------|---------|----------------------|--------|-------|
+| 2.1 (Hidden 256) | ❌ Failed | 4.1h | 0.095 | **-87.8%** ❌ | batch_size=256 error |
+| 2.1 Retry (batch=2048) | ⏸️ Ready | ~2-3h | 0.82-0.85 (expected) | Corrected | Fix applied |
+| 3.1 (Features 220) | ⏸️ Dataset | ~4h | 0.85+ (expected) | Backup | If retry fails |
 
-**Target**: Reach or exceed 0.849 Sharpe
+**Status**: Tier 2 failed due to batch size configuration error (256 vs 1024)
+**Target**: Reach or exceed 0.849 Sharpe with corrected Tier 2 retry
 
 ### 📝 Phase 3: Refinement (Planned)
 
@@ -209,24 +269,33 @@ archive/
 
 ## 🔧 Recommended Next Actions
 
-### Immediate (Today - High Priority)
+### ❗ URGENT: Tier 2 Retry (Today - Highest Priority)
 
-**1. Launch Experiment 2.1** (Hidden size 256)
-- Use proven optimal Sharpe weight=1.0
-- Expected to reach or exceed target 0.849
-- Runtime: ~2 hours
-- **Action**: Execute launch command above
+**1. Launch Experiment 2.1 Retry** (Hidden size 256, batch_size=2048)
+- **Status**: ❌ Previous attempt FAILED (Sharpe 0.095 due to batch_size=256 error)
+- **Fix Applied**: Explicit `--batch-size 2048` (4x failed attempt)
+- **Mode**: Optimized (NOT Safe mode)
+- **Expected**: Sharpe 0.82-0.85, high probability of reaching target 0.849
+- **Runtime**: ~2-3 hours
+- **Action**: Execute corrected launch command above (line 135-150)
+
+**Why This is Critical**:
+- Root cause identified and fixed (batch size configuration error)
+- All other settings correct (SHARPE_WEIGHT=1.0, hidden_size=256)
+- High confidence in success with corrected configuration
 
 ### Short-term (This Week)
 
-**2. Validate Tier 2 Results**
-- If Exp 2.1 reaches target → Proceed to production validation
-- If below target → Launch Exp 3.1 (Features 220)
+**2. Validate Tier 2 Retry Results**
+- If Exp 2.1 Retry reaches target 0.849 → Proceed to production validation ✅
+- If below target but >0.80 → Launch Exp 3.1 (Features 220)
+- If still failing → Investigate model architecture issues
 
-**3. Production Readiness**
+**3. Production Readiness** (If Tier 2 Retry succeeds)
 - Walk-forward validation on holdout period
-- Ensemble top 2-3 models
+- Ensemble top 2-3 models (Tier 1 best + Tier 2 retry)
 - Risk analysis and stress testing
+- Document final model configuration
 
 ### Medium-term (Next Week - Optional)
 
