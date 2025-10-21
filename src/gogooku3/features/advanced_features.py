@@ -67,6 +67,20 @@ def _compute_realized_vol_20(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
+def _compute_amihud_20(df: pl.DataFrame) -> pl.DataFrame:
+    if "amihud_20" in df.columns:
+        return df
+    required = {"returns_1d", "dollar_volume"}
+    if not required.issubset(df.columns):
+        return df
+    illiq = (
+        (pl.col("returns_1d").abs() / (pl.col("dollar_volume") + EPS))
+        .rolling_mean(20, min_periods=5)
+        .over("Code")
+    ).alias("amihud_20")
+    return df.with_columns([illiq])
+
+
 def _compute_macd_hist_slope(df: pl.DataFrame) -> pl.DataFrame:
     if "macd_hist_slope" in df.columns or "Close" not in df.columns:
         return df
@@ -115,6 +129,7 @@ def add_advanced_features(df: pl.DataFrame) -> pl.DataFrame:
     # RSI and realized vol
     out = _compute_rsi14(out)
     out = _compute_realized_vol_20(out)
+    out = _compute_amihud_20(out)
 
     # Interaction features
     if {"rsi_14", "realized_vol_20"}.issubset(out.columns):

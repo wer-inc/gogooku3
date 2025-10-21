@@ -47,7 +47,15 @@
     "volatility_10d",
     "volatility_20d",
     "volatility_5d",
-    "volatility_60d"
+    "volatility_60d",
+    "pk_vol_20",
+    "pk_vol_60",
+    "rs_vol_20",
+    "rs_vol_60",
+    "yz_vol_20",
+    "yz_vol_60",
+    "vov_20",
+    "vov_60"
   ],
   "moving_averages": [
     "ema_10",
@@ -354,8 +362,9 @@
     "days_since_earnings",
     "days_since_flow",
     "days_to_earnings",
-    "dollar_volume",
-    "earnings_day_return",
+  "dollar_volume",
+  "amihud_20",
+  "earnings_day_return",
     "earnings_momentum_10d",
     "earnings_momentum_20d",
     "earnings_momentum_5d",

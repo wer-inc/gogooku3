@@ -9,10 +9,12 @@ Implements leak-safety by shifting EOD features to the next business day
 using the equity panel's unique business dates (no external calendar required).
 """
 
-from math import sqrt
+from math import sqrt, log
 from typing import Iterable
 
 import polars as pl
+
+EPS = 1e-12
 
 
 def _next_bday_expr_from_equity(quotes: pl.DataFrame) -> pl.Expr:
@@ -56,36 +58,84 @@ def add_advanced_vol_block(
         ]
     )
 
-    cols_to_attach: list[pl.Expr] = []
+    exprs: list[pl.Expr] = []
+    wins_list: list[int] = []
     for win in windows:
-        if win is None or int(win) <= 1:
+        if win is None:
             continue
         win = int(win)
+        if win <= 1:
+            continue
+        wins_list.append(win)
         k = 0.34 / (1.34 + (win + 1) / (win - 1))
         var_u = pl.col("yz_u").rolling_var(win).over("Code")
         var_d = pl.col("yz_d").rolling_var(win).over("Code")
         var_c = pl.col("yz_c").rolling_var(win).over("Code")
         yz_var = var_u + k * var_c + (1 - k) * var_d
-        yz_vol = (yz_var.clip(lower_bound=0.0)).sqrt().alias(f"yz_vol_{win}")
-        # Volatility-of-Volatility as rolling std of yz_vol over the same window
-        vov = pl.col(f"yz_vol_{win}").rolling_std(win).over("Code").alias(f"vov_{win}")
-        cols_to_attach.append(yz_vol)
-        cols_to_attach.append(vov)
+        yz_vol = (
+            yz_var.clip(lower_bound=0.0).sqrt().alias(f"yz_vol_{win}")
+        )
+        exprs.append(yz_vol)
 
-    x = x.with_columns(cols_to_attach)
+        # Parkinson variance estimator
+        log_hl = (
+            ((pl.col("High") + EPS) / (pl.col("Low") + EPS)).log()
+        )
+        pk_var = (
+            log_hl.pow(2.0)
+            .rolling_mean(win, min_periods=win)
+            .over("Code")
+            / (4.0 * log(2.0))
+        )
+        pk_vol = (
+            pk_var.clip(lower_bound=0.0).sqrt() * sqrt(252.0)
+        ).alias(f"pk_vol_{win}")
+        exprs.append(pk_vol)
 
-    # Keep only columns to join back
-    yz_cols = [c for c in x.columns if c.startswith("yz_vol_") or c.startswith("vov_")]
-    yz = x.select(["Code", "Date"] + yz_cols)
+        # Rogers–Satchell variance estimator
+        log_h_o = ((pl.col("High") + EPS) / (pl.col("Open") + EPS)).log()
+        log_h_c = ((pl.col("High") + EPS) / (pl.col("Close") + EPS)).log()
+        log_l_o = ((pl.col("Low") + EPS) / (pl.col("Open") + EPS)).log()
+        log_l_c = ((pl.col("Low") + EPS) / (pl.col("Close") + EPS)).log()
+        rs_term = (log_h_o * log_h_c) + (log_l_o * log_l_c)
+        rs_var = rs_term.rolling_mean(win, min_periods=win).over("Code")
+        rs_vol = (
+            rs_var.clip(lower_bound=0.0).sqrt() * sqrt(252.0)
+        ).alias(f"rs_vol_{win}")
+        exprs.append(rs_vol)
+
+    if exprs:
+        x = x.with_columns(exprs)
+
+    # Attach volatility-of-volatility after yz columns exist
+    vov_exprs: list[pl.Expr] = []
+    for win in wins_list:
+        vs = (
+            pl.col(f"yz_vol_{win}")
+            .rolling_std(win, min_periods=win)
+            .over("Code")
+            .alias(f"vov_{win}")
+        )
+        vov_exprs.append(vs)
+    if vov_exprs:
+        x = x.with_columns(vov_exprs)
+
+    vol_cols = [
+        c for c in x.columns if c.startswith(("yz_vol_", "pk_vol_", "rs_vol_", "vov_"))
+    ]
+    if not vol_cols:
+        return df
+
+    vol = x.select(["Code", "Date"] + vol_cols)
 
     if shift_to_next_day:
         next_bd = _next_bday_expr_from_equity(df)
-        yz = yz.with_columns([next_bd.alias("Date")])
+        vol = vol.with_columns([next_bd.alias("Date")])
 
     # Join back to main frame (left join on Code, Date)
-    out = df.join(yz, on=["Code", "Date"], how="left")
+    out = df.join(vol, on=["Code", "Date"], how="left")
     # Validity column per a main representative window (first in list)
-    main_win = int(next(iter(windows))) if windows else 20
+    main_win = wins_list[0] if wins_list else 20
     if f"yz_vol_{main_win}" in out.columns:
         out = out.with_columns(
             [
@@ -93,4 +143,3 @@ def add_advanced_vol_block(
             ]
         )
     return out
-
