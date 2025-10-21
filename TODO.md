@@ -360,3 +360,141 @@ tail -f logs/ml_training.log | grep -i "worker\|spawn\|fork"
 - [optimization_summary_20251016.md](docs/reports/analysis/optimization_summary_20251016.md) - 12-minute session summary
 - [phase0_decision_framework_20251016.md](docs/reports/status/phase0_decision_framework_20251016.md) - Early stopping criteria
 - [gpu_investigation_complete.md](docs/reports/completion/gpu_investigation_complete.md) - GPU utilization analysis
+
+
+----
+
+• 承知しました。いまの実装と提示された「Standardプラン完全仕様」を細かく突き合わせると、次のような“まだ埋
+  まっていない／限定的にしか出ていない”領域が残っています。単に「列がある／ない」だけでなく、どういう構造上
+  の理由で欠けているのか、取り込み時にどんな追加作業が要るのかまで掘り下げておきます。
+
+  ———
+
+  ## 1. 空売り（ss_* 系）とセクター空売り (sector_short_*) の実データ出力
+
+  ### 現状
+
+  - コードベースには /markets/short_selling と /markets/short_selling_positions を取り込む処理 (src/
+    gogooku3/features/short_selling.py, short_selling_sector.py) が存在します。
+  - ただしデフォルトの実行環境では該当 API からデータを取得できておらず、生成された
+    ml_dataset_latest_full.parquet に ss_ratio 等の列は出現していません。
+  - allowed_prefixes に ss_ を加えたことで、データがあれば列を保つ準備は整いましたが、実際には
+    short_selling_parquet / short_positions_parquet が空 (もしくは未指定) のままになっているため出力に現れて
+    いません。
+
+  ### 仕様とのギャップ
+
+  - 仕様書の 3.8 節では 業種別空売り比率・大量空売りポジションを T+1 as-of で銘柄に付与することを前提にして
+    います。
+  - Standard プランでも /markets/short_selling 系は利用可能です。差が出ているのは データ取得タイミングと実装
+    フラグ（--enable-short-selling／--enable-sector-short-selling）の活用に過ぎません。
+
+  ### 改善策
+
+  1. 本番ジョブで --enable-short-selling を明示し、API 認証を効かせた状態で実行する。
+  2. あるいは過去にダウンロードした short_selling_*.parquet / short_positions_*.parquet を --short-selling-
+     parquet で指定。
+  3. 完全処理後 output/ml_dataset_latest_full.parquet を開き、[c for c in cols if c.startswith("ss_")] が所
+     定の列数（仕様では比率・モメンタム・Z・極値フラグなど十数列）そろっているか確認。
+
+  ———
+
+  ## 2. NX225 オプション集計（opt_*）
+
+  ### 現状
+
+  - src/gogooku3/features/index_option.py に市場レベルの IV 集計を T+1 シフトで株式に載せる処理があります。
+  - しかし dataset_features_detail.json には opt_ プレフィクスがまだ入っておらず、生成された parquet にも該
+    当列がありません。
+
+  ### 仕様とのギャップ
+
+  - 「任意」扱いですが、仕様書には NK225 オプション (/option/index_option) の集計を株式パネルにマージする設
+    計例が含まれています。
+  - Standard プランでも /option/index_option は利用可能（10年前まで）。データを用意して差し込めば列は出力可
+    能です。
+
+  ### 改善策
+
+  1. --index-option-parquet に raw データを渡すか、API からフェッチ (get_index_option) を有効化して parquet
+     を保存。
+  2. dataset_features_detail.json に opt_iv_* などの列を追記し、allowed_prefixes に opt_ を追加済みであるこ
+     とを確認。
+  3. 生成後に opt_ 列が出ているかチェック。統合がうまくいけば、例えば opt_iv_atm_median,
+     opt_term_slope_30_60, opt_oi_sum などが揃うはずです。
+
+  ———
+
+  ## 3. 上位仕様で触れていたが未実装な「高度な相互作用／埋め込み」
+
+  仕様では、以下の取り組みも紹介されていますが、現行のパイプライン（特徴量生成＋学習コード）にはまだ組み込ま
+  れていません。
+
+  ### 3.1 自己教師あり系列表現（TS2Vec など）
+
+  - 現状：通常のローリング特徴＋Transformer などの学習。TS2Vec や自己教師ありによる“事前学習 → 下流微調整”は
+    未導入。
+  - もし取り入れるなら、別途 Pretraining スクリプトや model zoo が必要になります。今の構成だと、そのままでは
+    使われていません。
+
+  ### 3.2 相関グラフ埋め込み／Graph Attention
+
+  - グラフ特徴 (graph_degree, peer_corr_mean など) の計算は実装されていますが、グラフに対する Node2Vec/
+    DeepWalk 的な埋め込みや GraphSAGEまではまだ入っていません。
+  - 仕様書で言及されている「Market-Guided Stock Transformer」（相関グラフを活かしたモデル）は、外部の研究実
+    装を参考に追加する余地があります。
+
+  ### 3.3 基礎的な先行研究指向の損失／Sharpe最適化
+
+  - Sharpe 損失や Sortino 損失に近い custom loss を既に試されているところ（Sharpe weight 1.0 など）はありま
+    すが、仕様で紹介されている DMN 系（Deep Momentum Networks）のような直接的な Sharpe 最適化アーキテクチャ
+    はまだ未導入です。
+
+  ———
+
+  ## 4. ビジネスカレンダー基準の再現性チェック
+
+  仕様書では 2020/10/01 の扱い（is_halt_20201001）や、T+1 の as‑of 結合が繰り返し強調されています。コード上
+  でこれらが欠けている部分はほぼありませんが、再現性の検証という意味で次の点は確認しておくと安心です。
+
+  1. 2020/10/01 マスク：is_halt_20201001 列は出力されています。が、対象日で範囲系・出来高系がゼロ／Null のま
+     まになっているか、テストで確認する必要があります。
+  2. T+1 effective_start：weekly_margin_interest や daily_margin_interest が期待どおりに翌営業日にシフトされ
+     ているか（effective_start 列→margin_days_since 等）を spot チェック。
+  3. カレンダー /markets/trading_calendar の取扱：現状は pandas の営業日ベース＋ _find_latest で処理していま
+     すが、祝日例外があった場合に実行ログで WARN が出ていないかを確認。
+
+  ———
+
+  ## 5. 今後の実装ロードマップ（抜けている項目を埋めるためのステップ）
+
+  1. 空売りブロックの完全有効化
+      - API 認証をセットし run_full_dataset に --enable-short-selling / --enable-sector-short-selling を
+        付与。
+      - 生成後、ss_* / sector_short_* 列が出ていることを確認。
+      - dataset_features_detail.json にどの列が載っているかを更新（ss_ratio や ss_percentile_252d など）。
+  2. オプション集計の取り込み
+      - --index-option-parquet を指定して raw データを取り込み、opt_ 列が出力されることを確認。
+      - 予め dataset_features_detail.json に opt_iv_atm_median, opt_oi_sum などを反映。
+  3. 自己教師あり・埋め込み系の導入
+      - 仕様を満たすだけなら不要ですが、「次の伸びしろ」として TS2Vec などを採用すれば、長期系列の圧縮が改善
+        します。
+      - その際は (1) pretraining スクリプト、(2) 埋め込みを特徴量として扱う変換、(3) モデル側での統合手順を
+        整備。
+  4. Sharpe 最適化アーキテクチャ
+      - 既存の Sharpe 損失をより洗練させたい場合には DMN 実装や Sharpe-only fine-tune の仕組みを整理し、**評
+        価指標（RankIC、Top-K コスト込み Sharpe）**を一貫して追うフレームワークを構築。
+
+  ———
+
+  ## まとめ
+
+  - 純粋に列が欠けている範囲：空売り派生 (ss_*)・業種別空売り (sector_short_*)・オプション集計 (opt_*) →
+    データを取得し、パイプラインに通せば即補完可能。
+  - 仕様で挙げたが未導入の “高度な手法”：自己教師あり系列表現、相関グラフ埋め込み、Sharpe 直接最適化など →
+    こちらは今後の研究タスクとして検討対象。
+  - 既に実装済み：価格・ボラ・レンジ（Parkinson, RS, YZ, vov）、流動性 (Amihud)、信用系 (dmi_*, margin_*)、
+    投資部門別 (flow_*)、業種相対 (sec_*)、相互作用 (x_*)、Graph 指標 (graph_*) 等。
+
+  抜けている部分を埋める第一歩としては、まず 空売り と オプション を Standard プランの範囲で確実に出力させる
+  ことが最も取り掛かりやすく、全仕様の完成度も一気に上がります。
