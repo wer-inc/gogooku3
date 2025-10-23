@@ -153,6 +153,30 @@ mypy src/gogooku3             # Type checking
 pre-commit run --all-files     # Full quality check
 ```
 
+### Cloud Storage (GCS)
+```bash
+# Status and configuration
+make gcs-status                # Check GCS configuration
+
+# Multi-directory sync (output/, outputs/, archive/)
+make gcs-sync-multi            # Sync all three directories
+make gcs-sync-multi-dry        # Dry-run mode (preview only)
+
+# Individual directory sync
+make gcs-sync-outputs          # Sync outputs/ only
+make gcs-sync-archive          # Sync archive/ only
+
+# Direct script usage
+python scripts/sync_multi_dirs_to_gcs.py --dry-run
+python scripts/sync_multi_dirs_to_gcs.py --dirs output outputs
+python scripts/sync_multi_dirs_to_gcs.py --bucket custom-bucket
+
+# Expected output:
+# output/: ~29K files, 42 GB (datasets, raw data, cache)
+# outputs/: ~400 files, <1 GB (Hydra outputs, configs)
+# archive/: ~80 files, ~30 MB (experiment archives, backups)
+```
+
 ### Health Diagnostics
 ```bash
 # Comprehensive project health check (8-step validation)
