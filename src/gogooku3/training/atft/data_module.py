@@ -8,6 +8,7 @@ import math
 import multiprocessing as mp
 import os
 import pickle
+import threading
 import time
 from bisect import bisect_right
 from pathlib import Path
@@ -343,6 +344,15 @@ class StreamingParquetDataset(Dataset):
                 "FEATURE_CLIP_VALUE is 0; set a positive bound to enable preprocessing clip and avoid overflow"
             )
 
+        # Guard refresh operations so multiple workers don't rebuild index simultaneously
+        self._refresh_lock = threading.Lock()
+        try:
+            self._missing_shard_retry = max(
+                1, int(os.getenv("MISSING_SHARD_RETRY", "2"))
+            )
+        except Exception:
+            self._missing_shard_retry = 2
+
         # CRITICAL FIX (2025-10-03): Global normalization statistics
         # Compute median/MAD from training data for proper cross-sample normalization
         self._global_median: np.ndarray | None = None
@@ -637,6 +647,77 @@ class StreamingParquetDataset(Dataset):
             "Metadata building took %.2fs (from scratch)", time.time() - start_time
         )
 
+    def _refresh_missing_shard(self, missing_path: Path) -> bool:
+        """
+        Refresh dataset state when a parquet shard disappears mid-training.
+
+        Args:
+            missing_path: Absolute path to the shard that raised FileNotFoundError.
+
+        Returns:
+            bool: True if the dataset metadata was successfully refreshed.
+        """
+        with self._refresh_lock:
+            if missing_path.exists():
+                # Shard reappeared while we were waiting on the lock (e.g. slow FS)
+                return True
+
+            split_dir = missing_path.parent
+            if not split_dir.exists():
+                logger.error(
+                    "Shard %s missing and parent directory %s no longer exists",
+                    missing_path,
+                    split_dir,
+                )
+                return False
+
+            logger.warning(
+                "Shard %s disappeared; rebuilding dataset index from %s",
+                missing_path,
+                split_dir,
+            )
+
+            new_paths = sorted(p for p in split_dir.glob("*.parquet") if p.exists())
+            if not new_paths:
+                logger.error(
+                    "No parquet files remain in %s after shard %s went missing",
+                    split_dir,
+                    missing_path,
+                )
+                return False
+
+            self.file_paths = new_paths
+
+            # Drop stale metadata cache so a rebuild reflects current shards
+            cache_path = self._get_cache_path()
+            try:
+                if cache_path.exists():
+                    cache_path.unlink()
+            except Exception as exc:
+                logger.debug(
+                    "Failed to remove stale metadata cache at %s: %s",
+                    cache_path,
+                    exc,
+                )
+
+            self.sequence_dates = None
+            self._file_window_counts.clear()
+            self._cumulative_windows.clear()
+            self._length = 0
+
+            try:
+                self._build_index()
+            except Exception as exc:
+                logger.error("Rebuilding dataset index failed: %s", exc)
+                return False
+
+            logger.info(
+                "Refreshed dataset index after shard loss. files=%d windows=%d",
+                len(self.file_paths),
+                self._length,
+            )
+            return True
+
     def _get_file_num_rows(self, file_path: Path) -> int:
         """Read the row count from parquet metadata (fast path)."""
         if _HAS_PQ:
@@ -743,18 +824,68 @@ class StreamingParquetDataset(Dataset):
 
     def _load_sample(self, idx: int) -> dict[str, Any]:
         """Load a single sample from disk."""
-        file_idx, relative_idx = self._resolve_sample_location(idx)
-        file_path = self.file_paths[file_idx]
+        attempts = 0
+        window: pl.DataFrame | None = None
 
-        # Select reader path
-        if self.reader_engine == "pyarrow" and _HAS_PQ:
-            window = self._load_window_pyarrow(file_idx, file_path, relative_idx)
-        else:
-            window = (
-                pl.scan_parquet(file_path)
-                .slice(relative_idx, self.sequence_length)
-                .select(self._columns_needed)
-                .collect(streaming=True)
+        while attempts <= self._missing_shard_retry:
+            try:
+                file_idx, relative_idx = self._resolve_sample_location(idx)
+            except IndexError as exc:
+                if attempts == 0:
+                    raise
+                raise IndexError(
+                    f"Index {idx} invalid after shard refresh (dataset length={self._length})"
+                ) from exc
+
+            try:
+                file_path = self.file_paths[file_idx]
+            except IndexError as exc:
+                if attempts == 0:
+                    raise
+                raise IndexError(
+                    f"Index {idx} out of range after shard refresh (len={len(self.file_paths)})"
+                ) from exc
+
+            try:
+                if self.reader_engine == "pyarrow" and _HAS_PQ:
+                    window = self._load_window_pyarrow(
+                        file_idx, file_path, relative_idx
+                    )
+                else:
+                    window = (
+                        pl.scan_parquet(file_path)
+                        .slice(relative_idx, self.sequence_length)
+                        .select(self._columns_needed)
+                        .collect(streaming=True)
+                    )
+                break
+            except FileNotFoundError as exc:
+                attempts += 1
+                logger.warning(
+                    "Missing parquet shard %s while loading idx=%d (attempt %d/%d)",
+                    file_path,
+                    idx,
+                    attempts,
+                    self._missing_shard_retry,
+                )
+
+                if attempts > self._missing_shard_retry:
+                    raise FileNotFoundError(
+                        f"Parquet shard {file_path} unavailable after "
+                        f"{self._missing_shard_retry} refresh attempts. "
+                        "Rebuild ATFT parquet splits (run the dataset conversion pipeline) and retry."
+                    ) from exc
+
+                if not self._refresh_missing_shard(file_path):
+                    raise FileNotFoundError(
+                        f"Failed to refresh dataset after shard {file_path} disappeared. "
+                        "Rebuild ATFT parquet splits and retry."
+                    ) from exc
+                continue
+
+        if window is None:
+            raise RuntimeError(
+                f"Failed to load sample idx={idx}; no parquet window available"
             )
 
         if window.height < self.sequence_length:

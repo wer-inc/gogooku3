@@ -17,6 +17,7 @@ if os.getenv("FORCE_SINGLE_PROCESS", "0") == "1":
     # Note: torch.set_num_threads(1) will still be called in data_module.py as backup
 
 import asyncio
+import hashlib
 import json
 import logging
 import subprocess
@@ -24,6 +25,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -73,8 +75,8 @@ class CompleteATFTTrainingPipeline:
         # ATFT-GAT-FANの成果設定
         self.atft_settings = {
             "expected_sharpe": 0.849,
-            "model_params": 5611803,
-            "input_dim": 8,
+            "model_params": 5181827,
+            "input_dim": 373,
             "sequence_length": 20,
             "prediction_horizons": [1, 5, 10, 20],
             "batch_size": 1024,  # A100 80GB向け安全デフォルト (旧: 4096)
@@ -234,28 +236,47 @@ class CompleteATFTTrainingPipeline:
             for key, value in self.stability_settings.items():
                 os.environ[key] = str(value)
 
-            # ATFT-GAT-FANのパス設定（スタンドアロン運用時は任意）
-            # - ATFT_EXTERNAL_PATH: 既存ATFTリポジトリの場所（未設定なら既定パス）
-            # - REQUIRE_ATFT_EXTERNAL: 1/trueで必須化（既定はオプション）
-            ext_path_env = os.getenv(
-                "ATFT_EXTERNAL_PATH", "/home/ubuntu/gogooku2/apps/ATFT-GAT-FAN"
-            )
-            atft_path = Path(ext_path_env)
+            # 長期調査結果に基づく運用デフォルト
+            os.environ.setdefault("FEATURE_CLIP_VALUE", "8")
+            os.environ.setdefault("EXPORT_PREDICTIONS", "1")
+            os.environ.setdefault("USE_BEST_CKPT_FOR_EXPORT", "1")
+            os.environ.setdefault("REQUIRE_GPU", "1")
+            os.environ.setdefault("ACCELERATOR", "gpu")
+            os.environ.setdefault("EARLY_STOP_METRIC", "val_sharpe")
+            os.environ.setdefault("EARLY_STOP_MAXIMIZE", "1")
+            os.environ.setdefault("EARLY_STOP_PATIENCE", "12")
+            os.environ.setdefault("NORMALIZATION_MAX_SAMPLES", "8192")
+            os.environ.setdefault("NORMALIZATION_MAX_FILES", "256")
+            os.environ.setdefault("ALLOW_UNSAFE_DATALOADER", "0")
+            os.environ.setdefault("NUM_WORKERS", "0")
+            os.environ.setdefault("PERSISTENT_WORKERS", "0")
+            os.environ.setdefault("PREFETCH_FACTOR", "0")
+
+            # ATFT-GAT-FAN の外部パス設定（オプション運用）
+            # - ATFT_EXTERNAL_PATH が指定されている場合のみ存在チェックを行う
+            ext_path_env = os.getenv("ATFT_EXTERNAL_PATH", "").strip()
             require_ext = os.getenv("REQUIRE_ATFT_EXTERNAL", "0").lower() in (
                 "1",
                 "true",
                 "yes",
             )
-            if not atft_path.exists():
-                if require_ext:
-                    logger.error(
-                        f"ATFT-GAT-FAN external path not found: {atft_path} (set ATFT_EXTERNAL_PATH or disable by REQUIRE_ATFT_EXTERNAL=0)"
+            if ext_path_env:
+                atft_path = Path(ext_path_env)
+                if not atft_path.exists():
+                    if require_ext:
+                        logger.error(
+                            f"ATFT-GAT-FAN external path not found: {atft_path} (set ATFT_EXTERNAL_PATH correctly or disable REQUIRE_ATFT_EXTERNAL)"
+                        )
+                        return False
+                    logger.info(
+                        "ATFT_EXTERNAL_PATH=%s is not available; continuing with bundled modules",
+                        atft_path,
                     )
-                    return False
-                else:
-                    logger.warning(
-                        f"ATFT-GAT-FAN external path not found: {atft_path} — continue in standalone mode"
-                    )
+            elif require_ext:
+                logger.error(
+                    "REQUIRE_ATFT_EXTERNAL is set but ATFT_EXTERNAL_PATH is not provided"
+                )
+                return False
 
             # 必要なディレクトリ作成
             (self.output_dir / "atft_data").mkdir(parents=True, exist_ok=True)
@@ -311,6 +332,12 @@ class CompleteATFTTrainingPipeline:
                 logger.info(f"📂 Loading ML dataset from: {ml_dataset_path}")
                 df = pl.read_parquet(ml_dataset_path)
                 self._last_ml_dataset_path = ml_dataset_path
+                try:
+                    self._record_feature_manifest(df, ml_dataset_path)
+                except Exception as manifest_err:  # noqa: BLE001
+                    logger.warning(
+                        f"Feature manifest recording skipped: {manifest_err}"
+                    )
 
             # 迅速検証モード: --sample-size が指定された場合は変換前にデータを縮小
             if self.sample_size is not None and self.sample_size > 0:
@@ -608,9 +635,11 @@ class CompleteATFTTrainingPipeline:
                 # Check for Safe mode once
                 is_safe_mode = os.getenv("FORCE_SINGLE_PROCESS", "0") == "1"
 
+                # Initialize safe_batch_size for logging (always defined)
+                safe_batch_size = int(os.getenv("SAFE_MODE_BATCH_SIZE", "256"))
+
                 if "train.batch.train_batch_size" not in cli_override_keys:
                     # Use Safe mode batch size if FORCE_SINGLE_PROCESS=1
-                    safe_batch_size = int(os.getenv("SAFE_MODE_BATCH_SIZE", "256"))
                     batch_size = (
                         safe_batch_size
                         if is_safe_mode
@@ -629,7 +658,7 @@ class CompleteATFTTrainingPipeline:
                     if "train.batch.pin_memory" not in cli_override_keys:
                         overrides.append("train.batch.pin_memory=false")
                     logger.info(
-                        f"[Safe Mode] Setting single-worker DataLoader: batch_size={safe_batch_size if is_safe_mode else self.atft_settings['batch_size']}, num_workers=0"
+                        f"[Safe Mode] Setting single-worker DataLoader: batch_size={safe_batch_size}, num_workers=0"
                     )
 
                 if "train.optimizer.lr" not in cli_override_keys:
@@ -650,6 +679,25 @@ class CompleteATFTTrainingPipeline:
                     )
                 if "train.trainer.enable_progress_bar" not in cli_override_keys:
                     overrides.append("train.trainer.enable_progress_bar=true")
+
+                # 特徴量次元の整合性（自動検出373列に合わせる）
+                if "model.input_dims.total_features" not in cli_override_keys:
+                    overrides.append("model.input_dims.total_features=373")
+                if "model.input_dims.historical_features" not in cli_override_keys:
+                    overrides.append("model.input_dims.historical_features=0")
+                if "model.input_dims.basic_features" not in cli_override_keys:
+                    overrides.append("model.input_dims.basic_features=373")
+
+                # ワーカークラッシュ防止のため単一プロセスのローダーを強制
+                if "train.batch.num_workers" not in cli_override_keys:
+                    overrides.append("train.batch.num_workers=0")
+                if "train.batch.prefetch_factor" not in cli_override_keys:
+                    overrides.append("train.batch.prefetch_factor=null")
+                if "train.batch.persistent_workers" not in cli_override_keys:
+                    overrides.append("train.batch.persistent_workers=false")
+                if "train.batch.pin_memory" not in cli_override_keys:
+                    overrides.append("train.batch.pin_memory=false")
+
                 cmd.extend(overrides)
 
             # 追加のHydraオーバーライド（HPOや詳細設定をパススルー）
@@ -782,8 +830,36 @@ class CompleteATFTTrainingPipeline:
             env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
             env.setdefault(
                 "ALLOW_UNSAFE_DATALOADER",
-                (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto"),
+                (os.getenv("ALLOW_UNSAFE_DATALOADER", "0") or "0"),
             )
+            # 学習安定化向け環境変数（既存指定があれば尊重）
+            env.setdefault("REQUIRE_GPU", os.getenv("REQUIRE_GPU", "1"))
+            env.setdefault("ACCELERATOR", os.getenv("ACCELERATOR", "gpu"))
+            env.setdefault("EXPORT_PREDICTIONS", os.getenv("EXPORT_PREDICTIONS", "1"))
+            env.setdefault(
+                "USE_BEST_CKPT_FOR_EXPORT",
+                os.getenv("USE_BEST_CKPT_FOR_EXPORT", "1"),
+            )
+            env.setdefault("FEATURE_CLIP_VALUE", os.getenv("FEATURE_CLIP_VALUE", "8"))
+            env.setdefault(
+                "EARLY_STOP_METRIC", os.getenv("EARLY_STOP_METRIC", "val_sharpe")
+            )
+            env.setdefault("EARLY_STOP_MAXIMIZE", os.getenv("EARLY_STOP_MAXIMIZE", "1"))
+            env.setdefault(
+                "EARLY_STOP_PATIENCE", os.getenv("EARLY_STOP_PATIENCE", "12")
+            )
+            env.setdefault(
+                "NORMALIZATION_MAX_SAMPLES",
+                os.getenv("NORMALIZATION_MAX_SAMPLES", "8192"),
+            )
+            env.setdefault(
+                "NORMALIZATION_MAX_FILES",
+                os.getenv("NORMALIZATION_MAX_FILES", "256"),
+            )
+            env.setdefault("NUM_WORKERS", os.getenv("NUM_WORKERS", "0"))
+            env.setdefault("PERSISTENT_WORKERS", os.getenv("PERSISTENT_WORKERS", "0"))
+            env.setdefault("PREFETCH_FACTOR", os.getenv("PREFETCH_FACTOR", "0"))
+            env.setdefault("PIN_MEMORY", os.getenv("PIN_MEMORY", "0"))
             # GPU/CPU の実行方針に応じて DataLoader 関連を調整（上の判定を再利用）
 
             # Detect optimized config to avoid passing loader overrides that may conflict
@@ -1144,10 +1220,11 @@ class CompleteATFTTrainingPipeline:
             # 成果の検証
             # Prefer metrics_summary.json, then latest_metrics.json, else parse logs
             sharpe = None
+            phase_metrics_summary: dict[str, Any] | None = None
             try:
                 ms_path = Path("runs/last/metrics_summary.json")
                 if ms_path.exists():
-                    with open(ms_path) as mf:
+                    with open(ms_path, encoding="utf-8") as mf:
                         jm = json.load(mf)
                         if isinstance(jm, dict):
                             sharpe = jm.get("avg_sharpe")
@@ -1157,14 +1234,22 @@ class CompleteATFTTrainingPipeline:
                 try:
                     metrics_path = Path("runs/last/latest_metrics.json")
                     if metrics_path.exists():
-                        with open(metrics_path) as mf:
+                        with open(metrics_path, encoding="utf-8") as mf:
                             jm = json.load(mf)
                             if isinstance(jm, dict):
                                 sharpe = jm.get("avg_sharpe")
                 except Exception:
                     sharpe = None
             if sharpe is None:
-                # Fallback to training logs
+                phase_metrics_summary = self._extract_phase_metrics_summary()
+                if (
+                    phase_metrics_summary
+                    and "best" in phase_metrics_summary
+                    and phase_metrics_summary["best"].get("sharpe") is not None
+                ):
+                    sharpe = phase_metrics_summary["best"]["sharpe"]
+            if sharpe is None:
+                # Fallback to training logs (use last occurrence to avoid batch-level spikes)
                 sharpe = self._extract_sharpe_ratio(training_info.get("log", ""))
                 if sharpe is None:
                     try:
@@ -1174,6 +1259,8 @@ class CompleteATFTTrainingPipeline:
                             sharpe = self._extract_sharpe_ratio(tail)
                     except Exception:
                         sharpe = None
+            if phase_metrics_summary is None:
+                phase_metrics_summary = self._extract_phase_metrics_summary()
 
             validation_info = {
                 "checkpoint_path": str(latest_checkpoint),
@@ -1185,6 +1272,7 @@ class CompleteATFTTrainingPipeline:
                 "sharpe_ratio": sharpe,
                 "target_sharpe": self.atft_settings["expected_sharpe"],
                 "checkpoint_size_mb": latest_checkpoint.stat().st_size / (1024 * 1024),
+                "phase_metrics": phase_metrics_summary,
             }
 
             logger.info(f"✅ Validation completed: {param_count} parameters")
@@ -1338,11 +1426,107 @@ class CompleteATFTTrainingPipeline:
 
         # 負値もマッチ（例: "Sharpe: -0.0123"）
         sharpe_pattern = r"Sharpe[:\s]*(-?[0-9]*\.?[0-9]+)"
-        match = re.search(sharpe_pattern, log)
+        matches = re.findall(sharpe_pattern, log)
 
-        if match:
-            return float(match.group(1))
+        if matches:
+            try:
+                return float(matches[-1])
+            except (TypeError, ValueError):
+                return None
         return None
+
+    def _extract_phase_metrics_summary(self) -> dict[str, Any] | None:
+        """phase_x_metrics.jsonl からバリデーション Sharpe を集計"""
+        metrics_dir = Path("output/results")
+        if not metrics_dir.exists():
+            return None
+
+        records: list[dict[str, Any]] = []
+        for path in sorted(metrics_dir.glob("phase_*_metrics.jsonl")):
+            try:
+                with open(path, encoding="utf-8") as fp:
+                    for line in fp:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        rec = json.loads(line)
+                        if not isinstance(rec, dict):
+                            continue
+                        val_sharpe = rec.get("val_sharpe")
+                        if val_sharpe is None:
+                            continue
+                        try:
+                            val_sharpe = float(val_sharpe)
+                        except (TypeError, ValueError):
+                            continue
+                        records.append(
+                            {
+                                "sharpe": val_sharpe,
+                                "phase": rec.get("phase"),
+                                "epoch": rec.get("epoch"),
+                                "val_loss": rec.get("val_loss"),
+                                "path": str(path),
+                            }
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"Phase metrics parse skipped for {path}: {exc}")
+
+        if not records:
+            return None
+
+        best_record = max(records, key=lambda r: r["sharpe"])
+        last_record = records[-1]
+        return {
+            "count": len(records),
+            "best": best_record,
+            "last": last_record,
+            "source_files": sorted({rec["path"] for rec in records}),
+        }
+
+    def _record_feature_manifest(
+        self, df: pl.DataFrame, dataset_path: Path | None
+    ) -> None:
+        """特徴量リストのスナップショットを保存して差分調査を容易にする"""
+        columns = list(df.columns)
+        manifest: dict[str, Any] = {
+            "path": str(dataset_path) if dataset_path else None,
+            "rows": int(len(df)),
+            "columns": len(columns),
+            "column_names": columns,
+            "column_hash": hashlib.sha256(
+                "||".join(columns).encode("utf-8")
+            ).hexdigest(),
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        metadata_path: Path | None = None
+        if dataset_path is not None:
+            try:
+                candidate = dataset_path.with_name(
+                    dataset_path.name.replace(".parquet", "_metadata.json")
+                )
+                if candidate.exists():
+                    metadata_path = candidate
+            except Exception:
+                metadata_path = None
+        if metadata_path is not None:
+            manifest["metadata_path"] = str(metadata_path)
+            try:
+                metadata_obj = json.loads(metadata_path.read_text(encoding="utf-8"))
+                manifest["metadata_features"] = metadata_obj.get("features", {}).get(
+                    "count"
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"Metadata read skipped for manifest: {exc}")
+
+        manifest_dir = self.output_dir / "results"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        manifest_path = manifest_dir / f"feature_manifest_{timestamp}.json"
+        payload = json.dumps(manifest, ensure_ascii=False, indent=2)
+        manifest_path.write_text(payload, encoding="utf-8")
+        latest_path = manifest_dir / "feature_manifest_latest.json"
+        latest_path.write_text(payload, encoding="utf-8")
 
     def _save_complete_training_result(self, result: dict):
         """完全な学習結果の保存"""

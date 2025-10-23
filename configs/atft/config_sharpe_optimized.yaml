@@ -27,7 +27,7 @@ model:
   hidden_size: 256  # Keep larger size for capacity
 
   input_dims:
-    total_features: 365  # Match actual data features (auto-detected)
+    total_features: 373  # Updated 2025-10-22: Align with latest dataset
     historical_features: 0
 
   # Variable Selection (enabled for feature selection)

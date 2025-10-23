@@ -9,9 +9,9 @@ input_projection:
   dropout: 0.1
 
 input_dims:
-  basic_features: 46
-  historical_features: 260
-  total_features: 306
+  basic_features: 373  # Latest dataset (no separate historical window expansion)
+  historical_features: 0
+  total_features: 373
 
 tft:
   lstm:

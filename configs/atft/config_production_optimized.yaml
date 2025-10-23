@@ -68,24 +68,24 @@ model:
   name: ATFT_GAT_FAN
   hidden_size: 256  # Increased from 64
 
-  # Input dimensions aligned with DATA LOADER detection (200 features)
-  # NOTE: DataLoader auto-detects 200 features after excluding metadata
-  # Updated 2025-10-04: Was 182, but actual detection shows F=200
+  # Input dimensions aligned with DATA LOADER detection (373 features)
+  # NOTE: DataLoader auto-detects 373 features after excluding metadata
+  # Updated 2025-10-22: Latest dataset provides 373 numeric features
   # CRITICAL: Model input_dim MUST match what DataLoader provides
   input_dims:
-    total_features: 200     # MUST match DataLoader detection (F=200)
+    total_features: 373     # MUST match DataLoader detection (F=373)
     historical_features: 0  # No historical features for now
 
     # Feature group breakdown (NOT USED - category split disabled)
-    # Kept for documentation only
-    basic_features: 18
-    technical_features: 24
-    ma_derived_features: 16
-    returns_features: 15
-    market_features: 26
-    flows_features: 55
-    statements_features: 18
-    additional_features: 10
+    # Counts retained for documentation only; aggregation handled dynamically
+    basic_features: 373
+    technical_features: 0
+    ma_derived_features: 0
+    returns_features: 0
+    market_features: 0
+    flows_features: 0
+    statements_features: 0
+    additional_features: 0
 
   # Variable Selection Networks (VSN) per feature group
   # RE-ENABLED after prediction collapse diagnosis completed (2025-10-04)

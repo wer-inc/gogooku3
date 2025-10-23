@@ -12,9 +12,9 @@ input_projection:
   dropout: 0.1
 
 input_dims:
-  basic_features: 365  # Updated 2025-10-15: Match actual feature count
+  basic_features: 373  # Updated 2025-10-22: Align with latest dataset (373 features)
   historical_features: 0
-  total_features: 365  # Updated 2025-10-15: Match actual feature count
+  total_features: 373  # Updated 2025-10-22: Align with latest dataset
 
 tft:
   lstm:
