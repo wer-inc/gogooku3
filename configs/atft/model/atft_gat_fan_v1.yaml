@@ -14,11 +14,11 @@ input_projection:
 # 入力特徴量次元（データローダーで自動計算）
 input_dims:
   # 基本特徴量
-  basic_features: 46  # price + flags + technical indicators
+  basic_features: 373  # 最新データセットの動的特徴量数
   # 履歴特徴量
-  historical_features: 260  # 13 indicators × 20 days
+  historical_features: 0  # 履歴展開はデータ側で処理済み
   # 合計
-  total_features: 306
+  total_features: 373
 
 # Temporal Fusion Transformer設定
 tft:
@@ -124,7 +124,7 @@ prediction_head:
     distribution_prediction:
       enabled: false
       type: normal
-    
+
     # Student-t分布ヘッド（ヘテロスケダスティック予測用）
     student_t: true
 

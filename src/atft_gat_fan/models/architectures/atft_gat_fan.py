@@ -136,37 +136,57 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         return target_tensor
 
     def _calculate_feature_dims(self):
-        """特徴量次元の計算（シンプル版：カテゴリ分割なし）"""
-        # カテゴリ分割を完全に無効化し、total_featuresのみを使用
+        """特徴量次元の計算（configの入力次元定義を尊重）"""
+
+        def _cfg_get(obj: object, key: str, default: int | None = None) -> int | None:
+            """Safely extract scalar values from OmegaConf nodes or dicts."""
+            try:
+                if obj is None:
+                    return default
+                if hasattr(obj, key):
+                    value = getattr(obj, key)
+                elif isinstance(obj, dict):
+                    value = obj.get(key, default)
+                else:
+                    from omegaconf import OmegaConf
+
+                    value = OmegaConf.select(obj, key, default=default)  # type: ignore[arg-type]
+                if value is None:
+                    return default
+                return int(value)
+            except Exception:
+                return default
+
         manual_dims = getattr(self.config.model, "input_dims", None)
 
-        if manual_dims is not None and hasattr(manual_dims, "total_features"):
-            total_features = int(manual_dims.total_features)
-            historical_override = int(
-                getattr(manual_dims, "historical_features", 0) or 0
-            )
-
-            self.n_current_features = total_features - historical_override
-            if self.n_current_features <= 0:
-                self.n_current_features = total_features
-
-            self.n_historical_features = historical_override
-            self.n_dynamic_features = total_features
-
-            logger.info(
-                "✅ Using simplified feature dimensions (category split DISABLED): "
-                f"total={total_features}, current={self.n_current_features}, "
-                f"historical={self.n_historical_features}"
-            )
-        else:
-            # Fallback: 設定がない場合はエラー
+        total_features = _cfg_get(manual_dims, "total_features")
+        if total_features is None:
             raise ValueError(
                 "model.input_dims.total_features must be specified in config. "
                 "Feature category auto-detection has been disabled."
             )
 
-        # 静的特徴量（market_code_nameのエンコーディング後の次元）
-        self.n_static_features = 10  # 仮の値（実際はエンコーディング方法による）
+        historical_override = _cfg_get(manual_dims, "historical_features", 0) or 0
+        current_features = total_features - historical_override
+        if current_features <= 0:
+            current_features = total_features
+
+        self.n_current_features = current_features
+        self.n_historical_features = historical_override
+        self.n_dynamic_features = total_features
+
+        static_features = _cfg_get(manual_dims, "static_features", 0) or 0
+        categorical_features = _cfg_get(manual_dims, "categorical_features", 0) or 0
+        self.n_static_features = static_features + categorical_features
+
+        logger.info(
+            "✅ Feature dimensions resolved from config: total=%d, current=%d, "
+            "historical=%d, static=%d",
+            self.n_dynamic_features,
+            self.n_current_features,
+            self.n_historical_features,
+            self.n_static_features,
+        )
 
     def _build_model(self):
         """モデルアーキテクチャの構築"""

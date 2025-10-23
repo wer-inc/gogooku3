@@ -3,11 +3,25 @@ Graph Builder for ATFT-GAT-FAN
 Minimal implementation for training compatibility
 """
 
+import glob
 import logging
+import os
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from datetime import date as _date_cls
+from datetime import datetime as _datetime_cls
+from datetime import timedelta
+from typing import Any, Optional, Union
 
+import polars as pl
 import torch
+
+try:
+    import pandas as pd  # noqa: F401  # optional downstream use
+except Exception:  # pragma: no cover - pandas optional
+    pd = None  # type: ignore[assignment]
+
+from src.data.utils.graph_builder import FinancialGraphBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GBConfig:
     """Graph Builder Configuration"""
+
     max_nodes: int = 100
     edge_threshold: float = 0.3
     use_dynamic_graph: bool = False
@@ -37,8 +52,12 @@ class GBConfig:
     size_tau: float = 1.0
     source_glob: str | None = None
     symmetric: bool = True
+    returns_channel_index: Optional[int] = None
+    date_column: str = "date"
+    code_column: str = "code"
+    market_col: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Ensure numeric fields remain positive where required
         self.max_nodes = max(1, int(self.max_nodes))
         self.k = max(1, int(self.k))
@@ -47,7 +66,9 @@ class GBConfig:
         self.min_obs = max(1, int(self.min_obs))
         self.update_frequency = max(1, int(self.update_frequency))
         if self.return_cols is not None:
-            self.return_cols = tuple(self.return_cols)
+            self.return_cols = tuple(str(col) for col in self.return_cols)
+        if self.returns_channel_index is not None:
+            self.returns_channel_index = max(0, int(self.returns_channel_index))
 
 
 class GraphBuilder:
@@ -60,9 +81,78 @@ class GraphBuilder:
         self.config = config or GBConfig()
         self.edge_index = None
         self.edge_attr = None
-        logger.info(f"GraphBuilder initialized with max_nodes={self.config.max_nodes}")
+        self._warned_missing_returns = False
+        self._last_asof_ts: Optional[_datetime_cls] = None
+        self._last_result: dict[str, Any] | None = None
 
-    def build_graph(self, features: torch.Tensor, codes: list | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        # Allow GRAPH_RET_IDX env override to align with runtime pipelines
+        env_idx = os.getenv("GRAPH_RET_IDX", "").strip()
+        if env_idx:
+            try:
+                self.config.returns_channel_index = max(0, int(env_idx))
+            except ValueError:
+                logger.warning("GRAPH_RET_IDX=%s cannot be interpreted as int", env_idx)
+
+        self._returns_channel_index = self.config.returns_channel_index
+        self.edge_index = None
+        self.edge_attr = None
+        logger.info(
+            "GraphBuilder initialized with max_nodes=%d, returns_channel_index=%s",
+            self.config.max_nodes,
+            "auto"
+            if self._returns_channel_index is None
+            else self._returns_channel_index,
+        )
+
+        self.source_glob = getattr(self.config, "source_glob", None)
+        self.date_column = getattr(self.config, "date_column", "date")
+        self.code_column = getattr(self.config, "code_column", "code")
+        self.return_columns = list(getattr(self.config, "return_cols", ()) or ())
+        if not self.return_columns:
+            self.return_columns = ["return_1d", "feat_ret_1d", "target_1d"]
+
+        self._financial_builder: Optional[FinancialGraphBuilder] = None
+        if self.source_glob:
+            try:
+                self._financial_builder = FinancialGraphBuilder(
+                    correlation_window=int(getattr(self.config, "lookback", 60)),
+                    min_observations=int(getattr(self.config, "min_obs", 40)),
+                    correlation_threshold=float(
+                        getattr(self.config, "edge_threshold", 0.3)
+                    ),
+                    max_edges_per_node=int(getattr(self.config, "k", 10)),
+                    include_negative_correlation=True,
+                    correlation_method=str(
+                        getattr(self.config, "method", "ewm_demean")
+                    ),
+                    ewm_halflife=int(getattr(self.config, "ewm_halflife", 20)),
+                    shrinkage_gamma=float(
+                        getattr(self.config, "shrinkage_gamma", 0.05)
+                    ),
+                    symmetric=bool(getattr(self.config, "symmetric", True)),
+                    cache_dir=str(getattr(self.config, "cache_dir", "graph_cache")),
+                    verbose=False,
+                    sector_col=getattr(self.config, "sector_col", None),
+                    market_col=getattr(self.config, "market_col", None),
+                )
+                logger.info(
+                    "FinancialGraphBuilder enabled (source_glob=%s, window=%d)",
+                    self.source_glob,
+                    int(getattr(self.config, "lookback", 60)),
+                )
+            except Exception as exc:
+                logger.warning("Failed to initialize FinancialGraphBuilder: %s", exc)
+                self._financial_builder = None
+        else:
+            logger.info(
+                "GraphBuilder running without source_glob; using local correlation fallback."
+            )
+
+    def build_graph(
+        self,
+        features: Union[torch.Tensor, dict[str, Any]],
+        codes: list | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Build graph from features.
 
@@ -74,12 +164,26 @@ class GraphBuilder:
             edge_index: Edge indices (2, E)
             edge_attr: Edge attributes (E, A)
         """
-        n_nodes = min(features.shape[0], self.config.max_nodes)
+        tensor_features = (
+            features
+            if torch.is_tensor(features)
+            else features.get("features")
+            if isinstance(features, dict)
+            else None
+        )
 
-        # Check if we have returns data for correlation calculation
-        if features.ndim == 3 and features.shape[1] >= 20:
-            # Use returns correlation (A+ approach)
-            edge_index, edge_attr = self.build_correlation_edges(features)
+        if tensor_features is None and torch.is_tensor(features):
+            tensor_features = features
+
+        if tensor_features is None or tensor_features.ndim < 2:
+            raise ValueError("GraphBuilder expects features with at least 2 dimensions")
+
+        n_nodes = min(tensor_features.shape[0], self.config.max_nodes)
+
+        returns_matrix = self._extract_returns_matrix(features)
+
+        if returns_matrix is not None and returns_matrix.shape[1] >= 2:
+            edge_index, edge_attr = self.build_correlation_edges(returns_matrix)
         else:
             # Fallback to simple similarity
             edge_list = []
@@ -87,25 +191,25 @@ class GraphBuilder:
                 for j in range(n_nodes):
                     if i != j:
                         # Simple threshold based on feature similarity
-                        if features.ndim == 3:
-                            feat_i = features[i, -1, :]  # Last timestep
-                            feat_j = features[j, -1, :]
+                        if tensor_features.ndim == 3:
+                            feat_i = tensor_features[i, -1, :]  # Last timestep
+                            feat_j = tensor_features[j, -1, :]
                         else:
-                            feat_i = features[i:i+1]
-                            feat_j = features[j:j+1]
+                            feat_i = tensor_features[i : i + 1]
+                            feat_j = tensor_features[j : j + 1]
 
                         similarity = torch.cosine_similarity(
                             feat_i.unsqueeze(0) if feat_i.ndim == 1 else feat_i,
                             feat_j.unsqueeze(0) if feat_j.ndim == 1 else feat_j,
-                            dim=-1
+                            dim=-1,
                         )
                         if similarity > self.config.edge_threshold:
                             edge_list.append([i, j])
 
             if len(edge_list) == 0:
                 # If no edges, create a minimal connected graph
-                edge_list = [[i, (i+1) % n_nodes] for i in range(n_nodes)]
-                edge_list += [[(i+1) % n_nodes, i] for i in range(n_nodes)]
+                edge_list = [[i, (i + 1) % n_nodes] for i in range(n_nodes)]
+                edge_list += [[(i + 1) % n_nodes, i] for i in range(n_nodes)]
 
             edge_index = torch.tensor(edge_list, dtype=torch.long).t()
             edge_attr = torch.ones(edge_index.shape[1], 1)  # Simple unit weights
@@ -115,14 +219,68 @@ class GraphBuilder:
 
         return edge_index, edge_attr
 
+    def _extract_returns_matrix(
+        self, features: Union[torch.Tensor, dict[str, Any]]
+    ) -> Optional[torch.Tensor]:
+        """
+        Try to extract a (N, T) returns matrix from different feature containers.
+
+        Supports:
+        - dict batches containing keys like 'returns', 'past_ret', or 'return_matrix'
+        - tensor features with shape (N, T, F) using configured return channel index
+        """
+
+        if isinstance(features, dict):
+            candidate_keys = ("returns", "return_matrix", "past_ret", "returns_matrix")
+            for key in candidate_keys:
+                value = features.get(key)
+                if torch.is_tensor(value):
+                    if value.dim() == 3:
+                        # Collapse feature dimension if present
+                        return value[..., 0].detach()
+                    if value.dim() == 2:
+                        return value.detach()
+            tensor_features = features.get("features")
+        else:
+            tensor_features = features
+
+        if tensor_features is None or not torch.is_tensor(tensor_features):
+            return None
+
+        if tensor_features.dim() < 3:
+            if not self._warned_missing_returns:
+                logger.warning(
+                    "GraphBuilder received tensor with shape %s; unable to extract "
+                    "returns history for correlation graph.",
+                    tuple(tensor_features.shape),
+                )
+                self._warned_missing_returns = True
+            return None
+
+        # Resolve channel index to use
+        channel_idx = self._returns_channel_index
+        if channel_idx is None:
+            # Default to channel 0 but warn once so configs can be explicit
+            channel_idx = 0
+            if not self._warned_missing_returns:
+                logger.warning(
+                    "GraphBuilder fallback: returns_channel_index not provided; "
+                    "defaulting to channel 0. Set GBConfig.returns_channel_index "
+                    "or GRAPH_RET_IDX to control this selection."
+                )
+                self._warned_missing_returns = True
+
+        channel_idx = max(0, min(int(channel_idx), tensor_features.size(-1) - 1))
+        return tensor_features[:, :, channel_idx].detach()
+
     def build_correlation_edges(
-        self, features: torch.Tensor, window: int = 20, k: int = 10
+        self, data: torch.Tensor, window: int = 20, k: int = 10
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Build edges based on returns correlation (A+ approach).
 
         Args:
-            features: Time series features (N, T, F) where first feature is returns
+            data: Either (N, T) returns matrix or (N, T, F) feature tensor
             window: Correlation window size
             k: Number of nearest neighbors
 
@@ -130,14 +288,27 @@ class GraphBuilder:
             edge_index: Edge indices
             edge_attr: Edge attributes (correlation values)
         """
-        n_nodes = int(features.shape[0])
+        if data.dim() == 3:
+            returns_matrix = self._extract_returns_matrix({"features": data})
+            if returns_matrix is None:
+                raise ValueError(
+                    "Unable to derive returns history from feature tensor for correlation edges."
+                )
+        else:
+            returns_matrix = data
+
+        if returns_matrix.dim() != 2:
+            raise ValueError(
+                f"Correlation graph expects returns with shape (N, T); got {tuple(returns_matrix.shape)}"
+            )
+
+        n_nodes = int(returns_matrix.shape[0])
         k = int(min(k, max(1, n_nodes - 1)))
 
-        # Extract returns (assuming first feature channel is returns)
-        if features.shape[1] >= window:
-            returns = features[:, -window:, 0]  # Last 'window' timesteps, first feature
+        if returns_matrix.shape[1] >= window:
+            returns = returns_matrix[:, -window:]
         else:
-            returns = features[:, :, 0]  # Use all available timesteps
+            returns = returns_matrix
 
         # Compute correlation matrix
         # Normalize returns for correlation calculation
@@ -149,19 +320,19 @@ class GraphBuilder:
         corr_matrix = torch.mm(returns_norm, returns_norm.t()) / returns.shape[1]
 
         # Set diagonal to -inf to exclude self-loops
-        corr_matrix.fill_diagonal_(-float('inf'))
+        corr_matrix.fill_diagonal_(-float("inf"))
 
         # Get top-k correlations for each node
         values, indices = torch.topk(corr_matrix, k=k, dim=1)
 
         # Build directed edge set with threshold, then densify to min_k if needed
-        edge_set: set[Tuple[int, int]] = set()
-        edge_attr_map: dict[Tuple[int, int], float] = {}
+        edge_set: set[tuple[int, int]] = set()
+        edge_attr_map: dict[tuple[int, int], float] = {}
 
         thr = float(self.config.edge_threshold)
 
         for i in range(n_nodes):
-            keep_for_i: List[Tuple[int, float]] = []
+            keep_for_i: list[tuple[int, float]] = []
             for j_idx, corr_val in zip(indices[i], values[i], strict=False):
                 j = int(j_idx.item())
                 c = float(corr_val.item())
@@ -203,7 +374,9 @@ class GraphBuilder:
                     edge_attr_map[(i, i)] = 1.0
 
         # Global minimum edges safeguard
-        if int(self.config.min_edges) > 0 and len(edge_set) < int(self.config.min_edges):
+        if int(self.config.min_edges) > 0 and len(edge_set) < int(
+            self.config.min_edges
+        ):
             # Densify by adding additional top-k neighbors per node cyclically
             needed_extra = int(self.config.min_edges) - len(edge_set)
             if needed_extra > 0:
@@ -229,9 +402,9 @@ class GraphBuilder:
                 edge_attr_map[((i + 1) % n_nodes, i)] = 0.5
 
         # Materialize tensors
-        edge_list: List[Tuple[int, int]] = list(edge_set)
+        edge_list: list[tuple[int, int]] = list(edge_set)
         edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
-        edge_attr_vals: List[float] = [edge_attr_map[e] for e in edge_list]
+        edge_attr_vals: list[float] = [edge_attr_map[e] for e in edge_list]
         edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32).unsqueeze(-1)
 
         # Diagnostics
@@ -249,6 +422,123 @@ class GraphBuilder:
     def update_graph(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Update graph with new features"""
         return self.build_graph(features)
+
+    # ------------------------------------------------------------------
+    # FinancialGraphBuilder integration
+    # ------------------------------------------------------------------
+    def _parse_date(self, value: Union[str, _date_cls, _datetime_cls]) -> _date_cls:
+        if isinstance(value, _datetime_cls):
+            return value.date()
+        if isinstance(value, _date_cls):
+            return value
+        if isinstance(value, str):
+            try:
+                return _datetime_cls.strptime(value[:10], "%Y-%m-%d").date()
+            except ValueError:
+                return _datetime_cls.fromisoformat(value).date()
+        raise TypeError(f"Unsupported date value: {value!r}")
+
+    def _load_source_data(
+        self, date_end: Union[str, _date_cls, _datetime_cls], codes: Sequence[str]
+    ) -> Optional[pl.DataFrame]:
+        if not self.source_glob:
+            return None
+        try:
+            target_date = self._parse_date(date_end)
+        except Exception as exc:
+            logger.warning("Failed to parse date %r: %s", date_end, exc)
+            return None
+
+        lookback = int(getattr(self.config, "lookback", 60))
+        buffer_days = max(5, lookback // 4)
+        start_date = target_date - timedelta(days=lookback + buffer_days)
+
+        codes_str = [str(code) for code in codes]
+
+        frames: list[pl.DataFrame] = []
+        for path in glob.iglob(self.source_glob):
+            try:
+                scan = (
+                    pl.scan_parquet(path)
+                    .filter(
+                        (pl.col(self.code_column).cast(pl.Utf8).is_in(codes_str))
+                        & (pl.col(self.date_column) >= pl.lit(start_date))
+                        & (pl.col(self.date_column) <= pl.lit(target_date))
+                    )
+                    .collect(streaming=True)
+                )
+                if scan.height > 0:
+                    frames.append(scan)
+            except Exception as exc:
+                logger.debug("GraphBuilder source load failed for %s: %s", path, exc)
+        if not frames:
+            logger.debug(
+                "No source data collected for %s in range [%s, %s]",
+                target_date,
+                start_date,
+                target_date,
+            )
+            return None
+        return pl.concat(frames, how="vertical")
+
+    def build_for_day(
+        self, date_end: Union[str, _date_cls, _datetime_cls], codes: Sequence[str]
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """Build graph using FinancialGraphBuilder for a specific day."""
+        if self._financial_builder is None or not self.source_glob:
+            logger.debug("FinancialGraphBuilder unavailable; skipping build_for_day.")
+            return None, None
+
+        data = self._load_source_data(date_end, codes)
+        if data is None:
+            return None, None
+
+        codes_str = [str(code) for code in codes]
+        result: dict[str, Any] | None = None
+        for return_col in self.return_columns:
+            try:
+                candidate = self._financial_builder.build_graph(
+                    data, codes_str, date_end=date_end, return_column=return_col
+                )
+                result = candidate
+                # Stop early if we obtained edges
+                edge_index = candidate.get("edge_index")
+                if isinstance(edge_index, torch.Tensor) and edge_index.numel() > 0:
+                    break
+            except Exception as exc:
+                logger.debug(
+                    "FinancialGraphBuilder failed for return_col=%s: %s",
+                    return_col,
+                    exc,
+                )
+                continue
+
+        if result is None:
+            return None, None
+
+        edge_index = result.get("edge_index")
+        edge_attr = result.get("edge_attr")
+        if not isinstance(edge_index, torch.Tensor) or edge_index.numel() == 0:
+            return None, None
+
+        if isinstance(edge_attr, torch.Tensor) and edge_attr.dim() == 1:
+            edge_attr = edge_attr.unsqueeze(-1)
+
+        # Track metadata for staleness checks
+        try:
+            asof = result.get("date", date_end)
+            self._last_asof_ts = _datetime_cls.combine(
+                self._parse_date(asof), _datetime_cls.min.time()
+            )
+        except Exception:
+            self._last_asof_ts = None
+        self._last_result = result
+
+        return edge_index, edge_attr
+
+    def last_asof_ts(self) -> Optional[_datetime_cls]:
+        """Return the timestamp corresponding to the most recent financial graph build."""
+        return self._last_asof_ts
 
     def get_adjacency_matrix(self, n_nodes: int) -> torch.Tensor:
         """Get adjacency matrix from edge index"""
