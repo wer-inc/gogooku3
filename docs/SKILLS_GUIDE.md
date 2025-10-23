@@ -4,21 +4,31 @@ ATFT-GAT-FAN プロジェクト用の Claude Code Skills セットアップと�
 
 ## 概要
 
-Claude Code Skills は、プロジェクト固有のタスクを自動化する強力な機能です。このプロジェクトでは、以下の4つの専門スキルを提供しています。
+Claude Code Skills は、プロジェクト固有のタスクを自動化する強力な機能です。このプロジェクトでは、以下の5つの専門スキルを提供しています。
 
 ## インストール方法
 
-スキルは既に `~/.claude/skills/` にインストールされています:
+リポジトリ内の `claude/skills/` に最新のスキル定義を保存しています。最初に以下を実行してローカル環境へ同期してください:
 
 ```bash
+mkdir -p ~/.claude/skills
+rsync -av claude/skills/ ~/.claude/skills/
 ls -la ~/.claude/skills/
 # atft-pipeline/
 # atft-training/
 # atft-research/
 # atft-code-quality/
+# atft-autonomy/
 ```
 
-Claude Code を起動すると自動的に認識されます。
+Codex 連携を利用する場合は OpenAI Codex CLI を導入し、初期設定を済ませます:
+
+```bash
+npm install -g @openai/codex
+./tools/codex.sh --no-check   # .mcp.json / AGENTS.md を自動生成
+```
+
+Claude Code を再起動するとスキルが読み込まれます。
 
 ## スキル一覧
 
@@ -32,10 +42,14 @@ Claude Code を起動すると自動的に認識されます。
 - "キャッシュを確認"
 - "データパイプラインを実行"
 
-**提供するコマンド**:
-- `make dataset-bg` - バックグラウンドでデータセット生成
-- `make cache-verify` - キャッシュ検証
-- `make dataset-check` - 環境チェック
+**提供するコマンド/ワークフロー**:
+- `make dataset-check-strict` → GPU/認証プリフライト
+- `make dataset-bg` → 5年分データセットを GPU + SSH-safe 背景実行
+- `make dataset-gpu-refresh` → キャッシュをスキップし強制再取得
+- `make dataset-safe-resume` → チャンク生成の失敗箇所を再開
+- `make cache-stats` / `make cache-prune` → グラフキャッシュの健全性維持
+- `python scripts/pipelines/run_full_dataset.py --inspect-graph` → 特徴量/エッジ検査
+- `tools/project-health-check.sh --section dataset` → 全体診断
 
 **詳細**: `~/.claude/skills/atft-pipeline/SKILL.md`
 
@@ -49,10 +63,14 @@ Claude Code を起動すると自動的に認識されます。
 - "120エポック実行"
 - "ハイパーパラメータ最適化"
 
-**提供するコマンド**:
-- `make train` - 最適化トレーニング
-- `make train-safe` - 安定トレーニング
-- `make train-status` - 進捗確認
+**提供するコマンド/ワークフロー**:
+- `make train-optimized` → TorchInductor + FlashAttention2 を有効にした本番訓練
+- `make train-quick` → 3エポックのクイックスモーク
+- `make train-safe` → シングルワーカー/非コンパイルの安全モード
+- `make train-monitor` / `make train-status` → 背景プロセス監視
+- `make hpo-run HPO_TRIALS=24 ...` → Optuna ハイパーパラメータ探索
+- `python scripts/integrated_ml_training_pipeline.py --profile` → プロファイリング
+- `tools/project-health-check.sh --section training` → 事前ヘルスチェック
 
 **詳細**: `~/.claude/skills/atft-training/SKILL.md`
 
@@ -66,10 +84,13 @@ Claude Code を起動すると自動的に認識されます。
 - "ベースラインと比較"
 - "研究レポートを生成"
 
-**提供するコマンド**:
-- `make research-plus` - 完全研究バンドル
-- `make research-baseline` - ベースライン比較
-- `python scripts/smoke_test.py` - スモークテスト
+**提供するコマンド/ワークフロー**:
+- `make research-plus` → 指標集計 + 可視化 + レポート生成
+- `make research-baseline RUN=...` → 最新ランと基準モデルの比較
+- `python scripts/research/factor_drift.py` → 特徴量ドリフト検査
+- `python scripts/research/regime_detector.py` → レジーム分析
+- `python scripts/research/plot_metrics.py` → KPI グラフ生成
+- `make research-report FACTORS=... HORIZONS=...` → レポートテンプレート出力
 
 **詳細**: `~/.claude/skills/atft-research/SKILL.md`
 
@@ -83,13 +104,33 @@ Claude Code を起動すると自動的に認識されます。
 - "型チェックを実行"
 - "テストを走らせて"
 
-**提供するコマンド**:
-- `ruff check src/ --fix` - Linting
-- `ruff format src/` - フォーマット
-- `mypy src/gogooku3` - 型チェック
-- `pytest tests/ -v` - テスト実行
+**提供するコマンド/ワークフロー**:
+- `tools/project-health-check.sh --section quality` → 事前診断
+- `ruff check src/ --fix` / `ruff format src/ tests/` → Lint & フォーマット
+- `mypy src/gogooku3 scripts/` → 型チェック
+- `pytest tests/unit -n auto` / `pytest tests/integration -m "not slow"` → テスト実行
+- `pre-commit run --all-files` → フックのフル実行
+- `bandit -qr src/` / `detect-secrets scan` → セキュリティ診断
 
 **詳細**: `~/.claude/skills/atft-code-quality/SKILL.md`
+
+### 5. atft-autonomy (Claude × Codex 連携)
+
+**用途**: Claude Skills と OpenAI Codex を組み合わせ、完全自律運用フローを構築
+
+**自動起動するケース**:
+- "Claude と Codex を連携してメンテして"
+- "完全自律モードで日次メンテナンス"
+- "インシデント対応をエージェント協調で"
+
+**提供するコマンド/ワークフロー**:
+- `./tools/claude-code.sh` → 高速メンテナンス
+- `./tools/codex.sh --max --exec "..."` → 深い最適化/調査
+- `tools/project-health-check.sh --summary` → 事前スナップショット
+- `_logs/codex-sessions/` と `_logs/claude-code/` を集約し `docs/ops/autonomy_log.md` に記録
+- cron 連携例: `0 2 * * * cd /workspace/gogooku3 && ./tools/codex.sh --max`
+
+**詳細**: `~/.claude/skills/atft-autonomy/SKILL.md`
 
 ## 実践例
 
@@ -309,6 +350,9 @@ done
 - **Skills Marketplace**: https://github.com/anthropics/skills
 - **プロジェクト CLAUDE.md**: [CLAUDE.md](../CLAUDE.md)
 - **プロジェクト README**: [README.md](../README.md)
+- **スキル定義リポジトリ版**: [claude/skills/README.md](../claude/skills/README.md)
+- **Codex 自律運用ガイド**: [tools/README.md](../tools/README.md)
+- **Codex MCP 設定**: [docs/guides/codex_mcp.md](../docs/guides/codex_mcp.md)
 
 ## バージョン情報
 
