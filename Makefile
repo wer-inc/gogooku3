@@ -29,8 +29,9 @@ help:
 	@echo "  make clean          Cleanup"
 	@echo ""
 	@echo "☁️  Cloud Storage:"
-	@echo "  make gcs-status     Check GCS configuration"
-	@echo "  make gcs-sync       Sync datasets to GCS"
+	@echo "  make gcs-status        Check GCS configuration"
+	@echo "  make gcs-sync-multi    Sync output/, outputs/, archive/ to GCS"
+	@echo "  make gcs-sync-multi-dry  Dry-run multi-directory sync"
 	@echo ""
 	@echo "📖 Full help:"
 	@echo "  make help-dataset   Dataset commands"
@@ -273,6 +274,25 @@ gcs-sync-all:
 	@echo "Syncing graph cache..."
 	@$(MAKE) gcs-sync-cache
 	@echo "✅ All data synced to GCS"
+
+# Multi-directory sync (output/, outputs/, archive/)
+gcs-sync-multi:
+	@echo "☁️  Syncing multiple directories to GCS"
+	@echo "   📁 Directories: output/, outputs/, archive/"
+	@python scripts/sync_multi_dirs_to_gcs.py
+
+gcs-sync-multi-dry:
+	@echo "🔍 DRY RUN: Showing what would be synced"
+	@echo "   📁 Directories: output/, outputs/, archive/"
+	@python scripts/sync_multi_dirs_to_gcs.py --dry-run
+
+gcs-sync-outputs:
+	@echo "☁️  Syncing outputs/ directory to GCS"
+	@python scripts/sync_multi_dirs_to_gcs.py --dirs outputs
+
+gcs-sync-archive:
+	@echo "☁️  Syncing archive/ directory to GCS"
+	@python scripts/sync_multi_dirs_to_gcs.py --dirs archive
 
 # ============================================================================
 # Cache Management & Verification
