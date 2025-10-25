@@ -3570,6 +3570,30 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         },
     ]
 
+    aug_epochs_cfg = _phase_epochs(0, "PHASE4_EPOCHS")
+    enable_aug_phase = _env_flag("ENABLE_AUGMENTATION_PHASE", False)
+    if enable_aug_phase or aug_epochs_cfg > 0:
+        if aug_epochs_cfg <= 0:
+            aug_epochs_cfg = 15
+        phases.append(
+            {
+                "name": "Phase 4: Augmentation",
+                "epochs": aug_epochs_cfg,
+                "toggles": {
+                    "use_fan": True,
+                    "use_san": True,
+                    "use_gat": True,
+                },
+                "loss_weights": {
+                    "quantile": 1.0,
+                    "sharpe": 0.2,
+                    "corr": 0.05,
+                },
+                "lr": _phase_lr(5e-5, "PHASE4_LR"),
+                "grad_clip": 0.5,
+            }
+        )
+
     # Optimizer初期化
     optimizer_type = os.getenv("OPTIMIZER_TYPE", "adamw").lower()
     lr = phases[0]["lr"]
