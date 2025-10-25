@@ -39,6 +39,21 @@ def add_sector_cross_sectional_features(
     out = df
     keys = ["Date", sec]
 
+    # CRITICAL FIX (2025-10-24): Create T-N lagged returns to prevent data leakage
+    # See: reports/critical_issue_20251024.md, patches/fix_leakage_lag_injection.md
+    if "returns_1d" in out.columns:
+        out = out.with_columns([
+            pl.col("returns_1d").shift(1).over("Code").alias("lag_returns_1d")
+        ])
+    if "returns_5d" in out.columns:
+        out = out.with_columns([
+            pl.col("returns_5d").shift(5).over("Code").alias("lag_returns_5d")
+        ])
+    if "returns_10d" in out.columns:
+        out = out.with_columns([
+            pl.col("returns_10d").shift(10).over("Code").alias("lag_returns_10d")
+        ])
+
     # Helper: within sector stats
     def _sector_mean(x: str, alias: str) -> pl.Expr:
         return pl.col(x).mean().over(keys).alias(alias)
@@ -46,39 +61,39 @@ def add_sector_cross_sectional_features(
     def _sector_std(x: str, alias: str) -> pl.Expr:
         return pl.col(x).std().over(keys).alias(alias)
 
-    # Returns deviation, ranks, and z-scores within sector
-    if "returns_1d" in out.columns:
+    # Returns deviation, ranks, and z-scores within sector (using lagged returns)
+    if "lag_returns_1d" in out.columns:  # FIXED: Check for lagged column
         out = out.with_columns([
-            _sector_mean("returns_1d", "_sec_mean_ret1d"),
-            _sector_std("returns_1d", "_sec_std_ret1d"),
+            _sector_mean("lag_returns_1d", "_sec_mean_ret_prev_1d"),  # FIXED: Use T-1
+            _sector_std("lag_returns_1d", "_sec_std_ret_prev_1d"),    # FIXED: Use T-1
         ])
         out = out.with_columns([
-            (pl.col("returns_1d") - pl.col("_sec_mean_ret1d")).alias("ret_1d_vs_sec"),
-            ((pl.col("returns_1d") - pl.col("_sec_mean_ret1d")) / (pl.col("_sec_std_ret1d") + 1e-12)).alias("ret_1d_in_sec_z"),
+            (pl.col("lag_returns_1d") - pl.col("_sec_mean_ret_prev_1d")).alias("ret_prev_1d_vs_sec"),  # FIXED
+            ((pl.col("lag_returns_1d") - pl.col("_sec_mean_ret_prev_1d")) / (pl.col("_sec_std_ret_prev_1d") + 1e-12)).alias("ret_prev_1d_in_sec_z"),  # FIXED
         ])
-        # Percentile rank within sector for returns_1d
+        # Percentile rank within sector for lag_returns_1d
         cnt = pl.count().over(keys)
-        rk = pl.col("returns_1d").rank(method="average").over(keys)
+        rk = pl.col("lag_returns_1d").rank(method="average").over(keys)  # FIXED: Use T-1
         out = out.with_columns([
-            pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias("ret_1d_rank_in_sec")
+            pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias("ret_prev_1d_rank_in_sec")  # FIXED: Renamed
         ])
-    if "returns_5d" in out.columns:
+    if "lag_returns_5d" in out.columns:  # FIXED: Check for lagged column
         out = out.with_columns([
-            _sector_mean("returns_5d", "_sec_mean_ret5d"),
-            _sector_std("returns_5d", "_sec_std_ret5d"),
-        ])
-        out = out.with_columns([
-            (pl.col("returns_5d") - pl.col("_sec_mean_ret5d")).alias("ret_5d_vs_sec"),
-            ((pl.col("returns_5d") - pl.col("_sec_mean_ret5d")) / (pl.col("_sec_std_ret5d") + 1e-12)).alias("ret_5d_in_sec_z"),
-        ])
-    if "returns_10d" in out.columns:
-        out = out.with_columns([
-            _sector_mean("returns_10d", "_sec_mean_ret10d"),
-            _sector_std("returns_10d", "_sec_std_ret10d"),
+            _sector_mean("lag_returns_5d", "_sec_mean_ret_prev_5d"),  # FIXED: Use T-5
+            _sector_std("lag_returns_5d", "_sec_std_ret_prev_5d"),    # FIXED: Use T-5
         ])
         out = out.with_columns([
-            (pl.col("returns_10d") - pl.col("_sec_mean_ret10d")).alias("ret_10d_vs_sec"),
-            ((pl.col("returns_10d") - pl.col("_sec_mean_ret10d")) / (pl.col("_sec_std_ret10d") + 1e-12)).alias("ret_10d_in_sec_z"),
+            (pl.col("lag_returns_5d") - pl.col("_sec_mean_ret_prev_5d")).alias("ret_prev_5d_vs_sec"),  # FIXED
+            ((pl.col("lag_returns_5d") - pl.col("_sec_mean_ret_prev_5d")) / (pl.col("_sec_std_ret_prev_5d") + 1e-12)).alias("ret_prev_5d_in_sec_z"),  # FIXED
+        ])
+    if "lag_returns_10d" in out.columns:  # FIXED: Check for lagged column
+        out = out.with_columns([
+            _sector_mean("lag_returns_10d", "_sec_mean_ret_prev_10d"),  # FIXED: Use T-10
+            _sector_std("lag_returns_10d", "_sec_std_ret_prev_10d"),    # FIXED: Use T-10
+        ])
+        out = out.with_columns([
+            (pl.col("lag_returns_10d") - pl.col("_sec_mean_ret_prev_10d")).alias("ret_prev_10d_vs_sec"),  # FIXED
+            ((pl.col("lag_returns_10d") - pl.col("_sec_mean_ret_prev_10d")) / (pl.col("_sec_std_ret_prev_10d") + 1e-12)).alias("ret_prev_10d_in_sec_z"),  # FIXED
         ])
 
     # Z-scores within sector (Volume, realized_vol_20 if present)

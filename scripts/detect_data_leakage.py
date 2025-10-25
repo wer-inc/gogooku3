@@ -7,6 +7,104 @@ Critical: Detect and fix data leakage
 import pandas as pd
 import numpy as np
 
+
+def check_normalization_stats(df, feature_cols, verbose=True):
+    """
+    Check normalization statistics validity
+
+    Verifies that feature statistics (mean, std) are reasonable
+    and not indicative of data quality issues.
+
+    Args:
+        df: DataFrame with features
+        feature_cols: List of feature column names
+        verbose: Print detailed info
+
+    Returns:
+        bool: True if stats look reasonable, False if warnings detected
+    """
+    if verbose:
+        print("\n" + "=" * 60)
+        print("5️⃣ Checking normalization statistics...")
+        print("=" * 60)
+
+    # Compute statistics for numeric features
+    numeric_features = [
+        col for col in feature_cols
+        if df[col].dtype in ['float64', 'float32', 'int64', 'int32']
+    ]
+
+    if len(numeric_features) == 0:
+        if verbose:
+            print("⚠️ No numeric features found")
+        return False
+
+    # Sample for efficiency (100k rows)
+    sample_df = df.sample(min(100000, len(df)))
+
+    means = sample_df[numeric_features].mean()
+    stds = sample_df[numeric_features].std()
+
+    if verbose:
+        print(f"\n📊 Statistics from {len(sample_df)} samples:")
+        print(f"   Mean range: [{means.min():.4f}, {means.max():.4f}]")
+        print(f"   Std range:  [{stds.min():.6f}, {stds.max():.4f}]")
+
+    # Detect anomalies (conservative thresholds)
+    warnings = []
+
+    # 1. Extremely large absolute means (> 1000)
+    extreme_means = [c for c in numeric_features if abs(means[c]) > 1000]
+    if extreme_means:
+        warnings.append(
+            f"⚠️  {len(extreme_means)} features with |mean| > 1000 (may need scaling)"
+        )
+        if verbose:
+            print(f"\n   Extreme means: {extreme_means[:5]}")
+
+    # 2. Near-constant features (std < 1e-8)
+    tiny_stds = [c for c in numeric_features if stds[c] < 1e-8]
+    if tiny_stds:
+        warnings.append(
+            f"⚠️  {len(tiny_stds)} features with std < 1e-8 (near-constant, consider removal)"
+        )
+        if verbose:
+            print(f"   Near-constant features: {tiny_stds[:5]}")
+
+    # 3. Extremely large std (> 10000)
+    huge_stds = [c for c in numeric_features if stds[c] > 10000]
+    if huge_stds:
+        warnings.append(
+            f"⚠️  {len(huge_stds)} features with std > 10000 (outliers or scale issue)"
+        )
+        if verbose:
+            print(f"   Huge std features: {huge_stds[:5]}")
+
+    # 4. NaN/Inf check
+    nan_counts = sample_df[numeric_features].isna().sum()
+    high_nan_features = [c for c in numeric_features if nan_counts[c] > len(sample_df) * 0.5]
+    if high_nan_features:
+        warnings.append(
+            f"⚠️  {len(high_nan_features)} features with >50% missing values"
+        )
+        if verbose:
+            print(f"   High missing features: {high_nan_features[:5]}")
+
+    # Print summary
+    if verbose:
+        print("\n" + "-" * 60)
+        if warnings:
+            for w in warnings:
+                print(w)
+            print("\n💡 Recommendation: Review these features before training")
+            return False
+        else:
+            print("✅ Normalization statistics look reasonable")
+            return True
+
+    return len(warnings) == 0
+
+
 def detect_data_leakage():
     """データリークを検出"""
 
@@ -15,8 +113,10 @@ def detect_data_leakage():
     print("=" * 60)
 
     # データ読み込み
-    print("\n📂 Loading data...")
-    df = pd.read_parquet('/home/ubuntu/gogooku3-standalone/output/ml_dataset_latest_full.parquet')
+    import sys
+    data_path = sys.argv[1] if len(sys.argv) > 1 else 'output/ml_dataset_latest_full.parquet'
+    print(f"\n📂 Loading data: {data_path}")
+    df = pd.read_parquet(data_path)
     print(f"✅ Data shape: {df.shape}")
 
     # ターゲット変数
@@ -143,7 +243,10 @@ def detect_data_leakage():
                     if high_corr_count > 0:
                         print(f"   🔴 WARNING: {high_corr_count} features have correlation > 0.9!")
 
-    # 5. 最終診断
+    # 5. Normalization statistics check (newly added v3.0)
+    check_normalization_stats(df, feature_cols, verbose=True)
+
+    # 6. 最終診断
     print("\n" + "=" * 60)
     print("🏁 DIAGNOSIS")
     print("=" * 60)

@@ -151,6 +151,13 @@ def add_advanced_features(df: pl.DataFrame) -> pl.DataFrame:
         ])
 
     # Cross-sectional features (per Date)
+    # CRITICAL FIX (2025-10-24): Create T-1 lagged returns to prevent data leakage
+    # See: reports/critical_issue_20251024.md, patches/fix_leakage_lag_injection.md
+    if "returns_1d" in out.columns:
+        out = out.with_columns([
+            pl.col("returns_1d").shift(1).over("Code").alias("lag_returns_1d")
+        ])
+
     _use_gpu_etl = os.getenv("USE_GPU_ETL", "0") == "1"
     if _use_gpu_etl:
         try:
@@ -162,23 +169,24 @@ def add_advanced_features(df: pl.DataFrame) -> pl.DataFrame:
             except Exception:
                 pass
 
+            # Use lagged returns to prevent leakage
             out = cs_rank_and_z(
                 out,
-                rank_col="returns_1d",
+                rank_col="lag_returns_1d",  # FIXED: Use T-1 lagged returns
                 z_col="Volume",
                 group_keys=("Date",),
-                out_rank_name="rank_ret_1d",
+                out_rank_name="rank_ret_prev_1d",  # FIXED: Renamed to indicate T-1
                 out_z_name="volume_cs_z",
             )
         except Exception:
             _use_gpu_etl = False  # fall back to CPU path below
 
     if not _use_gpu_etl:
-        if "returns_1d" in out.columns:
+        if "lag_returns_1d" in out.columns:  # FIXED: Check for lagged column
             cnt = pl.count().over("Date")
-            rk = pl.col("returns_1d").rank(method="average").over("Date")
+            rk = pl.col("lag_returns_1d").rank(method="average").over("Date")  # FIXED: Use T-1
             out = out.with_columns([
-                pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias("rank_ret_1d")
+                pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias("rank_ret_prev_1d")  # FIXED: Renamed
             ])
             # Streaks and momentum persistence
             # up_streak_1d/down_streak_1d: consecutive days of positive/negative returns
