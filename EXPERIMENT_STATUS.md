@@ -1,423 +1,358 @@
-# Experiment Suite Status
+# ATFT-GAT-FAN Experiment Status & Evaluation Protocol
 
-**Updated**: 2025-10-21 13:00 JST
-**Current Best**: Sharpe 0.779 (Experiment 1.1b - Pure Sharpe optimization)
-**Latest Experiment**: Tier 2.1 FAILED (Sharpe 0.095 - batch size error)
+**Purpose**: Track experiment progress, define evaluation methodology, and establish escalation criteria.
 
----
-
-## 🎯 Overall Goals
-
-- **Current Best**: Sharpe 0.779 🎯 (Tier 1.1b)
-- **Target**: Sharpe 0.849
-- **Remaining Gap**: 0.070 (8.2%)
-- **Progress**: **91.7% of target achieved**
-- **Strategy**: Systematic tier-by-tier optimization (Tier 2 retry needed)
+**Last updated**: 2025-10-24
+**Current Phase**: Phase 0 → Phase 1 transition
+**Previous experiments**: See [EXPERIMENT_STATUS_legacy.md](EXPERIMENT_STATUS_legacy.md)
 
 ---
 
-## ✅ Tier 1 COMPLETE: Sharpe Weight Optimization
+## 📊 Current Baseline Metrics
 
-**Status**: ✅ **3/3 Experiments Completed** (2025-10-21 06:38 JST)
-**Duration**: 4.5 hours total
-**Key Discovery**: Pure Sharpe optimization (weight=1.0) outperformed all other configurations
+| Metric | Current Value | Target (CLAUDE.md) | Gap |
+|--------|---------------|---------------------|-----|
+| **Val Sharpe** | 0.0094 | 0.849 | -0.840 (99%) |
+| **Val RankIC** | -0.014 | 0.180 | -0.194 (108%) |
+| **Val IC** | -0.014 | - | - |
+| **Hit Rate (1d)** | 47.03% | ~58% | -11% |
 
-### Completed Experiments
-
-| Experiment | Sharpe Weight | Final Sharpe | Best Val Loss | Improvement | Completion |
-|------------|---------------|--------------|---------------|-------------|------------|
-| **Baseline** | 0.6 | 0.582 | 0.378 | - | 02:49 JST ✅ |
-| **Exp 1.1a** | 0.8 | 0.476 | 0.180 | -18.2% ❌ | 05:13 JST ✅ |
-| **Exp 1.1b** | 1.0 | **0.779** 🎯 | -0.0319 | **+33.8%** | 06:38 JST ✅ |
-
-### Key Findings
-
-**1. Non-Linear Optimization Landscape**
-- Sharpe weight 0.6 → Sharpe 0.582 ✅ (Baseline)
-- Sharpe weight 0.8 → Sharpe 0.476 ❌ (Middle trap - worst performance)
-- Sharpe weight 1.0 → Sharpe 0.779 🎯 (Pure optimization - best performance)
-
-**2. The "Middle Trap" Phenomenon**
-- Intermediate weights (0.7-0.9) create conflicting optimization pressures
-- Neither fully optimized nor balanced → suboptimal convergence
-- Recommendation: **Avoid intermediate Sharpe weights**
-
-**3. Loss-Metric Alignment**
-- Exp 1.1a: Good loss (0.180) ≠ Good Sharpe (0.476)
-- Exp 1.1b: Excellent loss (-0.0319) = Excellent Sharpe (0.779)
-- **Lesson**: Loss function must align with business goal
-
-**4. Pure Sharpe Optimization is Stable**
-- High batch-level volatility is normal (Sharpe -0.720 ~ +0.786)
-- Training converged successfully without instability
-- **Conclusion**: Pure Sharpe (weight=1.0) is safe and effective
-
-### Documentation & Archives
-
-- ✅ **Full Report**: `docs/reports/experiments/tier1_sharpe_weight_optimization_20251021.md`
-- ✅ **Archive**: `archive/experiments_tier1_20251021.tar.gz` (946KB)
-  - Complete logs for all experiments
-  - Result JSON files
-  - Comprehensive analysis report
-- ✅ **Logs**:
-  - Exp 1.1a: `/tmp/experiment_1_1a_sharpe08.log` (640KB)
-  - Exp 1.1b: `/tmp/experiment_1_1b_sharpe10.log` (623KB)
+**Status**: Baseline performance is **below random**. Immediate priority is data quality verification and basic model functionality.
 
 ---
 
-## ❌ Tier 2 FAILED: Model Capacity Expansion (Batch Size Error)
+## 🎯 Weekly Milestones (v3.0)
 
-**Status**: ❌ **FAILED - Critical Configuration Error**
-**Completed**: 2025-10-21 12:55 JST
-**Duration**: 4.1 hours (14,893s)
+### Week 1: Data Quality + Baseline (Phase 0-1)
 
-### Experiment 2.1: Hidden Size 256 (FAILED)
+**Goal**: Establish stable baseline with positive Sharpe
 
-**Results**:
-- **Final Sharpe**: **0.095** (vs Tier 1's 0.779)
-- **Performance**: **-87.8% degradation** ❌
-- **Best Val Loss**: -0.0180 (vs Tier 1's -0.0319)
-- **Status**: Complete failure - worse than random
+| Target | Metric | Success Criteria | Escalation Threshold |
+|--------|--------|------------------|----------------------|
+| **Data Quality** | Leakage | 0 critical issues | Any leakage detected |
+| **Data Quality** | Norm stats | All features reasonable | >10 features with extreme stats |
+| **Val Sharpe** | 0.03-0.06 | Mean of last 10 epochs > 0.03 | Mean < 0.0 (negative) |
+| **Val RankIC** | 0.01-0.02 | Mean of last 10 epochs > 0.01 | Mean < -0.01 |
+| **Stability** | Completion | 60 epochs finished | Deadlock or OOM >2 times |
 
-**Root Cause**: **Batch size reduced from 1024 → 256**
-- Used Safe mode (FORCE_SINGLE_PROCESS=1)
-- Safe mode defaults to batch_size=256 for stability
-- Small batch size → Unstable Sharpe estimation → Poor optimization
-- Model capacity scaling requires **larger** batches, not smaller
+**Deliverables**:
+- [ ] Phase 0 diagnostics report (`reports/data_leakage_check_*.md`)
+- [ ] Phase 1 full training log (`_logs/training/phase1_full_*.log`)
+- [ ] Week 1 evaluation report (see template below)
 
-**Key Learnings**:
-1. ❌ **Never reduce batch size for larger models**
-2. ❌ **Safe mode defaults not universal** - Optimized for stability, not performance
-3. ✅ **Batch size is critical** for financial metric optimization
-4. ✅ **Model capacity alone insufficient** - Need holistic configuration
+---
 
-**Configuration Used (INCORRECT)**:
-```bash
-# What was run (WRONG):
-FORCE_SINGLE_PROCESS=1  # Triggered Safe mode
-SHARPE_WEIGHT=1.0 RANKIC_WEIGHT=0.0 CS_IC_WEIGHT=0.0 \
-python scripts/integrated_ml_training_pipeline.py \
-  --max-epochs 30 \
-  --data-path output/ml_dataset_latest_full.parquet
-  # batch_size=256 (from Safe mode defaults) ❌
+### Week 2: Scale-Up (Phase 2)
+
+**Goal**: Increase throughput without losing stability
+
+| Target | Metric | Success Criteria | Escalation Threshold |
+|--------|--------|------------------|----------------------|
+| **Val Sharpe** | 0.08-0.12 | Mean > 0.08 | < 0.05 (regression) |
+| **Val RankIC** | 0.03-0.05 | Mean > 0.03 | < 0.02 (regression) |
+| **Throughput** | Speed | >1.5x vs Phase 1 | <1.2x (insufficient gain) |
+| **Stability** | No deadlock | All stages complete | Deadlock in any stage |
+
+**Deliverables**:
+- [ ] Stage 2.1-2.4 completion logs
+- [ ] Throughput comparison report
+- [ ] Week 2 evaluation report
+
+---
+
+### Week 3-4: HPO + Production (Phase 3-4)
+
+**Goal**: Optimize hyperparameters and finalize production model
+
+| Target | Metric | Success Criteria | Escalation Threshold |
+|--------|--------|------------------|----------------------|
+| **Val Sharpe** | 0.15-0.25 | Best trial > 0.15 | Best < 0.10 |
+| **Val RankIC** | 0.08-0.15 | Best trial > 0.08 | Best < 0.05 |
+| **HPO Improvement** | Delta Sharpe | +0.03 vs Phase 2 | +0.01 or less |
+| **Production Run** | 120 epochs | Completes successfully | Failure or instability |
+
+**Deliverables**:
+- [ ] Optuna study results (`hpo_study_*.json`)
+- [ ] Phase 4 production training log
+- [ ] Final model evaluation report
+
+---
+
+## 🔬 Evaluation Protocol
+
+### Fixed Validation Set
+
+**Critical**: Use the **same validation set** across all phases for fair comparison.
+
+```yaml
+Validation Period: 2024-01-01 to 2024-12-31  # Latest 1 year
+Split Method: Walk-forward (do NOT reshuffle)
+Evaluation Frequency: Every epoch
 ```
 
-**Documentation**:
-- **Full Analysis**: `docs/reports/experiments/tier2_failure_analysis_20251021.md`
-- **Log File**: `/tmp/experiment_2_1_hidden256_tier2.log` (387KB)
-- **Result JSON**: `output/results/complete_training_result_20251021_125546.json`
+**Never**:
+- ❌ Change validation date range mid-experiment
+- ❌ Reshuffle validation set
+- ❌ Use different sampling methods
 
 ---
 
-## 🔄 Tier 2 Retry: Corrected Configuration (READY TO LAUNCH)
+### Sharpe Ratio Calculation (Standardized)
 
-### Experiment 2.1 Retry: Hidden Size 256 with Correct Batch Size
+```python
+def calculate_val_sharpe_standardized(predictions, returns, percentile=0.8):
+    """
+    Standardized Sharpe calculation for all experiments
 
-**Configuration** (CORRECTED):
-- **Model**: hidden_size 256 (vs current 64) - 20M params
-- **Batch Size**: **2048** (4x failed attempt, 2x Tier 1)
-- **Sharpe weight**: 1.0 (proven optimal from Tier 1)
-- **Mode**: Optimized (NOT Safe mode)
-- **Expected Sharpe**: 0.82-0.85 (+5-8% over Tier 1)
-- **Expected**: **High probability of reaching target 0.849**
-- **Runtime**: ~2-3 hours
-- **Priority**: ⭐⭐⭐ (Highest - corrected configuration)
+    Args:
+        predictions: Model predictions (numpy array, N samples)
+        returns: Actual returns (numpy array, N samples)
+        percentile: Top percentile to long (default 0.8 = top 20%)
 
-**Rationale**:
-- Larger model capacity (5.6M → 20M params) needs **more signal** (larger batches)
-- Batch size 2048 provides stable Sharpe estimation for 20M param model
-- Rule of thumb: `batch_size ≥ sqrt(params) × 10` → 20M params → batch ≥ 4472
-- Using 2048 as conservative middle ground (between 1024 and 4096)
-- Proven loss configuration (SHARPE_WEIGHT=1.0)
+    Returns:
+        annual_sharpe: Annualized Sharpe ratio
+    """
+    import numpy as np
 
-**Launch Command** (CORRECTED):
-```bash
-cd /workspace/gogooku3
+    # 1. Rank stocks by predicted return
+    threshold = np.percentile(predictions, percentile * 100)
+    long_mask = predictions >= threshold
 
-# Tier 2 Retry with corrected configuration
-SHARPE_WEIGHT=1.0 \
-RANKIC_WEIGHT=0.0 \
-CS_IC_WEIGHT=0.0 \
-python scripts/integrated_ml_training_pipeline.py \
-  --max-epochs 30 \
-  --batch-size 2048 \
-  --lr 2.0e-4 \
-  --data-path output/ml_dataset_latest_full.parquet \
-  > /tmp/experiment_2_1_retry_batch2048.log 2>&1 &
+    # 2. Equal-weight portfolio of top predictions
+    portfolio_returns = returns[long_mask]
 
-# Monitor
-tail -f /tmp/experiment_2_1_retry_batch2048.log | grep -E "Sharpe|batch_size|hidden_size"
+    # 3. Daily Sharpe
+    daily_mean = portfolio_returns.mean()
+    daily_std = portfolio_returns.std()
+    daily_sharpe = daily_mean / daily_std if daily_std > 0 else 0.0
+
+    # 4. Annualize (252 trading days)
+    annual_sharpe = daily_sharpe * np.sqrt(252)
+
+    return annual_sharpe
 ```
 
-### Experiment 3.1: Feature Bundle 220 (DATASET REBUILD NEEDED)
+**Usage in evaluation**:
+```python
+# Extract from model outputs
+predictions = model(val_features)  # Model predictions
+returns = val_data['target_1d']     # Actual 1-day returns
 
-**Configuration**:
-- **Features**: 220 (vs current 99)
-- **Sharpe weight**: 1.0
-- **Expected Sharpe**: 0.85+ (+9%+)
-- **Runtime**: Dataset rebuild 30-60 min + Training ~3 hours
-- **Priority**: ⭐⭐ (High - after confirming capacity scaling)
+sharpe = calculate_val_sharpe_standardized(predictions, returns)
+print(f"Val Sharpe: {sharpe:.4f}")
+```
 
-**Steps**:
-1. Regenerate dataset:
-   ```bash
-   python scripts/pipelines/run_full_dataset.py \
-     --start-date 2020-09-06 \
-     --end-date 2025-09-06 \
-     --enable-all-features \
-     --max-features 220
+---
+
+### IC/RankIC Calculation
+
+```python
+def calculate_ic_rankic(predictions, targets):
+    """
+    Calculate both IC and RankIC
+
+    Returns:
+        ic: Pearson correlation (linear)
+        rank_ic: Spearman correlation (rank-based)
+    """
+    from scipy.stats import pearsonr, spearmanr
+
+    # Remove NaN
+    mask = ~(np.isnan(predictions) | np.isnan(targets))
+    pred_clean = predictions[mask]
+    targ_clean = targets[mask]
+
+    # Pearson IC
+    ic, ic_pval = pearsonr(pred_clean, targ_clean)
+
+    # Spearman RankIC
+    rank_ic, rank_pval = spearmanr(pred_clean, targ_clean)
+
+    return ic, rank_ic, ic_pval, rank_pval
+```
+
+---
+
+### Evaluation Report Template
+
+```markdown
+# Week [N] Evaluation Report
+
+**Date**: YYYY-MM-DD
+**Phase**: Phase [X]
+**Evaluator**: [Name]
+
+## 1. Training Summary
+
+- **Configuration**: [config name]
+- **Epochs**: [completed / target]
+- **Training time**: [hours]
+- **Stability**: [✅ Stable / ⚠️ Issues / ❌ Failed]
+
+## 2. Performance Metrics
+
+| Metric | Value | Target | Status |
+|--------|-------|--------|--------|
+| Val Sharpe (mean last 10) | X.XXX | > 0.XXX | [✅/⚠️/❌] |
+| Val RankIC (mean last 10) | X.XXX | > 0.XXX | [✅/⚠️/❌] |
+| Val IC (mean last 10) | X.XXX | - | - |
+| Hit Rate (1d) | XX.X% | ~58% | [✅/⚠️/❌] |
+
+## 3. Progression Analysis
+
+- **Trend**: [Improving / Stable / Degrading]
+- **Best epoch**: Epoch [N] with Sharpe=[X.XXX]
+- **Stability**: Std of last 10 epochs = [X.XXX]
+
+## 4. Issues Encountered
+
+- [Issue 1]: [Description] → [Resolution/Status]
+- [Issue 2]: [Description] → [Resolution/Status]
+
+## 5. Next Steps
+
+- [ ] [Action 1]
+- [ ] [Action 2]
+
+## 6. Escalation Decision
+
+- [X] Continue to next phase
+- [ ] Repeat current phase with adjustments
+- [ ] Escalate to team review
+```
+
+---
+
+## 🚨 Escalation Criteria
+
+### Immediate Escalation (Critical)
+
+**Trigger**: Any of the following
+- Data leakage detected in Phase 0
+- Training fails 3+ times with same config
+- Val Sharpe consistently negative for 20+ epochs
+- NaN/Inf in predictions
+
+**Action**:
+1. Stop all training
+2. Document issue in `reports/critical_issue_[YYYYMMDD].md`
+3. Team review meeting (within 24h)
+4. Root cause analysis before resuming
+
+---
+
+### Weekly Review (Non-Critical)
+
+**Trigger**: Any of the following
+- Target not met for 2 consecutive weeks
+- Performance regression >20% vs previous phase
+- Throughput improvement <1.2x in Phase 2
+
+**Action**:
+1. Complete weekly evaluation report
+2. Analyze root causes (data/model/hyperparams)
+3. Adjust plan if needed
+4. Continue with modified approach
+
+---
+
+## 📁 Documentation Management
+
+### New Document Creation
+
+**Process**:
+1. Create in `docs/` directory (or root for top-level)
+2. Add to `README.md` Documentation section
+3. Notify team:
+   ```
+   📄 New Documentation
+   Title: [Document Name]
+   Path: docs/[filename].md
+   Purpose: [1-2 sentence description]
+   Audience: [All / Developers / ML Engineers / etc.]
    ```
 
-2. Train with new dataset:
-   ```bash
-   SHARPE_WEIGHT=1.0 RANKIC_WEIGHT=0.0 CS_IC_WEIGHT=0.0 \
-   python scripts/integrated_ml_training_pipeline.py \
-     --max-epochs 30 \
-     --data-path output/ml_dataset_220features.parquet \
-     > /tmp/experiment_3_1_features220.log 2>&1 &
-   ```
+### Document Update Protocol
+
+**For critical documents** (this file, TRAINING_COMMANDS.md, MODEL_INPUT_DIMS.md):
+- Git commit message: `[DOCS] Update [filename]: [brief description]`
+- Tag reviewers in PR
+- Update "Last updated" timestamp
+
+**For experimental logs**:
+- No review needed
+- Keep in `reports/` or `_logs/`
+- Archive monthly
 
 ---
 
-## ⏳ Tier 1 Alternative Experiments (Optional)
-
-### Experiment 1.2: Loss Curriculum
-
-**Status**: ⚙️ IMPLEMENTATION READY (Backup strategy)
-**Expected**: Sharpe ~0.70-0.75 (+15-20%)
-**Use Case**: If pure Sharpe (1.0) causes issues in larger models
-**Priority**: ⭐ (Optional - pure Sharpe already proven effective)
-
-**Implementation**: `scripts/utils/loss_curriculum.py`
-- Progressive schedule: Phase 0-1 (0.5) → Phase 2 (0.7) → Phase 3 (1.0)
-- Requires integration into training script
-
----
-
-## 📊 Execution Timeline
-
-### ✅ Phase 1: Quick Wins (COMPLETE)
-
-| Experiment | Status | Runtime | Final Sharpe | Result |
-|------------|--------|---------|--------------|--------|
-| Baseline | ✅ Complete | 71 min | 0.582 | Reference |
-| 1.1a (Sharpe 0.8) | ✅ Complete | 83 min | 0.476 | Failed ❌ |
-| 1.1b (Sharpe 1.0) | ✅ Complete | 85 min | **0.779** | **Best 🎯** |
-
-**Achievement**: +33.8% improvement, 91.7% of target
-
-### ❌ Phase 2: Capacity Expansion (FAILED - RETRY READY)
-
-| Experiment | Status | Runtime | Final/Expected Sharpe | Result | Notes |
-|------------|--------|---------|----------------------|--------|-------|
-| 2.1 (Hidden 256) | ❌ Failed | 4.1h | 0.095 | **-87.8%** ❌ | batch_size=256 error |
-| 2.1 Retry (batch=2048) | ⏸️ Ready | ~2-3h | 0.82-0.85 (expected) | Corrected | Fix applied |
-| 3.1 (Features 220) | ⏸️ Dataset | ~4h | 0.85+ (expected) | Backup | If retry fails |
-
-**Status**: Tier 2 failed due to batch size configuration error (256 vs 1024)
-**Target**: Reach or exceed 0.849 Sharpe with corrected Tier 2 retry
-
-### 📝 Phase 3: Refinement (Planned)
-
-| Experiment | Status | Runtime | Expected Sharpe |
-|------------|--------|---------|----------------|
-| 4.1 (Quick HPO) | ⚙️ Ready | ~6h | +2-5% |
-| 4.2 (Full HPO) | ⚙️ Ready | ~48h | +5-10% |
-| Ensemble | 📝 Planned | ~2h | +2-5% |
-| Production validation | 📝 Planned | 1 day | - |
-
----
-
-## 📈 Progress Tracking
-
-### Sharpe Ratio Improvement Path
-
-| Milestone | Sharpe | Gap to Target | Achievement |
-|-----------|--------|---------------|-------------|
-| **Initial Baseline** | 0.136 | -0.713 | Starting point |
-| **Optimized Baseline** | 0.582 | -0.267 | 68.6% of target |
-| **Current Best (Tier 1)** | **0.779** | **-0.070** | **91.7% of target** |
-| **Expected (Tier 2)** | 0.82-0.85 | -0.03 ~ +0.001 | 96-100%+ |
-| **Target** | 0.849 | 0.000 | Goal |
-
-**Cumulative Improvement**:
-- Initial → Current: +0.643 (+472% improvement)
-- Latest improvement (Tier 1): +0.197 (+33.8%)
-- Expected next (Tier 2): +0.041-0.071 (+5-9%)
-
----
-
-## 📁 Generated Files & Documentation
+## 📂 File Organization
 
 ```
-docs/reports/experiments/
-└── tier1_sharpe_weight_optimization_20251021.md  # Full Tier 1 analysis
-
-configs/experiments/
-├── README.md                                      # All experiment launch commands
-├── hpo_search_space.yaml                         # HPO configuration
-
-scripts/utils/
-└── loss_curriculum.py                            # Loss schedule implementation
-
-archive/
-├── training_20251021_012605.tar.gz              # Baseline package (101KB)
-└── experiments_tier1_20251021.tar.gz            # Tier 1 complete archive (946KB)
+/workspace/gogooku3/
+├── EXPERIMENT_STATUS.md          ← This file (top-level tracking)
+├── EXPERIMENT_STATUS_legacy.md   ← Previous experiments archive
+├── docs/
+│   ├── MODEL_INPUT_DIMS.md       ← Config reference
+│   ├── TRAINING_COMMANDS.md      ← Command reference
+│   └── ...
+├── reports/
+│   ├── week1_eval_20251024.md    ← Weekly evaluations
+│   ├── data_leakage_check_*.md   ← Phase 0 diagnostics
+│   └── ...
+├── _logs/training/
+│   ├── phase1_full_*.log         ← Training logs
+│   └── ...
+└── metrics/
+    ├── sharpe_history.txt        ← Extracted metrics
+    └── ...
 ```
 
 ---
 
-## 🔧 Recommended Next Actions
+## 🔄 Version History
 
-### ❗ URGENT: Tier 2 Retry (Today - Highest Priority)
-
-**1. Launch Experiment 2.1 Retry** (Hidden size 256, batch_size=2048)
-- **Status**: ❌ Previous attempt FAILED (Sharpe 0.095 due to batch_size=256 error)
-- **Fix Applied**: Explicit `--batch-size 2048` (4x failed attempt)
-- **Mode**: Optimized (NOT Safe mode)
-- **Expected**: Sharpe 0.82-0.85, high probability of reaching target 0.849
-- **Runtime**: ~2-3 hours
-- **Action**: Execute corrected launch command above (line 135-150)
-
-**Why This is Critical**:
-- Root cause identified and fixed (batch size configuration error)
-- All other settings correct (SHARPE_WEIGHT=1.0, hidden_size=256)
-- High confidence in success with corrected configuration
-
-### Short-term (This Week)
-
-**2. Validate Tier 2 Retry Results**
-- If Exp 2.1 Retry reaches target 0.849 → Proceed to production validation ✅
-- If below target but >0.80 → Launch Exp 3.1 (Features 220)
-- If still failing → Investigate model architecture issues
-
-**3. Production Readiness** (If Tier 2 Retry succeeds)
-- Walk-forward validation on holdout period
-- Ensemble top 2-3 models (Tier 1 best + Tier 2 retry)
-- Risk analysis and stress testing
-- Document final model configuration
-
-### Medium-term (Next Week - Optional)
-
-**4. HPO Optimization** (if target not yet reached)
-- Quick probe (16 trials × 2 epochs)
-- Fine-tune learning rate, weight decay, batch size
-
-**5. Advanced Techniques** (stretch goals)
-- Ensemble best models
-- Multi-period validation
-- Feature importance analysis
+| Version | Date | Changes | Author |
+|---------|------|---------|--------|
+| v3.0 | 2025-10-24 | Initial version with v3.0 plan | Claude Code |
 
 ---
 
-## 📊 Success Metrics
+## ✅ Pre-Flight Checklist (Use before each Phase)
 
-### Primary
-- **Test Sharpe Ratio**: Target 0.849 (current best 0.779, 91.7%)
+### Phase 0
+- [ ] Cache cleared: `./scripts/clean_atft_cache.sh --force`
+- [ ] Health check passed: `./tools/project-health-check.sh`
+- [ ] Data leakage check: `python scripts/detect_data_leakage.py`
+- [ ] Feature analysis: `python scripts/analyze_baseline_features.py`
 
-### Secondary
-- **Val Loss**: Lower is better (current best: -0.0319)
-- **IC / RankIC**: Maintained during optimization
-- **Hit Rate**: Current ~0.53, Target >0.55
-- **Training time**: <2 hours per run ✅
-- **GPU memory**: <70GB ✅
+### Phase 1
+- [ ] Short test (5 epochs) completed successfully
+- [ ] No degeneracy warnings in logs
+- [ ] GPU utilized (check logs)
+- [ ] Ready for 60-epoch run
 
-### Stability
-- Sharpe std across runs: Monitor in Tier 2
-- No training crashes: ✅ All Tier 1 stable
-- Consistent convergence: ✅ Verified
+### Phase 2
+- [ ] Phase 1 Sharpe > 0.03
+- [ ] Stage 2.2 (2 workers) tested first
+- [ ] Thread count monitored: `nlwp < 100`
+- [ ] No deadlock in test runs
 
----
+### Phase 3
+- [ ] Phase 2 Sharpe > 0.08 and stable
+- [ ] 80%+ of recent epochs positive
+- [ ] HPO study name chosen
+- [ ] GPU hours available (estimate: 48h for 20 trials)
 
-## 🚨 Risk Assessment
-
-### Identified Risks
-
-**1. Pure Sharpe may not scale to larger models**
-- **Likelihood**: Low (Tier 1 showed stability)
-- **Impact**: Medium
-- **Mitigation**: Test Exp 2.1 with same weight=1.0 setting
-- **Fallback**: Use loss curriculum if instability appears
-
-**2. Model capacity increase may cause overfitting**
-- **Likelihood**: Medium
-- **Impact**: Medium
-- **Mitigation**: Monitor train/val gap, use dropout
-- **Validation**: Cross-validation on walk-forward splits
-
-**3. GPU memory constraints with hidden_size=256**
-- **Likelihood**: Low
-- **Impact**: High (blocks experiment)
-- **Mitigation**: Start with batch_size=1024, use gradient checkpointing
-- **Monitoring**: `nvidia-smi` during training
-
-### Mitigation Strategies
-
-1. ✅ **Progressive scaling**: Test capacity before features
-2. ✅ **Multiple metrics**: Track Sharpe, RankIC, IC, Hit Rate
-3. ✅ **Automated monitoring**: Use auto-launch scripts
-4. ✅ **Comprehensive documentation**: All experiments archived
+### Phase 4
+- [ ] Phase 3 best params documented
+- [ ] Config file created with best params
+- [ ] 120-epoch runtime estimated (~5 days)
+- [ ] Monitoring plan in place
 
 ---
 
-## 🎓 Lessons Learned (Tier 1)
-
-### ✅ What Worked
-
-1. **Pure Sharpe optimization (weight=1.0)** - Best strategy
-2. **Automated experiment queue** - Saved monitoring time
-3. **Phase-based training** - Stable convergence
-4. **Bold hypothesis testing** - Discovered optimal extreme value
-5. **Comprehensive documentation** - Reproducible and sharable
-
-### ❌ What Didn't Work
-
-1. **Intermediate Sharpe weight (0.8)** - "Middle trap" phenomenon
-2. **Assumption of monotonicity** - Non-linear relationship
-3. **Multi-objective without priority** - Conflicting gradients
-
-### 🔍 Insights
-
-1. **Prefer extremes over middle** in single-metric optimization
-2. **Test boundary conditions first** (0.0, 0.5, 1.0)
-3. **Monitor loss-metric alignment** - Divergence is a red flag
-4. **Pure optimization is often safer** than complex balancing
-5. **Volatility ≠ Instability** - High variance acceptable if convergence good
-
----
-
-## 📋 Quick Reference
-
-### Launch Next Experiment
-
-```bash
-# Experiment 2.1: Hidden Size 256 (RECOMMENDED)
-cd /workspace/gogooku3
-SHARPE_WEIGHT=1.0 RANKIC_WEIGHT=0.0 CS_IC_WEIGHT=0.0 \
-python scripts/integrated_ml_training_pipeline.py \
-  --max-epochs 30 \
-  --data-path output/ml_dataset_latest_full.parquet \
-  > /tmp/experiment_2_1_hidden256.log 2>&1 &
-
-# Monitor
-tail -f /tmp/experiment_2_1_hidden256.log | grep -E "Epoch|Sharpe|Phase"
-```
-
-### Check Status
-
-```bash
-# Check running processes
-ps aux | grep -E "python.*integrated_ml" | grep -v grep
-
-# Check latest results
-ls -lth output/results/complete_training_result_*.json | head -3
-
-# View latest Sharpe
-tail -50 /tmp/experiment_*.log | grep "Achieved Sharpe"
-```
-
----
-
-**Status Report Generated**: 2025-10-21 07:10 JST
-**Next Update**: After Experiment 2.1 completion (~2 hours)
-**Full Tier 1 Report**: `docs/reports/experiments/tier1_sharpe_weight_optimization_20251021.md`
+**For questions or clarifications**, refer to:
+- Configuration: [MODEL_INPUT_DIMS.md](docs/MODEL_INPUT_DIMS.md)
+- Commands: [TRAINING_COMMANDS.md](docs/TRAINING_COMMANDS.md)
+- General: [README.md](README.md)
