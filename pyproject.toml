@@ -146,7 +146,7 @@ ignore = [
 
 [tool.ruff.per-file-ignores]
 "__init__.py" = ["F401"]  # ignore unused imports in __init__.py
-"tests/**/*.py" = ["B011"]  # allow assert False
+"tests/**/*.py" = ["B011", "S101"]  # allow assert False and assert statements
 
 [tool.black]
 target-version = ['py310']
