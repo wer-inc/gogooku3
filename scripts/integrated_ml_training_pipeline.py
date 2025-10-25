@@ -251,6 +251,9 @@ class CompleteATFTTrainingPipeline:
             os.environ.setdefault("NUM_WORKERS", "0")
             os.environ.setdefault("PERSISTENT_WORKERS", "0")
             os.environ.setdefault("PREFETCH_FACTOR", "0")
+            os.environ.setdefault("ATFT_TRAIN_CONFIG", "adaptive_phase3_ext")
+            os.environ.setdefault("ENABLE_AUGMENTATION_PHASE", "1")
+            os.environ.setdefault("PHASE4_EPOCHS", "15")
 
             # ATFT-GAT-FAN の外部パス設定（オプション運用）
             # - ATFT_EXTERNAL_PATH が指定されている場合のみ存在チェックを行う
@@ -628,6 +631,10 @@ class CompleteATFTTrainingPipeline:
                 # データディレクトリを明示的に指定
                 f"data.source.data_dir={training_data_info['data_dir']}",
             ]
+
+            # Initialize filtered_overrides early (used later regardless of _optimized_pre)
+            filtered_overrides: list[str] = []
+
             if not _optimized_pre:
                 # data/model/train は既定のdefaultsで固定。必要な範囲のみ上書き。
                 # ただし、CLI引数で提供されている場合はスキップ（CLI優先）
@@ -743,7 +750,7 @@ class CompleteATFTTrainingPipeline:
                         return "=" in tok
                     return False
 
-                filtered_overrides: list[str] = []
+                # filtered_overrides already initialized above
                 i = 0
                 n = len(self.extra_overrides)
                 while i < n:
@@ -778,8 +785,17 @@ class CompleteATFTTrainingPipeline:
                         logger.debug("Dropping stray positional token: %s", tok)
                     i += 1
 
-                if filtered_overrides:
-                    cmd.extend(filtered_overrides)
+            if filtered_overrides:
+                cmd.extend(filtered_overrides)
+
+            # Ensure a train config override is always present (can be disabled via explicit override)
+            has_train_override = any(
+                isinstance(arg, str) and arg.startswith("train=") for arg in cmd
+            )
+            if not has_train_override:
+                train_cfg = os.getenv("ATFT_TRAIN_CONFIG", "").strip()
+                if train_cfg:
+                    cmd.append(f"train={train_cfg}")
 
             # まずGPU/CPU計画を判定（この結果を以降の設定に利用）
             # GPU必須モード（REQUIRE_GPU=1 or ACCELERATOR=gpu 等）の場合、

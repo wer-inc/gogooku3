@@ -597,7 +597,7 @@ async def enrich_and_save(
 
             df = add_sector_cross_sectional_features(df, include_cols=sector_cs_cols)
             logger.info(
-                "Sector cross-sectional features attached (ret_vs_sec, rank_in_sec, volume/rv20 z in sector)"
+                "Sector cross-sectional features attached (ret_prev_*d_vs_sec, ret_prev_*d_rank_in_sec with T-N lags, volume/rv20 z in sector)"
             )
         else:
             logger.info("Sector cross-sectional features disabled; skipping")
@@ -2303,14 +2303,14 @@ async def enrich_and_save(
             "x_liquidityshock_mom",
             "x_dmi_impulse_dir",
             "x_breadth_rel",
-            # 3.2) Sector cross-sectional (relative/rank/z within sector)
-            "ret_1d_vs_sec",
-            "ret_1d_in_sec_z",
-            "ret_1d_rank_in_sec",
-            "ret_5d_vs_sec",
-            "ret_5d_in_sec_z",
-            "ret_10d_vs_sec",
-            "ret_10d_in_sec_z",
+            # 3.2) Sector cross-sectional (relative/rank/z within sector) - FIXED: T-N lagged (2025-10-25)
+            "ret_prev_1d_vs_sec",        # FIXED: T-1 lag (was ret_1d_vs_sec)
+            "ret_prev_1d_in_sec_z",      # FIXED: T-1 lag (was ret_1d_in_sec_z)
+            "ret_prev_1d_rank_in_sec",   # FIXED: T-1 lag (was ret_1d_rank_in_sec)
+            "ret_prev_5d_vs_sec",        # FIXED: T-5 lag (was ret_5d_vs_sec)
+            "ret_prev_5d_in_sec_z",      # FIXED: T-5 lag (was ret_5d_in_sec_z)
+            "ret_prev_10d_vs_sec",       # FIXED: T-10 lag (was ret_10d_vs_sec)
+            "ret_prev_10d_in_sec_z",     # FIXED: T-10 lag (was ret_10d_in_sec_z)
             "volume_in_sec_z",
             "volume_rank_in_sec",
             "rsi14_in_sec_z",
