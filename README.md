@@ -327,6 +327,20 @@ batch:
   pin_memory: true
 ```
 
+## 📖 Documentation
+
+### Training & Configuration Guides (v3.0)
+
+- **[Training Commands Reference](docs/TRAINING_COMMANDS.md)** - Phase-by-phase execution commands with pre-flight checklists
+- **[Model Input Dimensions Guide](docs/MODEL_INPUT_DIMS.md)** - Correct usage of `model.input_dims.*` parameters (avoid confusion!)
+- **[Experiment Status & Evaluation Protocol](EXPERIMENT_STATUS.md)** - Weekly milestones, metrics calculation, escalation criteria
+
+### Legacy Documentation
+
+- **[Previous Experiments](EXPERIMENT_STATUS_legacy.md)** - Historical experiment results and findings
+
+---
+
 ## 📚 API リファレンス
 
 ### 主要スクリプト
