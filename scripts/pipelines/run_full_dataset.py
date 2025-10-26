@@ -437,6 +437,60 @@ def _parse_args() -> argparse.Namespace:
         default=True,  # Default enabled (395 theoretical max; ~307 active with futures disabled)
         help="Enable Yang–Zhang volatility and VoV features (default: enabled)",
     )
+    # Macro sentiment (VIX)
+    parser.add_argument(
+        "--enable-vix",
+        action="store_true",
+        default=False,
+        help="Enable VIX-based macro sentiment features (default: disabled)",
+    )
+    parser.add_argument(
+        "--vix-parquet",
+        type=Path,
+        default=None,
+        help="Optional cached VIX parquet (Date, Open, High, Low, Close, Adj Close, Volume)",
+    )
+    parser.add_argument(
+        "--force-refresh-vix",
+        action="store_true",
+        help="Force refresh of VIX data even if cache exists",
+    )
+    # FX (USD/JPY)
+    parser.add_argument(
+        "--enable-fx-usdjpy",
+        action="store_true",
+        default=False,
+        help="Enable USD/JPY FX macro features (default: disabled)",
+    )
+    parser.add_argument(
+        "--fx-parquet",
+        type=Path,
+        default=None,
+        help="Optional cached FX parquet (Date, Open, High, Low, Close, Adj Close, Volume)",
+    )
+    parser.add_argument(
+        "--force-refresh-fx",
+        action="store_true",
+        help="Force refresh of FX data even if cache exists",
+    )
+    # Crypto (BTC/USD)
+    parser.add_argument(
+        "--enable-btc",
+        action="store_true",
+        default=False,
+        help="Enable BTC/USD crypto macro features (default: disabled)",
+    )
+    parser.add_argument(
+        "--btc-parquet",
+        type=Path,
+        default=None,
+        help="Optional cached BTC parquet (Date, Open, High, Low, Close, Adj Close, Volume)",
+    )
+    parser.add_argument(
+        "--force-refresh-btc",
+        action="store_true",
+        help="Force refresh of BTC data even if cache exists",
+    )
     parser.add_argument(
         "--adv-vol-windows",
         type=str,
@@ -980,6 +1034,10 @@ async def main() -> int:
         cached_listed_info = _find_latest("listed_info_history_*.parquet")
         cached_weekly_margin = _find_latest("weekly_margin_interest_*.parquet")
         cached_daily_margin = _find_latest("daily_margin_interest_*.parquet")
+        cached_am = _find_latest("prices_am_*.parquet")
+        cached_breakdown = _find_latest("breakdown_*.parquet")
+        cached_dividend = _find_latest("dividends_*.parquet")
+        cached_fs = _find_latest("fs_details_*.parquet")
         cached_short_selling = (
             _find_latest("short_selling_*.parquet")
             if args.enable_short_selling
@@ -996,6 +1054,10 @@ async def main() -> int:
         listed_valid = _is_cache_valid(cached_listed_info, max_age)
         weekly_margin_valid = _is_cache_valid(cached_weekly_margin, max_age)
         daily_margin_valid = _is_cache_valid(cached_daily_margin, max_age)
+        am_valid = _is_cache_valid(cached_am, max_age)
+        breakdown_valid = _is_cache_valid(cached_breakdown, max_age)
+        dividend_valid = _is_cache_valid(cached_dividend, max_age)
+        fs_valid = _is_cache_valid(cached_fs, max_age)
         short_selling_valid = (
             _is_cache_valid(cached_short_selling, max_age)
             if args.enable_short_selling
@@ -1008,13 +1070,30 @@ async def main() -> int:
         )
 
         # Use cache if all required files are valid
-        if trades_valid and listed_valid and short_selling_valid and sector_short_valid:
+        if (
+            trades_valid
+            and listed_valid
+            and weekly_margin_valid
+            and daily_margin_valid
+            and am_valid
+            and breakdown_valid
+            and dividend_valid
+            and fs_valid
+            and short_selling_valid
+            and sector_short_valid
+        ):
             logger.info(
                 "✅ All cached data is valid, using cached files (skip API fetch)"
             )
             use_cached = True
             trades_spec_path = cached_trades
             listed_info_path = cached_listed_info
+            wmi_path = cached_weekly_margin
+            dmi_path = cached_daily_margin
+            am_path = cached_am
+            breakdown_path = cached_breakdown
+            dividend_path = cached_dividend
+            fs_path = cached_fs
             if args.enable_short_selling and cached_short_selling:
                 short_selling_path = cached_short_selling
             if args.enable_sector_short_selling and cached_sector_short:
@@ -1022,6 +1101,11 @@ async def main() -> int:
                 pass  # Sector short uses different variable names in offline fallback
         else:
             logger.info("⚠️  Some cached data is missing or stale, will fetch from API")
+
+    am_path: Path | None = None
+    breakdown_path: Path | None = None
+    dividend_path: Path | None = None
+    fs_path: Path | None = None
 
     if args.jquants and not use_cached:
         # Fetch trade-spec and save to Parquet
@@ -1041,6 +1125,10 @@ async def main() -> int:
         wmi_df: pl.DataFrame | None = pl.DataFrame()
         dmi_df: pl.DataFrame | None = pl.DataFrame()
         info_df: pl.DataFrame | None = pl.DataFrame()
+        am_df: pl.DataFrame | None = pl.DataFrame()
+        breakdown_df: pl.DataFrame | None = pl.DataFrame()
+        dividend_df: pl.DataFrame | None = pl.DataFrame()
+        fs_df: pl.DataFrame | None = pl.DataFrame()
 
         connector = aiohttp.TCPConnector(
             limit=tcp_limit,
@@ -1136,6 +1224,42 @@ async def main() -> int:
                 )
             )
 
+            logger.info("Fetching morning session (AM) quotes")
+            fetch_coroutines.append(
+                (
+                    "am_quotes",
+                    "morning session quotes",
+                    fetcher.get_prices_am(session, start_date, end_date),
+                )
+            )
+
+            logger.info("Fetching investor breakdown data")
+            fetch_coroutines.append(
+                (
+                    "breakdown",
+                    "investor breakdown",
+                    fetcher.get_breakdown(session, start_date, end_date),
+                )
+            )
+
+            logger.info("Fetching dividend announcements")
+            fetch_coroutines.append(
+                (
+                    "dividend",
+                    "dividend announcements",
+                    fetcher.get_dividends(session, start_date, end_date),
+                )
+            )
+
+            logger.info("Fetching financial statements (fs_details)")
+            fetch_coroutines.append(
+                (
+                    "fs_details",
+                    "financial statements",
+                    fetcher.get_fs_details(session, start_date, end_date),
+                )
+            )
+
             logger.info("Fetching listed_info for sector/market enrichment")
             fetch_coroutines.append(
                 (
@@ -1159,6 +1283,14 @@ async def main() -> int:
                     wmi_df = result
                 elif key == "daily_margin":
                     dmi_df = result
+                elif key == "am_quotes":
+                    am_df = result
+                elif key == "breakdown":
+                    breakdown_df = result
+                elif key == "dividend":
+                    dividend_df = result
+                elif key == "fs_details":
+                    fs_df = result
                 elif key == "listed_info":
                     info_df = result
 
@@ -1188,6 +1320,30 @@ async def main() -> int:
             trades_df = pl.DataFrame()
         if info_df is None:
             info_df = pl.DataFrame()
+
+        if am_df is not None and not am_df.is_empty() and "Code" in am_df.columns:
+            am_df = am_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+        else:
+            am_df = pl.DataFrame()
+
+        if breakdown_df is not None and not breakdown_df.is_empty() and "Code" in breakdown_df.columns:
+            breakdown_df = breakdown_df.with_columns(
+                [pl.col("Code").cast(pl.Utf8).alias("Code")]
+            )
+        else:
+            breakdown_df = pl.DataFrame()
+
+        if dividend_df is not None and not dividend_df.is_empty() and "Code" in dividend_df.columns:
+            dividend_df = dividend_df.with_columns(
+                [pl.col("Code").cast(pl.Utf8).alias("Code")]
+            )
+        else:
+            dividend_df = pl.DataFrame()
+
+        if fs_df is not None and not fs_df.is_empty() and "Code" in fs_df.columns:
+            fs_df = fs_df.with_columns([pl.col("Code").cast(pl.Utf8).alias("Code")])
+        else:
+            fs_df = pl.DataFrame()
 
         if trades_df is None or trades_df.is_empty():
             logger.warning(
@@ -1247,6 +1403,66 @@ async def main() -> int:
                 save_parquet_with_gcs(dmi_df, dmi_path, auto_sync=False)
             except Exception as e:
                 logger.warning(f"Failed to save daily margin parquet: {e}")
+
+        if am_df is not None and not am_df.is_empty():
+            try:
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+
+                outdir = Path("output/raw/prices_am")
+                outdir.mkdir(parents=True, exist_ok=True)
+                am_path = (
+                    outdir
+                    / f"prices_am_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                )
+                save_parquet_with_gcs(am_df, am_path, auto_sync=False)
+                logger.info(f"Saved AM quotes data: {am_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save AM quotes parquet: {e}")
+
+        if breakdown_df is not None and not breakdown_df.is_empty():
+            try:
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+
+                outdir = Path("output/raw/breakdown")
+                outdir.mkdir(parents=True, exist_ok=True)
+                breakdown_path = (
+                    outdir
+                    / f"breakdown_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                )
+                save_parquet_with_gcs(breakdown_df, breakdown_path, auto_sync=False)
+                logger.info(f"Saved breakdown data: {breakdown_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save breakdown parquet: {e}")
+
+        if dividend_df is not None and not dividend_df.is_empty():
+            try:
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+
+                outdir = Path("output/raw/dividends")
+                outdir.mkdir(parents=True, exist_ok=True)
+                dividend_path = (
+                    outdir
+                    / f"dividends_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                )
+                save_parquet_with_gcs(dividend_df, dividend_path, auto_sync=False)
+                logger.info(f"Saved dividend data: {dividend_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save dividend parquet: {e}")
+
+        if fs_df is not None and not fs_df.is_empty():
+            try:
+                from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
+
+                outdir = Path("output/raw/financials")
+                outdir.mkdir(parents=True, exist_ok=True)
+                fs_path = (
+                    outdir
+                    / f"fs_details_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
+                )
+                save_parquet_with_gcs(fs_df, fs_path, auto_sync=False)
+                logger.info(f"Saved financial statements data: {fs_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save financial statements parquet: {e}")
 
         # Fetch futures/short-selling within a fresh session (previous session closed)
         try:
@@ -1522,6 +1738,26 @@ async def main() -> int:
                         "No short positions parquet found; positions features will be skipped"
                     )
 
+        if am_path is None:
+            am_path = _find_latest("prices_am_*.parquet")
+            if am_path:
+                logger.info(f"Using local AM quotes parquet: {am_path}")
+
+        if breakdown_path is None:
+            breakdown_path = _find_latest("breakdown_*.parquet")
+            if breakdown_path:
+                logger.info(f"Using local breakdown parquet: {breakdown_path}")
+
+        if dividend_path is None:
+            dividend_path = _find_latest("dividends_*.parquet")
+            if dividend_path:
+                logger.info(f"Using local dividend parquet: {dividend_path}")
+
+        if fs_path is None:
+            fs_path = _find_latest("fs_details_*.parquet")
+            if fs_path:
+                logger.info(f"Using local fs_details parquet: {fs_path}")
+
     logger.info(
         "=== STEP 1: Run base optimized pipeline (prices + TA + statements) ==="
     )
@@ -1666,6 +1902,19 @@ async def main() -> int:
         adv_vol_windows=[
             int(s.strip()) for s in (args.adv_vol_windows or "").split(",") if s.strip()
         ],
+        enable_macro_vix=args.enable_vix,
+        vix_parquet=args.vix_parquet,
+        vix_force_refresh=args.force_refresh_vix,
+        enable_macro_fx_usdjpy=args.enable_fx_usdjpy,
+        fx_parquet=args.fx_parquet,
+        fx_force_refresh=args.force_refresh_fx,
+        enable_macro_btc=args.enable_btc,
+        btc_parquet=args.btc_parquet,
+        btc_force_refresh=args.force_refresh_btc,
+        am_quotes_parquet=am_path,
+        breakdown_parquet=breakdown_path,
+        dividend_parquet=dividend_path,
+        fs_details_parquet=fs_path,
         enable_margin_weekly=bool(
             margin_weekly_parquet is not None and margin_weekly_parquet.exists()
         ),

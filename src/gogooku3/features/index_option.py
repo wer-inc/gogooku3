@@ -355,6 +355,17 @@ def build_option_market_aggregates(opt_feats: pl.DataFrame, next_bday_expr: pl.E
     if "is_eod" in s.columns:
         s = s.filter(pl.col("is_eod") == 1)
 
+    if "tau_d" in s.columns:
+        s = s.with_columns(
+            pl.col("tau_d")
+            .fill_null(pl.col("tau_d").max().over("Date"))
+            .rank("dense")
+            .over("Date")
+            .alias("tau_rank")
+        )
+    else:
+        s = s.with_columns(pl.lit(1).alias("tau_rank"))
+
     # Aggregations (robust via median)
     agg = (
         s.group_by("Date")
@@ -367,6 +378,58 @@ def build_option_market_aggregates(opt_feats: pl.DataFrame, next_bday_expr: pl.E
                 pl.col("oi").sum().alias("opt_oi_sum"),
                 pl.col("vol").sum().alias("opt_vol_sum"),
                 pl.col("dollar_vol").sum().alias("opt_dollar_vol_sum"),
+                pl.col("iv")
+                .filter((pl.col("tau_rank") == 1) & (pl.col("atm_flag") == 1))
+                .median()
+                .alias("opt_iv_atm_near"),
+                pl.col("iv")
+                .filter((pl.col("tau_rank") == 2) & (pl.col("atm_flag") == 1))
+                .median()
+                .alias("opt_iv_atm_next"),
+                (
+                    pl.col("iv")
+                    .filter(
+                        (pl.col("tau_rank") == 1)
+                        & (pl.col("put_flag") == 1)
+                        & (pl.col("moneyness") >= 0.93)
+                        & (pl.col("moneyness") <= 0.97)
+                    )
+                    .median()
+                    - pl.col("iv")
+                    .filter(
+                        (pl.col("tau_rank") == 1)
+                        & (pl.col("put_flag") == 0)
+                        & (pl.col("moneyness") >= 1.03)
+                        & (pl.col("moneyness") <= 1.07)
+                    )
+                    .median()
+                ).alias("opt_skew_5pct"),
+                pl.col("iv")
+                .filter(
+                    (pl.col("tau_rank") == 1)
+                    & ((pl.col("moneyness") - 1.0).abs() <= 0.1)
+                )
+                .std()
+                .alias("opt_smile_width"),
+                (
+                    pl.col("oi")
+                    .filter(
+                        (pl.col("tau_rank") == 1)
+                        & (pl.col("put_flag") == 1)
+                        & ((pl.col("moneyness") - 1.0).abs() <= 0.1)
+                    )
+                    .sum()
+                    / (
+                        pl.col("oi")
+                        .filter(
+                            (pl.col("tau_rank") == 1)
+                            & (pl.col("put_flag") == 0)
+                            & ((pl.col("moneyness") - 1.0).abs() <= 0.1)
+                        )
+                        .sum()
+                        + EPS
+                    )
+                ).alias("opt_oi_put_call_ratio"),
             ]
         )
         .sort("Date")
@@ -374,6 +437,19 @@ def build_option_market_aggregates(opt_feats: pl.DataFrame, next_bday_expr: pl.E
     if next_bday_expr is not None:
         agg = agg.with_columns([next_bday_expr.alias("effective_date")])
         agg = agg.select(["effective_date", "Date", *[c for c in agg.columns if c not in ("Date", "effective_date")]])
+    agg = agg.with_columns(
+        [
+            (pl.col("opt_iv_atm_next") - pl.col("opt_iv_atm_near")).alias("opt_ts_slope"),
+            (
+                (pl.col("opt_iv_atm_near")
+                 - pl.col("opt_iv_atm_near").rolling_mean(window_size=20, min_periods=5))
+                / (
+                    pl.col("opt_iv_atm_near").rolling_std(window_size=20, min_periods=5)
+                    + EPS
+                )
+            ).alias("opt_iv_shock"),
+        ]
+    )
     return agg
 
 
@@ -397,4 +473,3 @@ def attach_option_market_to_equity(quotes: pl.DataFrame, mkt: pl.DataFrame) -> p
             pl.when(pl.col("opt_iv_cmat_30d").is_null()).then(0).otherwise(1).cast(pl.Int8).alias("is_opt_mkt_valid")
         ])
     return out
-
