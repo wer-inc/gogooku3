@@ -203,6 +203,16 @@ def main() -> None:
     ]
 
     feature_cols = [col for col in df.columns if col not in exclude_cols]
+    # Safety: drop any columns that are obvious label aliases (prevent leakage)
+    leak_patterns = ("target_", "feat_ret_")
+    leaked = [c for c in feature_cols if any(c.startswith(p) for p in leak_patterns)]
+    if leaked:
+        logger.warning(
+            "[leak-guard] Dropping %d potential label-alias features: %s",
+            len(leaked),
+            ", ".join(sorted(leaked)[:8]) + (" ..." if len(leaked) > 8 else ""),
+        )
+        feature_cols = [c for c in feature_cols if c not in leaked]
     logger.info(f"Feature columns: {len(feature_cols)}")
 
     # Check target exists
@@ -305,9 +315,8 @@ def main() -> None:
             "bagging_freq": 5,
             "verbose": -1,
             "seed": 42,
-            # GPU acceleration
-            "device": "gpu",
-            "gpu_platform_id": 0,
+            # CUDA GPU acceleration
+            "device": "cuda",
             "gpu_device_id": 0,
         }
 

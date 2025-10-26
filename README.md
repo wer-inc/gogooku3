@@ -13,6 +13,9 @@
 
 ATFT-GAT-FANは、最新の深層学習技術を活用した高性能金融時系列予測システムです。**ATFT-GAT-FAN**アーキテクチャにより、従来比**+20%**の予測精度向上を実現しています。
 
+### 🚧 進行中の課題
+- 市場センチメントを捉える外部ボラティリティ指数（例: 日経平均VI、TOPIXボラティリティ指数）の取得・統合を追加予定。現状のATRなど実現ボラティリティ指標のみでは期待ボラティリティ情報が不足しており、マクロモジュール強化のためデータ統合パイプラインを整備する。
+
 ### 🚀 主な特徴
 
 - **🧠 最新アーキテクチャ**: ATFT-GAT-FAN (Adaptive Temporal Fusion Transformer + Graph Attention + Frequency Adaptive Normalization)
@@ -337,7 +340,7 @@ batch:
 
 ### Legacy Documentation
 
-- **[Previous Experiments](EXPERIMENT_STATUS_legacy.md)** - Historical experiment results and findings
+- **[Previous Experiments](EXPERIMENT_STATUS.md)** - Historical experiment results and findings
 
 ---
 

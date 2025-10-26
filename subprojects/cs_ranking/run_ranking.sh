@@ -63,11 +63,12 @@ echo "  lr      : $LR"
 echo "  workers : ${NUM_WORKERS}"
 echo "  losses  : RankIC=$RANKIC_WEIGHT, CS_IC=$CS_IC_WEIGHT, Sharpe=$SHARPE_WEIGHT"
 
-exec python scripts/train.py \
-  --data-path "$DATA" \
+exec python ../../scripts/train.py \
+  --data-path "../../$DATA" \
   --epochs "$EPOCHS" \
   --batch-size "$BATCH" \
   --lr "$LR" \
   --hidden-size 256 \
+  --num-workers "${NUM_WORKERS}" \
   --mode optimized \
   --no-background

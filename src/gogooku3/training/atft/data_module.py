@@ -1589,12 +1589,15 @@ class ProductionDataModuleV2:
             pl.UInt8,
         }
 
-        # Exclude target columns (target_1d, target_5d, etc.) as well
+        # Exclude target columns (target_1d, target_5d, etc.) and known label aliases
         feature_cols = [
             col
             for col in df.columns
             if col not in exclude_cols
             and not col.startswith("target_")  # Exclude all target columns
+            and not col.startswith(
+                "feat_ret_"
+            )  # Prevent leakage via duplicated targets
             and df.schema[col] in numeric_dtypes
         ]
         # Optional: intersect with externally selected features (JSON list)

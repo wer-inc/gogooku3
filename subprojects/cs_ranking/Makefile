@@ -4,10 +4,10 @@ PY := python
 
 help:
 	@echo "Cross-sectional ranking helpers"
-	@echo "  make run   DATA=output/ml_dataset_latest_full.parquet EPOCHS=120 BATCH=2048 LR=2e-4"
-	@echo "  make quick DATA=output/ml_dataset_latest_full.parquet (3 epochs sanity)"
+	@echo "  make run   DATA=../../output/ml_dataset_latest_full.parquet EPOCHS=120 BATCH=2048 LR=2e-4"
+	@echo "  make quick DATA=../../output/ml_dataset_latest_full.parquet (3 epochs sanity)"
 
-DATA ?= output/ml_dataset_latest_full.parquet
+DATA ?= ../../output/ml_dataset_latest_full.parquet
 EPOCHS ?= 120
 BATCH ?= 2048
 LR ?= 2e-4
