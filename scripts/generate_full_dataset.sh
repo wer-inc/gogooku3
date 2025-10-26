@@ -63,6 +63,8 @@ CMD="$CMD --enable-sector-short-selling"  # Enable sector short selling
 CMD="$CMD --enable-short-selling"  # Enable short selling
 CMD="$CMD --enable-advanced-vol"  # Enable advanced volatility
 CMD="$CMD --enable-option-market-features"  # Enable option market features
+CMD="$CMD --enable-vix"  # Enable VIX macro sentiment features
+CMD="$CMD --enable-fx-usdjpy"  # Enable USD/JPY FX macro features
 
 # Add paths if found
 [ -n "$DAILY_MARGIN_PATH" ] && CMD="$CMD --daily-margin-parquet '$DAILY_MARGIN_PATH'"

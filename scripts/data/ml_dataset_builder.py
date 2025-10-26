@@ -12,6 +12,7 @@ Includes integration for margin weekly block.
 import json
 import logging
 import math
+import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -826,6 +827,876 @@ class MLDatasetBuilder:
         except Exception as e:
             logger.warning(f"[builder] TOPIX integration failed: {e}")
             return df
+
+    def add_vix_features(
+        self,
+        df: pl.DataFrame,
+        vix_df: Optional[pl.DataFrame],
+        *,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        """Attach VIX-derived macro sentiment features (T+1 alignment)."""
+        if vix_df is None or vix_df.is_empty():
+            logger.info("[builder] VIX features skipped (no data provided)")
+            return df
+
+        # Prepare join frame
+        vix = vix_df
+        if "Date" not in vix.columns:
+            logger.warning("[builder] VIX frame lacks Date column; skipping attach")
+            return df
+
+        vix = vix.with_columns(pl.col("Date").cast(pl.Date))
+
+        # If effective_date already present, use it; otherwise derive from calendar
+        if "effective_date" in vix.columns:
+            join_frame = vix.drop("Date").rename({"effective_date": "Date"})
+        else:
+            try:
+                if business_days:
+                    from src.features.calendar_utils import build_next_bday_expr_from_dates
+
+                    next_expr = build_next_bday_expr_from_dates(business_days)
+                else:
+                    next_expr = build_next_bday_expr_from_quotes(df)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(f"[builder] Failed to derive next business day for VIX: {exc}")
+                next_expr = None
+
+            if next_expr is not None:
+                join_frame = (
+                    vix.with_columns(next_expr.alias("effective_date"))
+                    .drop("Date")
+                    .rename({"effective_date": "Date"})
+                )
+            else:
+                join_frame = vix
+
+        # Ensure only Date + new feature columns
+        feature_cols = [c for c in join_frame.columns if c != "Date"]
+        join_frame = join_frame.select(["Date", *feature_cols])
+
+        # Drop duplicates that already exist on df
+        dup_cols = [c for c in feature_cols if c in df.columns]
+        if dup_cols:
+            logger.info(
+                "[builder] Dropping duplicate VIX columns prior to join: %s",
+                dup_cols[:4] + (["..."] if len(dup_cols) > 4 else []),
+            )
+            join_frame = join_frame.drop(dup_cols)
+            feature_cols = [c for c in feature_cols if c not in dup_cols]
+
+        if not feature_cols:
+            logger.info("[builder] VIX join frame had no new columns; skipping attach")
+            return df
+
+        out = df.join(join_frame, on="Date", how="left")
+
+        # Derived comparisons vs market volatility (if available)
+        if "mkt_vol_20d" in out.columns and "macro_vix_close" in out.columns:
+            eps = 1e-12
+            out = out.with_columns(
+                [
+                    (
+                        pl.col("macro_vix_close") - pl.col("mkt_vol_20d")
+                    ).alias("macro_vix_minus_mkt_vol_20d"),
+                    (
+                        pl.col("macro_vix_close") / (pl.col("mkt_vol_20d") + eps)
+                    ).alias("macro_vix_vs_mkt_vol_ratio"),
+                ]
+            )
+
+        return out
+
+    def add_fx_features(
+        self,
+        df: pl.DataFrame,
+        fx_df: Optional[pl.DataFrame],
+        *,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        """Attach FX-derived macro features (T+1 alignment)."""
+        if fx_df is None or fx_df.is_empty():
+            logger.info("[builder] FX features skipped (no data provided)")
+            return df
+
+        fx = fx_df
+        if "Date" not in fx.columns:
+            logger.warning("[builder] FX frame lacks Date column; skipping attach")
+            return df
+
+        fx = fx.with_columns(pl.col("Date").cast(pl.Date))
+
+        if "effective_date" in fx.columns:
+            join_frame = fx.drop("Date").rename({"effective_date": "Date"})
+        else:
+            try:
+                if business_days:
+                    from src.features.calendar_utils import build_next_bday_expr_from_dates
+
+                    next_expr = build_next_bday_expr_from_dates(business_days)
+                else:
+                    next_expr = build_next_bday_expr_from_quotes(df)
+            except Exception as exc:  # pragma: no cover
+                logger.warning(f"[builder] Failed to derive next business day for FX: {exc}")
+                next_expr = None
+
+            if next_expr is not None:
+                join_frame = (
+                    fx.with_columns(next_expr.alias("effective_date"))
+                    .drop("Date")
+                    .rename({"effective_date": "Date"})
+                )
+            else:
+                join_frame = fx
+
+        feature_cols = [c for c in join_frame.columns if c != "Date"]
+        join_frame = join_frame.select(["Date", *feature_cols])
+
+        dup_cols = [c for c in feature_cols if c in df.columns]
+        if dup_cols:
+            join_frame = join_frame.drop(dup_cols)
+            feature_cols = [c for c in feature_cols if c not in dup_cols]
+
+        if not feature_cols:
+            logger.info("[builder] FX join frame had no new columns; skipping attach")
+            return df
+
+        out = df.join(join_frame, on="Date", how="left")
+        return out
+
+    def add_btc_features(
+        self,
+        df: pl.DataFrame,
+        btc_df: Optional[pl.DataFrame],
+        *,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        """Attach BTC/USD macro features (T+1 alignment)."""
+        if btc_df is None or btc_df.is_empty():
+            logger.info("[builder] BTC features skipped (no data provided)")
+            return df
+
+        btc = btc_df
+        if "Date" not in btc.columns:
+            logger.warning("[builder] BTC frame lacks Date column; skipping attach")
+            return df
+
+        btc = btc.with_columns(pl.col("Date").cast(pl.Date))
+
+        if "effective_date" in btc.columns:
+            join_frame = btc.drop("Date").rename({"effective_date": "Date"})
+        else:
+            try:
+                if business_days:
+                    from src.features.calendar_utils import build_next_bday_expr_from_dates
+
+                    next_expr = build_next_bday_expr_from_dates(business_days)
+                else:
+                    next_expr = build_next_bday_expr_from_quotes(df)
+            except Exception as exc:  # pragma: no cover
+                logger.warning(f"[builder] Failed to derive next business day for BTC: {exc}")
+                next_expr = None
+
+            if next_expr is not None:
+                join_frame = (
+                    btc.with_columns(next_expr.alias("effective_date"))
+                    .drop("Date")
+                    .rename({"effective_date": "Date"})
+                )
+            else:
+                join_frame = btc
+
+        feature_cols = [c for c in join_frame.columns if c != "Date"]
+        join_frame = join_frame.select(["Date", *feature_cols])
+
+        dup_cols = [c for c in feature_cols if c in df.columns]
+        if dup_cols:
+            join_frame = join_frame.drop(dup_cols)
+            feature_cols = [c for c in feature_cols if c not in dup_cols]
+
+        if not feature_cols:
+            logger.info("[builder] BTC join frame had no new columns; skipping attach")
+            return df
+
+        out = df.join(join_frame, on="Date", how="left")
+
+        # Optional interaction: gauge divergence between BTC and VIX regimes if both present
+        if (
+            "macro_btc_ret_1d" in out.columns
+            and "macro_vix_ret_1d" in out.columns
+            and "macro_btc_vix_divergence" not in out.columns
+        ):
+            out = out.with_columns(
+                (
+                    pl.col("macro_btc_ret_1d") - pl.col("macro_vix_ret_1d")
+                ).alias("macro_btc_vix_divergence")
+            )
+
+        return out
+
+    def add_am_session_features(
+        self, df: pl.DataFrame, am_df: Optional[pl.DataFrame]
+    ) -> pl.DataFrame:
+        """Attach morning session (AM) features calculated from prices_am."""
+        if am_df is None or am_df.is_empty():
+            logger.info("[builder] AM session features skipped (no am_df)")
+            return df
+
+        required_cols = {
+            "Code",
+            "Date",
+            "MorningOpen",
+            "MorningHigh",
+            "MorningLow",
+            "MorningClose",
+            "MorningVolume",
+            "MorningTurnoverValue",
+        }
+        if not required_cols.issubset(set(am_df.columns)):
+            logger.warning(
+                "[builder] AM session frame missing required columns; skipping"
+            )
+            return df
+
+        am = am_df.with_columns(
+            [
+                pl.col("Date").cast(pl.Date, strict=False).alias("Date"),
+                pl.col("MorningOpen").cast(pl.Float64, strict=False).alias("am_open"),
+                pl.col("MorningHigh").cast(pl.Float64, strict=False).alias("am_high"),
+                pl.col("MorningLow").cast(pl.Float64, strict=False).alias("am_low"),
+                pl.col("MorningClose").cast(pl.Float64, strict=False).alias("am_close"),
+                pl.col("MorningVolume").cast(pl.Float64, strict=False).alias("am_volume"),
+                pl.col("MorningTurnoverValue")
+                .cast(pl.Float64, strict=False)
+                .alias("am_turnover"),
+            ]
+        ).drop(
+            [
+                c
+                for c in am_df.columns
+                if c
+                in {
+                    "MorningOpen",
+                    "MorningHigh",
+                    "MorningLow",
+                    "MorningClose",
+                    "MorningVolume",
+                    "MorningTurnoverValue",
+                }
+            ]
+        )
+
+        join_frame = am.select(["Code", "Date", "am_open", "am_high", "am_low", "am_close", "am_volume", "am_turnover"])
+        out = df.join(join_frame, on=["Code", "Date"], how="left")
+
+        eps = 1e-12
+        prev_close = pl.col("Close").shift(1).over("Code")
+        am_ret = (pl.col("am_close") / (pl.col("am_open") + eps)) - 1.0
+        am_abs = am_ret.abs()
+        am_median = am_abs.rolling_quantile(
+            window_size=60, quantile=0.5, interpolation="nearest", min_periods=20
+        ).over("Code")
+
+        out = out.with_columns(
+            [
+                am_ret.alias("am_ret"),
+                ((pl.col("am_high") - pl.col("am_low")) / (pl.col("am_open") + eps)).alias(
+                    "am_range"
+                ),
+                (
+                    (pl.col("am_close") - pl.col("am_low"))
+                    / (pl.col("am_high") - pl.col("am_low") + eps)
+                ).alias("am_pos"),
+                (
+                    (pl.col("am_open") / (prev_close + eps)) - 1.0
+                ).alias("am_gap_prev_close"),
+                (pl.col("am_volume")
+                 / (
+                    pl.col("am_volume")
+                    .rolling_mean(window_size=20, min_periods=5)
+                    .over("Code")
+                    + eps
+                )).alias("am_vol_ratio_20"),
+                (pl.col("am_turnover")
+                 / (
+                    pl.col("am_turnover")
+                    .rolling_mean(window_size=20, min_periods=5)
+                    .over("Code")
+                    + eps
+                )).alias("am_tvr_ratio_20"),
+                ((pl.col("am_high") - pl.col("am_low")) / (pl.col("am_close") + eps)).alias(
+                    "am_spread_proxy"
+                ),
+                pl.when(pl.col("am_close").is_not_null())
+                .then(
+                    pl.col("am_ret").sign()
+                    * (pl.col("am_ret").abs() - am_median)
+                )
+                .otherwise(None)
+                .alias("am_overhang"),
+                pl.col("am_close").is_not_null().cast(pl.Int8).alias("is_am_valid"),
+            ]
+        )
+
+        return out
+
+    def add_breakdown_features(
+        self,
+        df: pl.DataFrame,
+        breakdown_df: Optional[pl.DataFrame],
+        *,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        """Attach investor breakdown-derived features (T+1 alignment)."""
+        if breakdown_df is None or breakdown_df.is_empty():
+            logger.info("[builder] Breakdown features skipped (no breakdown_df)")
+            return df
+
+        bd = breakdown_df.with_columns(
+            [
+                pl.col("Date").cast(pl.Date, strict=False).alias("Date"),
+                pl.col("Code").cast(pl.Utf8, strict=False).alias("Code"),
+            ]
+        )
+
+        buy_cols = [
+            "LongBuyValue",
+            "MarginBuyNewValue",
+            "MarginBuyCloseValue",
+        ]
+        sell_cols = [
+            "LongSellValue",
+            "ShortSellWithoutMarginValue",
+            "MarginSellNewValue",
+            "MarginSellCloseValue",
+        ]
+
+        def _safe(col: str) -> pl.Expr:
+            if col in bd.columns:
+                return pl.col(col).cast(pl.Float64, strict=False).fill_null(0.0)
+            return pl.lit(0.0)
+
+        buy_exprs = [_safe(c) for c in buy_cols if c in bd.columns]
+        sell_exprs = [_safe(c) for c in sell_cols if c in bd.columns]
+        if not buy_exprs:
+            buy_exprs = [pl.lit(0.0)]
+        if not sell_exprs:
+            sell_exprs = [pl.lit(0.0)]
+
+        bd = bd.with_columns(
+            [
+                pl.sum_horizontal(buy_exprs).alias("bd_total_buy"),
+                pl.sum_horizontal(sell_exprs).alias("bd_total_sell"),
+                (_safe("MarginBuyNewValue") - _safe("MarginSellNewValue")).alias(
+                    "bd_credit_new_net"
+                ),
+                (_safe("MarginBuyCloseValue") - _safe("MarginSellCloseValue")).alias(
+                    "bd_credit_close_net"
+                ),
+                (_safe("ShortSellWithoutMarginValue") + _safe("MarginSellNewValue")).alias(
+                    "bd_short_flow"
+                ),
+            ]
+        )
+
+        eps = 1e-12
+        bd = bd.with_columns(
+            [
+                (pl.col("bd_total_buy") + pl.col("bd_total_sell") + eps).alias(
+                    "bd_total"
+                ),
+                (pl.col("bd_total_buy") - pl.col("bd_total_sell")).alias(
+                    "bd_net_value"
+                ),
+            ]
+        )
+
+        bd = bd.with_columns(
+            [
+                (pl.col("bd_net_value") / (pl.col("bd_total") + eps)).alias(
+                    "bd_net_ratio"
+                ),
+                (pl.col("bd_short_flow") / (pl.col("bd_total") + eps)).alias(
+                    "bd_short_intensity"
+                ),
+            ]
+        )
+
+        bd = bd.with_columns(
+            [
+                (
+                    (pl.col("bd_net_value") - pl.col("bd_net_value")
+                     .rolling_mean(window_size=260, min_periods=20)
+                     .over("Code"))
+                    /
+                    (
+                        pl.col("bd_net_value")
+                        .rolling_std(window_size=260, min_periods=20)
+                        .over("Code")
+                        + eps
+                    )
+                ).alias("bd_net_z_52"),
+                (
+                    (pl.col("bd_short_flow") - pl.col("bd_short_flow")
+                     .rolling_mean(window_size=260, min_periods=20)
+                     .over("Code"))
+                    /
+                    (
+                        pl.col("bd_short_flow")
+                        .rolling_std(window_size=260, min_periods=20)
+                        .over("Code")
+                        + eps
+                    )
+                ).alias("bd_short_z_52"),
+                (
+                    pl.col("bd_total")
+                    /
+                    (
+                        pl.col("bd_total")
+                        .rolling_mean(window_size=260, min_periods=20)
+                        .over("Code")
+                        + eps
+                    )
+                ).alias("bd_activity_ratio"),
+            ]
+        )
+
+        # Map to next business day (T+1)
+        try:
+            if business_days:
+                from src.features.calendar_utils import build_next_bday_expr_from_dates
+
+                next_expr = build_next_bday_expr_from_dates(business_days)
+            else:
+                next_expr = build_next_bday_expr_from_quotes(df)
+        except Exception:
+            next_expr = None
+
+        if next_expr is not None:
+            bd = bd.with_columns(next_expr.alias("effective_date"))
+        else:
+            bd = bd.with_columns(pl.col("Date").alias("effective_date"))
+
+        join_frame = bd.with_columns(pl.col("effective_date").alias("Date")).drop(
+            [c for c in ("effective_date",) if c in bd.columns]
+        )
+
+        feature_cols = [
+            c
+            for c in join_frame.columns
+            if c not in {"Code", "Date"}
+        ]
+        join_frame = join_frame.select(["Code", "Date", *feature_cols])
+
+        out = df.join(join_frame, on=["Code", "Date"], how="left")
+        out = out.with_columns(
+            [
+                pl.col("bd_total").is_not_null().cast(pl.Int8).alias("is_bd_valid"),
+            ]
+        )
+        if "bd_short_flow" in out.columns:
+            out = out.drop("bd_short_flow")
+        return out
+
+    def add_dividend_features(
+        self,
+        df: pl.DataFrame,
+        dividend_df: Optional[pl.DataFrame],
+        *,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        """Attach dividend event features respecting announcement PIT."""
+        if dividend_df is None or dividend_df.is_empty():
+            logger.info("[builder] Dividend features skipped (no dividend_df)")
+            return df
+
+        div = dividend_df.with_columns(
+            [
+                pl.col("Code").cast(pl.Utf8, strict=False).alias("Code"),
+                pl.col("AnnouncementDate")
+                .cast(pl.Date, strict=False)
+                .alias("AnnouncementDate"),
+                pl.col("ExDate").cast(pl.Date, strict=False).alias("ExDate"),
+                pl.col("GrossDividendRate")
+                .cast(pl.Float64, strict=False)
+                .alias("div_amt"),
+                pl.col("CommemorativeSpecialCode")
+                .cast(pl.Utf8, strict=False)
+                .alias("div_special_code"),
+                pl.col("StatusCode").cast(pl.Utf8, strict=False).alias("StatusCode"),
+                pl.col("AnnouncementTime")
+                .cast(pl.Utf8, strict=False)
+                .fill_null("00:00")
+                .alias("AnnouncementTime"),
+                pl.col("ReferenceNumber").cast(pl.Utf8, strict=False).alias(
+                    "ReferenceNumber"
+                ),
+            ]
+        )
+
+        # Drop deletions (StatusCode=3)
+        if "StatusCode" in div.columns:
+            div = div.filter(pl.col("StatusCode") != "3")
+
+        if div.is_empty():
+            return df
+
+        cut_time = datetime.time(15, 0)
+        time_col = (
+            pl.col("AnnouncementTime")
+            .str.slice(0, 8)
+            .str.strptime(pl.Time, strict=False, format="%H:%M:%S")
+            .fill_null(datetime.time(0, 0))
+        )
+
+        div = div.with_columns(
+            [
+                pl.col("AnnouncementDate").alias("Date"),
+                pl.col("div_special_code")
+                .is_in({"1", "2", "3"})
+                .cast(pl.Int8)
+                .alias("div_is_special"),
+            ]
+        )
+
+        try:
+            if business_days:
+                from src.features.calendar_utils import build_next_bday_expr_from_dates
+
+                next_expr = build_next_bday_expr_from_dates(business_days)
+            else:
+                next_expr = build_next_bday_expr_from_quotes(df)
+        except Exception:
+            next_expr = None
+
+        if next_expr is not None:
+            div = div.with_columns(next_expr.alias("next_bday"))
+        else:
+            div = div.with_columns(pl.col("Date").alias("next_bday"))
+
+        div = div.with_columns(
+            [
+                pl.when(time_col < pl.lit(cut_time))
+                .then(pl.col("Date"))
+                .otherwise(pl.col("next_bday"))
+                .alias("effective_date"),
+            ]
+        )
+
+        # Handle corrections by keeping latest entry per (Code, effective_date)
+        div = (
+            div.sort([
+                "Code",
+                "effective_date",
+                "AnnouncementDate",
+                "AnnouncementTime",
+            ])
+            .group_by(["Code", "effective_date"])
+            .tail(1)
+        )
+
+        div = div.with_columns(
+            [
+                (pl.col("div_amt") - pl.col("div_amt").shift(1).over("Code"))
+                / (pl.col("div_amt").shift(1).over("Code").abs() + 1e-12)
+                .alias("div_rev"),
+            ]
+        )
+
+        div = div.with_columns(
+            [
+                pl.col("div_rev")
+                .fill_null(0.0)
+                .clip(-1e6, 1e6)
+                .sign()
+                .alias("div_rev_flag"),
+            ]
+        )
+
+        # Business-day difference to ExDate
+        if business_days:
+            bd_index = {
+                datetime.datetime.strptime(d, "%Y-%m-%d").date(): idx
+                for idx, d in enumerate(business_days)
+            }
+            div = div.with_columns(
+                [
+                    pl.col("effective_date")
+                    .map_dict(bd_index)
+                    .alias("_eff_idx"),
+                    pl.col("ExDate")
+                    .map_dict(bd_index)
+                    .alias("_ex_idx"),
+                ]
+            ).with_columns(
+                (
+                    pl.col("_ex_idx") - pl.col("_eff_idx")
+                ).alias("div_days_to_ex")
+            )
+        else:
+            div = div.with_columns(
+                (
+                    pl.col("ExDate").cast(pl.Date, strict=False)
+                    - pl.col("effective_date")
+                )
+                .dt.days()
+                .alias("div_days_to_ex")
+            )
+
+        div = div.drop([c for c in ("_eff_idx", "_ex_idx", "next_bday") if c in div.columns])
+
+        div = div.select(
+            [
+                pl.col("Code"),
+                pl.col("effective_date").alias("Date"),
+                pl.col("div_amt"),
+                pl.col("div_is_special"),
+                pl.col("div_rev"),
+                pl.col("div_rev_flag"),
+                pl.col("div_days_to_ex"),
+                pl.col("ExDate"),
+            ]
+        )
+
+        out = df.join(div, on=["Code", "Date"], how="left")
+        out = out.with_columns(
+            [
+                pl.when(pl.col("div_amt").is_not_null() | pl.col("ExDate").is_not_null())
+                .then(1)
+                .otherwise(0)
+                .cast(pl.Int8)
+                .alias("is_div_valid"),
+                pl.when(
+                    (pl.col("div_days_to_ex").is_not_null())
+                    & (pl.col("div_days_to_ex") >= 0)
+                    & (pl.col("div_days_to_ex") <= 3)
+                )
+                .then(1)
+                .otherwise(0)
+                .cast(pl.Int8)
+                .alias("div_ex_soon_3"),
+            ]
+        )
+
+        prev_close = pl.col("Close").shift(1).over("Code")
+        out = out.with_columns(
+            (
+                pl.col("div_amt") / (prev_close + 1e-12)
+            ).alias("div_yield_est")
+        )
+
+        if "ExDate" in out.columns:
+            out = out.drop("ExDate")
+
+        return out
+
+    def add_fs_quality_features(
+        self,
+        df: pl.DataFrame,
+        fs_df: Optional[pl.DataFrame],
+        *,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        """Attach financial statement quality features using fs_details and existing stmt_* columns."""
+        if fs_df is None or fs_df.is_empty():
+            # Still create aliases if stmt_* columns exist
+            return self._alias_statement_features(df)
+
+        fs = fs_df.with_columns(
+            [
+                pl.col("Code").cast(pl.Utf8, strict=False).alias("Code"),
+                pl.col("DisclosedDate")
+                .cast(pl.Date, strict=False)
+                .alias("DisclosedDate"),
+                pl.col("DisclosedTime")
+                .cast(pl.Utf8, strict=False)
+                .fill_null("00:00")
+                .alias("DisclosedTime"),
+            ]
+        )
+
+        cut_time = datetime.time(15, 0)
+        time_expr = (
+            pl.col("DisclosedTime")
+            .str.slice(0, 8)
+            .str.strptime(pl.Time, strict=False, format="%H:%M:%S")
+            .fill_null(datetime.time(0, 0))
+        )
+
+        try:
+            if business_days:
+                from src.features.calendar_utils import build_next_bday_expr_from_dates
+
+                next_expr = build_next_bday_expr_from_dates(business_days)
+            else:
+                next_expr = build_next_bday_expr_from_quotes(df)
+        except Exception:
+            next_expr = None
+
+        fs = fs.with_columns(
+            [
+                pl.col("DisclosedDate").alias("Date"),
+            ]
+        )
+
+        if next_expr is not None:
+            fs = fs.with_columns(next_expr.alias("next_bday"))
+        else:
+            fs = fs.with_columns(pl.col("Date").alias("next_bday"))
+
+        fs = fs.with_columns(
+            [
+                pl.when(time_expr < pl.lit(cut_time))
+                .then(pl.col("Date"))
+                .otherwise(pl.col("next_bday"))
+                .alias("effective_date"),
+            ]
+        )
+
+        fs = fs.with_columns(
+            [
+                pl.col("NetSales").cast(pl.Float64, strict=False).alias("fs_revenue"),
+                pl.col("OperatingProfit").cast(pl.Float64, strict=False).alias("fs_op"),
+                pl.col("Profit").cast(pl.Float64, strict=False).alias("fs_np"),
+                pl.col("TotalAssets").cast(pl.Float64, strict=False).alias("fs_assets"),
+                pl.col("Equity").cast(pl.Float64, strict=False).alias("fs_equity"),
+                pl.col("NetCashProvidedByOperatingActivities")
+                .cast(pl.Float64, strict=False)
+                .alias("fs_cfo"),
+                pl.col("PurchaseOfPropertyPlantAndEquipment")
+                .cast(pl.Float64, strict=False)
+                .alias("fs_capex"),
+                pl.col("CashAndCashEquivalents")
+                .cast(pl.Float64, strict=False)
+                .alias("fs_cash"),
+                pl.col("InterestBearingDebt")
+                .cast(pl.Float64, strict=False)
+                .alias("fs_debt"),
+            ]
+        )
+
+        fs = fs.sort(["Code", "effective_date"])
+
+        fs_features = fs.select(
+            [
+                "Code",
+                pl.col("effective_date").alias("Date"),
+                "fs_revenue",
+                "fs_op",
+                "fs_np",
+                "fs_assets",
+                "fs_equity",
+                "fs_cfo",
+                "fs_capex",
+                "fs_cash",
+                "fs_debt",
+            ]
+        )
+
+        fs_features = fs_features.drop_nulls(subset=["Code", "Date"], how="any")
+
+        if fs_features.is_empty():
+            return self._alias_statement_features(df)
+
+        fs_features = fs_features.sort(["Code", "Date"])
+        out = df.join_asof(
+            fs_features.sort(["Date", "Code"]),
+            left_on="Date",
+            right_on="Date",
+            by="Code",
+            strategy="backward",
+            allow_exact_matches=True,
+        )
+
+        out = out.with_columns(
+            [
+                (pl.col("fs_cfo") / (pl.col("fs_revenue") + 1e-12)).alias(
+                    "fs_cfo_margin"
+                ),
+                (pl.col("fs_cfo") / (pl.col("fs_np") + 1e-12)).alias(
+                    "fs_cfo_to_np"
+                ),
+                (pl.col("fs_equity") / (pl.col("fs_assets") + 1e-12)).alias(
+                    "fs_equity_ratio"
+                ),
+                (
+                    (pl.col("fs_cash") - pl.col("fs_debt"))
+                    / (pl.col("fs_assets") + 1e-12)
+                ).alias("fs_net_cash_to_assets"),
+                pl.when(
+                    pl.col("fs_revenue").is_not_null()
+                    | pl.col("fs_op").is_not_null()
+                    | pl.col("fs_np").is_not_null()
+                )
+                .then(1)
+                .otherwise(0)
+                .cast(pl.Int8)
+                .alias("is_fs_valid"),
+            ]
+        )
+
+        out = self._alias_statement_features(out)
+        return out
+
+    def add_interaction_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Add cross-feature interactions derived from AM, breakdown, dividend, futures, and options."""
+        exprs: list[pl.Expr] = []
+        if {"am_ret", "bd_net_ratio"}.issubset(df.columns):
+            exprs.append(
+                (pl.col("am_ret") * pl.col("bd_net_ratio")).alias("x_am_bd_pressure")
+            )
+        if {"div_ex_soon_3", "am_pos"}.issubset(df.columns):
+            exprs.append(
+                (pl.col("div_ex_soon_3") * pl.col("am_pos")).alias(
+                    "x_div_am_position"
+                )
+            )
+        if {"am_ret", "fut_ret_1d"}.issubset(df.columns):
+            exprs.append(
+                (pl.col("am_ret") - pl.col("fut_ret_1d")).alias("x_am_vs_fut_ret")
+            )
+        if {"opt_iv_shock", "fut_ret_1d"}.issubset(df.columns):
+            exprs.append(
+                (
+                    pl.col("opt_iv_shock")
+                    * pl.col("fut_ret_1d").sign()
+                ).alias("x_opt_vol_direction")
+            )
+        if not exprs:
+            return df
+        return df.with_columns(exprs)
+
+    def _alias_statement_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        stmt_to_fs = {
+            "stmt_yoy_sales": "fs_yoy_sales",
+            "stmt_yoy_op": "fs_yoy_op",
+            "stmt_yoy_np": "fs_yoy_np",
+            "stmt_opm": "fs_opm",
+            "stmt_npm": "fs_npm",
+            "stmt_progress_op": "fs_progress_op",
+            "stmt_progress_np": "fs_progress_np",
+            "stmt_roe": "fs_roe",
+            "stmt_roa": "fs_roa",
+        }
+        existing = {k: v for k, v in stmt_to_fs.items() if k in df.columns}
+        if not existing:
+            return df
+        out = df
+        for src, dst in existing.items():
+            if dst not in out.columns:
+                out = out.with_columns(pl.col(src).alias(dst))
+        if "is_fs_valid" not in out.columns and existing:
+            out = out.with_columns(
+                pl.when(
+                    pl.any_horizontal([pl.col(src).is_not_null() for src in existing])
+                )
+                .then(1)
+                .otherwise(0)
+                .cast(pl.Int8)
+                .alias("is_fs_valid")
+            )
+        return out
 
     def add_index_features(
         self,
@@ -2916,6 +3787,14 @@ class MLDatasetBuilder:
             )
 
             out = attach_to_equity_panel(df, on_df, eod_df, cats)
+
+            alias_exprs: list[pl.Expr] = []
+            if "fut_day_ret" in out.columns and "fut_ret_1d" not in out.columns:
+                alias_exprs.append(pl.col("fut_day_ret").alias("fut_ret_1d"))
+            if "fut_oi_delta" in out.columns and "fut_oi_chg" not in out.columns:
+                alias_exprs.append(pl.col("fut_oi_delta").alias("fut_oi_chg"))
+            if alias_exprs:
+                out = out.with_columns(alias_exprs)
 
             # Coverage logs (best effort)
             try:

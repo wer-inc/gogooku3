@@ -45,6 +45,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "requests>=2.31.0",
     "jpholiday>=0.1.9",
+    "yfinance>=0.2.44",
     
     # Feature Engineering & Graphs
     "networkx>=3.0",

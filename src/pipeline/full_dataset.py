@@ -10,13 +10,22 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiohttp
 import polars as pl
 
 from src.features.calendar_utils import build_next_bday_expr_from_dates
+from src.features.macro import (
+    load_vix_history,
+    prepare_vix_features,
+    shift_to_next_business_day,
+    load_fx_history,
+    prepare_fx_features,
+    load_btc_history,
+    prepare_btc_features,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +122,19 @@ def save_with_symlinks(
     from src.gogooku3.pipeline.builder import MLDatasetBuilder
 
     builder = MLDatasetBuilder(output_dir=output_dir)
+
+    def _read_parquet(path: Path | None) -> pl.DataFrame:
+        if path and path.exists():
+            try:
+                return pl.read_parquet(path)
+            except Exception as exc:
+                logger.warning(f"Failed to read parquet {path}: {exc}")
+        return pl.DataFrame()
+
+    am_quotes_df = _read_parquet(am_quotes_parquet)
+    breakdown_df = _read_parquet(breakdown_parquet)
+    dividend_df = _read_parquet(dividend_parquet)
+    fs_details_df = _read_parquet(fs_details_parquet)
     metadata = builder.create_metadata(df)
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, default=str)
@@ -235,6 +257,19 @@ async def enrich_and_save(
     # Advanced volatility
     enable_advanced_vol: bool = False,
     adv_vol_windows: list[int] | None = None,
+    enable_macro_vix: bool = False,
+    vix_parquet: Path | None = None,
+    vix_force_refresh: bool = False,
+    enable_macro_fx_usdjpy: bool = False,
+    fx_parquet: Path | None = None,
+    fx_force_refresh: bool = False,
+    enable_macro_btc: bool = False,
+    btc_parquet: Path | None = None,
+    btc_force_refresh: bool = False,
+    am_quotes_parquet: Path | None = None,
+    breakdown_parquet: Path | None = None,
+    dividend_parquet: Path | None = None,
+    fs_details_parquet: Path | None = None,
     # Nikkei225 index option market aggregates (optional)
     enable_option_market_features: bool = False,
     index_option_features_parquet: Path | None = None,
@@ -338,6 +373,166 @@ async def enrich_and_save(
             logger.warning(f"TOPIX local selection failed: {e}")
 
     df = builder.add_topix_features(df_base, topix_df=topix_df)
+
+    # VIX macro features (T+1 attach)
+    vix_features = None
+    if enable_macro_vix:
+        try:
+            vix_start_dt = datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=400)
+            cache_path = vix_parquet
+            if cache_path is None:
+                cache_dir = Path("output") / "macro"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_dir / (
+                    f"vix_history_{vix_start_dt.strftime('%Y%m%d')}_{end_date.replace('-', '')}.parquet"
+                )
+            vix_raw = load_vix_history(
+                vix_start_dt.strftime("%Y-%m-%d"),
+                end_date,
+                parquet_path=cache_path,
+                force_refresh=vix_force_refresh,
+            )
+            if not vix_raw.is_empty():
+                vix_features = prepare_vix_features(vix_raw)
+                vix_features = shift_to_next_business_day(
+                    vix_features, business_days=business_days
+                )
+            else:
+                logger.warning(
+                    "VIX features enabled but no data retrieved; skipping macro VIX enrichment"
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to prepare VIX features: {exc}")
+            vix_features = None
+
+    if enable_macro_vix and vix_features is not None and not vix_features.is_empty():
+        try:
+            df = builder.add_vix_features(
+                df,
+                vix_df=vix_features,
+                business_days=business_days,
+            )
+            logger.info("VIX macro features attached")
+        except Exception as exc:
+            logger.warning(f"Failed to attach VIX macro features: {exc}")
+    elif enable_macro_vix:
+        logger.info("VIX macro features requested but skipped (no usable data)")
+
+    if not am_quotes_df.is_empty():
+        try:
+            df = builder.add_am_session_features(df, am_quotes_df)
+        except Exception as exc:
+            logger.warning(f"Failed to attach AM session features: {exc}")
+    else:
+        logger.info("AM session quotes not provided; skipping am_* features")
+
+    if not breakdown_df.is_empty():
+        try:
+            df = builder.add_breakdown_features(
+                df, breakdown_df, business_days=business_days
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to attach breakdown features: {exc}")
+    else:
+        logger.info("Breakdown data not provided; skipping bd_* features")
+
+    if not dividend_df.is_empty():
+        try:
+            df = builder.add_dividend_features(
+                df, dividend_df, business_days=business_days
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to attach dividend features: {exc}")
+    else:
+        logger.info("Dividend data not provided; skipping div_* features")
+
+    # FX macro features (USD/JPY)
+    fx_features = None
+    if enable_macro_fx_usdjpy:
+        try:
+            fx_start_dt = datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=400)
+            cache_path = fx_parquet
+            if cache_path is None:
+                cache_dir = Path("output") / "macro"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_dir / (
+                    f"fx_usdjpy_history_{fx_start_dt.strftime('%Y%m%d')}_{end_date.replace('-', '')}.parquet"
+                )
+            fx_raw = load_fx_history(
+                fx_start_dt.strftime("%Y-%m-%d"),
+                end_date,
+                parquet_path=cache_path,
+                force_refresh=fx_force_refresh,
+            )
+            if not fx_raw.is_empty():
+                fx_features = prepare_fx_features(fx_raw)
+                fx_features = shift_to_next_business_day(
+                    fx_features, business_days=business_days
+                )
+            else:
+                logger.warning(
+                    "FX features enabled but no data retrieved; skipping macro FX enrichment"
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to prepare FX features: {exc}")
+            fx_features = None
+
+    if enable_macro_fx_usdjpy and fx_features is not None and not fx_features.is_empty():
+        try:
+            df = builder.add_fx_features(
+                df,
+                fx_df=fx_features,
+                business_days=business_days,
+            )
+            logger.info("USD/JPY macro FX features attached")
+        except Exception as exc:
+            logger.warning(f"Failed to attach FX macro features: {exc}")
+    elif enable_macro_fx_usdjpy:
+        logger.info("FX macro features requested but skipped (no usable data)")
+
+    # Crypto macro features (BTC/USD)
+    btc_features = None
+    if enable_macro_btc:
+        try:
+            btc_start_dt = datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=600)
+            cache_path = btc_parquet
+            if cache_path is None:
+                cache_dir = Path("output") / "macro"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_path = cache_dir / (
+                    f"btc_history_{btc_start_dt.strftime('%Y%m%d')}_{end_date.replace('-', '')}.parquet"
+                )
+            btc_raw = load_btc_history(
+                btc_start_dt.strftime("%Y-%m-%d"),
+                end_date,
+                parquet_path=cache_path,
+                force_refresh=btc_force_refresh,
+            )
+            if not btc_raw.is_empty():
+                btc_features = prepare_btc_features(btc_raw)
+                btc_features = shift_to_next_business_day(
+                    btc_features, business_days=business_days
+                )
+            else:
+                logger.warning(
+                    "BTC features enabled but no data retrieved; skipping macro BTC enrichment"
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to prepare BTC features: {exc}")
+            btc_features = None
+
+    if enable_macro_btc and btc_features is not None and not btc_features.is_empty():
+        try:
+            df = builder.add_btc_features(
+                df,
+                btc_df=btc_features,
+                business_days=business_days,
+            )
+            logger.info("BTC macro features attached")
+        except Exception as exc:
+            logger.warning(f"Failed to attach BTC macro features: {exc}")
+    elif enable_macro_btc:
+        logger.info("BTC macro features requested but skipped (no usable data)")
 
     # CRITICAL FIX: Add forward return labels (feat_ret_1d, feat_ret_5d, feat_ret_10d, feat_ret_20d)
     # This fixes the missing supervised learning targets identified in the PDF diagnosis
@@ -494,6 +689,16 @@ async def enrich_and_save(
                 logger.info("Statements features attached from parquet")
             except Exception as e:
                 logger.warning(f"Failed to attach statements: {e}")
+
+    if not fs_details_df.is_empty():
+        try:
+            df = builder.add_fs_quality_features(
+                df, fs_details_df, business_days=business_days
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to attach financial statement features: {exc}")
+    else:
+        logger.info("Financial statement details not provided; skipping fs_* aliases")
 
     # Optional sector enrichment (listed_info)
     listed_info_df = None
@@ -2060,14 +2265,18 @@ async def enrich_and_save(
                     )
                 except Exception as e:
                     logger.warning(f"Failed to attach option market aggregates: {e}")
-            else:
-                logger.info(
-                    "Option market features requested but no data available; skipping attach"
-                )
         else:
-            logger.info("Option market features not enabled; skipping")
+            logger.info(
+                "Option market features requested but no data available; skipping attach"
+            )
+
     except Exception as e:
         logger.warning(f"Index option market aggregates step skipped: {e}")
+
+    try:
+        df = builder.add_interaction_features(df)
+    except Exception as exc:
+        logger.warning(f"Failed to attach interaction features: {exc}")
 
     # Assurance: guarantee mkt_*
     if not any(c.startswith("mkt_") for c in df.columns):

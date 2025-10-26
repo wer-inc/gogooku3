@@ -1100,3 +1100,137 @@ df = df.sort(['Code','Date']).join_asof(
 これが**フル版の列カタログ**です。
 この通りに揃えれば、これまでログに出ていた **Flow 0%** や **TOPIX Z 100% NaN** は「仕様上あり得る/設定不足」を切り分けて扱えます（有効フラグで制御）。
 もし「この列名が実ファイルにない/別名だ」という箇所があれば **alias マップ**を一枚作って吸収しましょう（特に `flow_*` と旧名）。
+
+---
+
+## 最新データセット仕様（6ソース + マクロ統合版）
+
+> `ml_dataset_latest_full.parquet` に含まれる主要カテゴリを整理しています。Premium プランの追加データ（前場四本値・売買内訳・配当・財務・先物・オプション）と yfinance 由来のマクロ指標が対象です。細目・件数は `dataset_features_detail.json` を参照してください。
+
+### 0) 識別子・メタ
+
+| Column | 型 | 説明 |
+|--------|----|------|
+| `Code` / `Date` | Utf8 / Date | 銘柄コード・営業日 |
+| `Section` / `section_norm` | Utf8 | 元市場名と正規化後市場名（TSEPrime 等） |
+| `row_idx` | UInt32 | 銘柄内の経過営業日カウンタ |
+| `shares_outstanding` | Float64 | 発行株数（分母に使用） |
+
+### 1) ベース価格・テクニカル（約 80 列）
+
+- 調整済み OHLCV / Turnover
+- `returns_{1,5,10,20,60,120}d`, `log_returns_{1,5,10,20}d`
+- ボラティリティ `volatility_{5,10,20,60}d`, `realized_volatility`
+- SMA/EMA `sma_{5..120}`, `ema_{5..200}`
+- 位置・ギャップ `price_to_sma20`, `ma_gap_5_20`, `close_to_high`
+- ボリューム系 `volume_ratio_{5,20}`, `turnover_rate`, `dollar_volume`
+- テクニカル指標（RSI/MACD/Bollinger/ATR/ADX/Stochastic）
+- 有効フラグ `is_rsi2_valid`, `is_ema{5,20,200}_valid`, `is_valid_ma`
+
+### 2) TOPIX 市場指標（26 列）
+
+`mkt_ret_*`, `mkt_ema_*`, `mkt_dev_20`, `mkt_gap_5_20`, `mkt_vol_20d`, `mkt_dd_from_peak`, `mkt_ret_1d_z`, `mkt_vol_20d_z`, `mkt_bull_200`, `mkt_high_vol` など。
+
+### 3) クロス（銘柄×市場）
+
+`beta_60d`, `alpha_{1d,5d}`, `rel_strength_5d`, `trend_align_mkt`, `alpha_vs_regime`, `idio_vol_ratio`, `beta_stability_60d`。
+
+### 4) セクター特徴
+
+セクター識別 (`sector33_code/name` 等)、セクター平均 (`sec_ret_{1d,5d,20d}`, `sec_mom_*`)、相対化 (`ret_5d_vs_sec`, `z_in_sec_returns_5d`, `volume_in_sec_z`)、`sec_small_flag`。
+
+### 5) フロー（/markets/trades_spec）
+
+`flow_foreign_net`, `flow_individual_net`, `flow_foreign_net_ratio`, `flow_foreign_net_z`, `flow_activity_z`, `flow_smart_idx`, `is_flow_valid` 等。発表翌営業日 (T+1) の値を使用。
+
+### 6) 前場四本値（/prices/prices_am）
+
+`am_open/high/low/close/volume/turnover` と派生指標 `am_ret`, `am_range`, `am_pos`, `am_gap_prev_close`, `am_vol_ratio_20`, `am_tvr_ratio_20`, `am_spread_proxy`, `am_overhang`, `is_am_valid`。
+
+### 7) 売買内訳（/markets/breakdown）
+
+`bd_total_buy`, `bd_total_sell`, `bd_total`, `bd_net_value`, `bd_net_ratio`, `bd_credit_new_net`, `bd_credit_close_net`, `bd_short_intensity`, `bd_net_z_52`, `bd_activity_ratio`, `is_bd_valid`。T+1 で結合。
+
+### 8) 配当イベント（/fins/dividend）
+
+`div_amt`, `div_is_special`, `div_rev`, `div_rev_flag`, `div_days_to_ex`, `div_yield_est`, `div_ex_soon_3`, `is_div_valid`。15:00 以降は翌営業日に適用。
+
+### 9) 財務諸表（/fins/fs_details）
+
+`fs_revenue`, `fs_op`, `fs_np`, `fs_assets`, `fs_equity`, `fs_cfo`, `fs_capex`, `fs_cash`, `fs_debt` に加え、`fs_cfo_margin`, `fs_cfo_to_np`, `fs_equity_ratio`, `fs_net_cash_to_assets`, `fs_yoy_{sales,op,np}`, `fs_opm`, `fs_npm`, `fs_progress_{op,np}`, `fs_roe`, `fs_roa`, `is_fs_valid`。15:00 カットで as-of backward。
+
+### 10) マクロ（VIX / USDJPY / BTC）
+
+- 取得元: `yfinance` (`^VIX`, `JPY=X`, `BTC-USD`) から日次 OHLC を取得し、`output/macro/*.parquet` にキャッシュ。
+- PIT: いずれも **翌営業日 (T+1)** に前方シフトして株式面 `(Code, Date)` に結合。
+- 外部市場が日本休場中でも更新されるため、欠損日は直近値で埋めず、シフト後の Date に一括反映。
+
+**VIX (macro_vix_\*)**
+- `macro_vix_close`, `macro_vix_log_close`
+- リターン: `macro_vix_ret_{1,5,10,20}d`
+- ボラ・乖離: `macro_vix_vol_20`, `macro_vix_sma5_over_sma20`, `macro_vix_ma_gap_20`
+- 体感度指標: `macro_vix_zscore_{60,252}`, `macro_vix_abs_ret_1d`, `macro_vix_range_pct`
+- レジーム: `macro_vix_spike_flag` (Z>1.5), `macro_vix_high_regime` (≧30), `macro_vix_low_regime` (≦15)
+- 市場比較: `macro_vix_minus_mkt_vol_20d`, `macro_vix_vs_mkt_vol_ratio`
+
+**USD/JPY (macro_fx_usdjpy_\*)**
+- `macro_fx_usdjpy_close`, `macro_fx_usdjpy_log_close`
+- リターン: `macro_fx_usdjpy_ret_{1,5,10,20}d`
+- ボラ・乖離: `macro_fx_usdjpy_vol_20`, `macro_fx_usdjpy_sma5_over_sma20`, `macro_fx_usdjpy_ma_gap_20`
+- 体感度: `macro_fx_usdjpy_zscore_{60,252}`, `macro_fx_usdjpy_abs_ret_1d`, `macro_fx_usdjpy_range_pct`
+- レジーム: `macro_fx_usdjpy_spike_flag` (|Z|>1.5), `macro_fx_usdjpy_trend_up` (円安トレンド), `macro_fx_usdjpy_shock_flag` (±1%超)
+- `macro_fx_usdjpy_sma5_slope_3` は短期トレンド変化を捉える傾き。
+
+**BTC/USD (macro_btc_\*)**
+- `macro_btc_close`, `macro_btc_log_close`
+- リターン: `macro_btc_ret_{1,5,10,20}d`
+- ボラ・乖離: `macro_btc_vol_{20,60}`, `macro_btc_sma7_over_sma30`, `macro_btc_ma_gap_{30,60}`
+- 環境指標: `macro_btc_zscore_{60,120}`, `macro_btc_abs_ret_1d`, `macro_btc_range_pct`, `macro_btc_volume_ratio_20`
+- レジーム: `macro_btc_spike_flag` (|Z|>2), `macro_btc_high_vol_regime` (年率90%以上), `macro_btc_trend_up`
+- モデル補助: `macro_btc_sma7_slope_3`（短期モメンタム）、`macro_btc_vix_divergence`（BTCとVIXの1日差分）
+
+> これらマクロ列は 1d/5d ターゲットでセンチメントや外部フローを捉える目的。10d/20d でもトレンド・レジーム列が有効に働く。
+
+#### 実装メモ（マクロ）
+
+- **営業日同期**: 3 系列とも「取得日翌営業日」の `Date` にシフトし、一度でも欠損を forward-fill しない設計。日本休場中の変化は休場明けにまとめて反映される。
+- **キャッシュ**: `output/macro/vix_history_*.parquet`, `fx_usdjpy_history_*.parquet`, `btc_history_*.parquet` が生成される。`--force-refresh-*` で更新強制。
+- **リーク防止**: 全特徴量は `Close[t-1]` までの情報のみから計算（例: `ret_1d` は t-1 vs t-2）。日次リターンやモメンタム列は *shift* 済みフレーム上で再計算しているため、当日終値は利用していない。
+- **極端値対策**: Z スコア・レジームフラグで極端環境をカテゴリ化し、必要に応じてウィンズライザー処理を下流で実施可能。
+- **相互作用**: BTC の 1 日リターンと VIX 変化率の差分 `macro_btc_vix_divergence` を追加。暗号資産と恐怖指数の乖離が大きい日をフラグ化できる。
+- **推奨ホライズン**:
+  - *1d*: `macro_vix_ret_1d`, `macro_fx_usdjpy_ret_1d`, `macro_btc_ret_1d`, 各 `abs_ret` / `spike_flag` / `shock_flag`
+  - *5d*: `macro_vix_ret_{5,10}d`, `macro_fx_usdjpy_ret_{5,10}d`, `macro_btc_vol_{20,60}`, `macro_btc_sma7_over_sma30`
+  - *10d/20d*: レジーム (`high_regime`, `trend_up`) や MA 乖離を活用
+- **API 依存**: `yfinance` を必須オプションとして `pyproject.toml` に明示済み。CLI では `--enable-{vix,fx-usdjpy,btc}` で選択。
+
+### 11) マージン / 12) セクターショート
+
+既存 `margin_weekly_*`, `margin_daily_*`, `short_selling_*`, `sector_short_*` ブロックを継承。
+
+### 13) 先物（/derivatives/futures）
+
+`fut_on_ret`, `fut_on_range`, `fut_on_z`, `fut_ret_1d`, `fut_whole_ret`, `fut_oi`, `fut_oi_chg`, `basis_close`, `carry_per_day`, `ttm_days`, `fut_emergency_flag`, `is_fut_on_valid_*`, `is_fut_eod_valid_*`。
+
+### 14) オプション（/derivatives/options）
+
+`opt_iv_cmat_{30,60}d`, `opt_term_slope_30_60`, `opt_iv_atm_{median,near,next}`, `opt_ts_slope`, `opt_skew_5pct`, `opt_smile_width`, `opt_oi_{sum,put_call_ratio}`, `opt_iv_shock`, `is_opt_mkt_valid`。
+
+### 15) 交互作用（interactions）
+
+`x_am_bd_pressure`, `x_div_am_position`, `x_am_vs_fut_ret`, `x_opt_vol_direction`。
+
+### 16) ターゲット / 17) 有効フラグ
+
+`target_{1,5,10,20}d`, `target_{*}d_binary`、および `is_*` フラグ（`is_am_valid`, `is_bd_valid`, `is_div_valid`, `is_fs_valid`, `is_fut_on_valid_*`, `is_fut_eod_valid_*`, `is_opt_mkt_valid`, `is_flow_valid`）。
+
+---
+
+### 実装メモ
+
+* 除算は `+1e-12` を加算しゼロ割を回避。
+* PIT 処理：breakdown/dividend/fs/options → **T+1**、AM と Futures → 当日。
+* API キャッシュ: `output/raw/prices_am`, `output/raw/breakdown`, `output/raw/dividends`, `output/raw/financials` など。
+* 列数やカテゴリ別件数は `dataset_features_detail.json` を確認。
+
+これで、Premium 追加データとマクロ因子を組み込んだ現行データセット仕様が網羅できます。学習設定 (`configs/atft/config*.yaml`) の feature groups を利用する際は、必要に応じて上記カテゴリを反映してください。

@@ -985,6 +985,384 @@ class JQuantsAsyncFetcher:
         )
         return out.sort(["Date"]) if "Date" in out.columns else out
 
+    async def get_prices_am(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """Fetch morning session (AM) OHLCV for all stocks within a date range."""
+        if not self.id_token:
+            raise RuntimeError("authenticate() must be called first")
+
+        headers = {"Authorization": f"Bearer {self.id_token}"}
+        base_url = f"{self.base_url}/prices/prices_am"
+
+        import datetime as _dt
+
+        def _parse(d: str) -> _dt.date:
+            if "-" in d:
+                return _dt.datetime.strptime(d, "%Y-%m-%d").date()
+            return _dt.datetime.strptime(d, "%Y%m%d").date()
+
+        rows: list[dict] = []
+        start = _parse(from_date)
+        end = _parse(to_date)
+        cur = start
+
+        while cur <= end:
+            date_str = cur.strftime("%Y-%m-%d")
+            pagination_key: str | None = None
+            while True:
+                params = {"date": date_str}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label=f"prices_am:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("prices_am") or data.get("data") or []
+                if items:
+                    rows.extend(items)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+            cur += _dt.timedelta(days=1)
+
+        if not rows:
+            return pl.DataFrame()
+
+        df = pl.DataFrame(rows)
+        df = enforce_code_column_types(df)
+        cast_exprs: list[pl.Expr] = []
+        for col in [
+            "Date",
+            "MorningOpen",
+            "MorningHigh",
+            "MorningLow",
+            "MorningClose",
+            "MorningVolume",
+            "MorningTurnoverValue",
+        ]:
+            if col not in df.columns:
+                continue
+            if col == "Date":
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Date, strict=False).alias(col)
+                    if df.schema.get(col) != pl.Date
+                    else pl.col(col)
+                )
+            else:
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Float64, strict=False).alias(col)
+                )
+        if cast_exprs:
+            df = df.with_columns(cast_exprs)
+        return df.sort(["Code", "Date"])
+
+    async def get_breakdown(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """Fetch investor breakdown data (/markets/breakdown) for the given range."""
+        if not self.id_token:
+            raise RuntimeError("authenticate() must be called first")
+
+        headers = {"Authorization": f"Bearer {self.id_token}"}
+        base_url = f"{self.base_url}/markets/breakdown"
+
+        import datetime as _dt
+
+        def _parse(d: str) -> _dt.date:
+            if "-" in d:
+                return _dt.datetime.strptime(d, "%Y-%m-%d").date()
+            return _dt.datetime.strptime(d, "%Y%m%d").date()
+
+        rows: list[dict] = []
+        start = _parse(from_date)
+        end = _parse(to_date)
+        cur = start
+
+        while cur <= end:
+            date_str = cur.strftime("%Y-%m-%d")
+            pagination_key: str | None = None
+            while True:
+                params = {"date": date_str}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label=f"breakdown:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("breakdown") or data.get("data") or []
+                if items:
+                    rows.extend(items)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+            cur += _dt.timedelta(days=1)
+
+        if not rows:
+            return pl.DataFrame()
+
+        df = pl.DataFrame(rows)
+        df = enforce_code_column_types(df)
+        cast_exprs: list[pl.Expr] = []
+        for col in df.columns:
+            if col == "Date":
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Date, strict=False).alias(col)
+                    if df.schema.get(col) != pl.Date
+                    else pl.col(col)
+                )
+            elif col not in {"Code"}:
+                cast_exprs.append(pl.col(col).cast(pl.Float64, strict=False).alias(col))
+        if cast_exprs:
+            df = df.with_columns(cast_exprs)
+        return df.sort(["Code", "Date"])
+
+    async def get_dividends(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """Fetch dividend announcements within a date range."""
+        if not self.id_token:
+            raise RuntimeError("authenticate() must be called first")
+
+        headers = {"Authorization": f"Bearer {self.id_token}"}
+        base_url = f"{self.base_url}/fins/dividend"
+
+        import datetime as _dt
+
+        def _parse(d: str) -> _dt.date:
+            if "-" in d:
+                return _dt.datetime.strptime(d, "%Y-%m-%d").date()
+            return _dt.datetime.strptime(d, "%Y%m%d").date()
+
+        rows: list[dict] = []
+        start = _parse(from_date)
+        end = _parse(to_date)
+        cur = start
+
+        while cur <= end:
+            date_str = cur.strftime("%Y-%m-%d")
+            pagination_key: str | None = None
+            while True:
+                params = {"date": date_str}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label=f"dividend:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("dividends") or data.get("data") or []
+                if items:
+                    rows.extend(items)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+            cur += _dt.timedelta(days=1)
+
+        if not rows:
+            return pl.DataFrame()
+
+        df = pl.DataFrame(rows)
+        df = enforce_code_column_types(df)
+        cast_exprs: list[pl.Expr] = []
+        for col in df.columns:
+            if col in {"Code"}:
+                continue
+            if col in {"AnnouncementDate", "ApprovalDate", "ExDate"}:
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Date, strict=False).alias(col)
+                    if df.schema.get(col) != pl.Date
+                    else pl.col(col)
+                )
+            elif col in {"AnnouncedTime", "AnnouncementTime"}:
+                # keep as Utf8 for downstream processing
+                if df.schema.get(col) != pl.Utf8:
+                    cast_exprs.append(pl.col(col).cast(pl.Utf8, strict=False).alias(col))
+            else:
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Utf8, strict=False).alias(col)
+                    if df.schema.get(col) not in (pl.Float64, pl.Int64, pl.Utf8)
+                    else pl.col(col)
+                )
+        if cast_exprs:
+            df = df.with_columns(cast_exprs)
+        return df.sort(["Code", "AnnouncementDate"])
+
+    async def get_fs_details(
+        self, session: aiohttp.ClientSession, from_date: str, to_date: str
+    ) -> pl.DataFrame:
+        """Fetch financial statement details (/fins/fs_details) for a date range."""
+        if not self.id_token:
+            raise RuntimeError("authenticate() must be called first")
+
+        headers = {"Authorization": f"Bearer {self.id_token}"}
+        base_url = f"{self.base_url}/fins/fs_details"
+
+        import datetime as _dt
+
+        def _parse(d: str) -> _dt.date:
+            if "-" in d:
+                return _dt.datetime.strptime(d, "%Y-%m-%d").date()
+            return _dt.datetime.strptime(d, "%Y%m%d").date()
+
+        target_labels: dict[str, tuple[str, ...]] = {
+            "NetSales": (
+                "net sales",
+                "netsales",
+                "revenue",
+                "sales",
+                "operating revenue",
+            ),
+            "OperatingProfit": (
+                "operating profit",
+                "operating income",
+                "operating loss",
+            ),
+            "Profit": ("profit", "profit (loss)", "net income", "net profit"),
+            "Equity": (
+                "equity attributable to owners of parent",
+                "total equity",
+                "total shareholders' equity",
+            ),
+            "TotalAssets": ("total assets",),
+            "CashAndCashEquivalents": ("cash and cash equivalents",),
+            "InterestBearingDebt": (
+                "interest-bearing debt",
+                "interest bearing debt",
+            ),
+            "NetCashProvidedByOperatingActivities": (
+                "net cash provided by (used in) operating activities",
+                "cash flows from operating activities",
+            ),
+            "PurchaseOfPropertyPlantAndEquipment": (
+                "purchase of property, plant and equipment",
+                "purchase of property,plant and equipment",
+                "capital expenditure",
+            ),
+        }
+
+        def _iter_items(node: Any) -> Iterable[tuple[str, Any]]:
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if isinstance(v, dict):
+                        yield from _iter_items(v)
+                    else:
+                        yield k, v
+            elif isinstance(node, list):
+                for item in node:
+                    yield from _iter_items(item)
+
+        def _extract_financials(fs_dict: dict[str, Any]) -> dict[str, Any]:
+            lower_map = {k: set(v) for k, v in target_labels.items()}
+            flat: dict[str, Any] = {}
+            for key, value in _iter_items(fs_dict):
+                norm_key = key.strip().lower()
+                for target, aliases in lower_map.items():
+                    if norm_key in aliases and target not in flat:
+                        flat[target] = value
+            return flat
+
+        rows: list[dict] = []
+        start = _parse(from_date)
+        end = _parse(to_date)
+        cur = start
+
+        while cur <= end:
+            date_str = cur.strftime("%Y-%m-%d")
+            pagination_key: str | None = None
+            while True:
+                params = {"date": date_str}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label=f"fs_details:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                items = data.get("fs_details") or data.get("data") or []
+                for item in items:
+                    base = {
+                        "Code": item.get("Code"),
+                        "TypeOfDocument": item.get("TypeOfDocument"),
+                        "FiscalYear": item.get("FiscalYear"),
+                        "AccountingStandard": item.get("AccountingStandard"),
+                        "DisclosedDate": item.get("DisclosedDate")
+                        or item.get("AnnouncementDate"),
+                        "DisclosedTime": item.get("DisclosedTime")
+                        or item.get("AnnouncementTime"),
+                    }
+                    fs = item.get("FinancialStatement") or {}
+                    flat = _extract_financials(fs)
+                    base.update(flat)
+                    rows.append(base)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+            cur += _dt.timedelta(days=1)
+
+        if not rows:
+            return pl.DataFrame()
+
+        df = pl.DataFrame(rows)
+        df = enforce_code_column_types(df)
+        cast_exprs: list[pl.Expr] = []
+        for col in df.columns:
+            if col in {"Code"}:
+                continue
+            if col == "DisclosedDate":
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Date, strict=False).alias(col)
+                    if df.schema.get(col) != pl.Date
+                    else pl.col(col)
+                )
+            elif col == "FiscalYear":
+                cast_exprs.append(pl.col(col).cast(pl.Int32, strict=False).alias(col))
+            elif col in {
+                "NetSales",
+                "OperatingProfit",
+                "Profit",
+                "Equity",
+                "TotalAssets",
+                "CashAndCashEquivalents",
+                "InterestBearingDebt",
+                "NetCashProvidedByOperatingActivities",
+                "PurchaseOfPropertyPlantAndEquipment",
+            }:
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Float64, strict=False).alias(col)
+                )
+            else:
+                cast_exprs.append(
+                    pl.col(col).cast(pl.Utf8, strict=False).alias(col)
+                    if df.schema.get(col) != pl.Utf8
+                    else pl.col(col)
+                )
+        if cast_exprs:
+            df = df.with_columns(cast_exprs)
+        return df.sort(["Code", "DisclosedDate"])
+
     async def get_daily_margin_interest(
         self,
         session: aiohttp.ClientSession,
