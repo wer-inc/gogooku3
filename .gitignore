@@ -41,6 +41,10 @@ env/
 /runs/
 /tuning_results/
 
+# Research/design documents (prefix with ! to exclude from tracking)
+/!QuantumFlow/
+/!*/
+
 # Data artifacts (narrow scope; allow configs/tests fixtures)
 /data/
 /cache/
@@ -88,6 +92,9 @@ monitoring.db
 # Logs (unified structure)
 /_logs/**
 /logs/
+**/subprojects/**/_logs/
+**/subprojects/**/logs/
+**/subprojects/**/output/
 *.log
 *.out
 *.err
