@@ -1,8 +1,0 @@
-# @package _global_
-
-# Minimal batch inference config placeholder.
-# This keeps training composition simple (no extra group selections).
-# The full ATFT inference config lives under configs/atft/inference/batch.yaml
-# and can be used directly by specifying --config-path/--config-name when needed.
-defaults:
-  - _self_

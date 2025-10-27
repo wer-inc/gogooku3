@@ -160,6 +160,59 @@ def _check_gpu_graph_support(*, strict: bool = False) -> bool:
         return False
 
 
+def _check_rapids_environment(*, strict: bool = False) -> bool:
+    """Ensure RAPIDS/cuDF stack (CuPy, cuDF, RMM) is available and GPU is visible."""
+    try:
+        import cupy as cp  # type: ignore
+        import cudf  # type: ignore
+        import rmm  # type: ignore
+
+        device_count = cp.cuda.runtime.getDeviceCount()  # type: ignore[attr-defined]
+        if device_count <= 0:
+            raise RuntimeError("CuPy reports zero CUDA devices")
+
+        logger.info(
+            "RAPIDS stack detected (CuPy %s, cuDF %s, RMM %s, CUDA devices=%d)",
+            getattr(cp, "__version__", "?"),
+            getattr(cudf, "__version__", "?"),
+            getattr(rmm, "__version__", "?"),
+            device_count,
+        )
+        return True
+    except Exception as exc:  # pragma: no cover - defensive logging
+        level = logger.error if strict else logger.warning
+        level(
+            "RAPIDS environment unavailable. Dataset build requires CuPy/cuDF/RMM.%s",
+            f" Details: {exc}" if strict else "",
+        )
+        logger.debug("RAPIDS environment check failed", exc_info=exc)
+        return False
+
+
+def _check_gcs_credentials(*, strict: bool = False) -> bool:
+    """Validate that GCS credentials are available when GCS sync is enabled."""
+    from src.gogooku3.utils.gcs_storage import validate_gcs_credentials  # type: ignore
+
+    if not os.getenv("GCS_ENABLED"):
+        return True
+
+    ok = validate_gcs_credentials()
+    if ok:
+        logger.info("GCS credentials validated (uploads enabled)")
+        return True
+
+    message = (
+        "GCS upload requested (GCS_ENABLED=1) but credentials are not available. "
+        "Set GCS_CREDENTIALS_PATH / GOOGLE_APPLICATION_CREDENTIALS, or provide "
+        "GCS_SERVICE_ACCOUNT_JSON(_B64)."
+    )
+    if strict:
+        logger.error(message)
+        return False
+    logger.warning(message)
+    return False
+
+
 def _find_latest(glob: str) -> Path | None:
     """Return the latest matching file anywhere under `output/`.
 
@@ -738,23 +791,30 @@ async def main() -> int:
         logger.info("   → To enable: Set JQUANTS_PLAN_TIER=premium in .env")
     logger.info("=" * 80)
 
+    # RAPIDS stack is mandatory only when GPU ETL is requested
+    rapids_ready = _check_rapids_environment(
+        strict=(getattr(args, "gpu_etl", True) and not args.check_env_only)
+    )
     # GPU graph check: only strict if --require-gpu-graph is explicitly set
-    gpu_ready = _check_gpu_graph_support(strict=args.require_gpu_graph)
+    gpu_ready = False
+    if rapids_ready:
+        gpu_ready = _check_gpu_graph_support(strict=args.require_gpu_graph)
+    gcs_ready = _check_gcs_credentials(strict=not args.check_env_only)
 
     if args.check_env_only:
         # Relaxed mode: only fail if credentials are missing
         # GPU fallback is allowed unless --require-gpu-graph is set
         if args.require_gpu_graph:
             # Strict mode: both credentials and GPU required
-            if creds_ok and gpu_ready:
+            if creds_ok and rapids_ready and gpu_ready and gcs_ready:
                 logger.info("✅ Preflight checks passed (strict mode)")
                 return 0
             logger.error("❌ Preflight checks failed (strict mode)")
             return 1
         else:
             # Relaxed mode: only credentials required
-            if creds_ok:
-                if gpu_ready:
+            if creds_ok and rapids_ready and gcs_ready:
+                if rapids_ready and gpu_ready:
                     logger.info("✅ Preflight checks passed (GPU accelerated)")
                 else:
                     logger.info("✅ Preflight checks passed (CPU fallback)")
@@ -763,6 +823,10 @@ async def main() -> int:
             return 1
 
     if args.jquants and not creds_ok:
+        return 1
+    if getattr(args, "gpu_etl", True) and not rapids_ready:
+        return 1
+    if not gcs_ready:
         return 1
     if args.require_gpu_graph and not gpu_ready:
         return 1
@@ -778,6 +842,48 @@ async def main() -> int:
         # Best-effort RMM init with large pool if provided
         try:
             from src.utils.gpu_etl import init_rmm  # type: ignore
+            import cupy as _cp  # type: ignore
+
+            pool_requested = os.getenv("RMM_POOL_SIZE", "").strip()
+            if pool_requested and pool_requested != "0":
+                try:
+                    free_bytes, _total_bytes = _cp.cuda.runtime.memGetInfo()  # type: ignore[attr-defined]
+                    safety_margin = int(os.getenv("RMM_POOL_SAFETY_MARGIN_BYTES", str(2 * 1024**3)))
+                    max_allowed = max(0, free_bytes - safety_margin)
+
+                    def _parse_bytes(txt: str) -> int | None:
+                        s = txt.strip().upper()
+                        try:
+                            if s.endswith("GB"):
+                                return int(float(s[:-2]) * (1024**3))
+                            if s.endswith("G"):
+                                return int(float(s[:-1]) * (1024**3))
+                            if s.endswith("MB"):
+                                return int(float(s[:-2]) * (1024**2))
+                            if s.endswith("M"):
+                                return int(float(s[:-1]) * (1024**2))
+                            if s.endswith("KB"):
+                                return int(float(s[:-2]) * 1024)
+                            if s.endswith("K"):
+                                return int(float(s[:-1]) * 1024)
+                            return int(float(s))
+                        except Exception:
+                            return None
+
+                    requested_bytes = _parse_bytes(pool_requested)
+                    if requested_bytes is not None and max_allowed > 0 and requested_bytes > max_allowed:
+                        logger.warning(
+                            "Requested RMM pool (%s) exceeds free GPU memory (%.1f GB). "
+                            "Clamping to %.1f GB (margin %.1f GB).",
+                            pool_requested,
+                            free_bytes / 1e9,
+                            max_allowed / 1e9,
+                            safety_margin / 1e9,
+                        )
+                        os.environ["RMM_POOL_SIZE"] = f"{int(max_allowed)}"
+                        pool_requested = os.environ["RMM_POOL_SIZE"]
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(f"Failed to inspect CUDA memory before RMM init: {exc}")
 
             pool = os.getenv("RMM_POOL_SIZE", "0")
             ok = init_rmm(pool)
@@ -1012,6 +1118,12 @@ async def main() -> int:
     futures_path: Path | None = None
     short_selling_path: Path | None = None
     short_positions_path: Path | None = None
+    wmi_path: Path | None = None
+    dmi_path: Path | None = None
+    am_path: Path | None = None
+    breakdown_path: Path | None = None
+    dividend_path: Path | None = None
+    fs_path: Path | None = None
 
     # Respect user-provided futures parquet regardless of plan tier
     if args.futures_parquet is not None:
@@ -1101,11 +1213,6 @@ async def main() -> int:
                 pass  # Sector short uses different variable names in offline fallback
         else:
             logger.info("⚠️  Some cached data is missing or stale, will fetch from API")
-
-    am_path: Path | None = None
-    breakdown_path: Path | None = None
-    dividend_path: Path | None = None
-    fs_path: Path | None = None
 
     if args.jquants and not use_cached:
         # Fetch trade-spec and save to Parquet
@@ -1374,7 +1481,7 @@ async def main() -> int:
             except Exception as e:
                 logger.warning(f"Failed to save listed_info parquet: {e}")
         # Save weekly margin interest if fetched
-        wmi_path: Path | None = None
+        wmi_path = None
         if wmi_df is not None and not wmi_df.is_empty():
             try:
                 from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
@@ -1389,7 +1496,7 @@ async def main() -> int:
             except Exception as e:
                 logger.warning(f"Failed to save weekly margin parquet: {e}")
         # Save daily margin interest if fetched
-        dmi_path: Path | None = None
+        dmi_path = None
         if dmi_df is not None and not dmi_df.is_empty():
             try:
                 from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs

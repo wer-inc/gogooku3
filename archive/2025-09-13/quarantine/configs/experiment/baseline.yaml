@@ -1,6 +1,0 @@
-# @package _global_
-
-experiment:
-  name: baseline
-  notes: Default baseline experiment
-

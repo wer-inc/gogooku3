@@ -1781,6 +1781,48 @@ class JQuantsAsyncFetcher:
             return df
 
         cols = df.columns
+        sentinel_strings = {"-", "*", "", "null", "none", "nan", "na"}
+
+        def _to_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return float(value)
+            if isinstance(value, (int, float)):
+                return float(value)
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if not cleaned:
+                    return None
+                # Normalise common sentinel values and locale artefacts
+                lowered = cleaned.lower()
+                if lowered in sentinel_strings:
+                    return None
+                cleaned = (
+                    cleaned.replace(",", "")
+                    .replace("−", "-")
+                    .replace("–", "-")
+                    .replace("—", "-")
+                    .replace("＋", "+")
+                    .replace("％", "")
+                    .replace("%", "")
+                )
+                if cleaned.lower() in sentinel_strings:
+                    return None
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    return None
+            return None
+
+        def _to_int(value: Any) -> int | None:
+            numeric = _to_float(value)
+            if numeric is None:
+                return None
+            try:
+                return int(numeric)
+            except (TypeError, ValueError):
+                return None
 
         # Helper for date columns
         def _date_col(name: str) -> pl.Expr:
@@ -1798,33 +1840,21 @@ class JQuantsAsyncFetcher:
         def _float_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Float64).alias(name)
-            return (
-                pl.when(pl.col(name) == "-")
-                .then(None)
-                .when(pl.col(name) == "*")
-                .then(None)
-                .when(pl.col(name).is_null())
-                .then(None)
-                .otherwise(pl.col(name))
-                .cast(pl.Float64)
-                .alias(name)
+            dtype = df.schema.get(name)
+            if dtype in (pl.Float32, pl.Float64, pl.Int32, pl.Int64):
+                return pl.col(name).cast(pl.Float64, strict=False).alias(name)
+            return pl.col(name).map_elements(_to_float, return_dtype=pl.Float64).alias(
+                name
             )
 
         # Helper for integer columns
         def _int_col(name: str) -> pl.Expr:
             if name not in cols:
                 return pl.lit(None, dtype=pl.Int64).alias(name)
-            return (
-                pl.when(pl.col(name) == "-")
-                .then(None)
-                .when(pl.col(name) == "*")
-                .then(None)
-                .when(pl.col(name).is_null())
-                .then(None)
-                .otherwise(pl.col(name))
-                .cast(pl.Int64)
-                .alias(name)
-            )
+            dtype = df.schema.get(name)
+            if dtype in (pl.Int32, pl.Int64):
+                return pl.col(name).cast(pl.Int64, strict=False).alias(name)
+            return pl.col(name).map_elements(_to_int, return_dtype=pl.Int64).alias(name)
 
         # Normalize columns
         normalized = df.with_columns(

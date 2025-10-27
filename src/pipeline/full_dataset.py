@@ -123,18 +123,6 @@ def save_with_symlinks(
 
     builder = MLDatasetBuilder(output_dir=output_dir)
 
-    def _read_parquet(path: Path | None) -> pl.DataFrame:
-        if path and path.exists():
-            try:
-                return pl.read_parquet(path)
-            except Exception as exc:
-                logger.warning(f"Failed to read parquet {path}: {exc}")
-        return pl.DataFrame()
-
-    am_quotes_df = _read_parquet(am_quotes_parquet)
-    breakdown_df = _read_parquet(breakdown_parquet)
-    dividend_df = _read_parquet(dividend_parquet)
-    fs_details_df = _read_parquet(fs_details_parquet)
     metadata = builder.create_metadata(df)
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, default=str)
@@ -309,6 +297,24 @@ async def enrich_and_save(
                 pl.col(target).fill_null(pl.col(source)).alias(target)
             )
         return frame.with_columns(pl.col(source).alias(target))
+
+    def _load_optional_parquet(path: Path | None, label: str) -> pl.DataFrame:
+        """Best-effort parquet loader that returns empty DataFrame on failure."""
+        if path is None:
+            return pl.DataFrame()
+        try:
+            resolved = Path(path)
+            if not resolved.exists():
+                return pl.DataFrame()
+            return pl.read_parquet(resolved)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning(f"Failed to read {label} parquet ({path}): {exc}")
+            return pl.DataFrame()
+
+    am_quotes_df = _load_optional_parquet(am_quotes_parquet, "AM quotes")
+    breakdown_df = _load_optional_parquet(breakdown_parquet, "breakdown")
+    dividend_df = _load_optional_parquet(dividend_parquet, "dividend")
+    fs_details_df = _load_optional_parquet(fs_details_parquet, "fs_details")
 
     # Ensure base quotes have Code as Utf8 before any joins
     result = _ensure_code_utf8(df_base, source="base_quotes")
@@ -2144,7 +2150,6 @@ async def enrich_and_save(
             # 2.5) Before API fetch, check for cached Index Options features
             if opt_feats_df is None or opt_feats_df.is_empty():
                 import glob
-                from datetime import timedelta
 
                 # Look for cached nk225_index_option_features files in multiple locations
                 search_dirs = [

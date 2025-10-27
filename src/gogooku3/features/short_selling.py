@@ -150,7 +150,7 @@ def add_short_statistical_features(ss: pl.DataFrame) -> pl.DataFrame:
     if ss.is_empty():
         return ss
 
-    return ss.with_columns(
+    tmp = ss.with_columns(
         [
             # Moving averages
             pl.col("ss_ratio").rolling_mean(5).over("Code").alias("ss_ratio_ma5"),
@@ -170,12 +170,14 @@ def add_short_statistical_features(ss: pl.DataFrame) -> pl.DataFrame:
                 pl.col("ss_volume_ratio")
                 - pl.col("ss_volume_ratio").shift(5).over("Code")
             ).alias("ss_volume_momentum_5d"),
-            # Trend strength (current vs MA20)
-            (
-                (pl.col("ss_ratio") - pl.col("ss_ratio_ma20"))
-                / (pl.col("ss_ratio_ma20") + EPS)
-            ).alias("ss_trend_strength"),
         ]
+    )
+
+    return tmp.with_columns(
+        (
+            (pl.col("ss_ratio") - pl.col("ss_ratio_ma20"))
+            / (pl.col("ss_ratio_ma20") + EPS)
+        ).alias("ss_trend_strength")
     )
 
 
@@ -193,12 +195,14 @@ def add_short_extreme_detection(
     if ss.is_empty():
         return ss
 
-    return ss.with_columns(
+    ss = ss.with_columns(
         [
             # Percentile rank (0-1 scale)
-            pl.col("ss_ratio").rank(method="average").over("Code")
-            / pl.col("ss_ratio").count().over("Code"),
-            # Rolling percentile (252-day window)
+            (
+                pl.col("ss_ratio").rank(method="average").over("Code")
+                / pl.col("ss_ratio").count().over("Code")
+            ).alias("ss_percentile_total"),
+            # Rolling percentiles (252-day window)
             pl.col("ss_ratio")
             .rolling_quantile(0.95, window_size=percentile_window)
             .over("Code")
@@ -207,14 +211,17 @@ def add_short_extreme_detection(
             .rolling_quantile(0.05, window_size=percentile_window)
             .over("Code")
             .alias("ss_p05_252d"),
-            # Extreme flags
+        ]
+    )
+
+    return ss.with_columns(
+        [
             (pl.col("ss_ratio") > pl.col("ss_p95_252d"))
             .cast(pl.Int8)
             .alias("ss_extreme_high"),
             (pl.col("ss_ratio") < pl.col("ss_p05_252d"))
             .cast(pl.Int8)
             .alias("ss_extreme_low"),
-            # Combined extreme flag
             (
                 (pl.col("ss_ratio") > pl.col("ss_p95_252d"))
                 | (pl.col("ss_ratio") < pl.col("ss_p05_252d"))
@@ -361,8 +368,8 @@ def asof_attach_to_daily(quotes: pl.DataFrame, ss_k: pl.DataFrame) -> pl.DataFra
 
     # Filter short data to valid effective dates only
     ss_valid = ss_k.filter(
-        pl.col("effective_start").is_not_null() & pl.col("effective_start")
-        <= pl.col("Date")  # Only use data effective by this date
+        pl.col("effective_start").is_not_null()
+        & (pl.col("effective_start") <= pl.col("Date"))
     )
 
     if ss_valid.is_empty():

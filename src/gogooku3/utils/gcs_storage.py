@@ -6,12 +6,19 @@ enabling automatic backup and synchronization of ML datasets and artifacts.
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_CREDENTIAL_HINT = (
+    "Set either GCS_CREDENTIALS_PATH, GOOGLE_APPLICATION_CREDENTIALS, "
+    "GCS_SERVICE_ACCOUNT_JSON, or GCS_SERVICE_ACCOUNT_JSON_B64."
+)
 
 
 def is_gcs_enabled() -> bool:
@@ -24,6 +31,67 @@ def get_gcs_bucket() -> str:
     bucket = os.getenv("GCS_BUCKET", "gogooku-ml-data")
     return bucket
 
+
+def _create_storage_client():
+    """Create a google.cloud.storage.Client using explicit credentials when provided."""
+    from google.cloud import storage
+
+    # 1) JSON string (plain)
+    cred_json = os.getenv("GCS_SERVICE_ACCOUNT_JSON")
+    if cred_json:
+        try:
+            info = json.loads(cred_json)
+            logger.debug("Creating GCS client from GCS_SERVICE_ACCOUNT_JSON env.")
+            return storage.Client.from_service_account_info(info)
+        except Exception as exc:
+            raise RuntimeError(f"GCS_SERVICE_ACCOUNT_JSON invalid: {exc}") from exc
+
+    # 2) JSON string (base64)
+    cred_b64 = os.getenv("GCS_SERVICE_ACCOUNT_JSON_B64")
+    if cred_b64:
+        try:
+            decoded = base64.b64decode(cred_b64)
+            info = json.loads(decoded.decode("utf-8"))
+            logger.debug("Creating GCS client from GCS_SERVICE_ACCOUNT_JSON_B64 env.")
+            return storage.Client.from_service_account_info(info)
+        except Exception as exc:
+            raise RuntimeError(f"GCS_SERVICE_ACCOUNT_JSON_B64 invalid: {exc}") from exc
+
+    # 3) Explicit credential path
+    cred_path = (
+        os.getenv("GCS_CREDENTIALS_PATH")
+        or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    )
+    if cred_path:
+        path = Path(cred_path).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(
+                f"GCS credentials file not found at {path}. {_CREDENTIAL_HINT}"
+            )
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(path)
+        logger.debug("Creating GCS client from %s", path)
+        return storage.Client.from_service_account_json(str(path))
+
+    # 4) Fallback to default credentials (metadata server / ADC)
+    try:
+        logger.debug("Creating GCS client using default credentials.")
+        return storage.Client()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Unable to obtain Google Cloud credentials. {_CREDENTIAL_HINT}"
+        ) from exc
+
+
+def validate_gcs_credentials() -> bool:
+    """Return True if a storage client can be created (when GCS is enabled)."""
+    if not is_gcs_enabled():
+        return True
+    try:
+        _create_storage_client()
+        return True
+    except Exception as exc:
+        logger.error("GCS credential validation failed: %s", exc)
+        return False
 
 def upload_to_gcs(
     local_path: Path | str,
@@ -51,10 +119,8 @@ def upload_to_gcs(
         return False
 
     try:
-        from google.cloud import storage
-
         bucket_name = bucket or get_gcs_bucket()
-        client = storage.Client()
+        client = _create_storage_client()
         bucket_obj = client.bucket(bucket_name)
 
         # Auto-generate GCS path from local path structure
@@ -100,10 +166,8 @@ def download_from_gcs(
         return None
 
     try:
-        from google.cloud import storage
-
         bucket_name = bucket or get_gcs_bucket()
-        client = storage.Client()
+        client = _create_storage_client()
         bucket_obj = client.bucket(bucket_name)
 
         # Auto-generate local path from GCS path
