@@ -161,15 +161,8 @@ def add_advanced_features(df: pl.DataFrame) -> pl.DataFrame:
     _use_gpu_etl = os.getenv("USE_GPU_ETL", "0") == "1"
     if _use_gpu_etl:
         try:
-            from src.utils.gpu_etl import cs_rank_and_z, init_rmm  # type: ignore
+            from src.utils.gpu_etl import cs_rank_and_z  # type: ignore
 
-            # Best-effort RMM init; ignore failure
-            try:
-                init_rmm(None)
-            except Exception:
-                pass
-
-            # Use lagged returns to prevent leakage
             out = cs_rank_and_z(
                 out,
                 rank_col="lag_returns_1d",  # FIXED: Use T-1 lagged returns

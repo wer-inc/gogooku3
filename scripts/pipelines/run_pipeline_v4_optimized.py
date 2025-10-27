@@ -491,6 +491,58 @@ def _merge_contiguous_ranges(ranges: List[Tuple[str, str]]) -> List[Tuple[str, s
     return merged
 
 
+def _align_frames_for_concat(
+    left: pl.DataFrame | None, right: pl.DataFrame | None
+) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
+    """
+    Align schemas of cached/new frames so they can be concatenated safely.
+
+    Args:
+        left: Cached DataFrame (may be None)
+        right: Newly fetched DataFrame (may be None)
+
+    Returns:
+        Tuple of aligned DataFrames (left_aligned, right_aligned)
+    """
+
+    if (
+        left is None
+        or right is None
+        or left.is_empty()
+        or right.is_empty()
+    ):
+        return left, right
+
+    schema_order: list[str] = []
+    schema_dtypes: dict[str, pl.DataType] = {}
+
+    for df in (left, right):
+        for name, dtype in zip(df.columns, df.dtypes):
+            if name not in schema_dtypes:
+                schema_order.append(name)
+                schema_dtypes[name] = dtype
+
+    def _project(df: pl.DataFrame) -> pl.DataFrame:
+        exprs: list[pl.Expr] = []
+        df_schema = df.schema
+        for name in schema_order:
+            dtype = schema_dtypes[name]
+            if name in df_schema:
+                expr = pl.col(name)
+                if df_schema[name] != dtype:
+                    expr = expr.cast(dtype, strict=False)
+                exprs.append(expr.alias(name))
+            else:
+                exprs.append(pl.lit(None, dtype=dtype).alias(name))
+        return df.select(exprs)
+
+    try:
+        return _project(left), _project(right)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning(f"Failed to align cached/new schema for concat: {exc}")
+        return left, right
+
+
 def _load_cache_data(cache_info: Dict, start_date: str, end_date: str, date_column: str = "Date") -> pl.DataFrame | None:
     """Load cached data, handling both single-file and multi-file cases.
 
@@ -943,6 +995,7 @@ class JQuantsOptimizedFetcherV4:
         if cached_data is not None and new_data is not None and not new_data.is_empty():
             # Merge cached and new data
             logger.info(f"🔀 Merging cached ({len(cached_data):,}) + new ({len(new_data):,}) data...")
+            cached_data, new_data = _align_frames_for_concat(cached_data, new_data)
             final_df = pl.concat([cached_data, new_data])
             logger.info(f"   Total: {len(final_df):,} records after merge")
         elif cached_data is not None:

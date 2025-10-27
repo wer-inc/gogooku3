@@ -300,6 +300,22 @@ def init_rmm(initial_pool_size: str | None = None) -> bool:
         size_bytes = _parse_bytes(size_str)
 
         if allocator_mode == "cuda_async":
+            if size_bytes and size_bytes > 0:
+                try:
+                    free_bytes, total_bytes = cp.cuda.runtime.memGetInfo()  # type: ignore[attr-defined]
+                    safety_margin = int(2 * 1024**3)  # 2GB safety margin
+                    max_allowed = max(0, free_bytes - safety_margin)
+                    if size_bytes >= max_allowed and max_allowed > 0:
+                        logger.warning(
+                            "Requested RMM pool (%s) exceeds available GPU memory (%.1f GB free). "
+                            "Clamping to %.1f GB.",
+                            size_str or f"{size_bytes}B",
+                            free_bytes / 1e9,
+                            max_allowed / 1e9,
+                        )
+                        size_bytes = max_allowed
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    logger.debug(f"Failed to query CUDA free memory: {exc}")
             try:
                 import rmm.mr as mr  # type: ignore
 

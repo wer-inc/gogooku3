@@ -1541,7 +1541,9 @@ class MLDatasetBuilder:
         )
 
         if next_expr is not None:
-            fs = fs.with_columns(next_expr.alias("next_bday"))
+            fs = fs.with_columns(
+                next_expr(pl.col("Date")).alias("next_bday")
+            )
         else:
             fs = fs.with_columns(pl.col("Date").alias("next_bday"))
 

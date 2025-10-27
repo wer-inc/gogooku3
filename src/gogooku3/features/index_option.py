@@ -341,7 +341,13 @@ def build_index_option_features(opt_df: pl.DataFrame) -> pl.DataFrame:
     return df.select(keep)
 
 
-def build_option_market_aggregates(opt_feats: pl.DataFrame, next_bday_expr: pl.Expr | None = None) -> pl.DataFrame:
+from collections.abc import Callable
+
+
+def build_option_market_aggregates(
+    opt_feats: pl.DataFrame,
+    next_bday_expr: Callable[[pl.Expr], pl.Expr] | pl.Expr | None = None,
+) -> pl.DataFrame:
     """Build daily market-level aggregates from per-contract option features.
 
     Aggregation is across all contracts for a given Date (option market snapshot),
@@ -357,14 +363,24 @@ def build_option_market_aggregates(opt_feats: pl.DataFrame, next_bday_expr: pl.E
 
     if "tau_d" in s.columns:
         s = s.with_columns(
-            pl.col("tau_d")
-            .fill_null(pl.col("tau_d").max().over("Date"))
-            .rank("dense")
-            .over("Date")
-            .alias("tau_rank")
+            pl.when(pl.col("tau_d").is_null())
+            .then(pl.lit(9_999_999.0))
+            .otherwise(pl.col("tau_d"))
+            .alias("_tau_tmp")
+        )
+        s = (
+            s.sort(["Date", "_tau_tmp"])
+            .with_columns(
+                pl.col("_tau_tmp")
+                .rank(method="dense")
+                .over("Date")
+                .cast(pl.Int32)
+                .alias("tau_rank")
+            )
+            .drop("_tau_tmp")
         )
     else:
-        s = s.with_columns(pl.lit(1).alias("tau_rank"))
+        s = s.with_columns(pl.lit(1).cast(pl.Int32).alias("tau_rank"))
 
     # Aggregations (robust via median)
     agg = (
@@ -435,7 +451,11 @@ def build_option_market_aggregates(opt_feats: pl.DataFrame, next_bday_expr: pl.E
         .sort("Date")
     )
     if next_bday_expr is not None:
-        agg = agg.with_columns([next_bday_expr.alias("effective_date")])
+        if callable(next_bday_expr):
+            eff_expr = next_bday_expr(pl.col("Date"))
+        else:
+            eff_expr = next_bday_expr
+        agg = agg.with_columns([eff_expr.alias("effective_date")])
         agg = agg.select(["effective_date", "Date", *[c for c in agg.columns if c not in ("Date", "effective_date")]])
     agg = agg.with_columns(
         [
@@ -463,7 +483,11 @@ def attach_option_market_to_equity(quotes: pl.DataFrame, mkt: pl.DataFrame) -> p
     has_eff = "effective_date" in mkt.columns
     df = quotes
     if has_eff:
-        join_df = mkt.rename({"effective_date": "Date"}).drop([c for c in ("Date",) if c in mkt.columns])
+        # Preserve the original option market trade date while using effective_date as join key
+        rename_map: dict[str, str] = {"effective_date": "Date"}
+        if "Date" in mkt.columns:
+            rename_map["Date"] = "option_market_date"
+        join_df = mkt.rename(rename_map)
     else:
         join_df = mkt
     out = df.join(join_df, on="Date", how="left")
