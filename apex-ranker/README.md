@@ -52,7 +52,19 @@ apex-ranker/
 
    The script validates column coverage, targets, and lookback depth before running a full training job.
 
-5. Launch training:
+5. (Optional) quick sanity run (CPU/GPU agnostic):
+
+   ```bash
+   python apex-ranker/scripts/train_v0.py \
+     --config apex-ranker/configs/v0_base.yaml \
+     --max-train-days 3 \
+     --max-epochs 1 \
+     --max-train-steps 2
+   ```
+
+   These flags throttle training for smoke-tests. Omit them (or increase) for real experiments.
+
+6. Launch full training:
 
    ```bash
    python apex-ranker/scripts/train_v0.py --config apex-ranker/configs/v0_base.yaml
@@ -65,6 +77,10 @@ apex-ranker/
    - GPU-enabled training with composite ranking loss
    - simple validation metrics (RankIC / Precision@K per horizon)
 
+### Mask handling
+
+Some mask columns (e.g. `is_stmt_valid`) may have zero positive coverage in certain datasets.  
+During dataset loading they are automatically dropped with a warning so that eligible days are kept for training.
 ## Extending the feature set
 
 `configs/feature_groups.yaml` defines groups of column names that can be

@@ -12,6 +12,7 @@ data:
     return_cols:
     - return_1d
     - feat_ret_1d
+    returns_channel_index: 0
     sector_col: sector33
     shrinkage_gamma: 0.1
     size_tau: 1.0
@@ -57,11 +58,10 @@ improvements:
   log_grad_norm: false
   memory_map: false
   multi_horizon_weights:
-  - 1.0
-  - 0.8
-  - 0.7
-  - 0.5
-  - 0.3
+  - 1.0  # horizon_1d
+  - 0.8  # horizon_5d
+  - 0.6  # horizon_10d
+  - 0.4  # horizon_20d
   online_normalization: false
   output_head_small_init: true
   use_ema: true

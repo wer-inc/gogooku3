@@ -9,7 +9,7 @@ data:
   optional_groups: []
   use_plus30: false
   lookback: 180
-  min_stocks_per_day: 500
+  min_stocks_per_day: 80
   date_column: Date
   code_column: Code
   target_columns:

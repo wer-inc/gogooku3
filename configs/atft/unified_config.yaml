@@ -36,7 +36,7 @@ data:
   # Time series configuration
   time_series:
     sequence_length: 20
-    prediction_horizons: [1, 2, 3, 5, 10]
+    prediction_horizons: [1, 5, 10, 20]
     drop_historical_columns: true
     use_tensor_sequences: true
 

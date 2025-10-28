@@ -57,7 +57,7 @@ batch:
 # Loss configuration optimized for financial metrics
 loss:
   # Multi-horizon settings
-  horizons: [1, 2, 3, 5, 10]
+  horizons: [1, 5, 10, 20]
   horizon_weights:
     1: 1.0
     5: 0.8

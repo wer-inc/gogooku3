@@ -84,7 +84,7 @@ loss:
 # Multi-horizon configuration
 prediction:
   use_multi_horizon_heads: true
-  horizons: [1, 2, 3, 5, 10]
+  horizons: [1, 5, 10, 20]
   horizon_weights:
     1: 1.0
     5: 1.2  # Focus on 5-day for RankIC
