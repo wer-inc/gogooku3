@@ -79,6 +79,11 @@ def build_panel_cache(
             start = idx - lookback + 1
             if start < 0:
                 continue
+            window = payload["features"][start : idx + 1]
+            targets = payload["targets"][idx]
+
+            if np.isnan(window).any() or np.isnan(targets).any():
+                continue
             if payload["masks"] is not None:
                 if np.any(payload["masks"][idx] == 0):
                     continue
