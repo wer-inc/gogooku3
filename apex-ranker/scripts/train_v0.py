@@ -26,6 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train APEX-Ranker v0 baseline.")
     parser.add_argument("--config", required=True, help="Path to YAML configuration.")
     parser.add_argument("--output", default=None, help="Optional path to save model state dict.")
+    parser.add_argument("--max-epochs", type=int, default=None, help="Optional cap on training epochs.")
+    parser.add_argument("--max-train-days", type=int, default=None, help="Limit number of training days (recent).")
+    parser.add_argument("--max-val-days", type=int, default=None, help="Limit number of validation days (recent).")
+    parser.add_argument("--max-train-steps", type=int, default=None, help="Stop each epoch after N optimisation steps.")
+    parser.add_argument("--log-interval", type=int, default=None, help="Override log interval for training loss prints.")
     return parser.parse_args()
 
 
@@ -80,6 +85,26 @@ def load_dataset(
     required_columns = list(dict.fromkeys(required_columns))
 
     frame = pl.read_parquet(parquet_path, columns=required_columns)
+
+    mask_columns = list(selection.masks)
+    if mask_columns:
+        coverage_exprs = [
+            pl.col(mask).fill_null(0).gt(0.5).sum().alias(mask) for mask in mask_columns
+        ]
+        coverage = frame.select(coverage_exprs)
+        active_masks: list[str] = []
+        dropped_masks: list[str] = []
+        for mask in mask_columns:
+            positive = int(coverage[0, mask])
+            if positive == 0:
+                dropped_masks.append(mask)
+            else:
+                active_masks.append(mask)
+        if dropped_masks:
+            dropped_str = ", ".join(dropped_masks)
+            print(f"[WARN] Dropping mask columns with zero coverage: {dropped_str}")
+        mask_columns = active_masks
+
     frame = add_cross_sectional_zscores(
         frame,
         columns=selection.features,
@@ -93,14 +118,14 @@ def load_dataset(
         frame,
         feature_cols=z_features,
         target_cols=target_cols,
-        mask_cols=selection.masks,
+        mask_cols=mask_columns,
         date_col=date_col,
         code_col=code_col,
         lookback=data_cfg["lookback"],
         min_stocks_per_day=data_cfg["min_stocks_per_day"],
     )
 
-    return cache, z_features, target_cols, selection.masks
+    return cache, z_features, target_cols, mask_columns
 
 
 def main() -> None:
@@ -113,6 +138,11 @@ def main() -> None:
     loss_cfg = cfg["loss"]
     model_cfg = cfg["model"]
 
+    if args.max_epochs is not None:
+        train_cfg["epochs"] = max(1, int(args.max_epochs))
+    if args.log_interval is not None:
+        train_cfg["log_interval"] = max(1, int(args.log_interval))
+
     feature_selector = FeatureSelector(data_cfg["feature_groups_config"])
     cache, feature_cols, target_cols, mask_cols = load_dataset(cfg, feature_selector)
 
@@ -120,6 +150,11 @@ def main() -> None:
     val_days = max(1, min(train_cfg.get("val_days", 60), len(dates) // 5))
     train_dates = dates[:-val_days] if len(dates) > val_days else dates
     val_dates = dates[-val_days:] if len(dates) > val_days else dates[-1:]
+
+    if args.max_train_days is not None and train_dates:
+        train_dates = train_dates[-int(args.max_train_days) :]
+    if args.max_val_days is not None and val_dates:
+        val_dates = val_dates[-int(args.max_val_days) :]
 
     train_dataset = DayPanelDataset(
         cache,
@@ -187,12 +222,37 @@ def main() -> None:
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=train_cfg["epochs"]
     )
-    scaler = torch.cuda.amp.GradScaler(enabled=train_cfg.get("amp", True) and device.startswith("cuda"))
+    device_type = "cuda" if device.startswith("cuda") else "cpu"
+    amp_enabled = bool(train_cfg.get("amp", True) and device_type == "cuda")
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        try:
+            scaler = torch.amp.GradScaler(device_type=device_type, enabled=amp_enabled)
+            autocast_kwargs = {"device_type": device_type, "enabled": amp_enabled}
+            autocast_ctx = torch.autocast
+        except TypeError:
+            scaler = torch.amp.GradScaler(enabled=amp_enabled)
+            autocast_kwargs = {"device_type": device_type, "enabled": amp_enabled}
+            autocast_ctx = torch.autocast
+    else:
+        from torch.cuda.amp import GradScaler as CudaGradScaler, autocast as cuda_autocast
+
+        scaler = CudaGradScaler(enabled=amp_enabled)
+        autocast_kwargs = {"enabled": amp_enabled}
+        autocast_ctx = cuda_autocast
 
     def to_device(tensor: torch.Tensor) -> torch.Tensor:
         return tensor.to(device, non_blocking=True)
 
+    print(f"[INFO] Training device: {device}")
+    print(f"[INFO] Train days: {len(train_dataset)}, Val days: {len(val_dataset)}")
+    print(f"[INFO] Active features: {len(feature_cols)}, Active masks: {len(mask_cols)}")
+    print(f"[INFO] Cached trading days available: {len(cache.date_ints)}")
+    if not train_dataset:
+        print("[ERROR] No training days available after masking; aborting.")
+        return
+
     for epoch in range(1, train_cfg["epochs"] + 1):
+        print(f"[INFO] Starting epoch {epoch}/{train_cfg['epochs']}")
         model.train()
         running_loss = 0.0
         batch_count = 0
@@ -205,7 +265,7 @@ def main() -> None:
             y = to_device(batch["y"].squeeze(0))
 
             optimizer.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
+            with autocast_ctx(**autocast_kwargs):
                 scores = model(X)
                 loss = model.compute_loss(scores, y)
 
@@ -226,9 +286,16 @@ def main() -> None:
                 avg_loss = running_loss / max(1, batch_count)
                 print(f"[Epoch {epoch} | Step {step}] loss={avg_loss:.4f}")
 
-        scheduler.step()
+            if args.max_train_steps is not None and batch_count >= args.max_train_steps:
+                print(f"[INFO] Reached max_train_steps={args.max_train_steps}; stopping epoch early.")
+                break
+
         if batch_count:
+            scheduler.step()
             print(f"Epoch {epoch} training loss: {running_loss / batch_count:.4f}")
+        else:
+            print(f"[WARN] Epoch {epoch} produced no training batches; check data coverage.")
+            continue
 
         # Validation
         model.eval()
@@ -269,4 +336,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:  # pragma: no cover - debugging aid
+        print(f"[ERROR] {type(exc).__name__}: {exc}")
+        raise

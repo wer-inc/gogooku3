@@ -199,6 +199,7 @@ data:
     return_cols:
     - return_1d
     - feat_ret_1d
+    returns_channel_index: 0
     sector_col: sector33
     shrinkage_gamma: 0.1
     size_tau: 1.0
@@ -218,7 +219,7 @@ data:
   # Time series settings
   time_series:
     sequence_length: 60
-    prediction_horizons: [1, 2, 3, 5, 10]
+    prediction_horizons: [1, 5, 10, 20]
 
 # ============================================================================
 # Environment overrides (will be set automatically)

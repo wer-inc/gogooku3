@@ -16,7 +16,7 @@ source:
 # 安全性重視の時系列設定
 time_series:
   sequence_length: 60                    # 20→60に拡張
-  prediction_horizons: [1, 2, 3, 5, 10]   # 多ホライズン対応
+  prediction_horizons: [1, 5, 10, 20]   # 実データ (target_1d/5d/10d/20d) に揃える
   
   # 履歴列を廃止してテンソル系列化
   drop_historical_columns: true         # rsi14_1d..20d等を無効化

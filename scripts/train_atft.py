@@ -3074,29 +3074,55 @@ def evaluate_model_metrics(
         pred = all_predictions[horizon].numpy()
         target = all_targets[horizon].numpy()
 
+        # NaN/infを除外するマスクを作成
+        valid_mask = np.isfinite(pred) & np.isfinite(target)
+        if not np.any(valid_mask):
+            # 全てNaN/infの場合はスキップ
+            logger.warning(f"Horizon {horizon}: All values are NaN/inf, skipping metrics")
+            metrics["horizon_metrics"][horizon] = {
+                "mse": float("nan"),
+                "rmse": float("nan"),
+                "mae": float("nan"),
+                "correlation": float("nan"),
+                "r2": float("nan"),
+                "sharpe_ratio": float("nan"),
+                "mean_prediction": float("nan"),
+                "std_prediction": float("nan"),
+                "mean_target": float("nan"),
+                "std_target": float("nan"),
+            }
+            continue
+
+        # 有効な値のみを使用
+        pred_valid = pred[valid_mask]
+        target_valid = target[valid_mask]
+
         # 基本的なメトリクス
-        mse = np.mean((pred - target) ** 2)
+        mse = np.mean((pred_valid - target_valid) ** 2)
         rmse = np.sqrt(mse)
-        mae = np.mean(np.abs(pred - target))
+        mae = np.mean(np.abs(pred_valid - target_valid))
 
         # 相関係数
-        correlation = np.corrcoef(pred.flatten(), target.flatten())[0, 1]
-        if np.isnan(correlation):
+        if len(pred_valid) > 1:
+            correlation = np.corrcoef(pred_valid.flatten(), target_valid.flatten())[0, 1]
+            if np.isnan(correlation):
+                correlation = 0.0
+        else:
             correlation = 0.0
 
         # R²スコア
-        ss_res = np.sum((target - pred) ** 2)
-        ss_tot = np.sum((target - np.mean(target)) ** 2)
+        ss_res = np.sum((target_valid - pred_valid) ** 2)
+        ss_tot = np.sum((target_valid - np.mean(target_valid)) ** 2)
         r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
 
         # シャープレシオ（金融指標）
-        returns = pred - target + float(os.getenv("SHARPE_OFFSET", "0.0"))
+        returns = pred_valid - target_valid + float(os.getenv("SHARPE_OFFSET", "0.0"))
         try:
             eps = float(os.getenv("SHARPE_EPS", "1e-6"))
         except Exception:
             eps = 1e-6
-        mean_ret = np.nanmean(returns) if returns.size else 0.0
-        sd = np.nanstd(returns) if returns.size else 0.0
+        mean_ret = np.mean(returns) if returns.size > 0 else 0.0
+        sd = np.std(returns) if returns.size > 0 else 0.0
         sharpe_ratio = mean_ret / max(sd, eps)
 
         metrics["horizon_metrics"][horizon] = {
@@ -3106,10 +3132,10 @@ def evaluate_model_metrics(
             "correlation": correlation,
             "r2": r2,
             "sharpe_ratio": sharpe_ratio,
-            "mean_prediction": np.mean(pred),
-            "std_prediction": np.std(pred),
-            "mean_target": np.mean(target),
-            "std_target": np.std(target),
+            "mean_prediction": np.mean(pred_valid),
+            "std_prediction": np.std(pred_valid),
+            "mean_target": np.mean(target_valid),
+            "std_target": np.std(target_valid),
         }
 
     # 全体の平均メトリクス
@@ -3243,6 +3269,28 @@ def validate(model, dataloader, criterion, device):
                         for k, v in targets.items()
                     }
                 )
+
+                if isinstance(outputs, dict):
+                    canonical_outputs = {}
+                    for _key, _tensor in outputs.items():
+                        canon = _normalize_target_key(
+                            _key, horizons=criterion.horizons
+                        )
+                        if canon and canon not in outputs:
+                            canonical_outputs[canon] = _tensor
+                    canonical_outputs.update(outputs)
+                    outputs = canonical_outputs
+
+                if isinstance(targets, dict):
+                    canonical_targets = {}
+                    for _key, _tensor in targets.items():
+                        canon = _normalize_target_key(
+                            _key, horizons=criterion.horizons
+                        )
+                        if canon and canon not in targets:
+                            canonical_targets[canon] = _tensor
+                    canonical_targets.update(targets)
+                    targets = canonical_targets
 
                 loss_result = criterion(outputs, targets, valid_masks=valid_masks)
 
@@ -3760,11 +3808,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         try:
             # Phaseに応じて重み調整（正規化はset_preset_weights側で実施）
             if phase_idx == 0:
-                w = {1: 1.0, 2: 0.0, 3: 0.0, 5: 0.0, 10: 0.0}
+                w = {1: 1.0, 5: 0.0, 10: 0.0, 20: 0.0}
             elif phase_idx == 1:
-                w = {1: 1.0, 2: 0.5, 3: 0.3, 5: 0.2, 10: 0.1}
+                w = {1: 1.0, 5: 0.45, 10: 0.25, 20: 0.10}
             else:
-                w = {1: 1.0, 2: 0.8, 3: 0.6, 5: 0.4, 10: 0.2}
+                w = {1: 1.0, 5: 0.8, 10: 0.6, 20: 0.4}
 
             if hasattr(criterion, "set_preset_weights"):
                 criterion.set_preset_weights(w)
@@ -6333,9 +6381,9 @@ def train(config: DictConfig) -> None:
             )
             horizons = int(getattr(config.data.time_series, "horizons", 10))
 
-            # 単純な線形層：(batch, seq_len, features) -> (batch, 5 horizons, 1)
-            # 実際のhorizonsは[1,2,3,5,10]の5つ
-            self.linear = nn.Linear(input_dim * sequence_length, 5)
+            # 単純な線形層：(batch, seq_len, features) -> (batch, 4 horizons, 1)
+            # 実際のhorizonsは[1,5,10,20]の4つ
+            self.linear = nn.Linear(input_dim * sequence_length, 4)
 
             logger.warning(
                 f"SimpleTestModel initialized: input={input_dim}*{sequence_length}={input_dim*sequence_length}, output={horizons}"
@@ -7792,7 +7840,7 @@ def train(config: DictConfig) -> None:
                                     os.getenv("GAT_ALPHA_WARMUP_MIN", "0.30")
                                 )
                                 warmup_steps_alpha = int(
-                                    os.getenv("GAT_WARMUP_STEPS", "500")
+                                    os.getenv("GAT_WARMUP_STEPS", "50")
                                 )
                                 if global_step < warmup_steps_alpha:
                                     model.alpha_graph_min = max(
@@ -8500,7 +8548,7 @@ def train(config: DictConfig) -> None:
                                 gat_norm, gat_count = grad_norm(model.gat)
 
                                 # Get configurable thresholds from environment
-                                gat_warmup = int(os.getenv("GAT_WARMUP_STEPS", "500"))
+                                gat_warmup = int(os.getenv("GAT_WARMUP_STEPS", "50"))
                                 gat_grad_threshold = float(
                                     os.getenv("GAT_GRAD_THR", "1e-10")
                                 )

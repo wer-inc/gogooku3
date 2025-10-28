@@ -86,6 +86,19 @@ def main() -> None:
             f"(need > lookback={lookback})"
         )
 
+    if selection.masks:
+        coverage_exprs = [
+            pl.col(mask).fill_null(0).gt(0.5).mean().alias(mask) for mask in selection.masks
+        ]
+        coverage = scan.select(coverage_exprs).collect()
+        for mask in selection.masks:
+            ratio = float(coverage[0, mask])
+            if ratio == 0.0:
+                print(f"[WARN] Mask '{mask}' has zero positive coverage; it will be ignored.")
+            else:
+                pct = ratio * 100.0
+                print(f"[OK] Mask '{mask}' coverage: {pct:.1f}%")
+
     print("[OK] dataset located:", parquet_path)
     print("[OK] feature groups:", groups, "(+ optional:", optional_groups, ")")
     print("[OK] features:", col_summary(selection.features))

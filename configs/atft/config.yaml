@@ -12,6 +12,7 @@ data:
     return_cols:
     - return_1d
     - feat_ret_1d
+    returns_channel_index: 0
     sector_col: sector33
     shrinkage_gamma: 0.1
     size_tau: 1.0

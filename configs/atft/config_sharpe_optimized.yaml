@@ -81,6 +81,7 @@ data:
     return_cols:
       - returns_1d
       - feat_ret_1d
+    returns_channel_index: 0
     sector_col: sector17_name
     shrinkage_gamma: 0.1
     size_tau: 1.0
@@ -94,7 +95,7 @@ data:
 
   time_series:
     sequence_length: 20
-    prediction_horizons: [1, 2, 3, 5, 10]
+    prediction_horizons: [1, 5, 10, 20]
 
 # Normalization (enable online normalization)
 normalization:

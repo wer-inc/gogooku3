@@ -134,7 +134,7 @@ sampling:
 # 時系列設定
 time_series:
   sequence_length: 20  # specification_lite.mdに準拠
-  prediction_horizons: [1, 2, 3, 5, 10]  # specification_lite.mdに準拠
+  prediction_horizons: [1, 5, 10, 20]  # 実データ列 (target_1d/5d/10d/20d) に整合
 
   # データ分割（時系列を考慮）
   split:

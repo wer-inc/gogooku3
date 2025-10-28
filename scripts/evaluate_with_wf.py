@@ -82,7 +82,7 @@ def load_model(model_path: str, device: str = 'cuda') -> torch.nn.Module:
     """
     logger.info(f"Loading model from {model_path}")
 
-    from src.models.architectures.atft_gat_fan import ATFT_GAT_FAN
+    from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
     from omegaconf import OmegaConf
 
     # 先にチェックポイントを読み込む
@@ -107,7 +107,7 @@ def load_model(model_path: str, device: str = 'cuda') -> torch.nn.Module:
 
     # 2) フォールバック（最小構成）
     if cfg is None:
-        config_path = project_root / "configs" / "model" / "atft_gat_fan_v1.yaml"
+        config_path = project_root / "configs" / "atft" / "model" / "atft_gat_fan.yaml"
         try:
             base_cfg = OmegaConf.load(config_path)
         except Exception as e:
@@ -117,7 +117,7 @@ def load_model(model_path: str, device: str = 'cuda') -> torch.nn.Module:
             {
                 "data": {
                     "features": {"input_dim": 64},
-                    "time_series": {"prediction_horizons": [1, 2, 3, 5, 10]},
+                    "time_series": {"prediction_horizons": [1, 5, 10, 20]},
                 },
                 "model": {
                     "hidden_size": 64,
@@ -152,8 +152,20 @@ def load_model(model_path: str, device: str = 'cuda') -> torch.nn.Module:
 
     # 重みの適用（strict=Falseでshape差異を許容）
     try:
-        sd = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
-        missing, unexpected = model.load_state_dict(sd, strict=False)
+        raw_state = ckpt["model_state_dict"] if isinstance(ckpt, dict) and "model_state_dict" in ckpt else ckpt
+        model_state = model.state_dict()
+        filtered_state = {}
+        skipped = []
+        for key, value in raw_state.items():
+            if key in model_state and isinstance(value, torch.Tensor):
+                if value.shape != model_state[key].shape:
+                    skipped.append((key, value.shape, model_state[key].shape))
+                    continue
+            filtered_state[key] = value
+        if skipped:
+            for name, src_shape, dst_shape in skipped:
+                logger.warning(f"State dict shape mismatch skipped: {name} {src_shape} -> {dst_shape}")
+        missing, unexpected = model.load_state_dict(filtered_state, strict=False)
         if missing or unexpected:
             logger.warning(f"Non-strict load: missing={len(missing)} unexpected={len(unexpected)}")
     except Exception as e:

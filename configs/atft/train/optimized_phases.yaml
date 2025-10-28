@@ -60,7 +60,7 @@ early_stopping:
 loss:
   type: huber_multi_horizon
   huber_delta: 0.01
-  multi_horizon_weights: [3.0, 2.0, 1.5, 1.0, 0.7]  # Even stronger short-term focus
+  multi_horizon_weights: [3.0, 2.0, 1.5, 1.0]  # Even stronger短期重視 (1d/5d/10d/20d)
   use_coverage_penalty: true
   coverage_alpha: 0.03      # Further increased
   rankic_weight: 0.15       # Increased from 0.1
