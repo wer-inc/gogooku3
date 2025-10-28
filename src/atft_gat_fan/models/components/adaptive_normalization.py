@@ -29,12 +29,10 @@ class FrequencyAdaptiveNorm(nn.Module):
         self.window_sizes = window_sizes
         self.aggregation = aggregation
 
-        # Layer normalization for each window size
         self.layer_norms = nn.ModuleList(
             [nn.LayerNorm(num_features) for _ in window_sizes]
         )
 
-        # Learnable aggregation weights
         if learn_weights and aggregation == "weighted_mean":
             self.weights = nn.Parameter(torch.ones(len(window_sizes)))
         else:
@@ -49,36 +47,29 @@ class FrequencyAdaptiveNorm(nn.Module):
         Returns:
             Normalized tensor
         """
-        batch_size, seq_len, num_features = x.shape
+        batch_size, seq_len, _ = x.shape
         normalized_outputs = []
 
         for i, window_size in enumerate(self.window_sizes):
             if seq_len >= window_size:
-                # Apply layer norm with different receptive fields
-                # Reshape to apply norm over windows
-                unfolded = x.unfold(1, window_size, 1)  # (B, L-W+1, F, W)
+                unfolded = x.unfold(1, window_size, 1)
                 unfolded = rearrange(unfolded, "b l f w -> (b l) w f")
 
-                # Apply layer norm
                 normalized = self.layer_norms[i](unfolded)
                 normalized = rearrange(normalized, "(b l) w f -> b l w f", b=batch_size)
 
-                # Take the center value for each window
                 center_idx = window_size // 2
                 normalized = normalized[:, :, center_idx, :]
 
-                # Pad to match original sequence length
                 pad_left = center_idx
                 pad_right = seq_len - normalized.shape[1] - pad_left
                 normalized = F.pad(normalized, (0, 0, pad_left, pad_right))
 
                 normalized_outputs.append(normalized)
             else:
-                # If sequence is shorter than window, use global norm
                 normalized = self.layer_norms[i](x)
                 normalized_outputs.append(normalized)
 
-        # Aggregate multi-scale normalized features
         if self.aggregation == "weighted_mean":
             weights = F.softmax(self.weights, dim=0)
             output = sum(w * out for w, out in zip(weights, normalized_outputs))
@@ -114,12 +105,10 @@ class SliceAdaptiveNorm(nn.Module):
         self.overlap = overlap
         self.slice_aggregation = slice_aggregation
 
-        # Instance normalization for each slice
         self.instance_norms = nn.ModuleList(
             [nn.InstanceNorm1d(num_features, affine=True) for _ in range(num_slices)]
         )
 
-        # Learned aggregation
         if slice_aggregation == "learned":
             self.slice_weights = nn.Linear(num_features, num_slices)
 
@@ -134,7 +123,6 @@ class SliceAdaptiveNorm(nn.Module):
         """
         batch_size, seq_len, num_features = x.shape
 
-        # Calculate slice size and step
         slice_size = max(1, seq_len // self.num_slices)
         step = max(1, int(slice_size * (1 - self.overlap)))
 
@@ -146,43 +134,35 @@ class SliceAdaptiveNorm(nn.Module):
             end = min(start + slice_size, seq_len)
 
             if start < seq_len:
-                # Extract slice
                 slice_data = x[:, start:end, :]
-
-                # Apply instance norm (need to transpose for 1D norm)
-                slice_data = slice_data.transpose(1, 2)  # (B, F, L)
+                slice_data = slice_data.transpose(1, 2)
                 normalized = self.instance_norms[i](slice_data)
-                normalized = normalized.transpose(1, 2)  # (B, L, F)
+                normalized = normalized.transpose(1, 2)
 
-                # Create mask for this slice
                 mask = torch.zeros(batch_size, seq_len, 1, device=x.device)
                 mask[:, start:end, :] = 1.0
 
                 normalized_slices.append(normalized)
                 slice_masks.append(mask)
 
-        # Aggregate slices
         if self.slice_aggregation == "learned":
-            # Compute slice weights based on input features
             weights = F.softmax(
                 self.slice_weights(x.mean(dim=1)), dim=1
             )  # (B, num_slices)
-            weights = weights.unsqueeze(1).unsqueeze(3)  # (B, 1, num_slices, 1)
+            weights = weights.unsqueeze(1).unsqueeze(3)
 
-            # Pad slices to full sequence length and stack
             padded_slices = []
-            for i, (normalized, mask) in enumerate(zip(normalized_slices, slice_masks)):
+            for i, (normalized, _mask) in enumerate(zip(normalized_slices, slice_masks)):
                 padded = torch.zeros_like(x)
                 start = i * step
                 end = min(start + slice_size, seq_len)
                 padded[:, start:end, :] = normalized
                 padded_slices.append(padded)
 
-            stacked = torch.stack(padded_slices, dim=2)  # (B, L, num_slices, F)
+            stacked = torch.stack(padded_slices, dim=2)
             output = (stacked * weights).sum(dim=2)
 
         else:
-            # Simple averaging with overlap handling
             output = torch.zeros_like(x)
             norm_count = torch.zeros(batch_size, seq_len, 1, device=x.device)
 
@@ -192,7 +172,6 @@ class SliceAdaptiveNorm(nn.Module):
                 output[:, start:end, :] += normalized
                 norm_count[:, start:end, :] += 1
 
-            # Average where we have overlaps, but keep original where no slices
             mask = norm_count > 0
             output = torch.where(mask, output / norm_count, x)
 

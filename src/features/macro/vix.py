@@ -6,12 +6,13 @@ from typing import Iterable
 
 import polars as pl
 
-try:
-    import yfinance as yf  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    yf = None  # type: ignore[assignment]
-
 import logging
+
+from .yfinance_utils import (
+    flatten_yfinance_columns,
+    get_yfinance_module,
+    resolve_cached_parquet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,14 +40,21 @@ def load_vix_history(
         Polars DataFrame with columns: Date, Open, High, Low, Close, Adj Close, Volume
     """
 
-    if parquet_path and parquet_path.exists() and not force_refresh:
+    resolved_cache = None
+    if not force_refresh:
+        resolved_cache = resolve_cached_parquet(
+            parquet_path, prefix="vix", start=start, end=end
+        )
+
+    if resolved_cache and resolved_cache.exists() and not force_refresh:
         try:
-            df = pl.read_parquet(parquet_path)
-            logger.info("Loaded VIX history from cache: %s", parquet_path)
+            df = pl.read_parquet(resolved_cache)
+            logger.info("Loaded VIX history from cache: %s", resolved_cache)
             return df
         except Exception as exc:  # pragma: no cover - IO guard
-            logger.warning("Failed to read cached VIX parquet (%s): %s", parquet_path, exc)
+            logger.warning("Failed to read cached VIX parquet (%s): %s", resolved_cache, exc)
 
+    yf = get_yfinance_module(raise_on_missing=False)
     if yf is None:
         logger.warning(
             "yfinance is not available; cannot fetch VIX history. "
@@ -74,16 +82,27 @@ def load_vix_history(
         logger.warning("VIX download returned no rows for %s → %s", start, end)
         return pl.DataFrame()
 
-    data = data.reset_index().rename(columns={"Date": "Date"})
+    data = flatten_yfinance_columns(data, ticker=_VIX_TICKER)
+    if data.index.name is None:
+        data.index.name = "Date"
+    data = data.reset_index()
+    data = flatten_yfinance_columns(data, ticker=_VIX_TICKER)
+
+    if "Date" not in data.columns:
+        logger.warning("Flattened VIX DataFrame missing Date column; skipping")
+        return pl.DataFrame()
+
     data["Date"] = data["Date"].dt.tz_localize(None)
     df = pl.from_pandas(data, include_index=False)
     df = df.with_columns(pl.col("Date").cast(pl.Date))
 
-    if parquet_path:
+    target_cache = parquet_path or resolved_cache
+
+    if target_cache:
         try:
-            parquet_path.parent.mkdir(parents=True, exist_ok=True)
-            df.write_parquet(parquet_path)
-            logger.info("Cached VIX history to %s", parquet_path)
+            target_cache.parent.mkdir(parents=True, exist_ok=True)
+            df.write_parquet(target_cache)
+            logger.info("Cached VIX history to %s", target_cache)
         except Exception as exc:  # pragma: no cover - IO guard
             logger.warning("Failed to cache VIX parquet (%s): %s", parquet_path, exc)
 
@@ -235,11 +254,17 @@ def shift_to_next_business_day(
         return macro_df
 
     if business_days:
-        expr = build_next_bday_expr_from_dates(list(business_days))
+        expr_fn = build_next_bday_expr_from_dates(list(business_days))
+        try:
+            expr = expr_fn(pl.col("Date"))
+        except TypeError:
+            expr = expr_fn
     else:
         expr = None
 
     if expr is None:
-        return macro_df
+        expr = pl.col("Date") + pl.duration(days=1)
+    elif callable(expr):
+        expr = expr(pl.col("Date"))
 
     return macro_df.with_columns(expr.alias("effective_date"))

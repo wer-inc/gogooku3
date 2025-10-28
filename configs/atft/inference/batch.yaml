@@ -36,7 +36,7 @@ inference:
     - MaxDrawdown
   
   # Time horizons
-  prediction_horizons: [1, 5, 10, 20]
+  prediction_horizons: [1, 2, 3, 5, 10]
   
   # Post-processing
   apply_ranking: true

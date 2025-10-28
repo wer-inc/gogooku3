@@ -1,0 +1,54 @@
+version: 0
+
+data:
+  parquet_path: output/ml_dataset_latest_full.parquet
+  metadata_path: dataset_features_detail.json
+  feature_groups_config: apex-ranker/configs/feature_groups.yaml
+  feature_groups:
+    - core50
+  optional_groups: []
+  use_plus30: false
+  lookback: 180
+  min_stocks_per_day: 500
+  date_column: Date
+  code_column: Code
+  target_columns:
+    1: target_1d
+    5: target_5d
+    10: target_10d
+    20: target_20d
+
+normalization:
+  mode: cross_section_z
+  clip_sigma: 5.0
+
+train:
+  horizons: [1, 5, 10, 20]
+  epochs: 5
+  lr: 0.0005
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  val_days: 120          # most recent N days for validation
+  log_interval: 10
+  amp: true
+  device: auto
+  num_workers: 0
+
+model:
+  d_model: 192
+  depth: 3
+  patch_len: 16
+  stride: 8
+  n_heads: 8
+  dropout: 0.1
+
+loss:
+  listnet:
+    weight: 1.0
+    tau: 0.5
+    topk: null
+  ranknet:
+    weight: 0.5
+    neg_sample: 4096
+  mse:
+    weight: 0.1

@@ -1594,10 +1594,15 @@ class JQuantsAsyncFetcher:
         ]
 
         all_futures = []
+        self._logger.info(
+            "Fetching futures daily data %s → %s (categories=%d)",
+            from_date,
+            to_date,
+            len(priority_categories),
+        )
 
         # First try: Range-based fetch with different parameter names
         try:
-            print(f"Trying range-based futures fetch: {from_date} to {to_date}")
             url = f"{self.base_url}/derivatives/futures"
             # Try different parameter combinations for compatibility
             param_sets = [
@@ -1628,23 +1633,33 @@ class JQuantsAsyncFetcher:
                             df_batch = pl.DataFrame(batch)
                             if not df_batch.is_empty():
                                 all_futures.append(df_batch)
-                                print(
-                                    f"Retrieved {len(df_batch)} futures records with range query"
+                                self._logger.info(
+                                    "Futures range query returned %d records (params=%s)",
+                                    len(df_batch),
+                                    params,
                                 )
                                 break
                     if all_futures:
                         break
                 elif status == 400:
-                    print(f"Bad request with params {params}, trying next...")
+                    self._logger.debug(
+                        "Futures range query rejected (params=%s), trying next combination",
+                        params,
+                    )
                     continue
         except Exception as e:
-            print(f"Range-based futures fetch failed: {e}")
+            self._logger.warning("Range-based futures fetch failed: %s", e)
 
         # Second try: Category-based fetch (original method)
         if not all_futures:
-            for category in priority_categories:
+            for idx, category in enumerate(priority_categories, start=1):
                 try:
-                    print(f"Fetching futures data for category: {category}")
+                    self._logger.info(
+                        "Fetching futures data for category %s (%d/%d)",
+                        category,
+                        idx,
+                        len(priority_categories),
+                    )
 
                     # Fetch derivatives futures for specific category
                     # Using pagination similar to other endpoints
@@ -1667,15 +1682,22 @@ class JQuantsAsyncFetcher:
                             headers=headers,
                         )
                         if status == 404:
-                            print(f"No data found for category {category}")
+                            self._logger.debug(
+                                "No futures data found for category %s", category
+                            )
                             break
                         if status == 400:
-                            print(
-                                f"Bad request for range, trying date-by-date for {category}"
+                            self._logger.debug(
+                                "Futures category %s requires date-by-date fallback",
+                                category,
                             )
                             break
                         if status != 200 or not isinstance(data, dict):
-                            print(f"API error for {category}: {status}")
+                            self._logger.warning(
+                                "Futures API error for category %s (status=%s)",
+                                category,
+                                status,
+                            )
                             break
 
                         batch = None
@@ -1698,6 +1720,12 @@ class JQuantsAsyncFetcher:
                                 [pl.lit(category).alias("ProductCategory")]
                             )
                             all_futures.append(df_batch)
+                            self._logger.info(
+                                "Fetched %d futures rows for category %s (page=%d)",
+                                len(df_batch),
+                                category,
+                                page,
+                            )
 
                         if len(batch) < 1000:
                             break
@@ -1707,12 +1735,13 @@ class JQuantsAsyncFetcher:
                         await asyncio.sleep(0.1)
 
                 except Exception as e:
-                    print(f"Error fetching futures category {category}: {e}")
+                    self._logger.warning(
+                        "Error fetching futures category %s: %s", category, e
+                    )
                     continue
 
         # Third try: Date-by-date fetch if range fetch failed
         if not all_futures:
-            print("Trying date-by-date futures fetch as final fallback")
             import datetime as _dt
 
             def _parse(d: str) -> _dt.date:
@@ -1723,6 +1752,15 @@ class JQuantsAsyncFetcher:
             start = _parse(from_date)
             end = _parse(to_date)
             cur = start
+            total_days = (end - start).days + 1
+            log_every = max(1, total_days // 10)
+            processed_days = 0
+            self._logger.info(
+                "Futures date-by-date fallback: %s → %s (%d calendar days)",
+                start.isoformat(),
+                end.isoformat(),
+                total_days,
+            )
 
             while (
                 cur <= end and len(all_futures) < 100
@@ -1754,21 +1792,48 @@ class JQuantsAsyncFetcher:
                                     df_batch = pl.DataFrame(batch)
                                     if not df_batch.is_empty():
                                         all_futures.append(df_batch)
-                                        print(f"Retrieved futures for {date_str}")
+                                        self._logger.debug(
+                                            "Retrieved futures for %s (%d rows)",
+                                            date_str,
+                                            len(df_batch),
+                                        )
                                         break
                         await asyncio.sleep(0.1)
                     except Exception as e:
-                        print(f"Failed to fetch futures for {date_str}: {e}")
+                        self._logger.warning(
+                            "Failed to fetch futures for %s: %s", date_str, e
+                        )
 
                 cur += _dt.timedelta(days=1)
+                processed_days += 1
+                if (
+                    processed_days == 1
+                    or processed_days == total_days
+                    or processed_days % log_every == 0
+                ):
+                    self._logger.info(
+                        "Futures fallback progress: %d/%d days processed (latest=%s, batches=%d)",
+                        processed_days,
+                        total_days,
+                        date_str,
+                        len(all_futures),
+                    )
 
         if not all_futures:
-            print("No futures data retrieved from any method")
+            self._logger.warning(
+                "No futures data retrieved for %s → %s via any method",
+                from_date,
+                to_date,
+            )
             return pl.DataFrame()
 
         # Combine all categories
         df = pl.concat(all_futures, how="vertical")
-        print(f"Retrieved {len(df)} futures records total")
+        self._logger.info(
+            "Futures fetch completed: %d rows across %d batches",
+            df.height,
+            len(all_futures),
+        )
 
         # Normalize the data structure
         df = self._normalize_futures_data(df)
@@ -1977,6 +2042,16 @@ class JQuantsAsyncFetcher:
         end = _parse(to_date)
         rows: list[dict] = []
 
+        total_days = (end - start).days + 1
+        log_every = max(1, total_days // 10)
+        processed_days = 0
+        self._logger.info(
+            "Fetching index option data %s → %s (%d calendar days)",
+            start.isoformat(),
+            end.isoformat(),
+            total_days,
+        )
+
         cur = start
         while cur <= end:
             date_str = cur.strftime("%Y-%m-%d")
@@ -2017,10 +2092,50 @@ class JQuantsAsyncFetcher:
                     break
             cur += _dt.timedelta(days=1)
 
+            processed_days += 1
+            if (
+                processed_days == 1
+                or processed_days == total_days
+                or processed_days % log_every == 0
+            ):
+                self._logger.info(
+                    "Index option progress: %d/%d days processed (latest=%s, rows=%d)",
+                    processed_days,
+                    total_days,
+                    date_str,
+                    len(rows),
+                )
+
         if not rows:
+            self._logger.warning(
+                "Index option fetch returned no records for %s → %s",
+                start.isoformat(),
+                end.isoformat(),
+            )
             return pl.DataFrame()
 
         df = pl.DataFrame(rows)
+
+        unique_days = 0
+        if "Date" in df.columns:
+            try:
+                unique_days = (
+                    df.select(pl.col("Date").cast(pl.Utf8, strict=False).alias("Date"))
+                    .unique()
+                    .height
+                )
+            except Exception:
+                try:
+                    unique_days = df["Date"].n_unique()
+                except Exception:
+                    unique_days = 0
+
+        self._logger.info(
+            "Index option fetch completed: %d rows across %d unique days (requested=%d)",
+            df.height,
+            unique_days,
+            total_days,
+        )
         return self._normalize_index_option_data(df)
 
     def _normalize_index_option_data(self, df: pl.DataFrame) -> pl.DataFrame:

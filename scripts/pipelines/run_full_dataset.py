@@ -307,6 +307,44 @@ def _is_cache_valid(file_path: Path | None, max_age_days: int) -> bool:
         return False
 
 
+def _get_retention_keep(env_var: str, default: int) -> int:
+    """Read an integer retention value from the environment with sane bounds."""
+    try:
+        value = int(os.getenv(env_var, str(default)))
+        return max(1, value)
+    except Exception:
+        return default
+
+
+def _prune_cached_files(directory: Path, pattern: str, *, keep: int, label: str) -> None:
+    """Remove old cached files while keeping the most recent `keep` entries."""
+    if keep <= 0 or not directory.exists():
+        return
+
+    try:
+        files = sorted(
+            [
+                path
+                for path in directory.glob(pattern)
+                if path.is_file() and "latest" not in path.name
+            ],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.debug("Failed to enumerate cache for pruning (%s): %s", label, exc)
+        return
+
+    for obsolete in files[keep:]:
+        try:
+            obsolete.unlink()
+            logger.info("🧹 Removed old %s cache: %s", label, obsolete.name)
+        except FileNotFoundError:
+            continue
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug("Failed to remove cache file %s (%s): %s", obsolete, label, exc)
+
+
 def _validate_enriched_dataset(parquet_path: Path, metadata_path: Path) -> None:
     """Ensure that the enriched dataset keeps required feature families."""
 
@@ -494,8 +532,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-vix",
         action="store_true",
-        default=False,
-        help="Enable VIX-based macro sentiment features (default: disabled)",
+        default=True,
+        help="Enable VIX-based macro sentiment features (default: enabled)",
+    )
+    parser.add_argument(
+        "--disable-vix",
+        dest="enable_vix",
+        action="store_false",
+        help="Disable VIX-based macro sentiment features",
     )
     parser.add_argument(
         "--vix-parquet",
@@ -512,8 +556,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-fx-usdjpy",
         action="store_true",
-        default=False,
-        help="Enable USD/JPY FX macro features (default: disabled)",
+        default=True,
+        help="Enable USD/JPY FX macro features (default: enabled)",
+    )
+    parser.add_argument(
+        "--disable-fx-usdjpy",
+        dest="enable_fx_usdjpy",
+        action="store_false",
+        help="Disable USD/JPY FX macro features",
     )
     parser.add_argument(
         "--fx-parquet",
@@ -530,8 +580,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-btc",
         action="store_true",
-        default=False,
-        help="Enable BTC/USD crypto macro features (default: disabled)",
+        default=True,
+        help="Enable BTC/USD crypto macro features (default: enabled)",
+    )
+    parser.add_argument(
+        "--disable-btc",
+        dest="enable_btc",
+        action="store_false",
+        help="Disable BTC/USD crypto macro features",
     )
     parser.add_argument(
         "--btc-parquet",
@@ -1118,6 +1174,7 @@ async def main() -> int:
     futures_path: Path | None = None
     short_selling_path: Path | None = None
     short_positions_path: Path | None = None
+    sector_short_path: Path | None = None
     wmi_path: Path | None = None
     dmi_path: Path | None = None
     am_path: Path | None = None
@@ -1135,13 +1192,29 @@ async def main() -> int:
                 "Specified futures parquet not found: %s", args.futures_parquet
             )
 
-    # Smart reuse: Check for cached data first (unless --force-refresh)
-    use_cached = False
-    if args.jquants and not args.force_refresh:
+    needs_trades_fetch = bool(args.jquants)
+    needs_weekly_margin_fetch = bool(args.jquants)
+    needs_daily_margin_fetch = bool(args.jquants)
+    needs_am_fetch = bool(args.jquants)
+    needs_breakdown_fetch = bool(args.jquants)
+    needs_dividend_fetch = bool(args.jquants)
+    needs_fs_fetch = bool(args.jquants)
+    needs_listed_info_fetch = bool(args.jquants and not listed_info_path)
+    needs_short_selling_fetch = bool(args.jquants and args.enable_short_selling)
+    needs_short_positions_fetch = bool(args.jquants and args.enable_short_selling)
+    needs_sector_short_fetch = bool(args.jquants and args.enable_sector_short_selling)
+
+    cache_keep = _get_retention_keep("PIPELINE_CACHE_KEEP", 3)
+
+    reused_sources: list[str] = []
+    stale_sources: list[str] = []
+
+    if args.jquants and args.force_refresh:
+        logger.info("🔄 Cache reuse disabled (--force-refresh)")
+    elif args.jquants:
         logger.info("🔍 Checking for cached data (use --force-refresh to skip cache)")
         max_age = args.max_cache_age_days
 
-        # Check for cached data files
         cached_trades = _find_latest("trades_spec_history_*.parquet")
         cached_listed_info = _find_latest("listed_info_history_*.parquet")
         cached_weekly_margin = _find_latest("weekly_margin_interest_*.parquet")
@@ -1155,13 +1228,17 @@ async def main() -> int:
             if args.enable_short_selling
             else None
         )
+        cached_short_positions = (
+            _find_latest("short_positions_*.parquet")
+            if args.enable_short_selling
+            else None
+        )
         cached_sector_short = (
             _find_latest("sector_short_selling_*.parquet")
             if args.enable_sector_short_selling
             else None
         )
 
-        # Verify cache validity
         trades_valid = _is_cache_valid(cached_trades, max_age)
         listed_valid = _is_cache_valid(cached_listed_info, max_age)
         weekly_margin_valid = _is_cache_valid(cached_weekly_margin, max_age)
@@ -1175,46 +1252,149 @@ async def main() -> int:
             if args.enable_short_selling
             else True
         )
+        short_positions_valid = (
+            _is_cache_valid(cached_short_positions, max_age)
+            if args.enable_short_selling
+            else True
+        )
         sector_short_valid = (
             _is_cache_valid(cached_sector_short, max_age)
             if args.enable_sector_short_selling
             else True
         )
 
-        # Use cache if all required files are valid
+        if cached_trades and trades_valid:
+            trades_spec_path = cached_trades
+            needs_trades_fetch = False
+            reused_sources.append("trade-spec")
+        elif cached_trades:
+            stale_sources.append("trade-spec")
+
+        if cached_weekly_margin and weekly_margin_valid:
+            wmi_path = cached_weekly_margin
+            needs_weekly_margin_fetch = False
+            reused_sources.append("weekly-margin")
+        elif cached_weekly_margin:
+            stale_sources.append("weekly-margin")
+
+        if cached_daily_margin and daily_margin_valid:
+            dmi_path = cached_daily_margin
+            needs_daily_margin_fetch = False
+            reused_sources.append("daily-margin")
+        elif cached_daily_margin:
+            stale_sources.append("daily-margin")
+
+        if cached_am and am_valid:
+            am_path = cached_am
+            needs_am_fetch = False
+            reused_sources.append("am-quotes")
+        elif cached_am:
+            stale_sources.append("am-quotes")
+
+        if cached_breakdown and breakdown_valid:
+            breakdown_path = cached_breakdown
+            needs_breakdown_fetch = False
+            reused_sources.append("breakdown")
+        elif cached_breakdown:
+            stale_sources.append("breakdown")
+
+        if cached_dividend and dividend_valid:
+            dividend_path = cached_dividend
+            needs_dividend_fetch = False
+            reused_sources.append("dividends")
+        elif cached_dividend:
+            stale_sources.append("dividends")
+
+        if cached_fs and fs_valid:
+            fs_path = cached_fs
+            needs_fs_fetch = False
+            reused_sources.append("financial-statements")
+        elif cached_fs:
+            stale_sources.append("financial-statements")
+
+        if needs_listed_info_fetch and cached_listed_info and listed_valid:
+            listed_info_path = cached_listed_info
+            needs_listed_info_fetch = False
+            reused_sources.append("listed-info")
+        elif cached_listed_info and not listed_valid:
+            stale_sources.append("listed-info")
+
+        if needs_short_selling_fetch and cached_short_selling and short_selling_valid:
+            short_selling_path = cached_short_selling
+            needs_short_selling_fetch = False
+            reused_sources.append("short-selling")
+        elif cached_short_selling and not short_selling_valid:
+            stale_sources.append("short-selling")
+
         if (
-            trades_valid
-            and listed_valid
-            and weekly_margin_valid
-            and daily_margin_valid
-            and am_valid
-            and breakdown_valid
-            and dividend_valid
-            and fs_valid
-            and short_selling_valid
+            needs_short_positions_fetch
+            and cached_short_positions
+            and short_positions_valid
+        ):
+            short_positions_path = cached_short_positions
+            needs_short_positions_fetch = False
+            reused_sources.append("short-positions")
+        elif cached_short_positions and not short_positions_valid:
+            stale_sources.append("short-positions")
+
+        if (
+            needs_sector_short_fetch
+            and cached_sector_short
             and sector_short_valid
         ):
+            sector_short_path = cached_sector_short
+            needs_sector_short_fetch = False
+            reused_sources.append("sector-short-selling")
+        elif cached_sector_short and not sector_short_valid:
+            stale_sources.append("sector-short-selling")
+
+    fetch_labels = [
+        label
+        for label, needed in [
+            ("trade-spec", needs_trades_fetch),
+            ("weekly-margin", needs_weekly_margin_fetch),
+            ("daily-margin", needs_daily_margin_fetch),
+            ("am-quotes", needs_am_fetch),
+            ("breakdown", needs_breakdown_fetch),
+            ("dividends", needs_dividend_fetch),
+            ("financial-statements", needs_fs_fetch),
+            ("listed-info", needs_listed_info_fetch),
+            ("short-selling", needs_short_selling_fetch),
+            ("short-positions", needs_short_positions_fetch),
+            ("sector-short-selling", needs_sector_short_fetch),
+        ]
+        if needed
+    ]
+
+    if args.jquants:
+        if reused_sources:
+            logger.info("♻️ Reusing cached data: %s", ", ".join(sorted(set(reused_sources))))
+        if stale_sources:
+            logger.info("⏳ Stale or missing cache entries: %s", ", ".join(sorted(set(stale_sources))))
+        if fetch_labels:
+            logger.info("⚠️ Refreshing data via API for: %s", ", ".join(fetch_labels))
+        else:
             logger.info(
                 "✅ All cached data is valid, using cached files (skip API fetch)"
             )
-            use_cached = True
-            trades_spec_path = cached_trades
-            listed_info_path = cached_listed_info
-            wmi_path = cached_weekly_margin
-            dmi_path = cached_daily_margin
-            am_path = cached_am
-            breakdown_path = cached_breakdown
-            dividend_path = cached_dividend
-            fs_path = cached_fs
-            if args.enable_short_selling and cached_short_selling:
-                short_selling_path = cached_short_selling
-            if args.enable_sector_short_selling and cached_sector_short:
-                # Note: sector_short_path will be set from cached_sector_short
-                pass  # Sector short uses different variable names in offline fallback
-        else:
-            logger.info("⚠️  Some cached data is missing or stale, will fetch from API")
 
-    if args.jquants and not use_cached:
+    fetch_required = any(
+        [
+            needs_trades_fetch,
+            needs_weekly_margin_fetch,
+            needs_daily_margin_fetch,
+            needs_am_fetch,
+            needs_breakdown_fetch,
+            needs_dividend_fetch,
+            needs_fs_fetch,
+            needs_listed_info_fetch,
+            needs_short_selling_fetch,
+            needs_short_positions_fetch,
+            needs_sector_short_fetch,
+        ]
+    )
+
+    if args.jquants and fetch_required:
         # Fetch trade-spec and save to Parquet
         email = os.getenv("JQUANTS_AUTH_EMAIL", "")
         password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
@@ -1297,84 +1477,92 @@ async def main() -> int:
 
             fetch_coroutines: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
 
-            logger.info(
-                "Fetching trade-spec from %s to %s (lookback %s days)",
-                flow_start_date,
-                end_date,
-                FLOW_SUPPORT_LOOKBACK_DAYS,
-            )
-            fetch_coroutines.append(
-                (
-                    "trades",
-                    "trade-spec",
-                    fetcher.get_trades_spec(session, flow_start_date, end_date),
+            if needs_trades_fetch:
+                logger.info(
+                    "Fetching trade-spec from %s to %s (lookback %s days)",
+                    flow_start_date,
+                    end_date,
+                    FLOW_SUPPORT_LOOKBACK_DAYS,
                 )
-            )
+                fetch_coroutines.append(
+                    (
+                        "trades",
+                        "trade-spec",
+                        fetcher.get_trades_spec(session, flow_start_date, end_date),
+                    )
+                )
 
-            logger.info("Fetching weekly margin interest for margin features")
-            fetch_coroutines.append(
-                (
-                    "weekly_margin",
-                    "weekly margin interest",
-                    fetcher.get_weekly_margin_interest(session, start_date, end_date),
+            if needs_weekly_margin_fetch:
+                logger.info("Fetching weekly margin interest for margin features")
+                fetch_coroutines.append(
+                    (
+                        "weekly_margin",
+                        "weekly margin interest",
+                        fetcher.get_weekly_margin_interest(session, start_date, end_date),
+                    )
                 )
-            )
 
-            logger.info("Fetching daily margin interest for daily credit features")
-            fetch_coroutines.append(
-                (
-                    "daily_margin",
-                    "daily margin interest",
-                    fetcher.get_daily_margin_interest(
-                        session, start_date, end_date, business_days=business_days
-                    ),
+            if needs_daily_margin_fetch:
+                logger.info("Fetching daily margin interest for daily credit features")
+                fetch_coroutines.append(
+                    (
+                        "daily_margin",
+                        "daily margin interest",
+                        fetcher.get_daily_margin_interest(
+                            session, start_date, end_date, business_days=business_days
+                        ),
+                    )
                 )
-            )
 
-            logger.info("Fetching morning session (AM) quotes")
-            fetch_coroutines.append(
-                (
-                    "am_quotes",
-                    "morning session quotes",
-                    fetcher.get_prices_am(session, start_date, end_date),
+            if needs_am_fetch:
+                logger.info("Fetching morning session (AM) quotes")
+                fetch_coroutines.append(
+                    (
+                        "am_quotes",
+                        "morning session quotes",
+                        fetcher.get_prices_am(session, start_date, end_date),
+                    )
                 )
-            )
 
-            logger.info("Fetching investor breakdown data")
-            fetch_coroutines.append(
-                (
-                    "breakdown",
-                    "investor breakdown",
-                    fetcher.get_breakdown(session, start_date, end_date),
+            if needs_breakdown_fetch:
+                logger.info("Fetching investor breakdown data")
+                fetch_coroutines.append(
+                    (
+                        "breakdown",
+                        "investor breakdown",
+                        fetcher.get_breakdown(session, start_date, end_date),
+                    )
                 )
-            )
 
-            logger.info("Fetching dividend announcements")
-            fetch_coroutines.append(
-                (
-                    "dividend",
-                    "dividend announcements",
-                    fetcher.get_dividends(session, start_date, end_date),
+            if needs_dividend_fetch:
+                logger.info("Fetching dividend announcements")
+                fetch_coroutines.append(
+                    (
+                        "dividend",
+                        "dividend announcements",
+                        fetcher.get_dividends(session, start_date, end_date),
+                    )
                 )
-            )
 
-            logger.info("Fetching financial statements (fs_details)")
-            fetch_coroutines.append(
-                (
-                    "fs_details",
-                    "financial statements",
-                    fetcher.get_fs_details(session, start_date, end_date),
+            if needs_fs_fetch:
+                logger.info("Fetching financial statements (fs_details)")
+                fetch_coroutines.append(
+                    (
+                        "fs_details",
+                        "financial statements",
+                        fetcher.get_fs_details(session, start_date, end_date),
+                    )
                 )
-            )
 
-            logger.info("Fetching listed_info for sector/market enrichment")
-            fetch_coroutines.append(
-                (
-                    "listed_info",
-                    "listed_info",
-                    fetcher.get_listed_info(session),
+            if needs_listed_info_fetch:
+                logger.info("Fetching listed_info for sector/market enrichment")
+                fetch_coroutines.append(
+                    (
+                        "listed_info",
+                        "listed_info",
+                        fetcher.get_listed_info(session),
+                    )
                 )
-            )
 
             results = await asyncio.gather(
                 *(coro for _, _, coro in fetch_coroutines), return_exceptions=True
@@ -1466,6 +1654,12 @@ async def main() -> int:
                 / f"trades_spec_history_{flow_start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
             )
             save_parquet_with_gcs(trades_df, trades_spec_path, auto_sync=False)
+            _prune_cached_files(
+                output_dir,
+                "trades_spec_history_*.parquet",
+                keep=cache_keep,
+                label="trade-spec",
+            )
         # Save listed_info if fetched (even if trade-spec failed)
         if listed_info_path is None:
             # Name by end date for reproducibility
@@ -1478,6 +1672,14 @@ async def main() -> int:
                 from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
 
                 save_parquet_with_gcs(info_df, listed_info_path, auto_sync=False)
+                listed_parent = listed_info_path.parent
+                if listed_parent == Path("output/raw/jquants"):
+                    _prune_cached_files(
+                        listed_parent,
+                        "listed_info_history_*.parquet",
+                        keep=cache_keep,
+                        label="listed-info",
+                    )
             except Exception as e:
                 logger.warning(f"Failed to save listed_info parquet: {e}")
         # Save weekly margin interest if fetched
@@ -1493,6 +1695,12 @@ async def main() -> int:
                     / f"weekly_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
                 )
                 save_parquet_with_gcs(wmi_df, wmi_path, auto_sync=False)
+                _prune_cached_files(
+                    outdir,
+                    "weekly_margin_interest_*.parquet",
+                    keep=cache_keep,
+                    label="weekly margin",
+                )
             except Exception as e:
                 logger.warning(f"Failed to save weekly margin parquet: {e}")
         # Save daily margin interest if fetched
@@ -1508,6 +1716,12 @@ async def main() -> int:
                     / f"daily_margin_interest_{start_dt.strftime('%Y%m%d')}_{end_dt.strftime('%Y%m%d')}.parquet"
                 )
                 save_parquet_with_gcs(dmi_df, dmi_path, auto_sync=False)
+                _prune_cached_files(
+                    outdir,
+                    "daily_margin_interest_*.parquet",
+                    keep=cache_keep,
+                    label="daily margin",
+                )
             except Exception as e:
                 logger.warning(f"Failed to save daily margin parquet: {e}")
 
@@ -1523,6 +1737,12 @@ async def main() -> int:
                 )
                 save_parquet_with_gcs(am_df, am_path, auto_sync=False)
                 logger.info(f"Saved AM quotes data: {am_path}")
+                _prune_cached_files(
+                    outdir,
+                    "prices_am_*.parquet",
+                    keep=cache_keep,
+                    label="AM quotes",
+                )
             except Exception as e:
                 logger.warning(f"Failed to save AM quotes parquet: {e}")
 
@@ -1538,6 +1758,12 @@ async def main() -> int:
                 )
                 save_parquet_with_gcs(breakdown_df, breakdown_path, auto_sync=False)
                 logger.info(f"Saved breakdown data: {breakdown_path}")
+                _prune_cached_files(
+                    outdir,
+                    "breakdown_*.parquet",
+                    keep=cache_keep,
+                    label="breakdown",
+                )
             except Exception as e:
                 logger.warning(f"Failed to save breakdown parquet: {e}")
 
@@ -1553,6 +1779,12 @@ async def main() -> int:
                 )
                 save_parquet_with_gcs(dividend_df, dividend_path, auto_sync=False)
                 logger.info(f"Saved dividend data: {dividend_path}")
+                _prune_cached_files(
+                    outdir,
+                    "dividends_*.parquet",
+                    keep=cache_keep,
+                    label="dividends",
+                )
             except Exception as e:
                 logger.warning(f"Failed to save dividend parquet: {e}")
 
@@ -1568,6 +1800,12 @@ async def main() -> int:
                 )
                 save_parquet_with_gcs(fs_df, fs_path, auto_sync=False)
                 logger.info(f"Saved financial statements data: {fs_path}")
+                _prune_cached_files(
+                    outdir,
+                    "fs_details_*.parquet",
+                    keep=cache_keep,
+                    label="financial statements",
+                )
             except Exception as e:
                 logger.warning(f"Failed to save financial statements parquet: {e}")
 
@@ -1617,6 +1855,12 @@ async def main() -> int:
                             )
                             futures_df.write_parquet(futures_path)
                             logger.info(f"Saved futures data: {futures_path}")
+                            _prune_cached_files(
+                                outdir,
+                                "futures_daily_*.parquet",
+                                keep=cache_keep,
+                                label="futures",
+                            )
                         else:
                             logger.warning("No futures data retrieved from API")
                     except Exception as e:
@@ -1625,7 +1869,7 @@ async def main() -> int:
                 # Short selling data (optional)
                 fetch_aux: list[tuple[str, str, Awaitable[pl.DataFrame | None]]] = []
 
-                if args.enable_short_selling:
+                if needs_short_selling_fetch:
                     logger.info(
                         f"Fetching short selling ratio data from {start_date} to {end_date}"
                     )
@@ -1647,6 +1891,7 @@ async def main() -> int:
                             f"Invalid date range for short selling: start={start_date}, end={end_date}"
                         )
 
+                if needs_short_positions_fetch:
                     logger.info(
                         f"Fetching short selling positions data from {start_date} to {end_date}"
                     )
@@ -1668,7 +1913,7 @@ async def main() -> int:
                             f"Invalid date range for short positions: start={start_date}, end={end_date}"
                         )
 
-                if args.enable_sector_short_selling:
+                if needs_sector_short_fetch:
                     logger.info(
                         f"Fetching sector-wise short selling data from {start_date} to {end_date}"
                     )
@@ -1722,6 +1967,12 @@ async def main() -> int:
                                 logger.info(
                                     f"✅ Saved short selling data: {short_selling_path} ({len(result)} records)"
                                 )
+                                _prune_cached_files(
+                                    outdir,
+                                    "short_selling_*.parquet",
+                                    keep=cache_keep,
+                                    label="short selling",
+                                )
 
                         elif key == "short_positions":
                             if result is None or result.is_empty():
@@ -1745,6 +1996,12 @@ async def main() -> int:
                                 logger.info(
                                     f"✅ Saved short positions data: {short_positions_path} ({len(result)} records)"
                                 )
+                                _prune_cached_files(
+                                    outdir,
+                                    "short_positions_*.parquet",
+                                    keep=cache_keep,
+                                    label="short positions",
+                                )
 
                         elif key == "sector_short":
                             if result is None or result.is_empty():
@@ -1767,6 +2024,12 @@ async def main() -> int:
                                 )
                                 logger.info(
                                     f"✅ Saved sector short selling data: {sector_short_path} ({len(result)} records)"
+                                )
+                                _prune_cached_files(
+                                    outdir,
+                                    "sector_short_selling_*.parquet",
+                                    keep=cache_keep,
+                                    label="sector short selling",
                                 )
         except Exception as e:
             logger.warning(f"Aux session for futures/short features failed: {e}")

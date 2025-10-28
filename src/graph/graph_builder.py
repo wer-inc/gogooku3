@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date as _date_cls
 from datetime import datetime as _datetime_cls
 from datetime import timedelta
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 import polars as pl
 import torch
@@ -274,7 +274,12 @@ class GraphBuilder:
         return tensor_features[:, :, channel_idx].detach()
 
     def build_correlation_edges(
-        self, data: torch.Tensor, window: int = 20, k: int = 10
+        self,
+        data: torch.Tensor,
+        window: int = 20,
+        k: int = 10,
+        sectors: Optional[Sequence[Any]] = None,
+        markets: Optional[Sequence[Any]] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Build edges based on returns correlation (A+ approach).
@@ -327,7 +332,7 @@ class GraphBuilder:
 
         # Build directed edge set with threshold, then densify to min_k if needed
         edge_set: set[tuple[int, int]] = set()
-        edge_attr_map: dict[tuple[int, int], float] = {}
+        edge_attr_map: dict[tuple[int, int], list[float]] = {}
 
         thr = float(self.config.edge_threshold)
 
@@ -355,8 +360,22 @@ class GraphBuilder:
             # Insert directed edges (i -> j)
             for j, c in keep_for_i:
                 edge_set.add((i, j))
-                # Normalize correlation to [0, 1]
-                edge_attr_map[(i, j)] = (c + 1.0) / 2.0
+                same_sector = (
+                    1.0
+                    if sectors is not None
+                    and len(sectors) == n_nodes
+                    and sectors[i] == sectors[j]
+                    else 0.0
+                )
+                same_market = (
+                    1.0
+                    if markets is not None
+                    and len(markets) == n_nodes
+                    and markets[i] == markets[j]
+                    else 0.0
+                )
+                attr_vals: list[float] = [float(c), same_sector, same_market]
+                edge_attr_map[(i, j)] = attr_vals
 
         # Enforce symmetry if configured
         if bool(self.config.symmetric):
@@ -371,7 +390,20 @@ class GraphBuilder:
             for i in range(n_nodes):
                 if (i, i) not in edge_set:
                     edge_set.add((i, i))
-                    edge_attr_map[(i, i)] = 1.0
+                    same_sector = (
+                        1.0
+                        if sectors is not None
+                        and len(sectors) == n_nodes
+                        else 0.0
+                    )
+                    same_market = (
+                        1.0
+                        if markets is not None
+                        and len(markets) == n_nodes
+                        else 0.0
+                    )
+                    attr_vals = [1.0, same_sector, same_market]
+                    edge_attr_map[(i, i)] = attr_vals
 
         # Global minimum edges safeguard
         if int(self.config.min_edges) > 0 and len(edge_set) < int(
@@ -389,7 +421,22 @@ class GraphBuilder:
                         j = int(j_idx.item())
                         if (i, j) not in edge_set:
                             edge_set.add((i, j))
-                            edge_attr_map[(i, j)] = (float(corr_val.item()) + 1.0) / 2.0
+                            same_sector = (
+                                1.0
+                                if sectors is not None
+                                and len(sectors) == n_nodes
+                                and sectors[i] == sectors[j]
+                                else 0.0
+                            )
+                            same_market = (
+                                1.0
+                                if markets is not None
+                                and len(markets) == n_nodes
+                                and markets[i] == markets[j]
+                                else 0.0
+                            )
+                            attr_vals = [float(corr_val.item()), same_sector, same_market]
+                            edge_attr_map[(i, j)] = attr_vals
                             needed_extra -= 1
 
         if not edge_set:
@@ -398,14 +445,19 @@ class GraphBuilder:
             for i in range(max(1, n_nodes - 1)):
                 edge_set.add((i, (i + 1) % n_nodes))
                 edge_set.add(((i + 1) % n_nodes, i))
-                edge_attr_map[(i, (i + 1) % n_nodes)] = 0.5
-                edge_attr_map[((i + 1) % n_nodes, i)] = 0.5
+                default_attr = [0.5, 0.0, 0.0]
+                edge_attr_map[(i, (i + 1) % n_nodes)] = list(default_attr)
+                edge_attr_map[((i + 1) % n_nodes, i)] = list(default_attr)
 
         # Materialize tensors
         edge_list: list[tuple[int, int]] = list(edge_set)
         edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
-        edge_attr_vals: list[float] = [edge_attr_map[e] for e in edge_list]
-        edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32).unsqueeze(-1)
+        attr_dim = 3
+        edge_attr_vals: list[list[float]] = [edge_attr_map[e] for e in edge_list]
+        if not edge_attr_vals:
+            edge_attr = torch.empty((0, attr_dim), dtype=torch.float32)
+        else:
+            edge_attr = torch.tensor(edge_attr_vals, dtype=torch.float32)
 
         # Diagnostics
         with torch.no_grad():
@@ -521,8 +573,16 @@ class GraphBuilder:
         if not isinstance(edge_index, torch.Tensor) or edge_index.numel() == 0:
             return None, None
 
-        if isinstance(edge_attr, torch.Tensor) and edge_attr.dim() == 1:
-            edge_attr = edge_attr.unsqueeze(-1)
+        if isinstance(edge_attr, torch.Tensor):
+            if edge_attr.dim() == 1:
+                edge_attr = edge_attr.unsqueeze(-1)
+            if edge_attr.shape[1] < 3:
+                pad_cols = 3 - edge_attr.shape[1]
+                edge_attr = torch.cat(
+                    [edge_attr, torch.zeros(edge_attr.size(0), pad_cols)], dim=1
+                )
+        else:
+            edge_attr = torch.zeros(edge_index.size(1), 3, dtype=torch.float32)
 
         # Track metadata for staleness checks
         try:

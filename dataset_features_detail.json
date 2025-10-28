@@ -528,6 +528,7 @@
     "individuals_net_ratio",
     "individuals_net_ratio_right",
     "is_borrowable",
+    "is_sec_cs_valid",
     "is_halt_20201001",
     "long_z52",
     "long_z52_right",

@@ -68,17 +68,14 @@ model:
   name: ATFT_GAT_FAN
   hidden_size: 256  # Increased from 64
 
-  # Input dimensions aligned with DATA LOADER detection (373 features)
-  # NOTE: DataLoader auto-detects 373 features after excluding metadata
-  # Updated 2025-10-22: Latest dataset provides 373 numeric features
-  # CRITICAL: Model input_dim MUST match what DataLoader provides
+  # Input dimensions aligned with curated core50/plus30 bundles (83 columns incl. masks)
   input_dims:
-    total_features: 373     # MUST match DataLoader detection (F=373)
+    total_features: 83      # Updated 2025-10-27: curated feature bundles
     historical_features: 0  # No historical features for now
 
     # Feature group breakdown (NOT USED - category split disabled)
     # Counts retained for documentation only; aggregation handled dynamically
-    basic_features: 373
+    basic_features: 83
     technical_features: 0
     ma_derived_features: 0
     returns_features: 0
@@ -116,7 +113,7 @@ model:
       dropout: 0.2
       edge_dropout: 0.1
     edge_features:
-      edge_dim: 0  # No edge features
+      edge_dim: 3  # No edge features
     regularization:
       edge_weight_penalty: 0.01        # 🔧 FIX: Enable edge regularization loss
       attention_entropy_penalty: 0.001  # 🔧 FIX: Enable attention entropy loss
@@ -166,13 +163,12 @@ train:
 # ============================================================================
 
 normalization:
-  # Enable online normalization using global statistics
+  # Cross-sectional Z-scores are generated during conversion; skip online normalization
   online_normalization:
-    enabled: true  # CRITICAL: Enable to prevent prediction collapse
+    enabled: false
 
-  # Cross-sectional normalization (daily z-score)
   cross_sectional:
-    enabled: false  # Using online normalization instead
+    enabled: false
 
 # ============================================================================
 # Data configuration
@@ -186,7 +182,6 @@ data:
     date_column: date
     code_column: code
     target_column: target
-    feature_columns: null  # Auto-detect if null
 
   # Graph builder configuration (required)
   # Updated 2025-10-04 based on TODO recommendations for improved RankIC
@@ -207,14 +202,14 @@ data:
     sector_col: sector33
     shrinkage_gamma: 0.1
     size_tau: 1.0
-    source_glob: ${data.source.data_dir}/*.parquet
+    source_glob: ${data.source.data_dir}/train/*.parquet
     symmetric: true
 
   # Walk-forward validation
   split:
     method: walk_forward
     n_splits: 5
-    embargo_days: 20
+    embargo_days: 10
     min_train_days: 252
 
   # Feature selection
@@ -223,7 +218,7 @@ data:
   # Time series settings
   time_series:
     sequence_length: 60
-    prediction_horizons: [1, 5, 10, 20]
+    prediction_horizons: [1, 2, 3, 5, 10]
 
 # ============================================================================
 # Environment overrides (will be set automatically)

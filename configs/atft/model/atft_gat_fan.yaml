@@ -12,9 +12,9 @@ input_projection:
   dropout: 0.1
 
 input_dims:
-  basic_features: 373  # Updated 2025-10-22: Align with latest dataset (373 features)
+  basic_features: 83   # Updated 2025-10-27: curated feature bundles
   historical_features: 0
-  total_features: 373  # Updated 2025-10-22: Align with latest dataset
+  total_features: 83   # Updated 2025-10-27: curated feature bundles
 
 tft:
   lstm:

@@ -15,7 +15,7 @@ data:
     sector_col: sector33
     shrinkage_gamma: 0.1
     size_tau: 1.0
-    source_glob: ${data.source.data_dir}/*.parquet
+    source_glob: ${data.source.data_dir}/train/*.parquet
     symmetric: true
 debug:
   detect_anomaly: false
@@ -61,7 +61,7 @@ improvements:
   - 1.0
   - 1.0
   - 1.0
-  online_normalization: true
+  online_normalization: false
   output_head_small_init: true
   use_ema: true
 logging:

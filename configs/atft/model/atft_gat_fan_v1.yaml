@@ -14,11 +14,11 @@ input_projection:
 # 入力特徴量次元（データローダーで自動計算）
 input_dims:
   # 基本特徴量
-  basic_features: 373  # 最新データセットの動的特徴量数
+  basic_features: 83   # 2025-10-27: curated core50/plus30 feature bundles
   # 履歴特徴量
   historical_features: 0  # 履歴展開はデータ側で処理済み
   # 合計
-  total_features: 373
+  total_features: 83
 
 # Temporal Fusion Transformer設定
 tft:

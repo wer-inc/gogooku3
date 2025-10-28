@@ -7,12 +7,12 @@ from typing import Iterable
 
 import polars as pl
 
-try:
-    import yfinance as yf  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    yf = None  # type: ignore[assignment]
-
 from .vix import shift_to_next_business_day
+from .yfinance_utils import (
+    flatten_yfinance_columns,
+    get_yfinance_module,
+    resolve_cached_parquet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +38,28 @@ def load_fx_history(
         parquet_path: Optional cache file
         force_refresh: Force re-download even if cache exists
     """
-    if parquet_path and parquet_path.exists() and not force_refresh:
+    resolved_cache: Path | None = None
+    if not force_refresh:
+        prefix = "fx"
+        if parquet_path:
+            stem = parquet_path.stem
+            if "_history_" in stem:
+                prefix = stem.split("_history_")[0]
+        else:
+            prefix = f"fx_{ticker.replace('=','').replace('-', '').lower()}"
+        resolved_cache = resolve_cached_parquet(
+            parquet_path, prefix=prefix, start=start, end=end
+        )
+
+    if resolved_cache and resolved_cache.exists() and not force_refresh:
         try:
-            df = pl.read_parquet(parquet_path)
-            logger.info("Loaded FX history from cache: %s", parquet_path)
+            df = pl.read_parquet(resolved_cache)
+            logger.info("Loaded FX history from cache: %s", resolved_cache)
             return df
         except Exception as exc:  # pragma: no cover
-            logger.warning("Failed to read cached FX parquet (%s): %s", parquet_path, exc)
+            logger.warning("Failed to read cached FX parquet (%s): %s", resolved_cache, exc)
 
+    yf = get_yfinance_module(raise_on_missing=False)
     if yf is None:
         logger.warning(
             "yfinance missing; cannot fetch FX history. Install yfinance or provide cached parquet."
@@ -72,17 +86,28 @@ def load_fx_history(
         logger.warning("FX download returned no rows for %s (%s→%s)", ticker, start, end)
         return pl.DataFrame()
 
-    data = data.reset_index().rename(columns={"Date": "Date"})
+    data = flatten_yfinance_columns(data, ticker=ticker)
+    if data.index.name is None:
+        data.index.name = "Date"
+    data = data.reset_index()
+    data = flatten_yfinance_columns(data, ticker=ticker)
+
+    if "Date" not in data.columns:
+        logger.warning("Flattened FX DataFrame missing Date column; skipping")
+        return pl.DataFrame()
+
     data["Date"] = data["Date"].dt.tz_localize(None)
     df = pl.from_pandas(data, include_index=False).with_columns(pl.col("Date").cast(pl.Date))
 
-    if parquet_path:
+    target_cache = parquet_path or resolved_cache
+
+    if target_cache:
         try:
-            parquet_path.parent.mkdir(parents=True, exist_ok=True)
-            df.write_parquet(parquet_path)
-            logger.info("Cached FX history to %s", parquet_path)
+            target_cache.parent.mkdir(parents=True, exist_ok=True)
+            df.write_parquet(target_cache)
+            logger.info("Cached FX history to %s", target_cache)
         except Exception as exc:  # pragma: no cover
-            logger.warning("Failed to cache FX parquet (%s): %s", parquet_path, exc)
+            logger.warning("Failed to cache FX parquet (%s): %s", target_cache, exc)
 
     return df
 

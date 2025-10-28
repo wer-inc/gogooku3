@@ -1,0 +1,96 @@
+version: 1
+
+groups:
+  core50:
+    description: Core ranking factors (price/flow/sector/financial)
+    include:
+      - returns_1d_cs_z
+      - returns_5d_cs_z
+      - log_returns_1d_cs_z
+      - volatility_5d_cs_z
+      - volatility_20d_cs_z
+      - ema_5_cs_z
+      - ema_20_cs_z
+      - ema_200_cs_z
+      - ma_gap_5_20_cs_z
+      - price_to_sma20_cs_z
+      - bb_position_cs_z
+      - bb_width_cs_z
+      - volume_ratio_5_cs_z
+      - volume_ratio_20_cs_z
+      - turnover_rate_cs_z
+      - mkt_ret_1d_cs_z
+      - mkt_ret_5d_cs_z
+      - mkt_gap_5_20_cs_z
+      - mkt_vol_20d_cs_z
+      - mkt_bull_200_cs_z
+      - mkt_high_vol_cs_z
+      - mkt_ret_1d_z_cs_z
+      - mkt_dd_from_peak_cs_z
+      - beta_60d_cs_z
+      - alpha_1d_cs_z
+      - alpha_5d_cs_z
+      - rel_strength_5d_cs_z
+      - idio_vol_ratio_cs_z
+      - trend_align_mkt_cs_z
+      - sec_mom_20_cs_z
+      - sec_ret_5d_eq_cs_z
+      - sec_vol_20_z_cs_z
+      - sec_gap_5_20_cs_z
+      - flow_foreign_net_z_cs_z
+      - flow_individual_net_z_cs_z
+      - flow_activity_z_cs_z
+      - flow_smart_idx_cs_z
+      - flow_smart_mom4_cs_z
+      - flow_shock_flag_cs_z
+      - flow_impulse_cs_z
+      - flow_days_since_cs_z
+      - stmt_yoy_sales_cs_z
+      - stmt_yoy_op_cs_z
+      - stmt_opm_cs_z
+      - stmt_progress_op_cs_z
+      - stmt_rev_fore_op_cs_z
+      - stmt_imp_statement_cs_z
+      - stmt_days_since_statement_cs_z
+    masks:
+      - is_flow_valid
+      - is_stmt_valid
+      - is_valid_ma
+      - is_sec_cs_valid
+
+  plus30:
+    description: Secondary enhancements (momentum, breadth, financial detail)
+    include:
+      - returns_10d_cs_z
+      - volatility_60d_cs_z
+      - price_to_sma5_cs_z
+      - price_to_sma60_cs_z
+      - close_to_high_cs_z
+      - close_to_low_cs_z
+      - realized_volatility_cs_z
+      - mkt_bb_bw_cs_z
+      - mkt_bb_pct_b_cs_z
+      - mkt_ret_10d_cs_z
+      - mkt_ret_20d_cs_z
+      - mkt_ema20_slope_3_cs_z
+      - beta_stability_60d_cs_z
+      - rsi_2_cs_z
+      - rsi_14_cs_z
+      - macd_histogram_cs_z
+      - stoch_k_cs_z
+      - alpha_vs_sec_1d_cs_z
+      - flow_foreign_net_ratio_cs_z
+      - flow_individual_net_ratio_cs_z
+      - flow_activity_ratio_cs_z
+      - flow_breadth_pos_cs_z
+      - stmt_yoy_np_cs_z
+      - stmt_npm_cs_z
+      - stmt_progress_np_cs_z
+      - stmt_rev_fore_np_cs_z
+      - stmt_roe_cs_z
+      - stmt_roa_cs_z
+      - returns_20d_cs_z
+      - volatility_10d_cs_z
+    masks:
+      - is_flow_valid
+      - is_stmt_valid

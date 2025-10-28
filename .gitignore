@@ -44,6 +44,7 @@ env/
 # Research/design documents (prefix with ! to exclude from tracking)
 /!QuantumFlow/
 /!*/
+!/apex-ranker/
 
 # Data artifacts (narrow scope; allow configs/tests fixtures)
 /data/

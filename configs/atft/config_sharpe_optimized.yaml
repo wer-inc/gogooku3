@@ -27,7 +27,7 @@ model:
   hidden_size: 256  # Keep larger size for capacity
 
   input_dims:
-    total_features: 373  # Updated 2025-10-22: Align with latest dataset
+    total_features: 83   # Updated 2025-10-27: core50 + plus30 + masks
     historical_features: 0
 
   # Variable Selection (enabled for feature selection)
@@ -53,7 +53,7 @@ model:
       dropout: 0.2
       edge_dropout: 0.1
     edge_features:
-      edge_dim: 0
+      edge_dim: 3
     regularization:
       edge_weight_penalty: 0.01
       attention_entropy_penalty: 0.001
@@ -66,7 +66,6 @@ data:
     date_column: Date
     code_column: Code
     target_column: returns_1d
-    feature_columns: null
 
   graph_builder:
     cache_dir: output/graph_cache
@@ -90,17 +89,17 @@ data:
   split:
     method: walk_forward
     n_splits: 5
-    embargo_days: 20
+    embargo_days: 10
     min_train_days: 252
 
   time_series:
-    sequence_length: 60
-    prediction_horizons: [1, 5, 10, 20]
+    sequence_length: 20
+    prediction_horizons: [1, 2, 3, 5, 10]
 
 # Normalization (enable online normalization)
 normalization:
   online_normalization:
-    enabled: true
+    enabled: false
   cross_sectional:
     enabled: false
 

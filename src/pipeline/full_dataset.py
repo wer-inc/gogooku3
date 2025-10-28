@@ -26,6 +26,7 @@ from src.features.macro import (
     load_btc_history,
     prepare_btc_features,
 )
+from src.features.macro.yfinance_utils import ensure_yfinance_available
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,58 @@ def _validate_code_type_consistency(df: pl.DataFrame, data_source: str) -> bool:
     except Exception:
         pass
     return True
+
+
+def _get_retention_keep(env_var: str, default: int) -> int:
+    """Read an integer retention count from the environment with floor at 1."""
+    try:
+        value = int(os.getenv(env_var, str(default)))
+        return max(1, value)
+    except Exception:
+        return default
+
+
+def _prune_dataset_history(directory: Path, tag: str) -> None:
+    """Remove old dataset parquet/metadata files while keeping the newest ones."""
+    keep = _get_retention_keep("ML_DATASET_RETENTION_KEEP", 3)
+    if keep <= 0 or not directory.exists():
+        return
+
+    patterns = [
+        (f"ml_dataset_*_{tag}.parquet", "dataset parquet"),
+        (f"ml_dataset_*_{tag}_metadata.json", "dataset metadata"),
+    ]
+
+    for pattern, label in patterns:
+        try:
+            candidates = sorted(
+                [
+                    path
+                    for path in directory.glob(pattern)
+                    if path.is_file()
+                    and not path.is_symlink()
+                    and "latest" not in path.name
+                ],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug(
+                "Failed to enumerate %s for pruning (pattern=%s): %s",
+                label,
+                pattern,
+                exc,
+            )
+            continue
+
+        for obsolete in candidates[keep:]:
+            try:
+                obsolete.unlink()
+                logger.info("🧹 Removed old %s: %s", label, obsolete.name)
+            except FileNotFoundError:
+                continue
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.debug("Failed to remove %s (%s): %s", obsolete, label, exc)
 
 
 def save_with_symlinks(
@@ -96,6 +149,8 @@ def save_with_symlinks(
         meta_path = output_dir / f"ml_dataset_{ts}_{tag}_metadata.json"
 
     # Write parquet with metadata where possible
+    compression = os.getenv("ML_DATASET_PARQUET_COMPRESSION", "zstd")
+    compression_level_raw = os.getenv("ML_DATASET_PARQUET_COMPRESSION_LEVEL")
     try:
         import pyarrow.parquet as pq  # type: ignore
 
@@ -114,9 +169,22 @@ def save_with_symlinks(
         else:
             meta.update({b"generator": b"full_dataset.py"})
         table = table.replace_schema_metadata(meta)
-        pq.write_table(table, str(parquet_path))
-    except Exception:
-        df.write_parquet(parquet_path)
+        pq_kwargs: dict[str, object] = {"compression": compression}
+        if compression_level_raw:
+            try:
+                pq_kwargs["compression_level"] = int(compression_level_raw)
+            except ValueError:
+                logger.warning(
+                    "Invalid ML_DATASET_PARQUET_COMPRESSION_LEVEL=%s; ignoring",
+                    compression_level_raw,
+                )
+            else:
+                compression_level_raw = None  # mark as consumed
+        pq.write_table(table, str(parquet_path), **pq_kwargs)
+    except Exception as exc:
+        logger.debug("Falling back to Polars parquet writer: %s", exc)
+        polars_kwargs: dict[str, object] = {"compression": compression}
+        df.write_parquet(parquet_path, **polars_kwargs)
 
     # Build metadata json via builder (to keep consistent shape)
     from src.gogooku3.pipeline.builder import MLDatasetBuilder
@@ -158,6 +226,8 @@ def save_with_symlinks(
             except Exception:
                 pass
             link.symlink_to(target)
+
+    _prune_dataset_history(output_dir, tag)
 
     # GCS sync: automatically upload to cloud storage if enabled
     if os.getenv("GCS_SYNC_AFTER_SAVE") == "1":
@@ -379,6 +449,18 @@ async def enrich_and_save(
             logger.warning(f"TOPIX local selection failed: {e}")
 
     df = builder.add_topix_features(df_base, topix_df=topix_df)
+
+    macro_requested = enable_macro_vix or enable_macro_fx_usdjpy or enable_macro_btc
+    if macro_requested:
+        try:
+            ensure_yfinance_available()
+        except RuntimeError as exc:
+            message = (
+                "Macro features requested but yfinance is unavailable. "
+                "Install yfinance (pip install yfinance) or disable macro feature flags."
+            )
+            logger.error(message)
+            raise RuntimeError(message) from exc
 
     # VIX macro features (T+1 attach)
     vix_features = None
@@ -3230,6 +3312,7 @@ async def enrich_and_save(
             "amihud_",
             "ss_",
             "opt_",
+            "macro_",
         )
         allowed_exact = {
             # Flow compatibility names without flow_ prefix
