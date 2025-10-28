@@ -29,14 +29,14 @@ optimizer:
       lr_multiplier: 2.0  # Higher LR for output head
 
 scheduler:
-  # Changed from cosine to plateau for better convergence
+  # Changed from cosine to plateau for better convergence (Optimized 2025-10-28)
   name: plateau
   mode: max  # Maximize validation metric
   monitor: val/rank_ic_5d  # Monitor 5-day RankIC
-  patience: 5
-  factor: 0.5
-  min_lr: 1e-6
-  threshold: 1e-4
+  patience: 10  # More patient (increased from 5, allows 10 epochs of no improvement)
+  factor: 0.7  # Gentler reduction (changed from 0.5, reduces by 30% each time)
+  min_lr: 1e-7  # Allow lower minimum (from 1e-6)
+  threshold: 1e-4  # Only count improvements > 0.0001
   cooldown: 2
 
   # Alternative: Extended cosine with restarts

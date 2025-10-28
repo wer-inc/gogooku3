@@ -26,18 +26,18 @@ hydra:
 # ============================================================================
 
 improvements:
-  # torch.compile一時無効化 (検証用 - 2025-10-04)
-  # 特徴次元修正の影響を確認するため一時的に無効化
-  compile_model: false  # Temporarily disabled for validation
+  # torch.compile re-enabled for A100 optimization (2025-10-28)
+  # Safe selective compilation: TFT + Head only, excludes GAT (dynamic graph)
+  compile_model: true  # RE-ENABLED: +10-30% GPU throughput on A100
   compile_mode: "reduce-overhead"  # FIX: max-autotune causes CUDA misaligned address errors
   compile_fullgraph: false
   compile_dynamic: false
 
-  # データローダー並列化 (PDF要件)
+  # データローダー並列化 (PDF要件 + optimized for A100)
   force_multiworker: true  # Override safety guard
   num_workers: 8
   persistent_workers: true
-  prefetch_factor: 4
+  prefetch_factor: 8  # Increased from 4 for A100 throughput (2025-10-28)
 
   # 目的関数の重み最適化 (PDF指摘: 現在Sharpe/ICが横ばい)
   loss_weights:

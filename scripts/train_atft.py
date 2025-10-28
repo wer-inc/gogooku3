@@ -2530,10 +2530,11 @@ def train_epoch(
 
         # Gradient accumulation
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
-            # Gradient clipping
+            # Gradient clipping (configurable via MAX_GRAD_NORM env var)
             if scaler_is_enabled:
                 scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            max_grad_norm = float(os.getenv("MAX_GRAD_NORM", "1.0"))
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
             if any(p.grad is not None for p in model.parameters()):
                 if scaler_is_enabled:
@@ -3097,18 +3098,25 @@ def evaluate_model_metrics(
         pred_valid = pred[valid_mask]
         target_valid = target[valid_mask]
 
+        # デバッグ: 予測値の統計情報をログ
+        pred_std = np.std(pred_valid)
+        target_std = np.std(target_valid)
+        logger.info(f"Horizon {horizon}: pred_std={pred_std:.6f}, target_std={target_std:.6f}, n_valid={len(pred_valid)}")
+
         # 基本的なメトリクス
         mse = np.mean((pred_valid - target_valid) ** 2)
         rmse = np.sqrt(mse)
         mae = np.mean(np.abs(pred_valid - target_valid))
 
-        # 相関係数
-        if len(pred_valid) > 1:
+        # 相関係数（予測値の分散がゼロの場合は計算不可）
+        if len(pred_valid) > 1 and pred_std > 1e-8 and target_std > 1e-8:
             correlation = np.corrcoef(pred_valid.flatten(), target_valid.flatten())[0, 1]
             if np.isnan(correlation):
                 correlation = 0.0
         else:
             correlation = 0.0
+            if pred_std <= 1e-8:
+                logger.warning(f"Horizon {horizon}: Cannot compute correlation - zero prediction variance")
 
         # R²スコア
         ss_res = np.sum((target_valid - pred_valid) ** 2)
