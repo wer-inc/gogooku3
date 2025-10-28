@@ -873,7 +873,17 @@ class MLDatasetBuilder:
                 join_frame = vix
 
         # Ensure only Date + new feature columns
-        feature_cols = [c for c in join_frame.columns if c != "Date"]
+        raw_ohlc_cols = {
+            "Adj Close",
+            "Close",
+            "Open",
+            "High",
+            "Low",
+            "Volume",
+        }
+        feature_cols = [
+            c for c in join_frame.columns if c != "Date" and c not in raw_ohlc_cols
+        ]
         join_frame = join_frame.select(["Date", *feature_cols])
 
         # Drop duplicates that already exist on df
@@ -942,15 +952,31 @@ class MLDatasetBuilder:
                 next_expr = None
 
             if next_expr is not None:
+                expr = next_expr
+                if callable(next_expr):
+                    try:
+                        expr = next_expr(pl.col("Date"))
+                    except TypeError:
+                        expr = next_expr
                 join_frame = (
-                    fx.with_columns(next_expr.alias("effective_date"))
+                    fx.with_columns(expr.alias("effective_date"))
                     .drop("Date")
                     .rename({"effective_date": "Date"})
                 )
             else:
                 join_frame = fx
 
-        feature_cols = [c for c in join_frame.columns if c != "Date"]
+        raw_ohlc_cols = {
+            "Adj Close",
+            "Close",
+            "Open",
+            "High",
+            "Low",
+            "Volume",
+        }
+        feature_cols = [
+            c for c in join_frame.columns if c != "Date" and c not in raw_ohlc_cols
+        ]
         join_frame = join_frame.select(["Date", *feature_cols])
 
         dup_cols = [c for c in feature_cols if c in df.columns]
@@ -999,8 +1025,14 @@ class MLDatasetBuilder:
                 next_expr = None
 
             if next_expr is not None:
+                expr = next_expr
+                if callable(next_expr):
+                    try:
+                        expr = next_expr(pl.col("Date"))
+                    except TypeError:
+                        expr = next_expr
                 join_frame = (
-                    btc.with_columns(next_expr.alias("effective_date"))
+                    btc.with_columns(expr.alias("effective_date"))
                     .drop("Date")
                     .rename({"effective_date": "Date"})
                 )
@@ -1274,7 +1306,11 @@ class MLDatasetBuilder:
             next_expr = None
 
         if next_expr is not None:
-            bd = bd.with_columns(next_expr.alias("effective_date"))
+            try:
+                bd = bd.with_columns(next_expr(pl.col("Date")).alias("effective_date"))
+            except TypeError:
+                # Backward compatibility: next_expr might already be an Expr
+                bd = bd.with_columns(next_expr.alias("effective_date"))
         else:
             bd = bd.with_columns(pl.col("Date").alias("effective_date"))
 
@@ -1555,6 +1591,25 @@ class MLDatasetBuilder:
                 .alias("effective_date"),
             ]
         )
+
+        required_cols = [
+            "NetSales",
+            "OperatingProfit",
+            "Profit",
+            "TotalAssets",
+            "Equity",
+            "NetCashProvidedByOperatingActivities",
+            "PurchaseOfPropertyPlantAndEquipment",
+            "CashAndCashEquivalents",
+            "InterestBearingDebt",
+        ]
+        missing_required = [col for col in required_cols if col not in fs.columns]
+        if missing_required:
+            logger.warning(
+                "[builder] fs_details missing required columns %s; falling back to stmt_* aliases",
+                missing_required,
+            )
+            return self._alias_statement_features(df)
 
         fs = fs.with_columns(
             [

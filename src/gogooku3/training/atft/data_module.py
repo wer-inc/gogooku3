@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import polars as pl
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -277,6 +276,8 @@ class StreamingParquetDataset(Dataset):
         cache_size: int = 10000,
         reader_engine: str | None = None,
         exposure_columns: list[str] | None = None,
+        static_columns: list[str] | None = None,
+        regime_columns: list[str] | None = None,
     ):
         """
         Initialize streaming parquet dataset.
@@ -289,6 +290,8 @@ class StreamingParquetDataset(Dataset):
             normalize_online: Apply online normalization
             cache_size: Number of samples to cache in memory
             exposure_columns: Columns to use for exposure features (e.g. market_cap, beta, sector_code)
+            static_columns: Columns to expose as static features (per-sample, last observation)
+            regime_columns: Columns aggregated for regime features (mean/last within window)
         """
         cleaned_paths: list[Path] = []
         missing_paths: list[str] = []
@@ -314,6 +317,12 @@ class StreamingParquetDataset(Dataset):
 
         self.file_paths = cleaned_paths
         self.feature_columns = feature_columns
+        self.dynamic_feature_columns = [c for c in feature_columns if c.endswith("_cs_z")]
+        if not self.dynamic_feature_columns:
+            self.dynamic_feature_columns = list(feature_columns)
+        self.mask_feature_columns = [
+            c for c in feature_columns if c not in self.dynamic_feature_columns
+        ]
         self.target_columns = target_columns
         self.sequence_length = sequence_length
         self.normalize_online = normalize_online
@@ -422,6 +431,26 @@ class StreamingParquetDataset(Dataset):
                 "[Phase2] Exposure features disabled (USE_EXPOSURE_FEATURES=0)"
             )
 
+        # Static & regime feature columns (last-step / aggregated context)
+        self.static_columns = []
+        self.regime_columns = []
+        if static_columns:
+            for col in static_columns:
+                if col in sample_columns:
+                    self.static_columns.append(col)
+                else:
+                    logger.warning(
+                        "[static] Column %s not found in dataset; skipping", col
+                    )
+        if regime_columns:
+            for col in regime_columns:
+                if col in sample_columns:
+                    self.regime_columns.append(col)
+                else:
+                    logger.warning(
+                        "[regime] Column %s not found in dataset; skipping", col
+                    )
+
         # Pre-compute per-file window offsets for fast index resolution
         # Only add exposure columns that actually exist in the data
         exposure_cols_to_add = []
@@ -429,6 +458,8 @@ class StreamingParquetDataset(Dataset):
             for col in self.exposure_columns:
                 if col in sample_columns:
                     exposure_cols_to_add.append(col)
+        static_cols_to_add = [c for c in self.static_columns if c not in exposure_cols_to_add]
+        regime_cols_to_add = [c for c in self.regime_columns if c not in exposure_cols_to_add]
 
         self._columns_needed = list(
             dict.fromkeys(
@@ -436,6 +467,8 @@ class StreamingParquetDataset(Dataset):
                 + list(self.target_columns)
                 + [self.code_column, self.date_column]
                 + exposure_cols_to_add
+                + static_cols_to_add
+                + regime_cols_to_add
             )
         )
         self._file_window_counts: list[int] = []
@@ -893,16 +926,16 @@ class StreamingParquetDataset(Dataset):
                 f"Index {idx} produced truncated window (file: {file_path}, rows: {window.height})"
             )
 
-        features = window.select(self.feature_columns).to_numpy()
-        features = features.astype(np.float32, copy=False)
-        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+        features_dyn = window.select(self.dynamic_feature_columns).to_numpy()
+        features_dyn = features_dyn.astype(np.float32, copy=False)
+        features_dyn = np.nan_to_num(features_dyn, nan=0.0, posinf=0.0, neginf=0.0)
 
         if self.feature_clip_value > 0:
             np.clip(
-                features,
+                features_dyn,
                 -self.feature_clip_value,
                 self.feature_clip_value,
-                out=features,
+                out=features_dyn,
             )
             if not self._clip_logged:
                 logger.info(
@@ -911,9 +944,20 @@ class StreamingParquetDataset(Dataset):
                 )
                 self._clip_logged = True
 
-        # Apply online normalization if needed
+        # Apply online normalization if needed (dynamic features only)
         if self.normalize_online:
-            features = self._normalize(features)
+            features_dyn = self._normalize(features_dyn)
+
+        if self.mask_feature_columns:
+            mask_arr = (
+                window.select(self.mask_feature_columns)
+                .to_numpy()
+                .astype(np.float32, copy=False)
+            )
+            mask_arr = np.nan_to_num(mask_arr, nan=0.0, posinf=0.0, neginf=0.0)
+            features = np.concatenate([features_dyn, mask_arr], axis=1)
+        else:
+            features = features_dyn
 
         targets_window = window.select(self.target_columns).to_numpy()
         targets_row = targets_window[-1]
@@ -1007,6 +1051,47 @@ class StreamingParquetDataset(Dataset):
                 # Empty exposures if no features found
                 sample["exposures"] = torch.zeros(1, dtype=torch.float32)
 
+        if self.static_columns:
+            try:
+                static_df = window.select(self.static_columns).tail(1)
+                static_arr = np.nan_to_num(
+                    static_df.to_numpy().astype(np.float32, copy=False),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+                sample["static_features"] = torch.tensor(
+                    static_arr.reshape(-1), dtype=torch.float32
+                )
+            except Exception:
+                sample["static_features"] = torch.zeros(
+                    len(self.static_columns), dtype=torch.float32
+                )
+
+        if self.regime_columns:
+            try:
+                regime_df = window.select(self.regime_columns)
+                regime_arr = regime_df.to_numpy().astype(np.float32, copy=False)
+                if regime_arr.size == 0:
+                    regime_vec = np.zeros(len(self.regime_columns) * 2, dtype=np.float32)
+                else:
+                    last_vals = regime_arr[-1]
+                    with np.errstate(invalid="ignore"):
+                        mean_vals = np.nanmean(regime_arr, axis=0)
+                    regime_vec = np.concatenate([last_vals, mean_vals]).astype(
+                        np.float32, copy=False
+                    )
+                regime_vec = np.nan_to_num(
+                    regime_vec, nan=0.0, posinf=0.0, neginf=0.0
+                )
+                sample["regime_features"] = torch.tensor(
+                    regime_vec, dtype=torch.float32
+                )
+            except Exception:
+                sample["regime_features"] = torch.zeros(
+                    len(self.regime_columns) * 2, dtype=torch.float32
+                )
+
         return sample
 
     # -----------------------
@@ -1068,20 +1153,9 @@ class StreamingParquetDataset(Dataset):
             use_threads=False,
         )
 
-        # Slice inside the concatenated row-groups to the exact window
         start_in_table = start - offsets[rg_start]
-        # If multiple RGs, the concatenated table starts at offsets[rg_start]
-        # Adjust for cumulative lengths
-        if rg_start != 0:
-            # We need cumulative length of preceding row-groups among selected ones
-            start_in_table = start - offsets[rg_start]
-        end_in_table = start_in_table + self.sequence_length
-
-        # Convert to pandas (cheap for small slices), then slice
-        pdf: pd.DataFrame = table.to_pandas(types_mapper=pd.ArrowDtype)
-        window_pdf = pdf.iloc[start_in_table:end_in_table]
-        # Convert to Polars for downstream uniformity
-        window_pl = pl.from_pandas(window_pdf.reset_index(drop=True))
+        slice_table = table.slice(start_in_table, self.sequence_length)
+        window_pl = pl.from_arrow(slice_table)
         return window_pl
 
     def _resolve_sample_location(self, idx: int) -> tuple[int, int]:
@@ -1151,6 +1225,11 @@ class StreamingParquetDataset(Dataset):
 
         logger.info("Computing global normalization statistics from training data...")
 
+        if not self.dynamic_feature_columns:
+            logger.info("No dynamic features detected; skipping global normalization stats")
+            self._stats_computed = True
+            return
+
         # Allow environment overrides for sample size / file coverage
         try:
             max_samples_env = os.getenv("NORMALIZATION_MAX_SAMPLES")
@@ -1192,7 +1271,7 @@ class StreamingParquetDataset(Dataset):
             try:
                 df = (
                     pl.scan_parquet(file_path)
-                    .select(self.feature_columns)
+                    .select(self.dynamic_feature_columns)
                     .head(samples_per_file)
                     .collect(streaming=True)
                 )
@@ -1415,6 +1494,20 @@ class ProductionDataModuleV2:
         feature_columns = self._get_feature_columns()
         target_columns = self._get_target_columns()
 
+        # Static / regime columns (optional)
+        try:
+            static_columns = list(
+                getattr(self.config.data.schema, "static_columns", []) or []
+            )
+        except Exception:
+            static_columns = []
+        try:
+            regime_columns = list(
+                getattr(self.config.data.schema, "regime_columns", []) or []
+            )
+        except Exception:
+            regime_columns = []
+
         # Phase 2: 露出特徴量の設定
         exposure_columns = None
         if os.getenv("USE_EXPOSURE_FEATURES", "0") == "1":
@@ -1450,6 +1543,8 @@ class ProductionDataModuleV2:
             exposure_columns=exposure_columns,
             cache_size=cache_size,
             reader_engine=reader_engine,
+            static_columns=static_columns,
+            regime_columns=regime_columns,
         )
 
         if val_files:
@@ -1464,6 +1559,8 @@ class ProductionDataModuleV2:
                 exposure_columns=exposure_columns,
                 cache_size=cache_size,
                 reader_engine=reader_engine,
+                static_columns=static_columns,
+                regime_columns=regime_columns,
             )
 
         if test_files:
@@ -1478,6 +1575,8 @@ class ProductionDataModuleV2:
                 exposure_columns=exposure_columns,
                 cache_size=cache_size,
                 reader_engine=reader_engine,
+                static_columns=static_columns,
+                regime_columns=regime_columns,
             )
 
         logger.info(f"✅ Datasets created: train={len(self.train_dataset)} samples")

@@ -35,8 +35,8 @@ data:
 
   # Time series configuration
   time_series:
-    sequence_length: 60
-    prediction_horizons: [1, 5, 10, 20]
+    sequence_length: 20
+    prediction_horizons: [1, 2, 3, 5, 10]
     drop_historical_columns: true
     use_tensor_sequences: true
 
@@ -82,7 +82,7 @@ features:
 validation:
   method: "walk_forward"
   n_splits: 5
-  embargo_days: 20
+  embargo_days: 10
   min_train_days: 252
   test_size_ratio: 0.2
   purge_overlap: true
@@ -99,7 +99,7 @@ normalization:
     enabled: false  # NEVER enable for time-series to prevent leakage
 
   online_normalization:
-    enabled: true
+    enabled: false
     per_batch: true
 
 # Baseline model configuration

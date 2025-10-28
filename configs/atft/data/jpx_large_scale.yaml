@@ -10,7 +10,100 @@ schema:
     - target_5d
     - target_10d
     - target_20d
-  feature_columns: null  # Auto-detect if null
+  feature_columns:
+    - returns_1d_cs_z
+    - returns_5d_cs_z
+    - log_returns_1d_cs_z
+    - volatility_5d_cs_z
+    - volatility_20d_cs_z
+    - ema_5_cs_z
+    - ema_20_cs_z
+    - ema_200_cs_z
+    - ma_gap_5_20_cs_z
+    - price_to_sma20_cs_z
+    - bb_position_cs_z
+    - bb_width_cs_z
+    - volume_ratio_5_cs_z
+    - volume_ratio_20_cs_z
+    - turnover_rate_cs_z
+    - mkt_ret_1d_cs_z
+    - mkt_ret_5d_cs_z
+    - mkt_gap_5_20_cs_z
+    - mkt_vol_20d_cs_z
+    - mkt_bull_200_cs_z
+    - mkt_high_vol_cs_z
+    - mkt_ret_1d_z_cs_z
+    - mkt_dd_from_peak_cs_z
+    - beta_60d_cs_z
+    - alpha_1d_cs_z
+    - alpha_5d_cs_z
+    - rel_strength_5d_cs_z
+    - idio_vol_ratio_cs_z
+    - trend_align_mkt_cs_z
+    - sec_mom_20_cs_z
+    - sec_ret_5d_eq_cs_z
+    - sec_vol_20_z_cs_z
+    - sec_gap_5_20_cs_z
+    - flow_foreign_net_z_cs_z
+    - flow_individual_net_z_cs_z
+    - flow_activity_z_cs_z
+    - flow_smart_idx_cs_z
+    - flow_smart_mom4_cs_z
+    - flow_shock_flag_cs_z
+    - flow_impulse_cs_z
+    - flow_days_since_cs_z
+    - stmt_yoy_sales_cs_z
+    - stmt_yoy_op_cs_z
+    - stmt_opm_cs_z
+    - stmt_progress_op_cs_z
+    - stmt_rev_fore_op_cs_z
+    - stmt_imp_statement_cs_z
+    - stmt_days_since_statement_cs_z
+    - returns_10d_cs_z
+    - volatility_60d_cs_z
+    - price_to_sma5_cs_z
+    - price_to_sma60_cs_z
+    - close_to_high_cs_z
+    - close_to_low_cs_z
+    - realized_volatility_cs_z
+    - mkt_bb_bw_cs_z
+    - mkt_bb_pct_b_cs_z
+    - mkt_ret_10d_cs_z
+    - mkt_ret_20d_cs_z
+    - mkt_ema20_slope_3_cs_z
+    - beta_stability_60d_cs_z
+    - rsi_2_cs_z
+    - rsi_14_cs_z
+    - macd_histogram_cs_z
+    - stoch_k_cs_z
+    - alpha_vs_sec_1d_cs_z
+    - flow_foreign_net_ratio_cs_z
+    - flow_individual_net_ratio_cs_z
+    - flow_activity_ratio_cs_z
+    - flow_breadth_pos_cs_z
+    - stmt_yoy_np_cs_z
+    - stmt_npm_cs_z
+    - stmt_progress_np_cs_z
+    - stmt_rev_fore_np_cs_z
+    - stmt_roe_cs_z
+    - stmt_roa_cs_z
+    - returns_20d_cs_z
+    - volatility_10d_cs_z
+    - is_flow_valid
+    - is_stmt_valid
+    - is_valid_ma
+    - is_sec_cs_valid
+  static_columns:
+    - sector33_code
+    - is_borrowable
+  regime_columns:
+    - mkt_ret_1d
+    - mkt_ret_5d
+    - mkt_vol_20d
+    - mkt_bull_200
+    - mkt_high_vol
+    - mkt_ret_1d_z
+    - mkt_bb_pct_b
 
 # バッファー付きローダーを使用（ファイル境界を跨いだシーケンス生成）
 use_buffered_loader: true  # 20日シーケンスのため必須
@@ -52,119 +145,13 @@ time_series:
     gap_days: 5
 
 # 特徴量設定（ML_DATASET_COLUMNS.md準拠）
-# NOTE: Auto-detected as 189 features from actual dataset
+# NOTE: Curated core50 + plus30 bundles (83 columns incl. masks)
 features:
-  input_dim: 189  # Explicitly set to match actual dataset features
-  # 基本特徴量（現在値）
-  basic:
-    price_volume:
-      - close          # ML_DATASET_COLUMNS.md準拠
-      - open
-      - high
-      - low
-      - volume
+  input_dim: 82
+  groups_config: configs/atft/feature_groups.yaml
+  enabled_groups:
+    - core50
+    - plus30
 
-    flags:
-      - upper_limit
-      - volume_spike
-      - high_break_20d
-
-  # テクニカル指標（現在値）
-  technical:
-    momentum:
-      - rsi_2         # ML_DATASET_COLUMNS.md準拠
-      - rsi_14
-      - rsi_delta
-
-    volatility:
-      - volatility_20d    # ML_DATASET_COLUMNS.md準拠
-      - volatility_ratio
-      - volatility_change
-      - sharpe_1d
-      - sharpe_5d
-      - sharpe_20d
-      - high_vol_flag
-      - low_vol_flag
-
-    trend:
-      - adx3
-      - adx7
-      - adx14
-
-    moving_averages:
-      - ema_5         # ML_DATASET_COLUMNS.md準拠
-      - ema_10
-      - ema_20
-      - ema_60
-      - ema_200
-
-    macd:
-      - macd_signal      # ML_DATASET_COLUMNS.md準拠
-      - macd_histogram
-
-    bollinger_bands:    # ML_DATASET_COLUMNS.md準拠
-      - bb_pct_b
-      - bb_bandwidth
-
-  # MA派生特徴量（現在値）
-  ma_derived:
-    price_deviations:
-      - price_ema5_dev
-      - price_ema10_dev
-      - price_ema20_dev
-      - price_ema200_dev
-
-    ma_gaps:
-      - ma_gap_5_20
-      - ma_gap_20_60
-      - ma_gap_60_200
-
-    ma_slopes:
-      - ema5_slope
-      - ema20_slope
-      - ema60_slope
-
-    ma_crosses:
-      - ema_cross_5_20
-      - ema_cross_20_60
-      - ema_cross_60_200
-
-    ma_ribbon:
-      - ma_ribbon_bullish
-      - ma_ribbon_bearish
-      - ma_ribbon_spread
-      - dist_to_200ema
-
-  # リターン×MA相互作用特徴量
-  returns_ma_interaction:
-    momentum:
-      - momentum_5_20
-      - momentum_1_5
-      - momentum_10_20
-
-    interactions:
-      - ret1d_x_ema20dev
-      - ret5d_x_ema20dev
-      - ret1d_x_ema200dev
-      - mom5d_x_ema20slope
-      - mom20d_x_ema60slope
-
-  # フロー特徴量（将来拡張用）
-  flow:
-    - smart_money_index
-    - smart_money_change
-    - flow_high_flag
-    - flow_low_flag
-
-  # リターン特徴量
-  returns:
-    columns: [returns_1d, returns_5d, returns_10d, returns_20d]  # ML_DATASET_COLUMNS.md準拠
-
-  # 成熟度フラグ
-  maturity_flags:
-    - is_rsi2_valid
-    - is_ema5_valid
-    - is_ema10_valid
-    - is_ema20_valid
-    - is_ema200_valid
-    - is_valid_ma
+# Expose flattened feature list for training pipeline
+feature_cols: ${schema.feature_columns}

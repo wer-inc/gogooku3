@@ -84,7 +84,7 @@ loss:
 # Multi-horizon configuration
 prediction:
   use_multi_horizon_heads: true
-  horizons: [1, 5, 10, 20]
+  horizons: [1, 2, 3, 5, 10]
   horizon_weights:
     1: 1.0   # Short-term most important for Sharpe
     5: 0.8

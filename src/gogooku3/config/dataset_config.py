@@ -141,17 +141,17 @@ class FeatureFlagsConfig(BaseSettings):
         False, description="Attach NK225 option market aggregates to equity panel"
     )
     macro_vix_features: bool = Field(
-        False,
+        True,
         alias="ENABLE_MACRO_VIX",
         description="Attach VIX-based macro sentiment features",
     )
     macro_fx_usdjpy: bool = Field(
-        False,
+        True,
         alias="ENABLE_MACRO_FX_USDJPY",
         description="Attach USD/JPY FX macro features",
     )
     macro_btc: bool = Field(
-        False,
+        True,
         alias="ENABLE_MACRO_BTC",
         description="Attach BTC/USD crypto macro features",
     )

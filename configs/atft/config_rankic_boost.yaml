@@ -17,7 +17,7 @@ data:
   # Fix prediction horizons to match actual data columns (target_1d, target_5d, target_10d, target_20d)
   time_series:
     sequence_length: 20
-    prediction_horizons: [1, 5, 10, 20]  # Match actual target columns in data
+    prediction_horizons: [1, 2, 3, 5, 10]  # Match actual target columns in data
   schema:
     date_column: Date  # Capital D as in the actual data
     code_column: Code  # Capital C as in the actual data
@@ -38,7 +38,7 @@ data:
     sector_col: sector33
     shrinkage_gamma: 0.1
     size_tau: 1.0
-    source_glob: ${data.source.data_dir}/*.parquet
+    source_glob: ${data.source.data_dir}/train/*.parquet
     symmetric: true
 
 # Model configuration - use larger hidden size for better capacity

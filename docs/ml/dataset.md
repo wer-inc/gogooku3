@@ -1200,6 +1200,9 @@ df = df.sort(['Code','Date']).join_asof(
 - **リーク防止**: 全特徴量は `Close[t-1]` までの情報のみから計算（例: `ret_1d` は t-1 vs t-2）。日次リターンやモメンタム列は *shift* 済みフレーム上で再計算しているため、当日終値は利用していない。
 - **極端値対策**: Z スコア・レジームフラグで極端環境をカテゴリ化し、必要に応じてウィンズライザー処理を下流で実施可能。
 - **相互作用**: BTC の 1 日リターンと VIX 変化率の差分 `macro_btc_vix_divergence` を追加。暗号資産と恐怖指数の乖離が大きい日をフラグ化できる。
+- **yfinance カラム**: MultiIndex で返却される OHLC に対応し、単層カラムへ自動正規化した上で `Date` 列を強制的に確保するよう修正済み。
+- **キャッシュ設定**: `YFINANCE_CACHE_DIR`（既定: `output/cache/yfinance`）に書き込み可能なローカルキャッシュを自動設定し、読み取り専用環境でもエラーにならないよう調整。
+- **依存性チェック**: マクロ列を有効化した場合は yfinance の事前チェックを行い、未導入であれば即時にエラーを返してサイレントスキップを防止。
 - **推奨ホライズン**:
   - *1d*: `macro_vix_ret_1d`, `macro_fx_usdjpy_ret_1d`, `macro_btc_ret_1d`, 各 `abs_ret` / `spike_flag` / `shock_flag`
   - *5d*: `macro_vix_ret_{5,10}d`, `macro_fx_usdjpy_ret_{5,10}d`, `macro_btc_vol_{20,60}`, `macro_btc_sma7_over_sma30`

@@ -6275,6 +6275,19 @@ def train(config: DictConfig) -> None:
 
     _resolve_checkpoint_refs(final_config)
 
+    # Ensure data.feature_cols resolves to a concrete list (avoid dangling interpolation)
+    try:
+        schema_features = OmegaConf.select(final_config, "data.schema.feature_columns")
+        if schema_features is not None:
+            OmegaConf.update(
+                final_config,
+                "data.feature_cols",
+                list(schema_features),
+                merge=True,
+            )
+    except Exception:
+        pass
+
     run_manifest = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "timestamp_jst": now_jst_iso(),
@@ -7457,6 +7470,14 @@ def train(config: DictConfig) -> None:
                             try:
                                 markets_list = batch.get("markets")
                                 sectors_list = batch.get("sectors")
+                                if hasattr(markets_list, "tolist"):
+                                    markets_list = markets_list.tolist()
+                                if hasattr(sectors_list, "tolist"):
+                                    sectors_list = sectors_list.tolist()
+                                if markets_list is not None and len(markets_list) != feats_full.size(0):
+                                    markets_list = None
+                                if sectors_list is not None and len(sectors_list) != feats_full.size(0):
+                                    sectors_list = None
                             except Exception:
                                 pass
                             # Determine parameters
@@ -7572,6 +7593,8 @@ def train(config: DictConfig) -> None:
                                     feats_full.to(device),
                                     window=win,
                                     k=int(max(1, k_try)),
+                                    sectors=sectors_list,
+                                    markets=markets_list,
                                 )
                                 sys.modules[__name__]._graph_cache_misses += 1
 
@@ -7652,10 +7675,44 @@ def train(config: DictConfig) -> None:
                             logger.warning(
                                 f"[edges-fallback] failed to build correlation edges: {_e}"
                             )
-                    # Iterate micro-batches
+                    # Validate edge index (if built) and clamp to available nodes
+                    if (
+                        edge_index is not None
+                        and isinstance(edge_index, torch.Tensor)
+                        and edge_index.numel() > 0
+                    ):
+                        valid_mask = (
+                            (edge_index >= 0)
+                            & (edge_index < n_items)
+                        ).all(dim=0)
+                        if not torch.all(valid_mask):
+                            dropped = int((~valid_mask).sum().item())
+                            logger.debug(
+                                "[GAT] Dropping %d edges referencing nodes outside batch (%d)",
+                                dropped,
+                                n_items,
+                            )
+                            edge_index = edge_index[:, valid_mask]
+                            if isinstance(edge_attr, torch.Tensor):
+                                edge_attr = edge_attr[valid_mask]
+                        if edge_index.numel() > 0:
+                            max_edge = int(edge_index.max().item())
+                            if max_edge >= n_items:
+                                raise RuntimeError(
+                                    f"GAT edge_index max {max_edge} exceeds batch nodes {n_items}"
+                                )
+
+                    # Iterate micro-batches (disable slicing when GAT is active)
+                    micro_bs_effective = micro_bs
+                    if (
+                        edge_index is not None
+                        and getattr(final_config.model.gat, "enabled", False)
+                    ):
+                        micro_bs_effective = n_items
+
                     mb_start = 0
                     while mb_start < n_items:
-                        mb_end = min(n_items, mb_start + micro_bs)
+                        mb_end = min(n_items, mb_start + micro_bs_effective)
                         features = feats_full[mb_start:mb_end].to(
                             device, non_blocking=True
                         )
@@ -8297,12 +8354,18 @@ def train(config: DictConfig) -> None:
                         )
                         if should_check:
                             with torch.no_grad():
-                                guard_predictions = _canonicalize_horizon_dict(
-                                    predictions_fp32
-                                    if isinstance(predictions_fp32, dict)
+                                # Extract predictions from outputs (works for both train and val loops)
+                                preds_for_guard = (
+                                    _unwrap_predictions(outputs)
+                                    if isinstance(outputs, dict)
                                     else {}
                                 )
-                                guard_targets = _canonicalize_horizon_dict(targets_fp32)
+                                guard_predictions = _canonicalize_horizon_dict(
+                                    preds_for_guard
+                                    if isinstance(preds_for_guard, dict)
+                                    else {}
+                                )
+                                guard_targets = _canonicalize_horizon_dict(targets)
 
                                 for h in criterion.horizons:
                                     canon_key = f"horizon_{h}"
@@ -8338,19 +8401,48 @@ def train(config: DictConfig) -> None:
 
                                     # Calculate std in FP32 for stability with mask
                                     if mask is not None and mask.sum() > 0:
-                                        yhat_masked = yhat[mask]
-                                        y_masked = y[mask]
-                                        yhat_std = (
-                                            yhat_masked.std().item()
-                                            if yhat_masked.numel() > 1
-                                            else 0.0
+                                        mask_bool = (
+                                            mask.bool()
+                                            if mask.dtype == torch.bool
+                                            else mask != 0
                                         )
-                                        y_std = max(
-                                            y_masked.std().item()
-                                            if y_masked.numel() > 1
-                                            else std_eps,
-                                            std_eps,
-                                        )
+                                        # Squeeze trailing singleton dims (e.g., [B,1] -> [B])
+                                        while mask_bool.dim() > 1 and mask_bool.size(-1) == 1:
+                                            mask_bool = mask_bool.squeeze(-1)
+                                        if mask_bool.dim() > 1:
+                                            # Collapse additional feature dims by requiring validity across axis
+                                            mask_bool = mask_bool.any(dim=-1)
+                                        mask_bool = mask_bool.view(-1)
+                                        if mask_bool.numel() != yhat.size(0):
+                                            target_len = yhat.size(0)
+                                            current_len = mask_bool.numel()
+                                            if current_len > target_len:
+                                                mask_bool = mask_bool[:target_len]
+                                            else:
+                                                padded = torch.zeros(
+                                                    target_len,
+                                                    dtype=torch.bool,
+                                                    device=mask_bool.device,
+                                                )
+                                                padded[:current_len] = mask_bool
+                                                mask_bool = padded
+                                        if mask_bool.sum() > 0:
+                                            yhat_masked = yhat[mask_bool]
+                                            y_masked = y[mask_bool]
+                                            yhat_std = (
+                                                yhat_masked.std().item()
+                                                if yhat_masked.numel() > 1
+                                                else 0.0
+                                            )
+                                            y_std = max(
+                                                y_masked.std().item()
+                                                if y_masked.numel() > 1
+                                                else std_eps,
+                                                std_eps,
+                                            )
+                                        else:
+                                            yhat_std = yhat.std().item()
+                                            y_std = max(y.std().item(), std_eps)
                                     else:
                                         yhat_std = yhat.std().item()
                                         y_std = max(y.std().item(), std_eps)

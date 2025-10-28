@@ -66,7 +66,7 @@ early_stopping:
 
 # Multi-horizon prediction configuration
 prediction:
-  horizons: [1, 5, 10, 20]  # Prediction horizons in days
+  horizons: [1, 2, 3, 5, 10]  # Prediction horizons in days
   horizon_specific_architecture: true  # Enable horizon-specific heads
   horizon_weights: [1.0, 1.0, 1.0, 1.0]  # Balanced weights to reduce short-term noise domination
 

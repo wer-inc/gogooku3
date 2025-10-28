@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 import numpy as np
 import polars as pl
 import torch
@@ -76,9 +78,9 @@ class CompleteATFTTrainingPipeline:
         self.atft_settings = {
             "expected_sharpe": 0.849,
             "model_params": 5181827,
-            "input_dim": 373,
+            "input_dim": 83,
             "sequence_length": 20,
-            "prediction_horizons": [1, 5, 10, 20],
+            "prediction_horizons": [1, 2, 3, 5, 10],
             "batch_size": 1024,  # A100 80GB向け安全デフォルト (旧: 4096)
             "learning_rate": 2e-4,
             "max_epochs": 75,
@@ -465,6 +467,122 @@ class CompleteATFTTrainingPipeline:
         except Exception:  # noqa: S110
             pass  # Baseline logging failure is non-critical
 
+    def _resolve_curated_feature_columns(
+        self, df: pl.DataFrame
+    ) -> dict[str, Any]:
+        """Load curated feature groups and resolve present columns."""
+        config_path = Path("configs/atft/feature_groups.yaml")
+        if not config_path.exists():
+            logger.warning(
+                "Curated feature configuration not found at %s; falling back to auto-detected columns",
+                config_path,
+            )
+            return {
+                "features": [],
+                "masks": [],
+                "missing_features": [],
+                "missing_masks": [],
+                "groups": [],
+            }
+
+        try:
+            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse curated feature configuration (%s): %s",
+                config_path,
+                exc,
+            )
+            return {
+                "features": [],
+                "masks": [],
+                "missing_features": [],
+                "missing_masks": [],
+                "groups": [],
+            }
+
+        available_groups = (cfg.get("groups") or {}).keys()
+        group_spec = cfg.get("groups") or {}
+
+        raw_selection = os.getenv("ATFT_FEATURE_GROUPS", "core50,plus30")
+        group_names = [
+            name.strip()
+            for token in raw_selection.replace(";", ",").split(",")
+            if (name := token.strip())
+        ]
+        if not group_names:
+            group_names = ["core50", "plus30"]
+
+        missing_groups = [g for g in group_names if g not in available_groups]
+        if missing_groups:
+            logger.warning(
+                "Requested feature groups not defined (%s); ignoring",
+                ", ".join(missing_groups),
+            )
+            group_names = [g for g in group_names if g in available_groups]
+
+        seen_features: dict[str, None] = {}
+        seen_masks: dict[str, None] = {}
+        missing_features: list[str] = []
+        missing_masks: list[str] = []
+
+        columns = set(df.columns)
+
+        for group_name in group_names:
+            group = group_spec.get(group_name) or {}
+            for col in group.get("include", []) or []:
+                col_name = col
+                base_name = col.removesuffix("_cs_z") if col.endswith("_cs_z") else col
+                if col in columns:
+                    seen_features.setdefault(col, None)
+                elif base_name in columns:
+                    seen_features.setdefault(col, None)
+                else:
+                    missing_features.append(col)
+            for mask in group.get("masks", []) or []:
+                if mask in columns:
+                    seen_masks.setdefault(mask, None)
+                else:
+                    missing_masks.append(mask)
+
+        features = list(seen_features.keys())
+        masks = list(seen_masks.keys())
+
+        if not features:
+            logger.warning(
+                "No curated features from groups %s were found in dataset; falling back to auto detection",
+                group_names,
+            )
+
+        info = {
+            "features": features,
+            "masks": masks,
+            "missing_features": missing_features,
+            "missing_masks": missing_masks,
+            "groups": group_names,
+        }
+
+        if missing_features or missing_masks:
+            logger.info(
+                "Curated feature check: missing %d features, %d masks",
+                len(missing_features),
+                len(missing_masks),
+            )
+        return info
+
+    @staticmethod
+    def _load_dataset_schema() -> dict[str, Any]:
+        """Load dataset schema (static/regime columns) from canonical YAML."""
+        schema_path = Path("configs/atft/data/jpx_large_scale.yaml")
+        if not schema_path.exists():
+            return {}
+        try:
+            cfg = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:
+            logger.warning("Unable to read dataset schema config (%s): %s", schema_path, exc)
+            return {}
+        return cfg.get("schema", {})
+
     async def _convert_ml_to_atft_format(self, df: pl.DataFrame) -> tuple[bool, dict]:
         """MLデータセットをATFT-GAT-FAN形式に変換"""
         try:
@@ -476,6 +594,57 @@ class CompleteATFTTrainingPipeline:
                 if (self.sample_size is not None and self.sample_size > 0)
                 else "output/atft_data"
             )
+
+            curated_info = self._resolve_curated_feature_columns(df)
+            curated_features = curated_info.get("features", [])
+            curated_masks = curated_info.get("masks", [])
+            base_feature_names = [
+                col.removesuffix("_cs_z") if col.endswith("_cs_z") else col
+                for col in curated_features
+            ]
+            curated_columns = curated_features + [
+                mask for mask in curated_masks if mask not in curated_features
+            ]
+            expected_feature_count = len(curated_columns)
+
+            schema_cfg = self._load_dataset_schema()
+            static_columns_cfg = list(schema_cfg.get("static_columns", []) or [])
+            regime_columns_cfg = list(schema_cfg.get("regime_columns", []) or [])
+
+            if curated_columns:
+                self.atft_settings["input_dim"] = expected_feature_count
+                self.atft_settings["feature_groups"] = curated_info.get("groups", [])
+                logger.info(
+                    "Using curated feature groups %s (%d features + %d masks = %d columns)",
+                    curated_info.get("groups", []),
+                    len(curated_features),
+                    len(curated_masks),
+                    expected_feature_count,
+                )
+                if curated_info.get("missing_features"):
+                    logger.warning(
+                        "Missing %d curated features (e.g. %s)",
+                        len(curated_info["missing_features"]),
+                        ", ".join(curated_info["missing_features"][:5])
+                        + (
+                            "..."
+                            if len(curated_info["missing_features"]) > 5
+                            else ""
+                        ),
+                    )
+                if curated_info.get("missing_masks"):
+                    logger.warning(
+                    "Missing %d curated mask columns (e.g. %s)",
+                    len(curated_info["missing_masks"]),
+                    ", ".join(curated_info["missing_masks"][:5])
+                    + (
+                        "..."
+                        if len(curated_info["missing_masks"]) > 5
+                        else ""
+                    ),
+                )
+            else:
+                self.atft_settings["feature_groups"] = curated_info.get("groups", [])
 
             # Try to import UnifiedFeatureConverter
             try:
@@ -490,6 +659,25 @@ class CompleteATFTTrainingPipeline:
 
                     _train_dir = _P(out_dir) / "train"
                     force_reconvert = os.getenv("FORCE_CONVERT", "0") == "1"
+                    _meta_path = _P(out_dir) / "metadata.json"
+                    if (
+                        curated_columns
+                        and not force_reconvert
+                        and _meta_path.exists()
+                    ):
+                        try:
+                            meta_obj = json.loads(_meta_path.read_text(encoding="utf-8"))
+                        except Exception:
+                            meta_obj = {}
+                        prev_columns = meta_obj.get("feature_columns") or []
+                        prev_count = int(meta_obj.get("n_features", -1))
+                        if prev_count != expected_feature_count or set(prev_columns) != set(curated_columns):
+                            logger.info(
+                                "Existing converted dataset uses %d columns (expected %d); forcing reconversion",
+                                prev_count,
+                                expected_feature_count,
+                            )
+                            force_reconvert = True
                     if (
                         (not force_reconvert)
                         and _train_dir.exists()
@@ -511,10 +699,32 @@ class CompleteATFTTrainingPipeline:
                             "metadata": str(_P(out_dir) / "metadata.json"),
                         }
                     else:
-                        file_paths = converter.convert_to_atft_format(df, out_dir)
+                        convert_kwargs: dict[str, Any] = {}
+                        if curated_columns:
+                            convert_kwargs["feature_columns"] = base_feature_names
+                        if static_columns_cfg:
+                            convert_kwargs["static_columns"] = static_columns_cfg
+                        if regime_columns_cfg:
+                            convert_kwargs["regime_columns"] = regime_columns_cfg
+                        if curated_masks:
+                            convert_kwargs["mask_columns"] = curated_masks
+                        file_paths = converter.convert_to_atft_format(
+                            df, out_dir, **convert_kwargs
+                        )
                 except Exception:
                     # フォールバック: 常に変換
-                    file_paths = converter.convert_to_atft_format(df, out_dir)
+                    convert_kwargs = {}
+                    if curated_columns:
+                        convert_kwargs["feature_columns"] = base_feature_names
+                    if static_columns_cfg:
+                        convert_kwargs["static_columns"] = static_columns_cfg
+                    if regime_columns_cfg:
+                        convert_kwargs["regime_columns"] = regime_columns_cfg
+                    if curated_masks:
+                        convert_kwargs["mask_columns"] = curated_masks
+                    file_paths = converter.convert_to_atft_format(
+                        df, out_dir, **convert_kwargs
+                    )
             except ImportError:
                 logger.warning(
                     "UnifiedFeatureConverter not found, using direct training approach"
@@ -534,6 +744,12 @@ class CompleteATFTTrainingPipeline:
                 else "UnifiedFeatureConverter",
                 "output_dir": out_dir,
                 "dataframe": df,  # Keep dataframe for direct training
+                "selected_features": curated_features,
+                "selected_masks": curated_masks,
+                "feature_groups": curated_info.get("groups", []),
+                "static_columns": static_columns_cfg,
+                "regime_columns": regime_columns_cfg,
+                "mask_columns": curated_masks,
             }
 
             logger.info(
@@ -687,13 +903,17 @@ class CompleteATFTTrainingPipeline:
                 if "train.trainer.enable_progress_bar" not in cli_override_keys:
                     overrides.append("train.trainer.enable_progress_bar=true")
 
-                # 特徴量次元の整合性（自動検出373列に合わせる）
+                # 特徴量次元の整合性（カスタムfeature groupsと同期）
                 if "model.input_dims.total_features" not in cli_override_keys:
-                    overrides.append("model.input_dims.total_features=373")
+                    overrides.append(
+                        f"model.input_dims.total_features={self.atft_settings['input_dim']}"
+                    )
                 if "model.input_dims.historical_features" not in cli_override_keys:
                     overrides.append("model.input_dims.historical_features=0")
                 if "model.input_dims.basic_features" not in cli_override_keys:
-                    overrides.append("model.input_dims.basic_features=373")
+                    overrides.append(
+                        f"model.input_dims.basic_features={self.atft_settings['input_dim']}"
+                    )
 
                 # ワーカークラッシュ防止のため単一プロセスのローダーを強制
                 if "train.batch.num_workers" not in cli_override_keys:

@@ -9,7 +9,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import polars as pl
@@ -158,6 +158,30 @@ class UnifiedFeatureConverter:
         logger.info(f"Detected {len(numeric_cols)} feature columns")
         return numeric_cols
 
+    def _apply_cross_sectional_zscores(
+        self,
+        frame: pl.DataFrame,
+        feature_cols: Sequence[str],
+    ) -> pl.DataFrame:
+        """Append *_cs_z columns computed per date group and drop raw columns."""
+        if not feature_cols:
+            return frame
+
+        exprs: list[pl.Expr] = []
+        for col in feature_cols:
+            mean_expr = pl.col(col).mean().over(self.date_column)
+            std_expr = pl.col(col).std().over(self.date_column)
+            z_expr = ((pl.col(col) - mean_expr) / (std_expr + 1e-8)).fill_nan(0.0)
+            exprs.append(z_expr.alias(f"{col}_cs_z"))
+
+        frame = frame.with_columns(exprs)
+        # Ensure no residual nulls
+        cs_cols = [f"{c}_cs_z" for c in feature_cols]
+        frame = frame.with_columns(
+            [pl.col(c).fill_null(0.0).alias(c) for c in cs_cols]
+        )
+        return frame
+
     def _create_sequences(
         self,
         df: pl.DataFrame,
@@ -177,7 +201,7 @@ class UnifiedFeatureConverter:
             return np.array([]), np.array([]), []
 
         # Get feature values
-        feature_values = code_df.select(self.feature_columns).to_numpy()
+        feature_values = code_df.select(self.all_feature_columns).to_numpy()
 
         # Prepare per-horizon target vectors (prefer standardized target_{h}d)
         target_series_by_h: Dict[int, np.ndarray] = {}
@@ -248,6 +272,10 @@ class UnifiedFeatureConverter:
         train_ratio: float = 0.7,
         val_ratio: float = 0.15,
         test_ratio: float = 0.15,
+        feature_columns: Optional[Sequence[str]] = None,
+        static_columns: Optional[Sequence[str]] = None,
+        regime_columns: Optional[Sequence[str]] = None,
+        mask_columns: Optional[Sequence[str]] = None,
     ) -> Dict[str, Union[List[str], Dict]]:
         """
         Convert ML dataset to ATFT format and save as parquet files
@@ -258,6 +286,9 @@ class UnifiedFeatureConverter:
             train_ratio: Training data ratio
             val_ratio: Validation data ratio
             test_ratio: Test data ratio
+            feature_columns: Optional explicit list of feature columns to use
+            static_columns: Optional list of columns to expose as static features
+            regime_columns: Optional list of columns for regime features (aggregated downstream)
 
         Returns:
             Dictionary with file paths and metadata
@@ -272,9 +303,77 @@ class UnifiedFeatureConverter:
             logger.info(f"Dropping duplicate columns: {dup_cols[:5]}{'...' if len(dup_cols) > 5 else ''}")
             df = df.drop(dup_cols)
 
-        # Detect features (used by downstream metadata)
-        self.feature_columns = self._detect_feature_columns(df)
+        # Detect or override feature columns (used by downstream metadata)
+        override_features: List[str] = []
+        if feature_columns:
+            unique_override = list(dict.fromkeys(feature_columns))
+            override_features = [c for c in unique_override if c in df.columns]
+            missing_override = [c for c in unique_override if c not in df.columns]
+            if missing_override:
+                logger.warning(
+                    "Skipping %d requested feature columns not present in dataset (e.g. %s)",
+                    len(missing_override),
+                    ", ".join(missing_override[:5])
+                    + ("..." if len(missing_override) > 5 else ""),
+                )
+            if override_features:
+                logger.info(
+                    "Using %d curated feature columns (override supplied)",
+                    len(override_features),
+                )
+        if override_features:
+            base_override = [
+                col.removesuffix("_cs_z") if col.endswith("_cs_z") else col
+                for col in override_features
+            ]
+            # Preserve order while dropping duplicates
+            seen_base: dict[str, None] = {}
+            base_ordered = [
+                seen_base.setdefault(col, None) or col
+                for col in base_override
+                if col not in seen_base
+            ]
+            self.raw_feature_columns = base_ordered
+            self.feature_columns = override_features
+        else:
+            detected = self._detect_feature_columns(df)
+            self.raw_feature_columns = list(detected)
+            self.feature_columns = detected
         logger.info(f"Using {len(self.feature_columns)} feature columns")
+
+        mask_columns = [c for c in (mask_columns or []) if c in df.columns]
+        static_columns = [c for c in (static_columns or []) if c in df.columns]
+        missing_static = [c for c in (static_columns or []) if c not in df.columns]
+        if missing_static:
+            logger.warning(
+                "Dropping %d static columns not present in dataset (e.g. %s)",
+                len(missing_static),
+                ", ".join(missing_static[:5])
+                + ("..." if len(missing_static) > 5 else ""),
+            )
+        regime_columns = [c for c in (regime_columns or []) if c in df.columns]
+        missing_regime = [c for c in (regime_columns or []) if c not in df.columns]
+        if missing_regime:
+            logger.warning(
+                "Dropping %d regime columns not present in dataset (e.g. %s)",
+                len(missing_regime),
+                ", ".join(missing_regime[:5])
+                + ("..." if len(missing_regime) > 5 else ""),
+            )
+
+        self.mask_columns = mask_columns
+        self.raw_feature_columns = list(self.raw_feature_columns)
+        self.dynamic_feature_columns = [
+            f"{col}_cs_z" for col in self.raw_feature_columns
+        ]
+        combined_feature_columns = self.dynamic_feature_columns + self.mask_columns
+        self.feature_columns = combined_feature_columns
+        self.all_feature_columns = combined_feature_columns
+        self.date_column = "Date" if "Date" in df.columns else "date"
+        if self.date_column not in df.columns:
+            raise ValueError(
+                "Dataset must contain a Date/date column for cross-sectional normalization"
+            )
 
         # Normalize ratios
         total_ratio = train_ratio + val_ratio + test_ratio
@@ -467,6 +566,9 @@ class UnifiedFeatureConverter:
             test_slice: Optional[pl.DataFrame] = None
 
             train_slice = code_df.slice(0, train_end)
+            train_slice = self._apply_cross_sectional_zscores(
+                train_slice, self.raw_feature_columns
+            )
             if train_slice.height >= self.sequence_length:
                 train_path = train_dir / f"{code}.parquet"
                 train_slice.write_parquet(train_path)
@@ -478,6 +580,9 @@ class UnifiedFeatureConverter:
 
             if val_end > val_start:
                 val_slice = code_df.slice(val_start, val_end - val_start)
+                val_slice = self._apply_cross_sectional_zscores(
+                    val_slice, self.raw_feature_columns
+                )
                 if val_slice.height >= self.sequence_length:
                     val_path = val_dir / f"{code}.parquet"
                     val_slice.write_parquet(val_path)
@@ -489,6 +594,9 @@ class UnifiedFeatureConverter:
 
             if test_end > test_start:
                 test_slice = code_df.slice(test_start, test_end - test_start)
+                test_slice = self._apply_cross_sectional_zscores(
+                    test_slice, self.raw_feature_columns
+                )
                 if test_slice.height >= self.sequence_length:
                     test_path = test_dir / f"{code}.parquet"
                     test_slice.write_parquet(test_path)
@@ -502,11 +610,18 @@ class UnifiedFeatureConverter:
             diag_entry["merged_test"] = merged_test
             diagnostics.append(diag_entry)
 
+        combined_feature_columns = self.feature_columns
+        self.all_feature_columns = combined_feature_columns
+
         metadata = {
             "sequence_length": self.sequence_length,
             "prediction_horizons": self.prediction_horizons,
-            "n_features": len(self.feature_columns),
-            "feature_columns": self.feature_columns,
+            "n_features": len(combined_feature_columns),
+            "feature_columns": combined_feature_columns,
+            "raw_feature_columns": self.raw_feature_columns,
+            "static_columns": static_columns,
+            "regime_columns": regime_columns,
+            "mask_columns": self.mask_columns,
             "n_codes_processed": len(codes),
             "train_ratio": train_ratio_norm,
             "val_ratio": val_ratio_norm,
@@ -556,8 +671,18 @@ class UnifiedFeatureConverter:
         if train_slice.height <= 0:
             return code_df, None
 
+        feature_names = self.raw_feature_columns
+        if not feature_names:
+            feature_names = [
+                col.removesuffix("_cs_z") if col.endswith("_cs_z") else col
+                for col in self.feature_columns
+            ]
+        feature_names = [col for col in feature_names if col in train_slice.columns]
+        if not feature_names:
+            return code_df, None
+
         feature_matrix = (
-            train_slice.select(self.feature_columns)
+            train_slice.select(feature_names)
             .to_numpy()
             .astype(np.float64, copy=False)
         )
@@ -576,7 +701,7 @@ class UnifiedFeatureConverter:
         clip_exprs: List[pl.Expr] = []
         min_clip = float("inf")
         max_clip = float("-inf")
-        for idx, column in enumerate(self.feature_columns):
+        for idx, column in enumerate(feature_names):
             lo = lower_bounds[idx]
             hi = upper_bounds[idx]
             if not np.isfinite(lo) or not np.isfinite(hi):
