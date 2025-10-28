@@ -54,9 +54,7 @@ groups:
       - stmt_days_since_statement
     masks:
       - is_flow_valid
-      - is_stmt_valid
       - is_valid_ma
-      - is_sec_cs_valid
 
   plus30:
     description: Secondary enhancements (momentum, breadth, financial detail)
@@ -95,7 +93,6 @@ groups:
       - volatility_10d
     masks:
       - is_flow_valid
-      - is_stmt_valid
 
   dmi_focus:
     description: Daily margin signals (focused subset)

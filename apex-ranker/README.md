@@ -50,7 +50,8 @@ apex-ranker/
    python apex-ranker/scripts/check_training_ready.py --config apex-ranker/configs/v0_base.yaml
    ```
 
-   The script validates column coverage, targets, and lookback depth before running a full training job.
+   The script validates column coverage, targets, and lookback depth before running a full training job.  
+   *Note:* As of the current dataset only `is_flow_valid` / `is_valid_ma` carry signal; `is_stmt_valid` / `is_sec_cs_valid` were removed from the active mask list and will be logged as zero-coverage if present.
 
 5. (Optional) quick sanity run (CPU/GPU agnostic):
 

@@ -300,6 +300,7 @@ def main() -> None:
         # Validation
         model.eval()
         metrics = {h: {"ic": [], "p@k": []} for h in horizons}
+        val_panel_count = 0
         with torch.no_grad():
             for batch in val_loader:
                 if batch is None:
@@ -307,6 +308,7 @@ def main() -> None:
                 X = to_device(batch["X"].squeeze(0))
                 y = to_device(batch["y"].squeeze(0))
                 scores = model(X)
+                val_panel_count += 1
 
                 for idx, horizon in enumerate(horizons):
                     if idx >= y.shape[1]:
@@ -326,7 +328,14 @@ def main() -> None:
                 continue
             ic_mean = sum(icvals) / len(icvals)
             pk_mean = sum(pkvals) / len(pkvals) if pkvals else float("nan")
-            print(f"[Val] h={horizon:>2}d RankIC={ic_mean:.4f}  P@K={pk_mean:.4f}")
+            print(
+                "[Val] h=%2dd RankIC=%.4f  P@K=%.4f  (panels=%d)"
+                % (horizon, ic_mean, pk_mean, len(icvals))
+            )
+        if val_panel_count == 0:
+            print("[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day.")
+        else:
+            print(f"[INFO] Processed {val_panel_count} validation panels.")
 
     if args.output:
         out_path = Path(args.output)
