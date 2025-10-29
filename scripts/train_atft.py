@@ -6928,6 +6928,9 @@ def train(config: DictConfig) -> None:
         logger.error(f"[OPT-AUDIT][FAIL] {_e}")
         raise
 
+    phase_training_active = os.getenv("PHASE_TRAINING_ACTIVE", "0") == "1"
+    phase_reset_epoch = os.getenv("PHASE_RESET_EPOCH", "0") == "1"
+    phase_reset_optimizer = os.getenv("PHASE_RESET_OPTIMIZER", "0") == "1"
     resume_epoch = 0
     resume_global_step = 0
     resume_ckpt_env = os.getenv("RESUME_FROM_CHECKPOINT", "").strip()
@@ -6949,17 +6952,21 @@ def train(config: DictConfig) -> None:
                             ", ".join(sorted(unexpected)),
                         )
                 optim_state = checkpoint.get("optimizer_state_dict")
-                if optim_state:
+                if optim_state and not phase_reset_optimizer:
                     try:
                         optimizer.load_state_dict(optim_state)
                     except Exception as _opt_e:
                         logger.warning("[resume] Optimizer state load skipped: %s", _opt_e)
+                elif optim_state and phase_reset_optimizer:
+                    logger.info("[phase-reset] Skipping optimizer state load for phase transition")
                 scaler_state = checkpoint.get("scaler_state_dict")
-                if scaler_state:
+                if scaler_state and not phase_reset_optimizer:
                     try:
                         scaler.load_state_dict(scaler_state)
                     except Exception as _scaler_e:
                         logger.warning("[resume] GradScaler state load skipped: %s", _scaler_e)
+                elif scaler_state and phase_reset_optimizer:
+                    logger.info("[phase-reset] Skipping GradScaler state load for phase transition")
                 resume_epoch = int(checkpoint.get("epoch", 0))
                 resume_global_step = int(checkpoint.get("global_step", 0))
                 logger.info(
@@ -6968,6 +6975,10 @@ def train(config: DictConfig) -> None:
                     resume_epoch,
                     resume_global_step,
                 )
+                if phase_training_active and phase_reset_epoch:
+                    resume_epoch = 0
+                    resume_global_step = 0
+                    logger.info("[phase-reset] Resetting epoch/global_step to 0 for new phase training")
             except Exception as _resume_err:
                 logger.error("[resume] Failed to load checkpoint %s: %s", resume_path, _resume_err)
         else:
@@ -8823,6 +8834,16 @@ def train(config: DictConfig) -> None:
                         scaler.update()
                     else:
                         optimizer.step()
+
+                    # 🔍 LOG GAT RESIDUAL GATE GRADIENT (After optimizer step, before zero_grad)
+                    if hasattr(model, "gat_residual_gate") and model.gat_residual_gate.grad is not None:
+                        gate_grad_norm = model.gat_residual_gate.grad.norm().item()
+                        gate_val = model.gat_residual_gate.item()
+                        logger.info(
+                            f"[GAT-GATE-GRAD] gate_value={gate_val:.4f}, "
+                            f"grad_norm={gate_grad_norm:.2e}"
+                        )
+
                     optimizer.zero_grad(set_to_none=True)
                 # Log training loss (removed unused variables)
                 if n_micro_steps > 0:

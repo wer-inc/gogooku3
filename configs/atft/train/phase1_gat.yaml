@@ -1,0 +1,142 @@
+# @package train
+# Phase 1: GAT Integration
+# Adds graph attention network on top of baseline
+
+trainer:
+  max_epochs: 25
+  accelerator: cuda
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 50
+  val_check_interval: 1.0
+  accumulate_grad_batches: 1
+
+optimizer:
+  name: adamw
+  lr: 3e-4  # Slightly higher for GAT learning
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  weight_decay: 1e-5
+
+  # Per-layer learning rates
+  param_groups:
+    - name: gat
+      lr_multiplier: 1.5  # Higher LR for new GAT layers
+    - name: tft
+      lr_multiplier: 0.5  # Lower LR for pre-trained TFT
+    - name: head
+      lr_multiplier: 1.0
+
+scheduler:
+  name: plateau
+  mode: max
+  monitor: val/rank_ic_5d
+  patience: 10
+  factor: 0.7
+  min_lr: 1e-7
+  threshold: 1e-4
+  cooldown: 2
+
+batch:
+  batch_size: 2048
+  shuffle: true
+  num_workers: 2  # Enable multi-worker for Phase 1
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+  drop_last: false
+
+# Loss configuration - shift toward IC/RankIC
+loss:
+  horizons: [1, 5, 10, 20]
+  horizon_weights:
+    1: 1.0
+    5: 0.8
+    10: 0.5
+    20: 0.3
+
+  components:
+    mse:
+      weight: 0.3  # Reduced from Phase 0
+
+    quantile:
+      weight: 0.2
+      quantiles: [0.5]
+
+    sharpe:
+      weight: 0.25  # Slightly increased
+      target_sharpe: 0.849
+
+    ic:
+      weight: 0.25  # Increased for IC focus
+      use_rank_ic: true
+      rank_ic_weight: 0.6  # More emphasis on RankIC
+
+# Model config: Enable GAT
+model:
+  use_graph: true  # ✅ GAT enabled in Phase 1
+  gat:
+    num_heads: 4
+    hidden_dim: 256
+    dropout: 0.1
+    alpha: 0.2
+    concat: true
+  fan:
+    enabled: false  # Not yet
+  san:
+    enabled: false  # Not yet
+
+# Early stopping
+early_stopping:
+  monitor: val/rank_ic_5d
+  mode: max
+  patience: 15
+  min_delta: 1e-4
+  verbose: true
+
+# Validation settings
+validation:
+  metrics:
+    - ic
+    - rank_ic
+    - sharpe
+    - max_drawdown
+  walk_forward:
+    enabled: true
+    embargo_days: 10
+    n_splits: 5
+
+# Checkpointing
+callbacks:
+  model_checkpoint:
+    monitor: val/rank_ic_5d
+    mode: max
+    save_top_k: 2
+    save_last: true
+    filename: phase1_best
+
+  learning_rate_monitor:
+    logging_interval: step
+
+  gpu_stats_monitor:
+    memory_utilization: true
+    gpu_utilization: true
+
+# Performance optimizations
+performance:
+  compile:
+    enabled: true
+    mode: reduce-overhead
+    fullgraph: false
+  gradient_checkpointing: false
+  mixed_precision: bf16
+  dataloader:
+    multiprocessing_context: spawn
+
+debug:
+  profiler: false
+  detect_anomaly: false
+  track_grad_norm: true
+  log_gpu_memory: true

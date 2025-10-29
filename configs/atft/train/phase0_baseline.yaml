@@ -1,0 +1,115 @@
+# @package train
+# Phase 0: Baseline Training (no GAT/FAN/SAN)
+# Foundation training with only TFT backbone
+
+trainer:
+  max_epochs: 20
+  accelerator: cuda
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 50
+  val_check_interval: 1.0
+  accumulate_grad_batches: 1
+
+optimizer:
+  name: adamw
+  lr: 2e-4  # Conservative learning rate for baseline
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  weight_decay: 1e-5
+
+scheduler:
+  name: plateau
+  mode: max
+  monitor: val/rank_ic_5d
+  patience: 8
+  factor: 0.7
+  min_lr: 1e-7
+  threshold: 1e-4
+  cooldown: 2
+
+batch:
+  batch_size: 2048
+  shuffle: true
+  num_workers: 0  # Safe mode for Phase 0
+  persistent_workers: false
+  prefetch_factor: 2
+  pin_memory: true
+  drop_last: false
+
+# Loss configuration - MSE-heavy for stable baseline
+loss:
+  horizons: [1, 5, 10, 20]
+  horizon_weights:
+    1: 1.0
+    5: 0.8
+    10: 0.5
+    20: 0.3
+
+  components:
+    mse:
+      weight: 0.5  # Primary loss for baseline
+
+    quantile:
+      weight: 0.2
+      quantiles: [0.5]
+
+    sharpe:
+      weight: 0.2
+      target_sharpe: 0.849
+
+    ic:
+      weight: 0.1
+      use_rank_ic: true
+      rank_ic_weight: 0.5
+
+# Model config: Disable GAT/FAN/SAN
+model:
+  use_graph: false  # No GAT in Phase 0
+  fan:
+    enabled: false  # No FAN in Phase 0
+  san:
+    enabled: false  # No SAN in Phase 0
+
+# Early stopping
+early_stopping:
+  monitor: val/rank_ic_5d
+  mode: max
+  patience: 12
+  min_delta: 1e-4
+  verbose: true
+
+# Validation settings
+validation:
+  metrics:
+    - ic
+    - rank_ic
+    - sharpe
+  walk_forward:
+    enabled: true
+    embargo_days: 10
+    n_splits: 5
+
+# Checkpointing
+callbacks:
+  model_checkpoint:
+    monitor: val/rank_ic_5d
+    mode: max
+    save_top_k: 1
+    save_last: true
+    filename: phase0_best  # Phase-specific checkpoint name
+
+# Performance optimizations (minimal for baseline)
+performance:
+  compile:
+    enabled: false  # No compilation in baseline for simplicity
+  gradient_checkpointing: false
+  mixed_precision: bf16
+
+debug:
+  profiler: false
+  detect_anomaly: false
+  track_grad_norm: true
+  log_gpu_memory: true

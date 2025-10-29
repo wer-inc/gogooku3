@@ -147,6 +147,7 @@ DISPOSITION.csv
 cleanup_execution_report.md
 logs/
 outputs/
+results/
 .env
 
 # Archive files (experimental data, logs, old code)

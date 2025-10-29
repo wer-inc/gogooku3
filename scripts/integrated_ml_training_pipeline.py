@@ -1935,6 +1935,67 @@ class CompleteATFTTrainingPipeline:
         logger.info(f"💾 Complete training result saved: {result_file}")
 
 
+def prepare_phase_training(args):
+    """
+    Phase Training (Phase 4) control logic.
+
+    Automatically selects config and checkpoint based on --phase flag:
+    - Phase 0: baseline (no GAT/FAN/SAN)
+    - Phase 1: GAT enabled
+    - Phase 2: FAN enabled
+    - Phase 3: SAN enabled
+    - Phase 4: finetune (all components active)
+
+    Auto-resumes from previous phase checkpoint if available.
+    """
+    if args.phase is None:
+        return args
+
+    # Phase config mapping
+    phase_config_map = {
+        0: 'phase0_baseline',
+        1: 'phase1_gat',
+        2: 'phase2_fan',
+        3: 'phase3_san',
+        4: 'phase4_finetune',
+    }
+
+    config_name = phase_config_map[args.phase]
+    logger.info(f"🔄 Phase {args.phase} training: Loading config '{config_name}'")
+
+    # Expose phase context to the underlying trainer via environment variables.
+    os.environ["PHASE_INDEX"] = str(args.phase)
+    os.environ.setdefault("PHASE_TRAINING_ACTIVE", "1")
+    os.environ.setdefault("PHASE_RESET_EPOCH", "1")
+    # Reinitialize optimizer/scaler state when jumping between phases unless explicitly disabled.
+    os.environ.setdefault("PHASE_RESET_OPTIMIZER", "1")
+
+    # Override config_name (will be passed as unknown arg to Hydra)
+    if '--config-name' not in ' '.join(getattr(args, 'extra_overrides', [])):
+        # Add to extra_overrides if not already specified
+        if not hasattr(args, 'config_name_override'):
+            args.config_name_override = config_name
+
+    # Auto-resume from previous phase if checkpoint exists
+    if args.phase > 0 and not args.resume_checkpoint:
+        prev_checkpoint = Path(f"models/checkpoints/phase{args.phase - 1}_best.pt")
+        if prev_checkpoint.exists():
+            args.resume_checkpoint = str(prev_checkpoint)
+            logger.info(f"📥 Auto-resuming from: {prev_checkpoint}")
+        else:
+            logger.warning(
+                f"⚠️  Previous phase checkpoint not found: {prev_checkpoint}\n"
+                f"   Starting Phase {args.phase} from scratch (no resume)"
+            )
+
+    # Handle save_phase_checkpoint flag
+    if args.save_phase_checkpoint:
+        os.environ['PHASE_CHECKPOINT_PREFIX'] = f'phase{args.phase}_'
+        logger.info(f"💾 Checkpoints will be saved with prefix: phase{args.phase}_")
+
+    return args
+
+
 async def main():
     """メイン実行関数"""
     import argparse
@@ -1978,8 +2039,34 @@ async def main():
         type=str,
         help="Resume training from a checkpoint path (model + optimizer state)",
     )
+    # Phase training control (Phase 4)
+    parser.add_argument(
+        "--phase",
+        type=int,
+        choices=[0, 1, 2, 3, 4],
+        default=None,
+        help="Training phase (0=baseline, 1=GAT, 2=FAN, 3=SAN, 4=finetune). Auto-selects config and checkpoint.",
+    )
+    parser.add_argument(
+        "--resume-checkpoint",
+        type=str,
+        default=None,
+        help="Checkpoint path to resume from previous phase (auto-detected if --phase provided)",
+    )
+    parser.add_argument(
+        "--save-phase-checkpoint",
+        action="store_true",
+        help="Save checkpoint with phase number in filename (e.g., phase2_best.pt)",
+    )
     # 既知以外のオプションはHydraオーバーライドとしてそのままtrain_atft.pyに渡す
     args, unknown = parser.parse_known_args()
+
+    # Phase training control (Phase 4)
+    args = prepare_phase_training(args)
+
+    # If phase config override is set, inject it into unknown args
+    if hasattr(args, 'config_name_override') and args.config_name_override:
+        unknown.insert(0, f'--config-name={args.config_name_override}')
 
     if args.dry_run:
         print("=" * 60)
@@ -1995,12 +2082,15 @@ async def main():
         print("=" * 60)
         return True, {"dry_run": True}
 
+    # Phase training takes precedence over --resume-from
+    resume_path = args.resume_checkpoint if args.resume_checkpoint else args.resume_from
+
     pipeline = CompleteATFTTrainingPipeline(
         data_path=args.data_path,
         sample_size=args.sample_size,
         run_safe_pipeline=bool(args.run_safe_pipeline),
         extra_overrides=unknown,
-        resume_from=args.resume_from,
+        resume_from=resume_path,
     )
 
     # 引数で設定を上書き（0も有効値として扱う）
