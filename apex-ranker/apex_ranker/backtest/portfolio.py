@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date as Date
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from .costs import CostCalculator
 
 
 @dataclass
@@ -130,6 +134,9 @@ class Portfolio:
         prices: dict[str, float],
         date: Date,
         transaction_costs: dict[str, float] | None = None,
+        *,
+        cost_calculator: "CostCalculator" | None = None,
+        volumes: dict[str, float] | None = None,
     ) -> list[Trade]:
         """
         Rebalance portfolio to target weights.
@@ -188,7 +195,27 @@ class Portfolio:
                 shares = abs(trade_value) / price
 
             # Apply transaction costs
-            cost = transaction_costs.get(code, 0.0)
+            commission = 0.0
+            slippage = 0.0
+            if cost_calculator is not None:
+                volume_value = 0.0
+                if volumes is not None:
+                    volume_value = volumes.get(code, 0.0) or 0.0
+                if volume_value <= 0.0:
+                    # Fallback: assume 1% participation
+                    volume_value = abs(trade_value) * 100.0
+                cost_breakdown = cost_calculator.calculate_trade_cost(
+                    abs(trade_value),
+                    volume_value,
+                    direction,
+                )
+                cost = cost_breakdown["total_cost"]
+                commission = cost_breakdown["commission"]
+                slippage = cost_breakdown["slippage"]
+            else:
+                cost = transaction_costs.get(code, 0.0)
+                commission = cost * 0.5
+                slippage = cost * 0.5
 
             trade = Trade(
                 date=date,
@@ -197,8 +224,8 @@ class Portfolio:
                 shares=shares,
                 price=price,
                 value=abs(trade_value),
-                commission=cost * 0.5,  # Assume 50% commission, 50% slippage
-                slippage=cost * 0.5,
+                commission=commission,
+                slippage=slippage,
                 total_cost=cost,
             )
 
@@ -255,14 +282,20 @@ class Portfolio:
         total_traded = sum(trade.value for trade in trades)
         return (total_traded / self.total_value) / 2
 
-    def log_state(self, date: Date) -> dict:
+    def log_state(
+        self,
+        date: Date,
+        *,
+        turnover: float | None = None,
+        transaction_cost: float | None = None,
+    ) -> dict:
         """
         Log current portfolio state.
 
         Returns:
             Dict with portfolio snapshot
         """
-        state = {
+        state: dict[str, float | str | list[dict[str, float | str]]] = {
             "date": str(date),
             "cash": self.cash,
             "equity_value": self.equity_value,
@@ -281,6 +314,10 @@ class Portfolio:
                 for code, pos in self.positions.items()
             ],
         }
+        if turnover is not None:
+            state["turnover"] = turnover
+        if transaction_cost is not None:
+            state["transaction_cost"] = transaction_cost
         self.history.append(state)
         return state
 
