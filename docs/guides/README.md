@@ -14,6 +14,6 @@ User-facing guides and tutorials for the gogooku3 project.
 
 ## See Also
 
-- [Main Documentation Index](../INDEX.md)
+- [Main Documentation Index](../index.md)
 - [Architecture Documentation](../architecture/)
-- [Reports](../reports/)
+- Output Reports (`output/reports/` 以下に生成)

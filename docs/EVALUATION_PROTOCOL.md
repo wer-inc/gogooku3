@@ -9,7 +9,7 @@
 - Data checks: `python scripts/tools/data_checks.py output/ml_dataset_latest_full.parquet`
 - Snapshot: `python scripts/tools/baseline_snapshot.py output/ml_dataset_latest_full.parquet`
 - Research bundle (snapshot + checks + splits + metrics): `make research-plus DATASET=output/ml_dataset_latest_full.parquet`
-- Research report (with optional fold-level section): `make research-report DATASET=output/ml_dataset_latest_full.parquet REPORT=reports/research_report.md`
+- Research report (with optional fold-level section): `make research-report DATASET=output/ml_dataset_latest_full.parquet REPORT=output/reports/research_report.md`
   - Uses `output/eval_splits_$(NSPLITS)fold_$(EMBARGO)d.json` if present to append fold-level top factors (RankIC mean ± CI95) tables.
 
 ## Metrics

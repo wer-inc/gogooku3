@@ -350,7 +350,7 @@ bash scripts/validate_loss_weights.sh
 ## 参考資料
 
 - **元の提案**: ユーザーの性能改善提案ドキュメント
-- **関連Issue**: [Phase 2 Regression Status](../reports/issues/phase2_regression_status_20251019.md) (損失関数重み設定不足)
+- **関連Issue**: Phase 2 Regression Status（損失関数重み設定不足、履歴アーカイブ済み）
 - **実装計画**: ExitPlanMode で承認された3-Phase計画
 - **設定参考**: `configs/atft/train/sharpe_optimized.yaml`
 

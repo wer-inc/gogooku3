@@ -462,7 +462,7 @@ export LEARNING_RATE=2.0e-4
 
 ### Documentation
 
-- **Experiment Report**: `docs/reports/experiments/tier1_sharpe_weight_optimization_20251021.md`
+- **Experiment Report**: `output/reports/tier1_sharpe_weight_optimization_20251021.md`（生成後に参照）
 - **Experiment Status**: `EXPERIMENT_STATUS.md`
 - **Loss Curriculum**: `scripts/utils/loss_curriculum.py`
 - **HPO Config**: `configs/experiments/hpo_search_space.yaml`
@@ -470,8 +470,8 @@ export LEARNING_RATE=2.0e-4
 ### Command Reference
 
 ```bash
-# View Tier 1 report
-cat docs/reports/experiments/tier1_sharpe_weight_optimization_20251021.md | less
+# View Tier 1 report (if generated)
+cat output/reports/tier1_sharpe_weight_optimization_20251021.md | less
 
 # Check experiment status
 cat EXPERIMENT_STATUS.md | grep -A 10 "Current Best"

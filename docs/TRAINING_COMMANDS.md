@@ -42,8 +42,10 @@ python scripts/detect_data_leakage.py
 ```bash
 python scripts/analyze_baseline_features.py \
   --data-path output/ml_dataset_latest_full.parquet \
-  --output reports/feature_analysis_$(date +%Y%m%d).md
+  --output output/reports/feature_analysis_$(date +%Y%m%d).md
 ```
+
+> 出力先ディレクトリ: `output/reports/`（必要に応じて `mkdir -p output/reports` を実行）
 
 **Check for**:
 - Feature importance distribution
@@ -317,8 +319,10 @@ print('Saved to metrics/sharpe_plot.png')
 python scripts/validate_production_model.py \
   --checkpoint outputs/best_model.pt \
   --data output/ml_dataset_latest_full.parquet \
-  --output reports/model_eval_$(date +%Y%m%d).md
+  --output output/reports/model_eval_$(date +%Y%m%d).md
 ```
+
+> 出力先ディレクトリ: `output/reports/`（未作成なら `mkdir -p output/reports`）
 
 ---
 

@@ -27,11 +27,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 import numpy as np
 import polars as pl
 import torch
+import yaml
 
 # パスを追加（repo root と src を import path へ）
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -107,7 +106,9 @@ class CompleteATFTTrainingPipeline:
             "AMP_DTYPE": "bf16",
         }
 
-    def _set_env_var(self, env: dict[str, str], key: str, value: float | int | str) -> None:
+    def _set_env_var(
+        self, env: dict[str, str], key: str, value: float | int | str
+    ) -> None:
         """Set environment variable in-place if value differs."""
         value_str = str(value)
         if env.get(key) != value_str:
@@ -159,7 +160,9 @@ class CompleteATFTTrainingPipeline:
                     logger.warning("Failed to read train config %s: %s", candidate, exc)
         return None
 
-    def _apply_train_config_env(self, env: dict[str, str], train_config: str | None) -> None:
+    def _apply_train_config_env(
+        self, env: dict[str, str], train_config: str | None
+    ) -> None:
         """Derive environment variables from train config loss/freeze fields."""
         cfg_dict = self._load_train_config_dict(train_config)
         if not isinstance(cfg_dict, dict):
@@ -170,28 +173,48 @@ class CompleteATFTTrainingPipeline:
             rankic_weight = loss_cfg.get("rankic_weight")
             if rankic_weight is not None:
                 weight_val = self._as_float(rankic_weight)
-                self._set_env_var(env, "RANKIC_WEIGHT", weight_val if weight_val is not None else rankic_weight)
+                self._set_env_var(
+                    env,
+                    "RANKIC_WEIGHT",
+                    weight_val if weight_val is not None else rankic_weight,
+                )
                 if weight_val is not None:
                     self._set_env_var(env, "USE_RANKIC", "1" if weight_val > 0 else "0")
 
             sharpe_weight = loss_cfg.get("sharpe_weight")
             if sharpe_weight is not None:
                 weight_val = self._as_float(sharpe_weight)
-                self._set_env_var(env, "SHARPE_WEIGHT", weight_val if weight_val is not None else sharpe_weight)
+                self._set_env_var(
+                    env,
+                    "SHARPE_WEIGHT",
+                    weight_val if weight_val is not None else sharpe_weight,
+                )
                 if weight_val is not None:
-                    self._set_env_var(env, "USE_SHARPE_LOSS", "1" if weight_val > 0 else "0")
+                    self._set_env_var(
+                        env, "USE_SHARPE_LOSS", "1" if weight_val > 0 else "0"
+                    )
 
             spearman_penalty = loss_cfg.get("spearman_penalty")
             if spearman_penalty is not None:
                 penalty_val = self._as_float(spearman_penalty)
-                self._set_env_var(env, "SPEARMAN_WEIGHT", penalty_val if penalty_val is not None else spearman_penalty)
+                self._set_env_var(
+                    env,
+                    "SPEARMAN_WEIGHT",
+                    penalty_val if penalty_val is not None else spearman_penalty,
+                )
                 if penalty_val is not None:
-                    self._set_env_var(env, "USE_SOFT_SPEARMAN", "1" if penalty_val > 0 else "0")
+                    self._set_env_var(
+                        env, "USE_SOFT_SPEARMAN", "1" if penalty_val > 0 else "0"
+                    )
 
             cs_ic_weight = loss_cfg.get("cs_ic_weight")
             if cs_ic_weight is not None:
                 weight_val = self._as_float(cs_ic_weight)
-                self._set_env_var(env, "CS_IC_WEIGHT", weight_val if weight_val is not None else cs_ic_weight)
+                self._set_env_var(
+                    env,
+                    "CS_IC_WEIGHT",
+                    weight_val if weight_val is not None else cs_ic_weight,
+                )
                 if weight_val is not None:
                     self._set_env_var(env, "USE_CS_IC", "1" if weight_val > 0 else "0")
 
@@ -202,7 +225,9 @@ class CompleteATFTTrainingPipeline:
                 self._set_env_var(env, "ENABLE_QUANTILES", "1" if enabled else "0")
                 if enabled and weight_val is not None:
                     pw = self._as_float(weight_val)
-                    self._set_env_var(env, "PINBALL_WEIGHT", pw if pw is not None else weight_val)
+                    self._set_env_var(
+                        env, "PINBALL_WEIGHT", pw if pw is not None else weight_val
+                    )
             horizon_weights = loss_cfg.get("multi_horizon_weights")
             if isinstance(horizon_weights, dict):
                 try:
@@ -227,6 +252,7 @@ class CompleteATFTTrainingPipeline:
                 except Exception:
                     freeze_epochs_val = freeze_epochs
                 self._set_env_var(env, "TEMPORAL_FREEZE_EPOCHS", freeze_epochs_val)
+
     async def run_complete_training_pipeline(self) -> tuple[bool, dict]:
         """ATFT-GAT-FANの成果を完全に再現する統合学習パイプラインを実行"""
         start_time = time.time()
@@ -588,9 +614,7 @@ class CompleteATFTTrainingPipeline:
         except Exception:  # noqa: S110
             pass  # Baseline logging failure is non-critical
 
-    def _resolve_curated_feature_columns(
-        self, df: pl.DataFrame
-    ) -> dict[str, Any]:
+    def _resolve_curated_feature_columns(self, df: pl.DataFrame) -> dict[str, Any]:
         """Load curated feature groups and resolve present columns."""
         config_path = Path("configs/atft/feature_groups.yaml")
         if not config_path.exists():
@@ -700,7 +724,9 @@ class CompleteATFTTrainingPipeline:
         try:
             cfg = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
         except Exception as exc:
-            logger.warning("Unable to read dataset schema config (%s): %s", schema_path, exc)
+            logger.warning(
+                "Unable to read dataset schema config (%s): %s", schema_path, exc
+            )
             return {}
         return cfg.get("schema", {})
 
@@ -747,23 +773,15 @@ class CompleteATFTTrainingPipeline:
                         "Missing %d curated features (e.g. %s)",
                         len(curated_info["missing_features"]),
                         ", ".join(curated_info["missing_features"][:5])
-                        + (
-                            "..."
-                            if len(curated_info["missing_features"]) > 5
-                            else ""
-                        ),
+                        + ("..." if len(curated_info["missing_features"]) > 5 else ""),
                     )
                 if curated_info.get("missing_masks"):
                     logger.warning(
-                    "Missing %d curated mask columns (e.g. %s)",
-                    len(curated_info["missing_masks"]),
-                    ", ".join(curated_info["missing_masks"][:5])
-                    + (
-                        "..."
-                        if len(curated_info["missing_masks"]) > 5
-                        else ""
-                    ),
-                )
+                        "Missing %d curated mask columns (e.g. %s)",
+                        len(curated_info["missing_masks"]),
+                        ", ".join(curated_info["missing_masks"][:5])
+                        + ("..." if len(curated_info["missing_masks"]) > 5 else ""),
+                    )
             else:
                 self.atft_settings["feature_groups"] = curated_info.get("groups", [])
 
@@ -781,18 +799,18 @@ class CompleteATFTTrainingPipeline:
                     _train_dir = _P(out_dir) / "train"
                     force_reconvert = os.getenv("FORCE_CONVERT", "0") == "1"
                     _meta_path = _P(out_dir) / "metadata.json"
-                    if (
-                        curated_columns
-                        and not force_reconvert
-                        and _meta_path.exists()
-                    ):
+                    if curated_columns and not force_reconvert and _meta_path.exists():
                         try:
-                            meta_obj = json.loads(_meta_path.read_text(encoding="utf-8"))
+                            meta_obj = json.loads(
+                                _meta_path.read_text(encoding="utf-8")
+                            )
                         except Exception:
                             meta_obj = {}
                         prev_columns = meta_obj.get("feature_columns") or []
                         prev_count = int(meta_obj.get("n_features", -1))
-                        if prev_count != expected_feature_count or set(prev_columns) != set(curated_columns):
+                        if prev_count != expected_feature_count or set(
+                            prev_columns
+                        ) != set(curated_columns):
                             logger.info(
                                 "Existing converted dataset uses %d columns (expected %d); forcing reconversion",
                                 prev_count,

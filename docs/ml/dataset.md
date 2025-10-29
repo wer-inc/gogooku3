@@ -1,794 +1,3 @@
-ありがとうございます。いただいた「現状の実装状況分析」を前提に、**いま何ができていて、何がボトルネックで、どの順にどう直すと“ベスト”に届くか**を、\*\*差分（具体的変更点）\*\*ベースで整理しました。結論から言うと——
-
-> **現状は土台（営業日スケジューリング／市場フィルタ／ページネーション／キャッシュ）は良好。主な改善余地は “データ取得の軸” と “差分検知の仕組み” に集中**しています。
-
----
-
-**モデル側の仕様（ATFT-GAT-FAN アーキテクチャ / Graph Attention Network / 学習設定）は [`docs/ml/atft_gat_fan.md`](./atft_gat_fan.md) を参照。** 本書はデータセットと特徴量の定義にフォーカスする。
-
-## 仕様追記（2025-09-07）
-
-本節は、本データセットに既に含まれている機能・列の仕様を明文化し、将来の再現性を高めるための補足です。
-
-### 1) セクター・ターゲットエンコーディング（TE）
-- 生成列: `te33_sec_target_5d`（エイリアス: `te_sec_target_5d`）
-- ベース: 33 セクター（`sector33_id`）
-- リーク防止: `t-Δ` での計算（既定 Δ=1 営業日）。当日情報は使用しない。
-- 学習安定化: k-fold クロスフィット排他 + ベイズ平滑（`m=100`）
-  - セクター平均（除外 fold）= μ_sec_excl(t)
-  - グローバル平均（除外 fold）= μ_all_excl(t)
-  - TE = (n_sec·μ_sec_excl + m·μ_all_excl) / (n_sec + m)
-- 欠損規約: `sector33_id` が未付与の行は TE を `null` とする。
-
-注: 極端にデータが薄い日に対しては、fold 排他計算が成立しない場合があり、その際も `t-1` までの情報のみで μ を構成する。
-
-### 2) セクター属性付与のルール
-- データ源: `listed_info`（`Code`, `Date`, `MarketCode`, `Sector33Code` ほか）
-- キー: 内部は `LocalCode`/`Code` を UTF-8 文字列として扱う（本データでは同一値）。
-- 期間結合:
-  - 原則は as-of backward（`valid_from ≤ Date ≤ valid_to`）。
-  - 将来日スナップショットのみが存在する場合は、`valid_from` をデータセット最小日付まで引き下げ、全期間カバーできるよう補正する（スナップショット型の listed_info を許容）。
-- 優先規則: 同名列が両辺にある場合、`listed_info` 側（右辺）を優先。
-  - 例: `Sector33Code` → `sector33_code`/`sector33`、`MarketCode` を右辺優先で採用。
-- Section 付与: `MarketCode`→`Section` へ標準化（JASDAQ 等は後方互換ルールで統合）。
-- 期待カバレッジ: 上場銘柄の大半（約 95〜97% 程度）が `sector33_id ≥ 0` となる。上場直後・特殊市場移行直後などは `null` になり得る。
-
-### 3) 命名の正規化（レガシー → 正式名）
-- 有効フラグ: `is_ema_5_valid` → `is_ema5_valid`、`is_ema_10_valid` → `is_ema10_valid`、`is_rsi_2_valid` → `is_rsi2_valid` など。
-- ボリンジャー: `bb_bandwidth` → `bb_width`、`bb_pct_b` → `bb_position`。
-- その他: 旧名は極力出力しない。互換が必要な場合はビュー/エイリアスで吸収する。
-
-### 4) フロー特徴の表記について
-- 文書中の **プレフィクスの説明** は「flow_* グループ」と記述する（ワイルドカード `flow_*` は列集合の説明であり、個々の列名は明示列を参照）。
-- 代表列: `flow_foreign_net_ratio`, `flow_individual_net_ratio`, `flow_activity_ratio`, `flow_smart_idx`, `flow_smart_mom4`, `flow_shock_flag`, `flow_impulse`, `flow_days_since` など（合計 ≥ 17）。
-
-### 5) 拡張（任意列）
-- セクター日次頻度: `sec33_daily_freq`
-  - 含意: 同一 `Date` における 33 セクター内の相対頻度（集計窓無しのその日スナップショット）。
-  - 算出: `count(Date×sector33_id) / count(Date)` を window 集計で算出（join 不要）。
-  - 位置づけ: 任意（必要に応じて生成）。本仕様の必須列ではない。
-
-### 6) 日次マージン（dmi_）ブロックの追加
-
-- ソース: `/markets/daily_margin_interest`（J-Quants）。
-- 補正: `(Code, ApplicationDate)` ごとに **最新の `PublishedDate`** を採用。
-- 有効日: `effective_start = next_business_day(PublishedDate)`（T+1）。
-- 結合: `(Code, Date)` に **as‑of backward** で付与。`dmi_impulse=1` は有効日当日。
-- 主な列: `dmi_long/short/net/total/credit_ratio/imbalance/short_long_ratio`, `dmi_d_*_1d`, `dmi_z26_*`, `dmi_*_to_adv20`, `dmi_reason_*`, `dmi_reason_count`, `dmi_tse_reg_level`, `dmi_days_since_pub/app`, `is_dmi_valid`。
-- 有効化: `scripts/pipelines/run_full_dataset.py --enable-daily-margin [--daily-margin-parquet PATH]`（未指定時は `output/daily_margin_interest_*.parquet` 自動探索）。
-
----
-
----
-
-## ステータス要約（あなたの整理に対する所見）
-
-### うまくできている点（維持）
-
-* **営業日ドリブン運転**：◎（TradingCalendarFetcher の扱い・HolidayDivision もOK）
-* **Market Code フィルタ**：◎（PRO/その他除外／ホワイトリスト方針も妥当）
-* **ページネーション**：◎（`pagination_key` 実装済）
-* **キャッシュ**：○（Listed 24h は後述の運用変更に合わせてTTLを調整）
-
-### ギャップ（優先順位つき）
-
-1. **/prices/daily\_quotes の“軸”**
-   　現在は **`date` 一択** → **市場フィルタ運用**では\*\*`code+from/to`\*\*のほうが無駄が少ない場面が多い。
-2. **/listed/info の取得タイミング**
-   　いまは「最初・中・最後」の **粗いサンプリング** → \*\*月初＋“差分検知日”\*\*へ。
-3. **/fins/statements の“軸”**
-   　いまは **`code` バッチ** → \*\*`date`（営業日ループ）\*\*に切替えると空振りが減る。
-4. **差分検知の欠如**
-   　上場/廃止/市場変更/社名変更を **日単位**で確定できていない。
-5. **自動軸選択の欠如**
-   　実測のない「固定 `date`」は、データ量や市場選択で**非最適**になりやすい。
-
----
-
-## いちばん良い解（現状からの**最短**アップグレード設計）
-
-> **“営業日で回す”外側の枠組みは維持**しつつ、**エンドポイントごとに最適軸を使い分け**、**差分検知で /listed を必要日だけに絞る**。
-> バックフィルでは **二分探索（sparse search）** を使い、**/listed の日次連打を回避**します。
-
-### A. daily\_quotes（株価）——**軸の自動選択＋市場フィルタ最適化**
-
-* **実装**：
-
-  * 起動時に **小規模試行**で `date` 軸と `code` 軸の**ページ数／転送量**を**実測**し、**その日のジョブ方針を自動決定**（例：代表3営業日 × 代表50銘柄）。
-  * **市場を絞って収集する日**は基本 **`code+from/to`** を優先（その銘柄の在籍期間だけ取り切る）
-  * \*\*全市場が必要な日（例：全量検証・棚卸し）\*\*は **`date=YYYY-MM-DD`** で一括取得
-* **保存**：
-
-  * どちらの軸でも **同じ upsert**（PK: `(date, local_code)`）に集約
-  * **5桁 LocalCode** に内部統一（4桁 Code は別カラムで保持）
-
-### B. listed\_info（銘柄マスター）——**月初＋差分日**に限定
-
-* **平時（運用）**：
-
-  * **毎月の最初の営業日**に `/listed/info?date=...` で**スナップショット**保存
-  * **日次ジョブでは** `daily_quotes の Code 集合` の**増減が出た日だけ** `/listed/info?date=当日` を追加取得
-* **バックフィル（過去5年）**：
-
-  * 各月の**月初営業日スナップショット**をまず全期間ぶん取得
-  * **イベント（新規上場/廃止/市場変更）が疑われる月**について、**その月の期間 \[前月初, 当月初) に二分探索で最小回数だけ /listed を叩く**
-
-    * 例）前月には存在せず当月に存在 → **上場日がその区間にある**ので 1〜⌈log₂ 区間日数⌉ 回の /listed で**正確な発生日**を特定
-    * 廃止・市場変更・社名変更も同様
-  * **日単位でのイベント日**が**少ないAPIコール**で復元できます
-
-### C. fins/statements（財務）——**営業日（date）で回収**
-
-* **営業日ループで `?date=YYYY-MM-DD`** を回すと、**開示のあった日だけ**返るため**空振りがほぼない**
-* 初回の埋め漏れが見つかった銘柄だけ **`?code=` で補完**
-* **IFRS の空欄（OrdinaryProfit 等）**はスキーマで**NULL許容**、型は DECIMAL 推奨
-
-### D. trades\_spec（投資部門別）——**セクション×期間一括＋ローリング再取得**
-
-* **セクションごと**に `from/to` 一括取得（過誤訂正は **PublishedDate** 違いで併存）
-* 運用では **直近2〜3週間**を**毎日取り直すローリング窓**で訂正を吸収
-* PK: `(section, start_date, end_date, published_date)`
-
-### E. 差分検知とイベント化（上場/廃止/市場・社名変更）
-
-* **コード集合の差分**（`daily_quotes?date` の集合 or **B の二分探索で確定した境界日**）でイベント生成
-* `securities_events`（flat）
-
-  * `local_code, event_type, effective_from, effective_to(null), details_text`
-  * ルール例：
-
-    * “前日まで存在→当日消失” → **最終在籍日=前営業日**, **廃止日=翌営業日**
-    * 市場/社名属性が変わった → **effective\_from=当日**
-
----
-
-## 変更差分（そのまま実装に落とせるレベル）
-
-### 1) 軸自動選択（prices）
-
-**新規**：`AxisDecider.measure_api_efficiency()`
-
-```ts
-type AxisChoice = 'by_date' | 'by_code';
-
-async function measure_api_efficiency(sampleDays: Date[], sampleCodes: string[]): Promise<AxisChoice> {
-  const datePages = await countPagesByDate(sampleDays);   // /prices?date=...
-  const codePages = await countPagesByCode(sampleCodes);  // /prices?code=...&from&to
-  // しきい値は経験則＋安全率（例：datePages <= 0.9 * codePages なら by_date）
-  return (datePages <= 0.9 * codePages) ? 'by_date' : 'by_code';
-}
-```
-
-* **導入箇所**：デイリーバッチ開始時／バックフィル開始時に1回計測 → ジョブ実行方針を決定
-* **メトリクス**：`calls_count`, `pages_count`, `bytes_total` をロギング
-
-### 2) prices: 銘柄軸フェッチャ
-
-**新規**：`DailyQuotesByCodeFetcher.fetch(code, from, to)`
-
-* **入力**：市場フィルタで作った **在籍期間レンジ**（後述）
-* **実装**：`GET /prices/daily_quotes?code=...&from=...&to=...` をページング追従、`(date, local_code)` で upsert
-
-### 3) listed: “月初＋差分日” & **二分探索**
-
-**新規**：`ListedInfoManager`
-
-```ts
-async function snapshotAt(monthStart: Date): Promise<ListedRow[]> { /* /listed?date=... */ }
-function detectChanges(prevSet: Set<string>, currSet: Set<string>): Change[] { /* add/del */ }
-async function pinpointChangeDate(range: [Date, Date], predicate: (d:Date)=>Promise<boolean>): Promise<Date> {
-  // /listed?date=mid を叩き、存在有無で半区間に絞る二分探索
-}
-```
-
-* **バックフィル**：
-
-  1. 5年分の**月初スナップショット**を取り切る
-  2. 月をまたいだ **出現/消滅/属性差** を検出
-  3. それぞれの区間で **二分探索**して **正確なイベント日**を確定
-* **運用**：
-
-  * 日次で prices の **Code集合差分**が出た日だけ `/listed?date=当日` を取得
-
-### 4) statements: `date` 軸へ切替
-
-* 既存 `fetch_statements(code)` を **`fetch_statements_by_date(date)`** に置換
-* **並行で** `reconcile_missing_by_code(code)` を用意（欠損補完用）
-* **テストの暫定 100銘柄制限**は削除
-
-### 5) イベントテーブル（flat）＆在籍期間生成
-
-* **新規テーブル**：`securities_events`（上で定義）
-* **在籍期間**を作る補助テーブル：`market_membership`
-
-  * `local_code, market_code, from_date, to_date(null)`（PK: `local_code, market_code, from_date`）
-  * **prices の銘柄軸取得**の入力レンジとして再利用
-
----
-
-## スケジューリング（デイリー & バックフィル）
-
-### デイリー（擬似フロー）
-
-```text
-1) trading_day = 今日の営業日判定
-2) axis = AxisDecider.measure_api_efficiency_if_needed()
-3) dq_date = GET /prices?date=trading_day   # コード集合抽出 + 全量保存(必要なら)
-4) if code_set_changed(dq_date vs yesterday):
-     listed_today = GET /listed?date=trading_day
-     update market_membership + emit securities_events
-5) if axis == 'by_code' and 市場フィルタあり:
-     for (code, ranges in market_membership):
-         GET /prices?code=code&from=range.start&to=range.end
-   else:
-     # すでに step3 で全量保存済
-6) GET /fins/statements?date=trading_day
-7) GET /markets/trades_spec (rolling 2–3 weeks)
-```
-
-### バックフィル（過去5年）
-
-```text
-A) 月初 /listed を全期間取得 → 月次差分を抽出
-B) 差分対象だけ /listed を二分探索で当日特定 → events + membership を構築
-C) prices: 市場フィルタ保有なら by_code でレンジ取得、なければ by_date 一括
-D) statements: 営業日ループで date 軸、漏れを code で補完
-E) trades_spec: セクション×期間一括 ＋ verification ローリング
-```
-
----
-
-## 最低限のスキーマ（PostgreSQL; *flat*）
-
-```sql
--- 株価（日次）
-create table daily_quotes (
-  date date not null,
-  local_code varchar(5) not null,
-  open numeric, high numeric, low numeric, close numeric,
-  volume bigint, turnover_value numeric,
-  adj_open numeric, adj_high numeric, adj_low numeric, adj_close numeric,
-  adjustment_factor numeric,
-  primary key (date, local_code)
-) partition by range (date);
-
--- 銘柄スナップショット
-create table securities_master (
-  as_of_date date not null,
-  local_code varchar(5) not null,
-  code_4 varchar(4),
-  company_name text,
-  market_code varchar(4),
-  market_name text,
-  sector17_code varchar(4), sector17_name text,
-  sector33_code varchar(4), sector33_name text,
-  scale_category text,
-  primary key (as_of_date, local_code)
-);
-
--- 在籍期間（市場別）
-create table market_membership (
-  local_code varchar(5) not null,
-  market_code varchar(4) not null,
-  from_date date not null,
-  to_date date,
-  primary key (local_code, market_code, from_date)
-);
-
--- イベント（上場/廃止/変更/改称）
-create table securities_events (
-  local_code varchar(5) not null,
-  event_type text not null,               -- 'new_listing' | 'delisting' | 'market_change' | 'name_change'
-  effective_from date not null,
-  effective_to date,
-  details_text text,
-  primary key (local_code, event_type, effective_from)
-);
-
--- 財務
-create table fins_statements (
-  disclosed_date date not null,
-  disclosed_time time,
-  local_code varchar(5) not null,
-  disclosure_number text not null,
-  type_of_document text,
-  net_sales numeric, operating_profit numeric, ordinary_profit numeric, profit numeric, eps numeric,
-  total_assets numeric, equity numeric,
-  primary key (local_code, disclosure_number)
-);
-
--- 投資部門別
-create table trades_spec (
-  section text not null,
-  start_date date not null,
-  end_date date not null,
-  published_date date not null,
-  -- ... numbers ...
-  primary key (section, start_date, end_date, published_date)
-);
-```
-
----
-
-## キャッシュとレートの運用ポイント
-
-* **Trading Calendar**：週1の再取得は妥当（年次切替期のみ前倒し更新）
-* **Listed Info**：
-
-  * **月初スナップショット**はキャッシュ長めでもOK
-  * **差分日**の取得は当日中のみ有効なので、**短TTL or no-cache**で
-* **prices by code**：銘柄数に応じて**並列度を上限管理**（指数バックオフ＋再試行）
-* **メトリクス**：`calls/pages/bytes/err_rate` を**軸別**・**エンドポイント別**に記録 → 次回の自動軸選択に活用
-
----
-
-## 受け入れ基準（Doneの定義）
-
-* **API コール数**：同一期間・同一市場集合に対し、現状比で**減少**（ダッシュボードで可視化）
-* **イベント精度**：上場/廃止/市場変更/社名変更の **effective\_from が日単位で再現**
-* **データ整合**：`low ≤ min(open, close) ≤ high`、出来高非負、2020-10-01 の Null を正しく温存
-* **再実行性**：全投入パイプラインが **主キー upsert** で冪等
-
----
-
-## すぐ着手できるタスク（PR 粒度のチェックリスト）
-
-**Phase 1（高優先）**
-
-* [ ] `AxisDecider.measure_api_efficiency()` を追加、ランブックに反映
-* [ ] `DailyQuotesByCodeFetcher` を実装（在籍レンジ入力で取得）
-* [ ] `fetch_statements_by_date()` を実装し、既存 `code` 方式を置換（欠損補完APIは退避）
-
-**Phase 2（中優先）**
-
-* [ ] `ListedInfoManager`：月初スナップショット保存
-* [ ] `detectChanges()` と **差分日だけ** `/listed` を取得するロジック
-* [ ] **二分探索**でイベント日を特定 → `securities_events` 生成
-* [ ] `market_membership` を出力（prices by code のレンジに供給）
-
-**Phase 3（低優先）**
-
-* [ ] 並列度とメモリの動的制御（メトリクス駆動）
-* [ ] ダッシュボード：軸別 calls/pages/bytes, 処理時間, 失敗率
-
----
-
-### まとめ
-
-* 現状の**基盤はOK**。
-* 仕上げるべきは **(1) prices の軸を“測って選ぶ”**、**(2) listed を“月初＋差分日＋二分探索”**、**(3) statements を“date軸”**、**(4) 差分検知でイベント化**。
-* これで **APIコールと転送量を顕著に削減**しつつ、**上場廃止・市場変更を日単位で正確に再現**できます。
-
-必要なら、この方針に合わせた **具体的なコード雛形（TypeScript/Node または Python）** や **既存クラス（TradingCalendarFetcher / MarketCodeFilter 等）への差分パッチ**まで一気に出します。
-
-
-
-
-了解です。最新の仕様・実装方針に合わせて、**dataset に含める全カラムの“最終版リスト”と計算方法**をカテゴリ別にまとめ直しました。
-（命名は既存のログ／実装に合わせ、**単位・ウィンドウ・有効化条件**も併記。除算は全て `+1e-12` でゼロ割防止。）
-
-> **前提（結合規則の要約）**
->
-> * **prices/daily\_quotes** を軸（キー: `Code, Date`）。
-> * **listed/info** → `Section` 付与 → **旧市場名→新市場名** 正規化: `section_norm ∈ {TSEPrime, TSEStandard, TSEGrowth}`。
-> * **trades\_spec** は **T+1 営業日**から**次回公表前日**まで有効に区間化し、**(section\_norm, Date)** で日次展開→結合。
-> * **indices/topix** は **Date** で結合。
-> * **fins/statements** は **(Code, effective\_date)** を基準に \*\*as‑of backward（T+1/15:00 ルール）\*\*で結合。
-> * **型統一**: すべての `Date` は `pl.Date`、テキストは `pl.Utf8`。
-
----
-
-## 0) 識別子・メタ（6）
-
-| Column               | 型       | 計算/生成                                                                          |
-| -------------------- | ------- | ------------------------------------------------------------------------------ |
-| `Code`               | Utf8    | J-Quants 銘柄コード（文字列固定）                                                          |
-| `Date`               | Date    | 取引日（営業日カレンダー基準）                                                                |
-| `Section`            | Utf8    | listed/info 由来の市場名（原文）                                                         |
-| `section_norm`       | Utf8    | **旧→新** 正規化: `TSE1st→TSEPrime`, `TSEMothers→TSEGrowth`, `JASDAQ→TSEStandard` 等 |
-| `row_idx`            | UInt32  | `Code` ごとの昇順行番号（ウォームアップ判定に使用）                                                  |
-| `shares_outstanding` | Float64 | 可能なら別テーブルから（無ければ `null`）                                                       |
-
----
-
-## 1) ベース（OHLCV/回転）+ 価格系特徴（約80）
-
-> **キー**: `(Code, Date)`
-> **Warm‑up**: 各ウィンドウ長（例: `returns_20d` は最低 20 営業日必要）
-
-### 1.1 OHLCV（5）
-
-* `Open`, `High`, `Low`, `Close`, `Volume` : **調整後**（Adjustment\* があればそれを採用）
-* `TurnoverValue` : 可能なら採用（なければ `null`）
-
-### 1.2 リターン系（10）
-
-* `returns_1d = Close/Close[-1]-1`
-* `returns_5d = Close/Close[-5]-1`
-* `returns_10d`, `returns_20d`, `returns_60d`, `returns_120d`（同様）
-* `log_returns_1d = ln(Close/Close[-1])`（5/10/20 も同様）
-
-### 1.3 ボラティリティ（5）
-
-* `volatility_5d = std(returns_1d, 5) * sqrt(252)`
-* `volatility_10d`, `volatility_20d`, `volatility_60d`
-* `realized_volatility ≈ sqrt( Σ( ln(High/Low) )^2 / 4 / ln(2) )`（日次近似）
-
-### 1.4 移動平均・EMA（10）
-
-* `sma_{5,10,20,60,120} = mean(Close, w)`
-* `ema_{5,10,20,60,200} = ewm_mean(Close, span=w)`
-
-### 1.5 価格位置/ギャップ（8）
-
-* `price_to_sma5 = Close/sma_5`
-* `price_to_sma20`, `price_to_sma60`
-* `ma_gap_5_20 = (ema_5-ema_20)/(ema_20+1e-12)`
-* `ma_gap_20_60 = (ema_20-ema_60)/(ema_60+1e-12)`
-* `high_low_ratio = High/(Low+1e-12)`
-* `close_to_high = (High-Close)/(High-Low+1e-12)`
-* `close_to_low = (Close-Low)/(High-Low+1e-12)`
-
-### 1.6 ボリューム/回転（6）
-
-* `volume_ma_{5,20} = mean(Volume, w)`
-* `volume_ratio_{5,20} = Volume/volume_ma_w`
-* `turnover_rate = Volume/(shares_outstanding+1e-12)`（無ければ `null`）
-* `dollar_volume = Close*Volume`
-
-### 1.7 テクニカル（pandas‑ta）（\~15）
-
-* RSI: `rsi_2`, `rsi_14`; `rsi_delta = rsi_14.diff()`
-* MACD: `macd`, `macd_signal`, `macd_histogram`
-* BB: `bb_upper, bb_lower, bb_middle`（内部）
-
-  * `bb_width = (bb_upper-bb_lower)/(Close+1e-12)`
-  * `bb_position = (Close-bb_lower)/(bb_upper-bb_lower+1e-12)`
-* ATR/ADX/Stoch: `atr_14`, `adx_14`, `stoch_k`
-
-> **Validity Flags（価格系）**
->
-> * `is_rsi2_valid = (row_idx >= 5)`
-> * `is_ema5_valid = (row_idx >= 15)`, `is_ema20_valid = (row_idx >= 60)`, `is_ema200_valid = (row_idx >= 200)`
-> * `is_valid_ma = (row_idx >= 60)`
-
----
-
-## 2) TOPIX 市場特徴（26）
-
-> **キー**: `Date` で全銘柄に同じ値を付与。
-> **Warm‑up**: `z`系と`ema_200`は長期窓（最長 252）。
-
-### 2.1 リターン（4）
-
-* `mkt_ret_1d = Close/Close[-1]-1`（TOPIX）
-* `mkt_ret_{5,10,20} = Close/Close[-w]-1`
-
-### 2.2 トレンド（4）
-
-* `mkt_ema_{5,20,60,200} = ewm_mean(TOPIX_Close, span=w)`
-
-### 2.3 偏差/ギャップ（3）
-
-* `mkt_dev_20 = (Close-mkt_ema_20)/(mkt_ema_20+1e-12)`
-* `mkt_gap_5_20 = (mkt_ema_5-mkt_ema_20)/(mkt_ema_20+1e-12)`
-* `mkt_ema20_slope_3 = pct_change(mkt_ema_20, 3)`
-
-### 2.4 ボラ・帯域（5）
-
-* `mkt_vol_20d = std(mkt_ret_1d,20)*sqrt(252)`
-* `mkt_atr_14`, `mkt_natr_14 = mkt_atr_14/(Close+1e-12)`
-* `mkt_bb_pct_b = (Close-bb_lower)/(bb_upper-bb_lower+1e-12)`
-* `mkt_bb_bw = (bb_upper-bb_lower)/(bb_middle+1e-12)`
-
-### 2.5 リスク/フラグ（2）
-
-* `mkt_dd_from_peak = (Close - cummax(Close))/cummax(Close)`
-* `mkt_big_move_flag = (abs(mkt_ret_1d) >= 2*std(mkt_ret_1d,60)).int8()`
-
-### 2.6 Z‑score（4）
-
-* `mkt_ret_1d_z = z(mkt_ret_1d, 252)`
-* `mkt_vol_20d_z = z(mkt_vol_20d, 252)`
-* `mkt_bb_bw_z = z(mkt_bb_bw, 252)`
-* `mkt_dd_from_peak_z = z(mkt_dd_from_peak, 252)`
-
-> **注意**: 期間が短いと `z` 系が `NaN` になるので、**TOPIX はウォームアップ長め（>252日）で取得**し、そのまま日付結合する。
-
-### 2.7 レジームフラグ（4）
-
-* `mkt_bull_200 = (Close > mkt_ema_200).int8()`
-* `mkt_trend_up = (mkt_gap_5_20 > 0).int8()`
-* `mkt_high_vol = (mkt_vol_20d_z > 1.0).int8()`
-* `mkt_squeeze = (mkt_bb_bw_z < -1.0).int8()`
-
----
-
-## 3) クロス（銘柄×市場）特徴（8）
-
-> **キー**: `(Code, Date)`（価格＋市場を使って銘柄ごとに算出）
-> **Warm‑up**: 最長 60 日
-
-* `beta_60d = Cov(returns_1d, mkt_ret_1d, 60) / Var(mkt_ret_1d, 60)`
-* `alpha_1d = returns_1d - beta_60d*mkt_ret_1d`
-* `alpha_5d = returns_5d - beta_60d*mkt_ret_5d`
-* `rel_strength_5d = returns_5d - mkt_ret_5d`
-* `trend_align_mkt = (sign(ma_gap_5_20) == sign(mkt_gap_5_20)).int8()`
-* `alpha_vs_regime = alpha_1d * mkt_bull_200`
-* `idio_vol_ratio = volatility_20d/(mkt_vol_20d+1e-12)`
-* `beta_stability_60d = 1/(std(beta_60d, 20)+1e-12)`
-
----
-
-## 4) フロー（投資部門別：/markets/trades\_spec）特徴（17）
-
-> **作り方の要点**
->
-> 1. **区間化**: `effective_start = next_business_day(PublishedDate)`、`effective_end = next_effective_start-1日`（同 `section_norm` 内で連鎖）。
-> 2. **日次展開**: 営業日格子 `Date` と **cross join → 範囲 filter**。
-> 3. **結合**: `(section_norm, Date)` で **left join**。
-> 4. **命名統一**: 学習で使う列は **`flow_` プレフィクス** に揃える。
-
-> **原始列（週次集計）**: `Foreigners{Sales,Purchases,Total,Balance}`, `Individuals*`, `Proprietary*`, `Brokerage*`, `TrustBanks*`, `InvestmentTrusts*`, `Total{Sales,Purchases,Total,Balance}`, …（J‑Quantsのキー名）
-
-**日次フロー特徴**
-
-* `flow_foreign_net_ratio = ForeignersBalance/(ForeignersTotal+1e-12)`
-
-* `flow_individual_net_ratio = IndividualsBalance/(IndividualsTotal+1e-12)`
-
-* `flow_activity_ratio = TotalTotal/(mean(TotalTotal, 52)+1e-12)`  ※年を跨いだ52週平滑（週次ベースのZに準ずる正規化）
-
-* `foreign_share_activity = ForeignersTotal/(TotalTotal+1e-12)`（補助; モデルには `flow_` 接頭辞版も導出可）
-
-* `breadth_pos = mean([ForeignersBalance>0, IndividualsBalance>0, TrustBanksBalance>0, InvestmentTrustsBalance>0, ProprietaryBalance>0, BrokerageBalance>0])`（0〜1）
-
-**Z 系（52 週）**
-
-* `flow_foreign_net_z = z(ForeignersBalance, win=52)`
-* `flow_individual_net_z = z(IndividualsBalance, win=52)`
-* `flow_activity_z = z(TotalTotal, win=52)`
-
-**スマートマネー**
-
-* `flow_smart_idx = flow_foreign_net_z - flow_individual_net_z`
-* `flow_smart_mom4 = flow_smart_idx - mean(flow_smart_idx, 4)`
-* `flow_shock_flag = (abs(flow_smart_idx) >= 2.0).int8()`
-
-**タイミング**
-
-* `flow_impulse = (Date == effective_start).int8()`
-* `flow_days_since = (Date - effective_start).days()`
-
-> **期待カバレッジ**: 営業日×3 セクションの多くに値が付く（70〜95%）。`section_norm` と `Date` の型が合っていることが必須。
-
----
-
-## 5) 財務（/fins/statements）特徴（17）
-
-> **as‑of/T+1 ルール**
->
-> * `effective_date = DisclosedDate`（**15:00 以前**） or `next_business_day(DisclosedDate)`（**15:00 以降**）。
-> * `(Code, Date)` に対し **backward as‑of** で最新開示をひとつ付ける。
-> * 同日複数は `disclosed_ts` で**最新のみ**採用。
-
-**YoY 成長（3）**（同四半期の1年前と比較: ラグ4期）
-
-* `stmt_yoy_sales = (NetSales - NetSales[-4])/(abs(NetSales[-4])+1e-12)`
-* `stmt_yoy_op = (OperatingProfit - OperatingProfit[-4])/(abs(OperatingProfit[-4])+1e-12)`
-* `stmt_yoy_np = (Profit - Profit[-4])/(abs(Profit[-4])+1e-12)`
-
-**マージン（2）**
-
-* `stmt_opm = OperatingProfit/(NetSales+1e-12)`
-* `stmt_npm = Profit/(NetSales+1e-12)`
-
-**進捗率（2）**
-
-* `stmt_progress_op = OperatingProfit/(ForecastOperatingProfit+1e-12)`
-* `stmt_progress_np = Profit/(ForecastProfit+1e-12)`
-
-**ガイダンス改定（4）**（前回開示と比較）
-
-* `stmt_rev_fore_op = (ForecastOperatingProfit - prev_ForecastOperatingProfit)/(abs(prev_ForecastOperatingProfit)+1e-12)`
-* `stmt_rev_fore_np = (ForecastProfit - prev_ForecastProfit)/(abs(prev_ForecastProfit)+1e-12)`
-* `stmt_rev_fore_eps = (ForecastEarningsPerShare - prev_ForecastEarningsPerShare)/(abs(prev_ForecastEarningsPerShare)+1e-12)`
-* `stmt_rev_div_fore = (ForecastDividendPerShareAnnual - prev_ForecastDividendPerShareAnnual)/(abs(prev_...)+1e-12)`
-
-**財務指標（2）**
-
-* `stmt_roe = Profit/(Equity+1e-12)`
-* `stmt_roa = Profit/(TotalAssets+1e-12)`
-
-**品質フラグ（2）**
-
-* `stmt_change_in_est = (ChangesInAccountingEstimates ∈ {"true","1"}).int8()`
-* `stmt_nc_flag = ((ChangesBasedOnRevisionsOfAccountingStandard ∨ RetrospectiveRestatement) == true).int8()`
-
-**タイミング（2）**
-
-* `stmt_imp_statement = (Date == effective_date).int8()`
-* `stmt_days_since_statement = (Date - effective_date).days()`
-
-> **備考**: 数値は文字列で届くことがあるため **型変換（to Float64）** を最初に実施。四半期系列のラグ参照（`[-4]`）は **同 Code 内** で会計期順に並べてから。
-
----
-
-## 6) 有効フラグ・成熟フラグ（8）
-
-| Column            | 定義                                        |
-| ----------------- | ----------------------------------------- |
-| `is_rsi2_valid`   | `row_idx >= 5`                            |
-| `is_ema5_valid`   | `row_idx >= 15`                           |
-| `is_ema10_valid`  | `row_idx >= 30`                           |
-| `is_ema20_valid`  | `row_idx >= 60`                           |
-| `is_ema200_valid` | `row_idx >= 200`                          |
-| `is_valid_ma`     | `row_idx >= 60`                           |
-| `is_flow_valid`   | `flow_days_since.is_not_null()`           |
-| `is_stmt_valid`   | `stmt_days_since_statement.is_not_null()` |
-
----
-
-## 7) 目的変数（ターゲット）（7）
-
-* 回帰:
-
-  * `target_1d = Close[+1]/Close - 1`
-  * `target_5d = Close[+5]/Close - 1`
-  * `target_10d`, `target_20d` 同様
-* 2値:
-
-  * `target_1d_binary = (target_1d > 0).int8()`
-  * `target_5d_binary`, `target_10d_binary`
-
-> **情報漏洩防止**: ターゲット計算は **完全に将来日の Close のみ**使用。
-
----
-
-## 8) 列数の目安（重複除外後）
-
-* **識別子/メタ**: 6
-* **価格・テクニカル**: \~80
-* **TOPIX（市場）**: 26
-* **クロス**: 8
-* **フロー**: 17
-* **財務**: 17
-* **フラグ**: 8
-* **ターゲット**: 7
-  **合計 ≈ 169 列**（環境/利用可否で±数列）
-
----
-
-## 9) よく出る `NaN` と対処（実装ルール）
-
-* **長期窓不足（z 系/ema200）** → ウォームアップ区間はそのまま `NaN` とし、**該当日の `is_*_valid` でマスク**。
-* **フロー0%問題** → `section_norm` 揃える／**日次格子**を作ってから `(section_norm, Date)` で結合。
-* **財務** → `as‑of` で開示が付かない日は `NaN` のまま（リーク防止）。
-* **ゼロ割** → 全ての除算に `+1e-12`。
-* **型** → `Date` は **pl.Date** に強制キャストしてから結合。
-
----
-
-## 10) 実装スニペット（式の典型形）
-
-```python
-eps = 1e-12
-
-# returns / vol
-df = df.with_columns([
-    (pl.col("Close")/pl.col("Close").shift(1)-1).alias("returns_1d"),
-    (pl.col("Close")/pl.col("Close").shift(5)-1).alias("returns_5d"),
-    (pl.col("returns_1d").rolling_std(20)*np.sqrt(252)).alias("volatility_20d"),
-])
-
-# MA gap
-df = df.with_columns([
-    pl.col("Close").ewm_mean(span=5).alias("ema_5"),
-    pl.col("Close").ewm_mean(span=20).alias("ema_20"),
-]).with_columns([
-    ((pl.col("ema_5")-pl.col("ema_20"))/(pl.col("ema_20")+eps)).alias("ma_gap_5_20"),
-])
-
-# cross beta
-df = df.with_columns([
-    pl.cov(pl.col("returns_1d"), pl.col("mkt_ret_1d")).over("Code").alias("cov_60") \
-        .rolling_mean(60),
-    pl.var(pl.col("mkt_ret_1d")).rolling_mean(60).alias("var_60"),
-]).with_columns([
-    (pl.col("cov_60")/(pl.col("var_60")+eps)).alias("beta_60d")
-])
-```
-
----
-
-### まとめ
-
-* **列名・計算法**は上記で**固定運用**がおすすめ（モデル/特征選択で安定）。
-* 既存ログで `NaN` が多かった列（`z` 系・flow 系）は、**ウォームアップ長**と**結合キー正規化**で解消できます。
-* ここまでをそのまま **データ辞書（md か json）** に落としておけば、将来の回帰や自動検証も一貫して行えます。
-
-
-----------
-
-推奨ワークフロー
-
-- 
-    1. ベース生成
-    - J-Quantsあり: python scripts/pipelines/run_pipeline_v4_optimized.py --jquants
-    - なし: python scripts/pipelines/run_pipeline_v4_optimized.py（サンプル価格で生成）
-- 
-    2. 後段付与（TOPIX＋trade spec＋fins statements）
-    - 例（ワンショット。出力: ml_dataset_latest_enriched.parquet）:
-    - python - << 'PY'
-      from pathlib import Path
-      import polars as pl
-      from scripts.data.ml_dataset_builder import MLDatasetBuilder
-      out = Path('output')
-      base = out/'ml_dataset_latest.parquet'
-      df = pl.read_parquet(base)
-      b = MLDatasetBuilder(output_dir=out)  # .env からJQトークンを読み、無ければサンプルTOPIX
-
-      # 2-1) TOPIX 市場＋クロス特徴（mkt_* 26 + cross 8）
-      df = b.add_topix_features(df)  # Dateで左結合、βはt-1ラグ、Zは252ウォームアップ
-
-      # 2-2) trade spec（投資部門別フロー）
-      # trades_spec のParquetを用意（gogooku2バッチ等）。例パスは環境に合わせて変更。
-      trades_spec_path = Path('/home/ubuntu/gogooku2/output/batch/20250824/trades_spec/tse_trades_spec_20250824_175808.parquet')
-      if trades_spec_path.exists():
-          trades_spec_df = pl.read_parquet(trades_spec_path)
-          df = b.add_flow_features(df, trades_spec_df, listed_info_df=None)  # 区間→日次展開→結合
-      else:
-          print('trade spec not found; skipping flow features')
-
-      # 2-3) 財務諸表
-      # パイプラインが保存した raw statements を優先（なければスキップ/再取得）。
-      stmt = out/'event_raw_statements.parquet'
-      if stmt.exists():
-          statements_df = pl.read_parquet(stmt)
-          df = b.add_statements_features(df, statements_df)
-      else:
-          print('statements file not found; skipping statements features')
-
-      # 保存（with/without を分ける）
-      enriched = out/'ml_dataset_latest_enriched.parquet'
-      df.write_parquet(enriched)
-      (out/'ml_dataset_latest_enriched.parquet')
-      print('saved:', enriched)
-      PY
-
-設計の要点（安全・品質）
-
-- 結合キー: Date 左結合（市場列は日次で全銘柄に同一付与）
-- 情報リーク防止: ベータは市場リターンを t-1 にラグ（実装済）
-- Zスコア: ウォームアップ 252 日、初期は null 許容（実装済）
-- 型整合: Date の文字列→日付変換に対応（実装済）
-- trade spec: 区間→日次展開→銘柄に結合（builder 内部にユーティリティ有）
-- 財務: まず event_raw_statements.parquet（パイプライン保存物）から結合。無ければ後段で fetch_statements_by_date による補完も可能
-成果物と採用ルール
-
-- ベース: output/ml_dataset_latest.parquet（価格系）
-- 付与後: output/ml_dataset_latest_enriched.parquet（TOPIX＋flow＋statements）
-- 学習側は enriched を優先採用（設定で切替可能）
-
-便利化（任意）
-
-- ラッパー追加: scripts/pipelines/run_pipeline_with_enrichment.py を作り、ベース→付与→保存を自動化
-- Make ターゲット: make dataset-with-enrichment でワンコマンド運用
-
-検証（簡易チェック）
-
-- 市場列: sum(c.startswith('mkt_') for c in cols) == 26
-- クロス列: beta_*, alpha_*, rel_strength_5d, trend_align_mkt, idio_vol_ratio, beta_stability_60d の存在
-- フロー列: flow_* などのプレフィックス数を確認
-- 財務列: stmt_ プレフィックスの存在
-
-----------
-
-承知しました。**“漏れなく”を最優先**に、現在の実装方針＋これまでの合意事項を統合した **フル版データセット仕様（列カタログ＋計算式＋背景）** をまとめ直します。
-（※ `ε=1e-12` はゼロ割回避の微小量。`over('Code')` は銘柄内ローリング、`over('Section')` は市場区分内ローリングを意味します。）
-
----
-
 # ML データセット完全仕様 v1.1（フル版）
 
 ## 0) 共通ルール（キー・結合・欠損の扱い）
@@ -862,6 +71,7 @@ df = df.with_columns([
 * `rsi_2`, `rsi_14`, `rsi_delta = diff(rsi_14)`
 * `macd_signal (MACDs_12_26_9)`, `macd_histogram (MACDh_12_26_9)`
 * `bb_pct_b = (Close−BBL)/(BBU−BBL+ε)`、`bb_bw = (BBU−BBL)/(BBM+ε)`
+  * 互換カラム: 出力では `bb_position`/`bb_width` も同値エイリアスとして並走（旧名対応）
 * `atr_14`, `adx_14`, `stoch_k`
   **背景**：反転/継続の二面性を少数の安定窓で表現。
 
@@ -925,7 +135,7 @@ df = df.with_columns([
 
 ---
 
-## 7) 週次フロー（/markets/trades\_spec）特徴（**プレフィックス `flow_` に統一**、\~18列）
+## 7) 週次フロー（/markets/trades\_spec）特徴（**プレフィックス `flow_` に統一**、\~37列）
 
 ### 7.1 区間展開
 
@@ -941,6 +151,7 @@ df = df.with_columns([
   * `flow_foreign_net_ratio = ForeignersBalance/(ForeignersTotal+ε)`
   * `flow_individual_net_ratio = IndividualsBalance/(IndividualsTotal+ε)`
   * `flow_activity_ratio = TotalTotal/(Σ Section 全体の TotalTotal + ε)` *（任意：市場全体比）*
+  * `flow_foreign_share = ForeignersTotal/(TotalTotal+ε)`
 * **ブレッドス**
 
   * `flow_breadth_pos = mean( [ForeignersBalance>0, IndividualsBalance>0, TrustBanksBalance>0, InvestmentTrustsBalance>0, ProprietaryBalance>0, BrokerageBalance>0] )`
@@ -952,26 +163,89 @@ df = df.with_columns([
 
   * `flow_smart_idx = flow_foreign_net_z − flow_individual_net_z`
   * `flow_smart_mom4 = flow_smart_idx − MA_4(flow_smart_idx)`
+  * `flow_smart_pos = (flow_smart_idx > 0).int8()`
   * `flow_shock_flag = (abs(flow_smart_idx) ≥ 2).int8()`
 * **タイミング**
 
   * `flow_impulse = (Date == effective_start).int8()`
   * `flow_days_since = (Date − effective_start).days()`
-    **背景**：主体別需給の強弱と異常フロー検知（短期の方向・続伸/反落に寄与）。
+* **追加指標（実装済み）**
+
+  * `flow_activity_high`, `flow_activity_low`: 活動水準の上下分解
+  * `days_since_flow_right`: 右側結合用の日数カウント
+  * 各指標の`_right`サフィックス版（結合処理用の重複列）
+    **背景**：主体別需給の強弱と異常フロー検知（短期の方向・続伸/反落に寄与）。拡張された37列は詳細な需給分析を可能にする。
 
 > **互換性エイリアス**：旧名（`foreigners_net_ratio`等）を使うコードがある場合は、`flow_*` を**正本**にし、旧名を **ビュー/別名** として残すのが安全。
 
 ---
 
-## 8) 財務（/fins/statements）特徴（\~17列＋タイミング）
+## 8) マージン特徴（週次・日次両方、合計\~86列）
 
-### 8.1 有効日
+### 8a) 週次マージン（**接頭辞 `margin_`**、\~45列）
+
+週次の信用取引データから生成される特徴量：
+
+* **基本指標**
+  * `margin_long_tot`, `margin_short_tot`: 買い建・売り建総額
+  * `margin_net`, `margin_total_gross`: ネット・グロス
+  * `margin_credit_ratio`: 信用倍率
+  * `margin_imbalance`: インバランス指標
+
+* **ADV正規化**
+  * `margin_long_to_adv20`, `margin_short_to_adv20`: 20日平均売買代金比
+
+* **変化率**
+  * `margin_d_long_wow`, `margin_d_short_wow`: 週次変化率
+  * `margin_d_net_wow`, `margin_d_ratio_wow`: ネット・比率変化
+
+* **Z-score（52週）**
+  * `margin_gross_z52`, `long_z52`, `short_z52`, `ratio_z52`: 52週標準化
+
+* **モメンタム**
+  * `margin_gross_mom4`: 4週モメンタム
+  * `margin_impulse`: インパルス指標
+
+* **シェア分解**
+  * `margin_neg_share_long/short`: ネゴシエイティブマージンシェア
+  * `margin_std_share_long/short`: 制度信用シェア
+
+### 8b) 日次マージン（**接頭辞 `dmi_`**、\~41列）
+
+#### 8b.1 キー・結合・リーク防止
+
+* **補正処理**：同一 `(Code, ApplicationDate)` について **最新の `PublishedDate`** を採用（API訂正の吸収）。
+* **有効日**：`effective_start = next_business_day(PublishedDate)`（T+1 ルール）。
+* **結合**：銘柄内 `effective_start` に対して **as‑of backward** で日次格子 `(Code, Date)` に付与。
+* **Null規約**：`effective_start` 前は `null`、有効日に `dmi_impulse=1`、`is_dmi_valid=1`。
+
+#### 8b.2 指標群
+
+* **水準・比率**：`dmi_long`, `dmi_short`, `dmi_net`, `dmi_total`, `dmi_credit_ratio`, `dmi_imbalance`, `dmi_short_long_ratio`
+* **変化・Z**：`dmi_d_long_1d`, `dmi_d_short_1d`, `dmi_d_net_1d`, `dmi_d_ratio_1d`, `dmi_z26_long/short/total/d_short_1d`
+* **ADV正規化**（有効時）：`dmi_long_to_adv20`, `dmi_short_to_adv20`, `dmi_total_to_adv20`, `dmi_d_long_to_adv1d`, `dmi_d_short_to_adv1d`, `dmi_d_net_to_adv1d`
+* **規制・イベント**：`dmi_reason_restricted`, `dmi_reason_dailypublication`, `dmi_reason_monitoring`, `dmi_reason_restrictedbyjsf`, `dmi_reason_precautionbyjsf`, `dmi_reason_unclearorseconalert`, `dmi_reason_count`, `dmi_tse_reg_level`
+* **タイミング**：`dmi_impulse`, `dmi_days_since_pub`, `dmi_days_since_app`, `is_dmi_valid`
+
+#### 8b.3 パイプライン有効化
+
+* `scripts/pipelines/run_full_dataset.py` で：
+  * `--enable-daily-margin` で有効化。
+  * `--daily-margin-parquet <path>` 指定可。未指定時は `output/daily_margin_interest_*.parquet` を自動探索。
+
+> 週次マージン（`margin_*`）と日次（`dmi_*`）は併存します。学習で日次を優先する場合は `dmi_*` を選択してください。
+
+---
+
+## 9) 財務（/fins/statements）特徴（\~20列＋タイミング）
+
+### 9.1 有効日
 
 * `effective_date = (DisclosedTime < 15:00 ? DisclosedDate : next_business_day(DisclosedDate))`
 * as‑of backward で `(Code, Date)` に**直近の有効開示**を付与。
   **背景**：PEADや開示吸収のタイミングをリークなしで取り込む。
 
-### 8.2 指標
+### 9.2 指標
 
 * **YoY 成長**
 
@@ -1000,7 +274,7 @@ df = df.with_columns([
 
 ---
 
-## 9) 有効フラグ（マスク）（10–14 列）
+## 10) 有効フラグ（マスク）（14 列）
 
 * **窓成熟**：`is_rsi2_valid (row_idx≥5)`, `is_ema5_valid (≥15)`, `is_ema10_valid (≥30)`, `is_ema20_valid (≥60)`, `is_ema200_valid (≥200)`
 * **市場Z**：`is_mkt_z_valid (warmup≥252)`
@@ -1013,7 +287,7 @@ df = df.with_columns([
 
 ---
 
-## 10) 目的変数（ターゲット）
+## 11) 目的変数（ターゲット）
 
 * **回帰**：`target_{1,2,3,5,10} = Close.shift(-h)/Close − 1`
 * **分類**：`target_{1,5,10}_binary = (target_h>0).int8()`
@@ -1021,7 +295,7 @@ df = df.with_columns([
 
 ---
 
-## 11) 正規化（任意・学習時に fold 内で）
+## 12) 正規化（任意・学習時に fold 内で）
 
 * **クロスセクション Z**（その日ごと）：`x_cs_z = (x − mean_by(Date))/(std_by(Date)+ε)`
 * **グループ内 Z**（セクター内）：`z_in_sec_*`（上記 6.3）
@@ -1029,25 +303,95 @@ df = df.with_columns([
 
 ---
 
-## 12) 列総数の目安（重複除去・一部任意含む）
+## 13) 列総数（実装済み）
 
-* 識別子・メタ：**\~12**
-* 価格/出来高：**\~65**
-* テクニカル：**\~18**
-* 市場（TOPIX）：**\~26 + Z系(\~4) = \~30**
-* クロス：**\~7**
-* セクター基礎/集約/相対/One‑Hot：**基礎6 + 集約~~8 + 相対~~5 + One‑Hot(17) + 頻度2 ≈ \~38**
-* 週次フロー（flow\_\*）：**\~18**
-* 財務（stmt\_\*）：**\~17**
-* 有効フラグ：**\~12**
-* ターゲット：**\~8**
+* 識別子・メタ：**12**
+* 価格/出来高：**\~70**（returns, log_returns, volatility, moving averages, volume ratios等）
+* テクニカル：**\~20**（RSI, MACD, Bollinger Bands, ATR, ADX, Stochastic等）
+* 市場（TOPIX）：**\~30**（market returns, EMA, volatility, Z-scores等）
+* クロス：**\~8**（beta, alpha, relative strength, idiosyncratic vol等）
+* セクター：**\~40**（基礎、集約、相対、One-Hot、頻度含む）
+* 週次フロー（flow\_\*）：**\~37**（拡張版：foreign, individual, smart money, timing等）
+* 週次マージン（margin\_\*）：**\~45**（買建、売建、Z-score、シェア分解等）
+* 日次マージン（dmi\_\*）：**\~41**（水準、変化、ADV正規化、規制フラグ等）
+* 財務（stmt\_\*）：**\~20**（YoY成長、マージン、進捗、ガイダンス改定等）
+* 有効フラグ：**\~14**
+* ターゲット：**\~12**（multi-horizon targets and binary versions）
+* その他の特徴：**\~146**（earnings events, short selling, options, cross-features等）
 
-**合計目安：** **\~225 列**（選択制の One‑Hot/頻度/Z を外すと \~170–185 列）。
-※ 実際の総数は設定フラグ（One‑Hot有無、Z有無、freq有無）で前後します。
+**実装コード上の合計：** **395 列**
+**現在生成される列数：** **約 303-307 列**
+
+※ 仕様の225列を大幅に超え、実際の実装では拡張された特徴量が追加されています。主な拡張：
+- フロー特徴の詳細化（18→37列）
+- マージン特徴の分離（週次45列＋日次41列）
+- その他の追加特徴（earnings, short selling, options, cross-features等）
+
+⚠️ **先物機能（88-92列）は J-Quants Premium プランがない環境ではデフォルト無効ですが、オフライン parquet を指定すれば Standard プランでも利用できます。** その他、日次マージン（dmi_*）や空売りなど一部の特徴量はデータ存在に依存するため、実際の列数は環境により若干変動します。
 
 ---
 
-## 13) 互換性・命名の最終確認（漏れ対策）
+## 13.1) 先物特徴量の無効化状態
+
+現在、J-Quants `/derivatives/futures` API の利用には Premium プランが必要です。Premium 環境では自動的に先物特徴量（88-92列）が有効化されます。Standard プランでも、オフライン parquet を指定すれば同じ列を取り込めます。
+
+### 欠落している先物特徴量
+
+#### ON (T+0) 特徴: 5列 × 4カテゴリ = 20列
+- `fut_on_ret`: 夜間セッション収益率
+- `fut_on_range`: 夜間レンジ（log(High/Low)）
+- `fut_on_z`: ON収益率の Z-score (60日窓)
+- `is_fut_on_valid`: ON特徴の有効性フラグ
+- `fut_emergency_flag`: 緊急証拠金フラグ
+
+#### EOD (T+1) 特徴: 17列 × 4カテゴリ = 68列
+価格・ベーシス関連:
+- `fut_day_ret`, `fut_whole_ret`: 日中・全日収益率
+- `basis_close`, `basis_close_z252`: ベーシス（先物−現物）と Z-score
+- `carry_per_day`: 日次キャリー（ベーシス/残存日数）
+- `ttm_days`: SQまでの残存日数
+
+建玉・出来高関連:
+- `fut_oi`, `fut_oi_delta`: 建玉とその変化
+- `fut_vol`: 出来高
+- `fut_oi_z252`, `fut_vol_z252`: 建玉・出来高の Z-score (252日窓)
+
+価格×建玉クロス:
+- `price_up_oi_up`, `price_up_oi_dn`: 上昇×建玉増減
+- `price_dn_oi_up`, `price_dn_oi_dn`: 下落×建玉増減
+- `is_fut_eod_valid_*`: EOD特徴の有効性フラグ (カテゴリ毎)
+
+#### 連続系列 (オプショナル): 1列 × 4カテゴリ = 4列
+- `fut_whole_ret_cont_*`: 比率連動の連続先物リターン系列
+  - `--futures-continuous` フラグ有効時のみ生成
+
+### デフォルトカテゴリ
+- **TOPIXF**: TOPIX先物
+- **NK225F**: 日経225先物
+- **JN400F**: JPX日経400先物
+- **REITF**: REIT指数先物
+
+### コード上の有効化ロジック（2025-10 更新）
+- Premium プラン (`JQUANTS_PLAN_TIER=premium`) の場合、先物 API を自動取得し先物列が常時有効。
+- Standard プランでも、`--futures-parquet` で parquet を指定するか `output/` 配下に `futures_daily_*.parquet` を配置すると自動的に有効化（`--disable-futures` で明示的に無効化可能）。
+- 連続系列を出力したい場合は `--futures-continuous` を併用。
+
+### オフライン再有効化例
+```bash
+python scripts/pipelines/run_full_dataset.py \
+  --futures-parquet output/futures_daily_YYYYMMDD_YYYYMMDD.parquet \
+  --futures-categories "TOPIXF,NK225F,JN400F,REITF" \
+  --futures-continuous  # 連続系列も有効化する場合
+```
+
+### 実装参照
+- 特徴量定義: `src/gogooku3/features/futures_features.py`
+- 統合ロジック: `src/pipeline/full_dataset.py` の `enrich_and_save()`
+- 過去の統合記録: `FUTURES_INTEGRATION_COMPLETE.md`
+
+---
+
+## 14) 互換性・命名の最終確認（漏れ対策）
 
 * **flow 列は `flow_` 接頭辞で統一**（旧名は alias として残す）：
   `foreigners_net_ratio → flow_foreign_net_ratio` 等。
@@ -1059,7 +403,7 @@ df = df.with_columns([
 
 ---
 
-## 14) 実装チェック（落ちやすいポイント）
+## 15) 実装チェック（落ちやすいポイント）
 
 1. **Flow カバレッジ 0%** → `Section` が `/listed` as‑of でなく **コード範囲擬似**になっていないか／区間展開が**営業日**か／`(Section,Date)` の **型一致**。
 2. **TOPIX Z が 100% NaN** → warmup 252 営業日の取得不足（取れない期間は `*_z` は仕様上 NaN）。
@@ -1105,137 +449,328 @@ df = df.sort(['Code','Date']).join_asof(
 
 ---
 
-## 最新データセット仕様（6ソース + マクロ統合版）
+## 10) グラフ（相関ネットワーク）特徴（18列）
 
-> `ml_dataset_latest_full.parquet` に含まれる主要カテゴリを整理しています。Premium プランの追加データ（前場四本値・売買内訳・配当・財務・先物・オプション）と yfinance 由来のマクロ指標が対象です。細目・件数は `dataset_features_detail.json` を参照してください。
+相関に基づくピア・グラフを営業日ごとに構築し、各ノード（銘柄）にグラフ指標を付与します。実装は CPU/GPU の双方に対応しており、GPU 環境では cuGraph により大幅に高速化されます（リーク防止：当日 T までの過去窓のみ使用）。
 
-### 0) 識別子・メタ
+### 10.1 構築ルール（リーク防止）
 
-| Column | 型 | 説明 |
-|--------|----|------|
-| `Code` / `Date` | Utf8 / Date | 銘柄コード・営業日 |
-| `Section` / `section_norm` | Utf8 | 元市場名と正規化後市場名（TSEPrime 等） |
-| `row_idx` | UInt32 | 銘柄内の経過営業日カウンタ |
-| `shares_outstanding` | Float64 | 発行株数（分母に使用） |
+- 入力系列：`returns_1d`（別名 `feat_ret_1d` を自動検出）
+- 窓と選別：直近 `graph_window` 日（既定 60）、絶対相関 `|ρ| ≥ graph_threshold`（既定 0.3）
+- スパース化：ノード当たり最大 `graph_max_k` 本（既定 4）。負相関も許容、無向対称。
+- 日付ごとに独立に構築し、当日より未来情報は不使用（T+0 安全）。
 
-### 1) ベース価格・テクニカル（約 80 列）
+### 10.2 列一覧と定義（出力 18 列）
 
-- 調整済み OHLCV / Turnover
-- `returns_{1,5,10,20,60,120}d`, `log_returns_{1,5,10,20}d`
-- ボラティリティ `volatility_{5,10,20,60}d`, `realized_volatility`
-- SMA/EMA `sma_{5..120}`, `ema_{5..200}`
-- 位置・ギャップ `price_to_sma20`, `ma_gap_5_20`, `close_to_high`
-- ボリューム系 `volume_ratio_{5,20}`, `turnover_rate`, `dollar_volume`
-- テクニカル指標（RSI/MACD/Bollinger/ATR/ADX/Stochastic）
-- 有効フラグ `is_rsi2_valid`, `is_ema{5,20,200}_valid`, `is_valid_ma`
+- `peer_count`：選定ピア数（当日グラフの隣接ノード数のうち、相関条件を満たしたエッジ本数）
+- `peer_corr_mean`：選定ピアとの（絶対）相関の平均
+- `graph_degree`：次数（当日のエッジ本数）
+- `graph_degree_z`：日内 Z（同一日内での `graph_degree` 標準化）
+- `graph_comp_id`：連結成分 ID（同一日のラベル整数）
+- `graph_comp_size`：当該連結成分のサイズ
+- `graph_degree_in_comp`：成分内正規化次数（`degree/(size−1)`）
+- `graph_degree_z_in_comp`：成分内 Z（`graph_degree` を同一成分内で標準化）
+- `graph_pagerank`：PageRank（α=0.85）
+- `graph_pagerank_share_comp`：成分内 PageRank シェア（`pagerank / Σ_{同成分}`）
+- `graph_pagerank_z_in_comp`：成分内 PageRank の Z
+- `graph_clustering`：クラスタリング係数（局所三角比）
+- `graph_avg_neigh_deg`：平均隣接次数
+- `graph_core`：k-core 番号
+- `graph_degree_centrality`：次数中心性（NetworkX 正規化）
+- `graph_closeness`：近接中心性（GPU 環境では実装都合で近似的に媒介中心性にフォールバックする場合あり）
+- `graph_local_density`：局所密度（近傍間の実エッジ/最大エッジ）
+- `graph_isolated`：孤立フラグ（`degree==0` → 1）
 
-### 2) TOPIX 市場指標（26 列）
+> 実装参照：`src/gogooku3/features/graph_features.py`（CPU）／`src/gogooku3/features/graph_features_gpu.py`（GPU）。
 
-`mkt_ret_*`, `mkt_ema_*`, `mkt_dev_20`, `mkt_gap_5_20`, `mkt_vol_20d`, `mkt_dd_from_peak`, `mkt_ret_1d_z`, `mkt_vol_20d_z`, `mkt_bull_200`, `mkt_high_vol` など。
+### 10.3 結合と Null 規約
 
-### 3) クロス（銘柄×市場）
+- キー：`(Code, Date)` の左外部結合で元パネルに付与。
+- 欠損：該当しない日（グラフ未成立など）は `0` で安全にフィル（`graph_*`/`peer_*`）。
 
-`beta_60d`, `alpha_{1d,5d}`, `rel_strength_5d`, `trend_align_mkt`, `alpha_vs_regime`, `idio_vol_ratio`, `beta_stability_60d`。
+### 10.4 パイプライン有効化・パラメータ
 
-### 4) セクター特徴
-
-セクター識別 (`sector33_code/name` 等)、セクター平均 (`sec_ret_{1d,5d,20d}`, `sec_mom_*`)、相対化 (`ret_5d_vs_sec`, `z_in_sec_returns_5d`, `volume_in_sec_z`)、`sec_small_flag`。
-
-### 5) フロー（/markets/trades_spec）
-
-`flow_foreign_net`, `flow_individual_net`, `flow_foreign_net_ratio`, `flow_foreign_net_z`, `flow_activity_z`, `flow_smart_idx`, `is_flow_valid` 等。発表翌営業日 (T+1) の値を使用。
-
-### 6) 前場四本値（/prices/prices_am）
-
-`am_open/high/low/close/volume/turnover` と派生指標 `am_ret`, `am_range`, `am_pos`, `am_gap_prev_close`, `am_vol_ratio_20`, `am_tvr_ratio_20`, `am_spread_proxy`, `am_overhang`, `is_am_valid`。
-
-### 7) 売買内訳（/markets/breakdown）
-
-`bd_total_buy`, `bd_total_sell`, `bd_total`, `bd_net_value`, `bd_net_ratio`, `bd_credit_new_net`, `bd_credit_close_net`, `bd_short_intensity`, `bd_net_z_52`, `bd_activity_ratio`, `is_bd_valid`。T+1 で結合。
-
-### 8) 配当イベント（/fins/dividend）
-
-`div_amt`, `div_is_special`, `div_rev`, `div_rev_flag`, `div_days_to_ex`, `div_yield_est`, `div_ex_soon_3`, `is_div_valid`。15:00 以降は翌営業日に適用。
-
-### 9) 財務諸表（/fins/fs_details）
-
-`fs_revenue`, `fs_op`, `fs_np`, `fs_assets`, `fs_equity`, `fs_cfo`, `fs_capex`, `fs_cash`, `fs_debt` に加え、`fs_cfo_margin`, `fs_cfo_to_np`, `fs_equity_ratio`, `fs_net_cash_to_assets`, `fs_yoy_{sales,op,np}`, `fs_opm`, `fs_npm`, `fs_progress_{op,np}`, `fs_roe`, `fs_roa`, `is_fs_valid`。15:00 カットで as-of backward。
-
-### 10) マクロ（VIX / USDJPY / BTC）
-
-- 取得元: `yfinance` (`^VIX`, `JPY=X`, `BTC-USD`) から日次 OHLC を取得し、`output/macro/*.parquet` にキャッシュ。
-- PIT: いずれも **翌営業日 (T+1)** に前方シフトして株式面 `(Code, Date)` に結合。
-- 外部市場が日本休場中でも更新されるため、欠損日は直近値で埋めず、シフト後の Date に一括反映。
-
-**VIX (macro_vix_\*)**
-- `macro_vix_close`, `macro_vix_log_close`
-- リターン: `macro_vix_ret_{1,5,10,20}d`
-- ボラ・乖離: `macro_vix_vol_20`, `macro_vix_sma5_over_sma20`, `macro_vix_ma_gap_20`
-- 体感度指標: `macro_vix_zscore_{60,252}`, `macro_vix_abs_ret_1d`, `macro_vix_range_pct`
-- レジーム: `macro_vix_spike_flag` (Z>1.5), `macro_vix_high_regime` (≧30), `macro_vix_low_regime` (≦15)
-- 市場比較: `macro_vix_minus_mkt_vol_20d`, `macro_vix_vs_mkt_vol_ratio`
-
-**USD/JPY (macro_fx_usdjpy_\*)**
-- `macro_fx_usdjpy_close`, `macro_fx_usdjpy_log_close`
-- リターン: `macro_fx_usdjpy_ret_{1,5,10,20}d`
-- ボラ・乖離: `macro_fx_usdjpy_vol_20`, `macro_fx_usdjpy_sma5_over_sma20`, `macro_fx_usdjpy_ma_gap_20`
-- 体感度: `macro_fx_usdjpy_zscore_{60,252}`, `macro_fx_usdjpy_abs_ret_1d`, `macro_fx_usdjpy_range_pct`
-- レジーム: `macro_fx_usdjpy_spike_flag` (|Z|>1.5), `macro_fx_usdjpy_trend_up` (円安トレンド), `macro_fx_usdjpy_shock_flag` (±1%超)
-- `macro_fx_usdjpy_sma5_slope_3` は短期トレンド変化を捉える傾き。
-
-**BTC/USD (macro_btc_\*)**
-- `macro_btc_close`, `macro_btc_log_close`
-- リターン: `macro_btc_ret_{1,5,10,20}d`
-- ボラ・乖離: `macro_btc_vol_{20,60}`, `macro_btc_sma7_over_sma30`, `macro_btc_ma_gap_{30,60}`
-- 環境指標: `macro_btc_zscore_{60,120}`, `macro_btc_abs_ret_1d`, `macro_btc_range_pct`, `macro_btc_volume_ratio_20`
-- レジーム: `macro_btc_spike_flag` (|Z|>2), `macro_btc_high_vol_regime` (年率90%以上), `macro_btc_trend_up`
-- モデル補助: `macro_btc_sma7_slope_3`（短期モメンタム）、`macro_btc_vix_divergence`（BTCとVIXの1日差分）
-
-> これらマクロ列は 1d/5d ターゲットでセンチメントや外部フローを捉える目的。10d/20d でもトレンド・レジーム列が有効に働く。
-
-#### 実装メモ（マクロ）
-
-- **営業日同期**: 3 系列とも「取得日翌営業日」の `Date` にシフトし、一度でも欠損を forward-fill しない設計。日本休場中の変化は休場明けにまとめて反映される。
-- **キャッシュ**: `output/macro/vix_history_*.parquet`, `fx_usdjpy_history_*.parquet`, `btc_history_*.parquet` が生成される。`--force-refresh-*` で更新強制。
-- **リーク防止**: 全特徴量は `Close[t-1]` までの情報のみから計算（例: `ret_1d` は t-1 vs t-2）。日次リターンやモメンタム列は *shift* 済みフレーム上で再計算しているため、当日終値は利用していない。
-- **極端値対策**: Z スコア・レジームフラグで極端環境をカテゴリ化し、必要に応じてウィンズライザー処理を下流で実施可能。
-- **相互作用**: BTC の 1 日リターンと VIX 変化率の差分 `macro_btc_vix_divergence` を追加。暗号資産と恐怖指数の乖離が大きい日をフラグ化できる。
-- **yfinance カラム**: MultiIndex で返却される OHLC に対応し、単層カラムへ自動正規化した上で `Date` 列を強制的に確保するよう修正済み。
-- **キャッシュ設定**: `YFINANCE_CACHE_DIR`（既定: `output/cache/yfinance`）に書き込み可能なローカルキャッシュを自動設定し、読み取り専用環境でもエラーにならないよう調整。
-- **依存性チェック**: マクロ列を有効化した場合は yfinance の事前チェックを行い、未導入であれば即時にエラーを返してサイレントスキップを防止。
-- **推奨ホライズン**:
-  - *1d*: `macro_vix_ret_1d`, `macro_fx_usdjpy_ret_1d`, `macro_btc_ret_1d`, 各 `abs_ret` / `spike_flag` / `shock_flag`
-  - *5d*: `macro_vix_ret_{5,10}d`, `macro_fx_usdjpy_ret_{5,10}d`, `macro_btc_vol_{20,60}`, `macro_btc_sma7_over_sma30`
-  - *10d/20d*: レジーム (`high_regime`, `trend_up`) や MA 乖離を活用
-- **API 依存**: `yfinance` を必須オプションとして `pyproject.toml` に明示済み。CLI では `--enable-{vix,fx-usdjpy,btc}` で選択。
-
-### 11) マージン / 12) セクターショート
-
-既存 `margin_weekly_*`, `margin_daily_*`, `short_selling_*`, `sector_short_*` ブロックを継承。
-
-### 13) 先物（/derivatives/futures）
-
-`fut_on_ret`, `fut_on_range`, `fut_on_z`, `fut_ret_1d`, `fut_whole_ret`, `fut_oi`, `fut_oi_chg`, `basis_close`, `carry_per_day`, `ttm_days`, `fut_emergency_flag`, `is_fut_on_valid_*`, `is_fut_eod_valid_*`。
-
-### 14) オプション（/derivatives/options）
-
-`opt_iv_cmat_{30,60}d`, `opt_term_slope_30_60`, `opt_iv_atm_{median,near,next}`, `opt_ts_slope`, `opt_skew_5pct`, `opt_smile_width`, `opt_oi_{sum,put_call_ratio}`, `opt_iv_shock`, `is_opt_mkt_valid`。
-
-### 15) 交互作用（interactions）
-
-`x_am_bd_pressure`, `x_div_am_position`, `x_am_vs_fut_ret`, `x_opt_vol_direction`。
-
-### 16) ターゲット / 17) 有効フラグ
-
-`target_{1,5,10,20}d`, `target_{*}d_binary`、および `is_*` フラグ（`is_am_valid`, `is_bd_valid`, `is_div_valid`, `is_fs_valid`, `is_fut_on_valid_*`, `is_fut_eod_valid_*`, `is_opt_mkt_valid`, `is_flow_valid`）。
+- CLI：`python scripts/pipelines/run_full_dataset.py --enable-graph-features --graph-window 60 --graph-threshold 0.3 --graph-max-k 4`
+- パラメータ（YAML/CLI で上書き可）：`graph_window`, `graph_threshold`, `graph_max_k`, `graph_cache_dir`
 
 ---
 
-### 実装メモ
+## 仕様追記（2025-09-19 更新）
 
-* 除算は `+1e-12` を加算しゼロ割を回避。
-* PIT 処理：breakdown/dividend/fs/options → **T+1**、AM と Futures → 当日。
-* API キャッシュ: `output/raw/prices_am`, `output/raw/breakdown`, `output/raw/dividends`, `output/raw/financials` など。
-* 列数やカテゴリ別件数は `dataset_features_detail.json` を確認。
+### 2025-09-19 更新内容
+- セクション12（列総数）を実装実態に合わせて更新（225列→395列）
+- フロー特徴を37列に拡張（flow_* プレフィックス統一）
+- マージン特徴を週次（margin_*）45列と日次（dmi_*）41列に分離
+- 財務特徴を20列に拡張
+- その他の特徴146列（earnings events, short selling, options, cross-features等）を明記
 
-これで、Premium 追加データとマクロ因子を組み込んだ現行データセット仕様が網羅できます。学習設定 (`configs/atft/config*.yaml`) の feature groups を利用する際は、必要に応じて上記カテゴリを反映してください。
+## 仕様追記（2025-09-07）
+
+最新データセットで運用・検証して明確化されたポイントを追記します（既存仕様の明文化であり、モデル性能に影響しない変更）。
+
+### 1) セクター・ターゲットエンコーディング（TE）
+- 生成列: `te33_sec_target_5d`（エイリアス: `te_sec_target_5d`）
+- ベース: 33 セクター（`sector33_id`）
+- リーク防止: `t-1` 遅れでの統計（当日情報は不使用）
+- 学習安定化: k-fold クロスフィット排他 + ベイズ平滑（`m=100`）
+  - セクター平均（除外 fold）= μ_sec_excl(t)
+  - グローバル平均（除外 fold）= μ_all_excl(t)
+  - TE = (n_sec·μ_sec_excl + m·μ_all_excl) / (n_sec + m)
+- 欠損規約: `sector33_id` 未付与行は TE を `null` とする（セクター不明のため）
+
+注: きわめて初期の期間など、fold 排他の窓が成立しない日は `t-1` までの統計のみで μ を構成し、ベイズ平滑により安定化する。
+
+### 2) セクター属性付与のルール（`/listed/info`）
+- キー: `LocalCode`/`Code` を UTF-8 文字列として扱う（本データでは同一値）
+- 期間結合: as-of backward（`valid_from ≤ Date ≤ valid_to`）。将来日スナップショットのみが存在する場合は、`valid_from` をデータセット最小日付まで引き下げ、全期間に適用可能とする（スナップショット型 `listed_info` を許容）
+- 優先規則: 同名列が両辺に存在する場合、`listed_info`（右辺）を優先
+  - 例: `Sector33Code` → `sector33_code`/`sector33`、`MarketCode` を右辺優先で採用
+- `MarketCode`→`Section` 変換を標準化（JASDAQ 等は互換ルールで統合）
+- 期待カバレッジ: `sector33_id ≥ 0` は概ね 95〜97% 程度（上場直後・市場移行直後などは `null` になり得る）
+
+### 3) 命名の正規化（レガシー → 正式名）
+- 有効フラグ: `is_ema_5_valid` → `is_ema5_valid`、`is_ema_10_valid` → `is_ema10_valid`、`is_rsi_2_valid` → `is_rsi2_valid`
+- ボリンジャー: `bb_bandwidth` → `bb_width`、`bb_pct_b` → `bb_position`
+- 旧名は原則出力しない。互換が必要な場合はビュー/別名で吸収する
+  - 追加（2025-10-01）：識別子 `SharesOutstanding` → `shares_outstanding`（スネークケースに統一）。
+
+### 4) フロー特徴の表記について
+- 文書中の**プレフィクスの説明**は「`flow_*` グループ」として扱う（ワイルドカードは列集合の説明。個々の列名は代表列の定義を参照）
+- 代表列: `flow_foreign_net_ratio`, `flow_individual_net_ratio`, `flow_activity_ratio`, `flow_smart_idx`, `flow_smart_mom4`, `flow_shock_flag`, `flow_impulse`, `flow_days_since` など（合計 ≥ 17）
+
+### 5) 拡張（任意列）
+- セクター日次頻度: `sec33_daily_freq`
+  - 含意: 同一 `Date` における 33 セクター内の相対頻度（その日のスナップショット）
+  - 算出: `count(Date×sector33_id) / count(Date)` を window 集計で算出（join 不要）
+  - 位置づけ: 任意（必要に応じて生成）。本仕様の必須列ではない
+
+
+---
+
+### 追加
+
+了解です。いただいた **v1.1 フル仕様** は土台が十分に厚いので、ここからは **「掛け合わせ＝相互作用・ゲーティング・残差化」** を狙って、少数精鋭で効く組み合わせを追加します。
+以下は **(A) 高優先度（まず入れる） → (B) 中優先度 → (C) 実装パターン（Polars断片）** の順です。すべて **t 時点の情報のみ** を使い、`is_*_valid` を尊重して **Null伝播/マスク** を行います。
+
+---
+
+## A. 高優先度（まず入れる：汎化とSharpe底上げに効く）
+
+> **設計原則**
+>
+> 1. 連続値どうしは **Z もしくはスケール整合**（÷volなど）してから積。
+> 2. **レジーム/フラグ × 連続値** は「フラグを float 化して乗算」＝ゲーティング。
+> 3. 相互作用は **“市場→セクター→個別” の三階層** を意識（ノイズ減らし）。
+
+### 1) 市場×個別トレンド整合（Trend Alignment Intensity）
+
+* **狙い**：市場トレンドと個別トレンドが同方向のときだけ、個別トレンドを強調。
+* **式**：`trend_intensity = ma_gap_5_20 * mkt_gap_5_20`
+* **ゲート版**：`trend_intensity_g = ma_gap_5_20 * (mkt_trend_up.cast(Float64) * 2 - 1)`
+  （`mkt_trend_up∈{0,1}` を ±1 に射影して乗算）
+* **効果想定**：継続相場（10–20日）で IC 上乗せ、弱地合いでは過信抑制。
+
+### 2) セクター相対モメンタムの強気/弱気整合
+
+* **式**：`rel_to_sec_5d * sec_mom_20`
+  さらに `z_in_sec_ma_gap_5_20 * sec_mom_20` も有効。
+* **効果**：**“強いセクターで相対的にも強い銘柄”** を抽出（5–10日リスキー逆風を回避）。
+
+### 3) リスク調整モメンタム（局所 Sharpe）
+
+* **式**：`mom_sh_5 = returns_5d / (volatility_20d + ε)`、`mom_sh_10`
+* **mkt 中立**：`(returns_5d - beta_60d*mkt_ret_5d) / (volatility_20d + ε)`
+* **効果**：**ボラに見合った上昇**を拾い、ノイズの高い小型株で特に有効。
+
+### 4) 出来高ショック × 価格方向（フロー実体の確認）
+
+* **式**：`rvol_5 = Volume/volume_ma_5`（既存）
+  相互作用：`rvol_5 * returns_1d.sign()`、`rvol_5 * bb_pct_b`
+* **効果**：**出来高伴う上昇/下落**だけを強調（フェイク・ブレイク排除）。
+
+### 5) スクイーズ検知（ショート×上昇）
+
+* **式**：`squeeze_pressure = dmi_short_to_adv20 * rel_strength_5d.clip_min(0)`
+  代替：`dmi_short_to_adv20 * (returns_1d.clip_min(0))`
+* **効果**：**ショート高水準×上昇転換**で踏み上げ捕捉（1–5日寄与）。
+
+### 6) 信用フローの偏り × 反転/継続の切替
+
+* **式**：`rev_bias = (dmi_credit_ratio - 1).zscore_26 * (-z_close_20).clip_min(0)`
+  （**信用買い偏重**が高いほど **過熱×逆張り**を強く出す）
+* **効果**：短期リバーサルの精度向上（特に高ボラ日）。
+
+### 7) PEADゲーティング（決算ドリフトの時間減衰）
+
+* **式**：`pead_score = (stmt_rev_fore_op + stmt_progress_op).fill_null(0)`（出力時は `stmt_progress_*`/`stmt_rev_fore_*` を ±100 にクリップして外れ値を抑制）
+  `pead_effect = pead_score * exp(- stmt_days_since_statement / τ)`（τ≈5営業日）
+* **効果**：**決算サプライズ→ドリフト**の典型を連続値で表現（5–10日）。
+
+### 8) マーケット・レジームゲート × リバーサル/ブレイク
+
+* **式**：`rev_gate = (mkt_high_vol.cast(Float64)) * (-z_close_20).clip_min(0)`
+  `bo_gate = ((~mkt_high_vol).cast(Float64)) * donchian_break_20`
+* **効果**：**高ボラ＝逆張り優位／低ボラ＝ブレイク優位** を自動切替。
+
+### 9) αの平均回帰 × β安定度
+
+* **式**：`alpha_meanrev = (-alpha_1d) * beta_stability_60d`
+* **効果**：βが安定している銘柄ほど **αは翌日戻りやすい** 傾向を利用（1–3日）。
+
+### 10) フロー（週次）× 個別相対強弱
+
+* **式**：`flow_smart_idx * rel_strength_5d`、`flow_foreign_net_z * rel_to_sec_5d`
+* **効果**：**主体別フローが支える相対強さ**を抽出（5–10日）。
+
+---
+
+## B. 中優先度（余力があれば：ノイズを削る・特殊局面で効く）
+
+### 11) 三階層の合成（市場×セクター×個別）
+
+* **式**：`tri_align = (mkt_gap_5_20>0).int8() * (sec_mom_20>0).int8() * (ma_gap_5_20)`
+* **効果**：**追い風×追い風×追い風** のときのみ個別トレンド採用（偽陽性低減）。
+
+### 12) 乖離の符号別相互作用（Hinge）
+
+* **式**：`pos_b = (bb_pct_b - 1).clip_min(0)`、`neg_b = (0 - bb_pct_b).clip_min(0)`
+  `pos_b * rvol_5`、`neg_b * rvol_5`
+* **効果**：**上限側/下限側**で反応を分離（非線形性の直交化）。
+
+### 13) 流動性ショック × 短期モメンタム
+
+* **式**：`liquidity_shock = (turnover_rate / turnover_rate.shift(1) - 1).clip(−p, p)`
+  `liquidity_shock * returns_5d`
+* **効果**：出来高急変を伴う継続/反転の識別。
+
+### 14) 相関変化感度（対TOPIX）
+
+* **式**：`corr_shift = (beta_60d - beta_20d)`（なければβ差近似）
+  `corr_break = corr_shift * returns_5d`
+* **効果**：**共動崩れ**をとらえてリスクイベント検知。
+
+### 15) 決算×市場地合いの符号整合
+
+* **式**：`pead_effect * (mkt_trend_up.cast(Float64)*2-1)`
+* **効果**：良決算でも弱地合いは伸びにくい／逆も然りを織り込む。
+
+### 16) dmi\_impulse × 短期方向
+
+* **式**：`dmi_impulse.cast(Float64) * returns_1d`、`dmi_days_since_pub` を指数減衰で重み付け
+* **効果**：**発表直後だけ** 影響が強い日次信用のクセを抽出。
+
+### 17) ブレッドス × 個別
+
+* **式**：`flow_breadth_pos * rel_strength_5d`
+* **効果**：**広範な買い越し日**に相対強い銘柄の追随期待（5–10日）。
+
+---
+
+## C. 実装パターン（Polars 最小断片）
+
+> **方針**：
+>
+> * 相互作用は **Null を尊重**（どちらかが NaN なら NaN）。
+> * ただし **“ゲート（0/1）×連続値”** は `fill_null(0.0)` で 0 に倒すと扱いやすい。
+> * 過度な次元爆発を避けるため **上記 10〜15 本に限定**。
+
+```python
+import polars as pl
+
+def hinge_pos(col): return pl.col(col).clip_min(0.0)
+def hinge_neg(col): return (-pl.col(col)).clip_min(0.0)
+
+df = df.with_columns([
+    # 1) 市場×個別トレンド
+    (pl.col("ma_gap_5_20") * pl.col("mkt_gap_5_20")).alias("x_trend_intensity"),
+    (pl.col("ma_gap_5_20") * (pl.col("mkt_trend_up").cast(pl.Float64)*2-1)).alias("x_trend_intensity_g"),
+
+    # 2) セクター相対×セクターモメンタム
+    (pl.col("rel_to_sec_5d") * pl.col("sec_mom_20")).alias("x_rel_sec_mom"),
+
+    # 3) 局所Sharpe
+    (pl.col("returns_5d") / (pl.col("volatility_20d")+1e-12)).alias("x_mom_sh_5"),
+    ((pl.col("returns_5d") - pl.col("beta_60d")*pl.col("mkt_ret_5d")) /
+        (pl.col("volatility_20d")+1e-12)).alias("x_mom_sh_5_mktneu"),
+
+    # 4) 出来高ショック×方向
+    (pl.col("volume_ratio_5") * pl.col("returns_1d").sign()).alias("x_rvol5_dir"),
+    (pl.col("volume_ratio_5") * pl.col("bb_pct_b")).alias("x_rvol5_bb"),
+
+    # 5) スクイーズ
+    (pl.col("dmi_short_to_adv20") * hinge_pos("rel_strength_5d")).alias("x_squeeze_pressure"),
+
+    # 6) 信用過熱×逆張り
+    ((pl.col("dmi_credit_ratio") - 1.0).rolling_mean(26).over("Code")
+        .fill_null(0) * hinge_neg("z_close_20")).alias("x_credit_rev_bias"),
+
+    # 7) PEAD 減衰
+    ((pl.col("stmt_rev_fore_op").fill_null(0) + pl.col("stmt_progress_op").fill_null(0)) *
+     ( (-pl.col("stmt_days_since_statement")/5.0).exp() )).alias("x_pead_effect"),
+
+    # 8) レジームゲート
+    (pl.col("mkt_high_vol").cast(pl.Float64) * hinge_neg("z_close_20")).alias("x_rev_gate"),
+    ((1.0 - pl.col("mkt_high_vol").cast(pl.Float64)) *
+     pl.col("ma_gap_5_20").gt(0).cast(pl.Float64)).alias("x_bo_gate"),
+
+    # 9) α平均回帰×β安定
+    ((-pl.col("alpha_1d")) * pl.col("beta_stability_60d")).alias("x_alpha_meanrev_stable"),
+
+    # 10) 週次フロー×相対強弱（Nullは落ちる）
+    (pl.col("flow_smart_idx") * pl.col("rel_strength_5d")).alias("x_flow_smart_rel"),
+    (pl.col("flow_foreign_net_z") * pl.col("rel_to_sec_5d")).alias("x_foreign_relsec"),
+
+    # 11) 三階層の合成（ブール×ブール×連続）
+    (pl.col("mkt_gap_5_20").gt(0).cast(pl.Float64) *
+     pl.col("sec_mom_20").gt(0).cast(pl.Float64) *
+     pl.col("ma_gap_5_20")).alias("x_tri_align"),
+
+    # 12) 乖離の符号別×出来高
+    (hinge_pos("bb_pct_b") * pl.col("volume_ratio_5")).alias("x_bbpos_rvol5"),
+    (hinge_neg("bb_pct_b") * pl.col("volume_ratio_5")).alias("x_bbneg_rvol5"),
+
+    # 13) 流動性ショック×モメンタム
+    (((pl.col("turnover_rate")/(pl.col("turnover_rate").shift(1)+1e-12)) - 1.0)
+        .clip(-0.5, 0.5) * pl.col("returns_5d")).alias("x_liquidityshock_mom"),
+
+    # 15) 決算×地合い
+    (pl.col("x_pead_effect") * (pl.col("mkt_trend_up").cast(pl.Float64)*2-1)).alias("x_pead_times_mkt"),
+
+    # 16) dmi インパルス×方向（インパルス Null は0に）
+    (pl.col("dmi_impulse").cast(pl.Float64).fill_null(0.0) * pl.col("returns_1d")).alias("x_dmi_impulse_dir"),
+
+    # 17) ブレッドス×個別
+    (pl.col("flow_breadth_pos") * pl.col("rel_strength_5d")).alias("x_breadth_rel"),
+])
+```
+
+> **メモ**
+>
+> * `volume_ratio_5` は `Volume/MA5(Volume)` 相当（仕様に合わせて置換）。
+> * `donchian_break_20` が未定義なら `Close > rolling_max_20(Close)` を bool→float 化で代替。
+> * 項目が未算出の列は、まず既存パイプで生成・正規名に合わせてください。
+
+---
+
+## どう効くか（期待・検証の着眼点）
+
+* **短期（1–3日）**：`x_rvol5_dir`、`x_rev_gate`、`x_alpha_meanrev_stable`、`x_squeeze_pressure`。
+* **中期（5–10日）**：`x_trend_intensity(_g)`、`x_rel_sec_mom`、`x_mom_sh_5(_mktneu)`、`x_pead_effect`。
+* **イベント横断**：`x_pead_times_mkt`、`x_dmi_impulse_dir`。
+* **ロバスト化**：`x_tri_align`（偽陽性を下げ Sharpe 底上げ）。
+
+**Ablation 推奨**：Base → +A（高優先度10本）→ +B（中優先度）で **Purged KFold+Embargo** 評価。
+**期待**：RankIC +0.01〜+0.03（短期側）、Sharpe +0.1〜+0.3 の底上げ（データ期間・ユニバース次第）。
+
+---/
+
+## 追加の運用ヒント
+
+* **学習時標準化**：相互作用列も **fold内 fit → transform**（`x_cs_z`等）を徹底。
+* **過学習抑制**：似通う相互作用は **L2/Dropout** か **学習率減衰＋早停** で制御。
+* **特徴選択**：Permutation / SHAP で寄与小を整理（ただしゲート類は残すと安定）。
+* **GAT併用**：`x_rel_sec_mom` や `x_flow_smart_rel` を **エッジ重み候補**（同業内）にも使える。
+
+---
+
+このセットは、**価格×需給×イベント×レジーム**をそれぞれ単独で足すのではなく、**“条件が揃ったときだけ強調する”** ための掛け合わせです。まずは **高優先度10本** を入れて再学習→効果を見てから中優先度を段階追加、の順で進めるのが最短で効果的です。

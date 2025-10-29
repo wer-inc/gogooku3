@@ -468,7 +468,7 @@ class CrossMarketFeaturesGenerator:
                 )
 
             # アイディオシンクラティック・ボラティリティ比
-            # dataset_new.md 定義: idio_vol_ratio = volatility_20d/(mkt_vol_20d+1e-12)
+            # dataset.md 定義: idio_vol_ratio = volatility_20d/(mkt_vol_20d+1e-12)
             if "volatility_20d" in df.columns and "mkt_vol_20d" in df.columns:
                 df = df.with_columns(
                     [

@@ -155,3 +155,7 @@ features:
 
 # Expose flattened feature list for training pipeline
 feature_cols: ${schema.feature_columns}
+
+# Phase 1 streaming loader configuration
+loader:
+  implementation: iterable_v1

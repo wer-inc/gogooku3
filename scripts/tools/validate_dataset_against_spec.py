@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Validate an ML dataset against docs/ml/dataset_new.md (canonical spec).
+Validate an ML dataset against docs/ml/dataset.md (canonical spec).
 
 - Verifies presence of canonical columns
 - Verifies cross features match exactly the spec's 8 columns
@@ -10,7 +10,7 @@ Validate an ML dataset against docs/ml/dataset_new.md (canonical spec).
 Usage:
   python scripts/tools/validate_dataset_against_spec.py \
     --dataset output/ml_dataset_YYYYMMDD_HHMMSS.parquet \
-    --docs docs/ml/dataset_new.md
+    --docs docs/ml/dataset.md
 Exit code is non-zero if validation fails.
 """
 
@@ -53,9 +53,9 @@ def extract_backticked_names(md_text: str) -> set[str]:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validate dataset against dataset_new.md")
+    ap = argparse.ArgumentParser(description="Validate dataset against dataset.md")
     ap.add_argument("--dataset", required=True, type=Path)
-    ap.add_argument("--docs", type=Path, default=Path("docs/ml/dataset_new.md"))
+    ap.add_argument("--docs", type=Path, default=Path("docs/ml/dataset.md"))
     args = ap.parse_args()
 
     if not args.dataset.exists():
@@ -98,7 +98,7 @@ def main():
         errors.append(f"stmt_* features too few: {stmt_count} < 17")
 
     flow_count = len([c for c in cols if c.startswith("flow_")])
-    # dataset_new.md lists 17 flow features target; allow >= 12 to pass if partial, else enforce 17
+    # dataset.md lists 17 flow features target; allow >= 12 to pass if partial, else enforce 17
     if flow_count < 17:
         errors.append(f"flow_* features too few: {flow_count} < 17")
 
@@ -112,7 +112,7 @@ def main():
     if "idio_vol_ratio" not in cols:
         errors.append("Missing idio_vol_ratio")
 
-    # 6) Extra names mentioned in dataset_new.md but absent (best effort)
+    # 6) Extra names mentioned in dataset.md but absent (best effort)
     # Filter to those likely to be columns
     md_col_like = [
         n
@@ -160,7 +160,7 @@ def main():
             f"Note: {len(missing_from_md)} doc-listed names missing (informative): {missing_from_md[:10]} ..."
         )
     if ok:
-        print("✅ Validation PASSED against dataset_new.md")
+        print("✅ Validation PASSED against dataset.md")
         sys.exit(0)
     else:
         print("❌ Validation FAILED:")

@@ -492,9 +492,9 @@ print(results["errors"])
 ## 📚 関連ドキュメント
 
 - [データセット仕様](../ml/dataset.md) - 生成される特徴量の詳細仕様
-- [日次マージン（dmi_）仕様](../ml/dataset_new.md#8-日次マージンmarketsdaily_margin_interest特徴接頭辞-dmi) - T+1/非リーク結合・列一覧・有効化方法
-- [MODULAR_ETL_DESIGN.md](../_archive/specifications_original/MODULAR_ETL_DESIGN.md) - モジュール設計の詳細
-- [brain.md](../_archive/legacy/brain.md) - プロジェクト開発履歴
+- [日次マージン（dmi_）仕様](../ml/dataset.md#8-日次マージンmarketsdaily_margin_interest特徴接頭辞-dmi) - T+1/非リーク結合・列一覧・有効化方法
+- MODULAR_ETL_DESIGN（アーカイブ済み資料） - 過去のモジュール設計ノート
+- brain.md（アーカイブ済み資料） - プロジェクト開発履歴メモ
 
 ## 🚀 今後の拡張予定
 

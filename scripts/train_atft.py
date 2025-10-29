@@ -2116,6 +2116,64 @@ class SimpleLSTM(nn.Module):
         return outputs
 
 
+def _set_requires_grad(module: nn.Module | None, requires_grad: bool) -> None:
+    if module is None:
+        return
+    try:
+        for param in module.parameters():
+            param.requires_grad = requires_grad
+    except Exception:
+        pass
+
+
+def _maybe_apply_temporal_encoder_freeze(model: torch.nn.Module, epoch: int | float) -> None:
+    freeze_flag = os.getenv("FREEZE_TEMPORAL_ENCODER", "0") == "1"
+    if not freeze_flag or not hasattr(model, "tft"):
+        return
+    try:
+        freeze_epochs = max(0, int(os.getenv("TEMPORAL_FREEZE_EPOCHS", "0")))
+    except Exception:
+        freeze_epochs = 0
+    if freeze_epochs <= 0:
+        return
+    try:
+        epoch_idx = int(epoch)
+    except Exception:
+        epoch_idx = 0
+    if epoch_idx <= 0:
+        epoch_idx = 1
+    already_frozen = bool(getattr(model, "_temporal_encoder_frozen", False))
+    should_freeze = epoch_idx <= freeze_epochs
+
+    def _toggle(requires_grad: bool) -> None:
+        modules = []
+        if getattr(model, "tft", None) is not None:
+            _set_requires_grad(model.tft, requires_grad)
+            modules.append("tft")
+        if getattr(model, "variable_selection", None) is not None:
+            _set_requires_grad(model.variable_selection, requires_grad)
+            modules.append("variable_selection")
+        if getattr(model, "input_projection", None) is not None:
+            _set_requires_grad(model.input_projection, requires_grad)
+            modules.append("input_projection")
+        if modules and os.getenv("LOG_TEMPORAL_FREEZE", "1") == "1":
+            state = "frozen" if not requires_grad else "unfrozen"
+            logger.info(
+                "Temporal encoder modules %s %s (epoch=%d, target=%d)",
+                "+".join(modules),
+                state,
+                epoch_idx,
+                freeze_epochs,
+            )
+
+    if should_freeze and not already_frozen:
+        _toggle(requires_grad=False)
+        setattr(model, "_temporal_encoder_frozen", True)
+    elif not should_freeze and already_frozen:
+        _toggle(requires_grad=True)
+        setattr(model, "_temporal_encoder_frozen", False)
+
+
 def train_epoch(
     model,
     dataloader,
@@ -2127,6 +2185,7 @@ def train_epoch(
     gradient_accumulation_steps=1,
 ):
     """1エポックの学習（Mixed Precision対応）"""
+    _maybe_apply_temporal_encoder_freeze(model, epoch)
     model.train()
     total_loss = 0
     horizon_losses = {f"horizon_{h}": 0 for h in criterion.horizons}
@@ -3860,6 +3919,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
 
         # エポック実行
         for epoch in range(phase["epochs"]):
+            _maybe_apply_temporal_encoder_freeze(model, epoch)
             # Training
             model.train()
             train_loss = 0.0
@@ -6868,6 +6928,51 @@ def train(config: DictConfig) -> None:
         logger.error(f"[OPT-AUDIT][FAIL] {_e}")
         raise
 
+    resume_epoch = 0
+    resume_global_step = 0
+    resume_ckpt_env = os.getenv("RESUME_FROM_CHECKPOINT", "").strip()
+    if resume_ckpt_env:
+        resume_path = Path(resume_ckpt_env).expanduser()
+        if resume_path.exists():
+            try:
+                checkpoint = torch.load(resume_path, map_location=device)
+                state_dict = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+                if state_dict:
+                    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                    if missing:
+                        logger.warning(
+                            "[resume] Missing keys during load: %s", ", ".join(sorted(missing))
+                        )
+                    if unexpected:
+                        logger.warning(
+                            "[resume] Unexpected keys during load: %s",
+                            ", ".join(sorted(unexpected)),
+                        )
+                optim_state = checkpoint.get("optimizer_state_dict")
+                if optim_state:
+                    try:
+                        optimizer.load_state_dict(optim_state)
+                    except Exception as _opt_e:
+                        logger.warning("[resume] Optimizer state load skipped: %s", _opt_e)
+                scaler_state = checkpoint.get("scaler_state_dict")
+                if scaler_state:
+                    try:
+                        scaler.load_state_dict(scaler_state)
+                    except Exception as _scaler_e:
+                        logger.warning("[resume] GradScaler state load skipped: %s", _scaler_e)
+                resume_epoch = int(checkpoint.get("epoch", 0))
+                resume_global_step = int(checkpoint.get("global_step", 0))
+                logger.info(
+                    "[resume] Loaded checkpoint %s (epoch=%d, global_step=%d)",
+                    resume_path,
+                    resume_epoch,
+                    resume_global_step,
+                )
+            except Exception as _resume_err:
+                logger.error("[resume] Failed to load checkpoint %s: %s", resume_path, _resume_err)
+        else:
+            logger.error("[resume] Checkpoint path not found: %s", resume_path)
+
     # 学習率スケジューラー（線形ウォームアップ→Cosine）
     warmup_epochs = int(final_config.train.scheduler.warmup_epochs)
     total_epochs = int(final_config.train.scheduler.total_epochs)
@@ -6927,6 +7032,8 @@ def train(config: DictConfig) -> None:
         n_epochs = final_config.train.scheduler.total_epochs
         best_val_loss = float("inf")
         logger.info(f"Starting training loop ({tag})...")
+        effective_resume_epoch = resume_epoch if tag == "main" else 0
+        effective_resume_step = resume_global_step if tag == "main" else 0
 
         # Time budget configuration
         time_budget_hours = float(os.getenv("TIME_BUDGET_HOURS", "2.0"))
@@ -6949,7 +7056,7 @@ def train(config: DictConfig) -> None:
 
         start_time = time.time()
         last_heartbeat = time.time()
-        global_step = 0
+        global_step = int(effective_resume_step)
         time_exceeded = False
 
         # Initialize degeneracy detection tracking
@@ -7180,12 +7287,29 @@ def train(config: DictConfig) -> None:
                 write_failure_report(e)
                 raise
 
-        for epoch in range(1, n_epochs + 1):
+        start_epoch = max(1, int(effective_resume_epoch) + 1)
+        if tag == "main" and effective_resume_epoch > 0:
+            logger.info(
+                "[resume] Continuing from epoch %d (global_step=%d)",
+                start_epoch,
+                effective_resume_step,
+            )
+        if start_epoch > n_epochs:
+            if tag == "main":
+                logger.info(
+                    "[resume] Checkpoint epoch %d >= configured epochs %d; skipping training loop.",
+                    resume_epoch,
+                    n_epochs,
+                )
+            return
+
+        for epoch in range(start_epoch, n_epochs + 1):
             if time_exceeded:
                 logger.info(f"Time budget exceeded after {epoch-1} epochs")
                 break
 
             # Set epoch on model for head noise control
+            _maybe_apply_temporal_encoder_freeze(model, epoch)
             if hasattr(model, "_epoch"):
                 model._epoch = epoch
 

@@ -8,7 +8,8 @@
 - モデル学習: `docs/ml/model-training.md`
 - 安全性ガードレール: `docs/ml/safety-guardrails.md`
 - はじめに: `docs/getting-started.md`
-- データセット仕様（英語）: `docs/ml/dataset_new.md`（日次マージン `dmi_*`、週次マージン `margin_*`、as-of 結合/T+1 など）
+- データセット仕様（英語）: `docs/ml/dataset.md`（日次マージン `dmi_*`、週次マージン `margin_*`、as-of 結合/T+1 など）
+- データ取得運用ノート: `docs/ml/dataset_ingestion_strategy.md`（API軸選択・差分検知・命名整備の補足）
 
 ---
 

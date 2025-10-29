@@ -62,7 +62,7 @@ improvements:
   - 1.0
   - 1.0
   - 1.0
-  online_normalization: false
+  online_normalization: true
   output_head_small_init: true
   use_ema: true
 logging:
@@ -77,3 +77,11 @@ project:
   deterministic: true
   name: ATFT-GAT-FAN
   seed: 42
+
+normalization:
+  online_normalization:
+    enabled: true
+    max_samples: 250000
+    random_state: 42
+  cross_sectional:
+    enabled: false

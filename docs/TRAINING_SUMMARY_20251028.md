@@ -2,9 +2,9 @@
 
 ## Executive Summary
 
-**Training Status**: ✅ Completed Successfully  
-**Total Training Time**: 72 minutes (4328.95 seconds)  
-**Best Model**: `models/checkpoints/atft_gat_fan_best_main.pt`  
+**Training Status**: ✅ Completed Successfully
+**Total Training Time**: 72 minutes (4328.95 seconds)
+**Best Model**: `models/checkpoints/atft_gat_fan_best_main.pt`
 **Best Val Sharpe**: **0.0818** (Phase 3, Epoch 4)
 
 ---
@@ -168,6 +168,6 @@ The ATFT-GAT-FAN training completed successfully with a best Val Sharpe of **0.0
 
 ---
 
-**Generated**: 2025-10-28  
-**Training Log**: `logs/ml_training.log`  
+**Generated**: 2025-10-28
+**Training Log**: `logs/ml_training.log`
 **Evaluation Report**: `docs/EVALUATION_REPORT_20251028.md`

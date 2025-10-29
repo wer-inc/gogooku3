@@ -349,7 +349,7 @@ RMM init failed: module 'rmm' has no attribute 'rmm_cupy_allocator'
 ### ドキュメント
 - `GPU_ETL_USAGE.md`: GPU-ETL使用ガイド
 - `GPU_TRAINING.md`: GPU学習ガイド
-- `docs/ml/dataset_new.md`: データセット仕様（理論最大395列、実際~307列）
+- `docs/ml/dataset.md`: データセット仕様（理論最大395列、実際~307列）
 
 ## 🎯 次のステップ
 

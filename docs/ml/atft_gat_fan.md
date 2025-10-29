@@ -1,6 +1,6 @@
 # ATFT-GAT-FAN モデル仕様（Graph Attention Network 含む）
 
-本ドキュメントは **ATFT-GAT-FAN** アーキテクチャのうち、Graph Attention Network (GAT) を含む推論パイプラインと学習設定を記録する。`docs/ml/dataset.md` がデータセット仕様に集中しているのに対し、本稿は **モデル側の構成・入出力・訓練フロー・監視指標** をまとめる。
+本ドキュメントは **ATFT-GAT-FAN** アーキテクチャのうち、Graph Attention Network (GAT) を含む推論パイプラインと学習設定を記録する。`docs/ml/dataset.md` がデータセット仕様を、`docs/ml/dataset_ingestion_strategy.md` が取得オペレーションの補足ノートを扱うのに対し、本稿は **モデル側の構成・入出力・訓練フロー・監視指標** をまとめる。
 
 ## 1. モデル全体像
 

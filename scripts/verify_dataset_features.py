@@ -2,7 +2,7 @@
 """
 Verify dataset features against documentation specification.
 
-This script checks if expected features from docs/ml/dataset_new.md
+This script checks if expected features from docs/ml/dataset.md
 are present in the generated dataset.
 
 Note: Theoretical maximum is 395 features with all data sources enabled.

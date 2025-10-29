@@ -158,7 +158,7 @@ gogooku3/
 │   └── portfolio/                # ポートフォリオ
 ├── scripts/                      # 学習スクリプト
 │   ├── train_atft.py            # メイン学習スクリプト
-│   ├── _archive/train_atft_wrapper.py    # 学習ラッパー（ARCHIVED）
+│   ├── train_atft_wrapper.py（archived）    # 学習ラッパー（参考用）
 │   ├── test_atft_training.py    # 機能テスト
 │   └── models/                   # 既存推論機能
 ├── configs/                      # 設定ファイル

@@ -21,7 +21,6 @@ for path in (REPO_ROOT, SCRIPTS_DIR):
 
 import importlib.util
 
-import polars as pl
 
 def _load_builder_class() -> type:
     module_path = SCRIPTS_DIR / "data" / "ml_dataset_builder.py"
@@ -32,14 +31,20 @@ def _load_builder_class() -> type:
     spec.loader.exec_module(module)
     return module.MLDatasetBuilder
 
+
 MLDatasetBuilder = _load_builder_class()
-from src.data.parquet_stock_dataset import OnlineRobustScaler, ParquetStockIterableDataset
+from src.data.parquet_stock_dataset import (
+    OnlineRobustScaler,
+    ParquetStockIterableDataset,
+)
 
 LOG = logging.getLogger("dataset_spec")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Validate dataset specification coverage.")
+    parser = argparse.ArgumentParser(
+        description="Validate dataset specification coverage."
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -80,7 +85,12 @@ def main() -> None:
     dataset_df.write_parquet(args.output)
     with open(args.metadata, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
-    LOG.info("Saved dataset to %s (%d rows, %d columns)", args.output, len(dataset_df), len(dataset_df.columns))
+    LOG.info(
+        "Saved dataset to %s (%d rows, %d columns)",
+        args.output,
+        len(dataset_df),
+        len(dataset_df.columns),
+    )
 
     # Validate category coverage
     missing_cols = []

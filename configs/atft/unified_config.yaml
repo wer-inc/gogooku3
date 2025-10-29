@@ -99,8 +99,10 @@ normalization:
     enabled: false  # NEVER enable for time-series to prevent leakage
 
   online_normalization:
-    enabled: false
+    enabled: true
     per_batch: true
+    max_samples: 250000
+    random_state: 42
 
 # Baseline model configuration
 baseline:

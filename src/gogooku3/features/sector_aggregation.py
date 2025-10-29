@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 Sector aggregation features (セクター集約特徴).
 
-Implements dataset_new.md v1.1 Section 6.2-6.3:
+Implements dataset.md v1.1 Section 6.2-6.3:
 - Sector equal-weighted returns (median-based, robust)
 - Sector momentum, EMA, gaps
 - Sector volatility and Z-scores

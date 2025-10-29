@@ -1,14 +1,14 @@
-# dataset_new.md VERIFICATION REPORT
+# dataset.md VERIFICATION REPORT
 
 **Generated**: 2025-09-06
 **Dataset**: `ml_dataset_20200906_20250906_20250906_143623_full.parquet`
-**Specification**: `docs/ml/dataset_new.md`
+**Specification**: `docs/ml/dataset.md`
 
 ## Executive Summary
 
 ### ✅ 100% IMPLEMENTATION ACHIEVED
 
-All 145 required features from `docs/ml/dataset_new.md` specification are successfully implemented in the latest dataset.
+All 145 required features from `docs/ml/dataset.md` specification are successfully implemented in the latest dataset.
 
 ## Dataset Overview
 
@@ -214,7 +214,7 @@ These extra features provide enhanced modeling capabilities while maintaining fu
 
 ## Conclusion
 
-The latest dataset **fully implements 100% of the `docs/ml/dataset_new.md` specification** with all 145 required features present and correctly calculated. The dataset is production-ready for machine learning model training with comprehensive coverage of price, technical, market, flow, and fundamental features.
+The latest dataset **fully implements 100% of the `docs/ml/dataset.md` specification** with all 145 required features present and correctly calculated. The dataset is production-ready for machine learning model training with comprehensive coverage of price, technical, market, flow, and fundamental features.
 
 ### Certification
 - **Specification Compliance**: ✅ 100%
@@ -225,4 +225,4 @@ The latest dataset **fully implements 100% of the `docs/ml/dataset_new.md` speci
 
 ---
 
-*This report confirms that the gogooku3-standalone ML dataset meets all requirements specified in `docs/ml/dataset_new.md` and is ready for production use in financial machine learning applications.*
+*This report confirms that the gogooku3-standalone ML dataset meets all requirements specified in `docs/ml/dataset.md` and is ready for production use in financial machine learning applications.*

@@ -165,7 +165,9 @@ train:
 normalization:
   # Cross-sectional Z-scores are generated during conversion; skip online normalization
   online_normalization:
-    enabled: false
+    enabled: true
+    max_samples: 250000
+    random_state: 42
 
   cross_sectional:
     enabled: false
