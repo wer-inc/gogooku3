@@ -1,0 +1,313 @@
+============================================================
+Complete ATFT-GAT-FAN Training Pipeline
+Target Sharpe Ratio: 0.849
+============================================================
+2025-10-28 23:43:02,806 - __main__ - INFO - 🚀 Complete ATFT-GAT-FAN Training Pipeline started
+2025-10-28 23:43:02,824 - __main__ - INFO - 🎯 Target Sharpe Ratio: 0.849
+2025-10-28 23:43:02,826 - __main__ - INFO - 🔧 Setting up ATFT-GAT-FAN environment...
+2025-10-28 23:43:02,831 - __main__ - INFO - ✅ ATFT-GAT-FAN environment setup completed
+2025-10-28 23:43:02,832 - __main__ - INFO - 📊 Loading and validating ML dataset...
+2025-10-28 23:43:02,848 - __main__ - INFO - 📂 Loading ML dataset from: output/ml_dataset_latest_full.parquet
+2025-10-28 23:43:14,292 - __main__ - INFO - ✅ ML dataset loaded: (4643854, 395)
+2025-10-28 23:43:14,294 - __main__ - INFO - 🔄 Converting ML dataset to ATFT-GAT-FAN format...
+2025-10-28 23:43:14,339 - __main__ - INFO - Using curated feature groups ['core50', 'plus30'] (78 features + 4 masks = 82 columns)
+2025-10-28 23:43:14,379 - __main__ - INFO - ♻️  Reusing existing converted data at output/atft_data (skip conversion)
+2025-10-28 23:43:14,385 - __main__ - INFO - ✅ Conversion completed: Mode = UnifiedFeatureConverter
+2025-10-28 23:43:14,386 - __main__ - INFO - 📋 Preparing ATFT-GAT-FAN training data...
+2025-10-28 23:43:14,387 - __main__ - INFO - ✅ ATFT-GAT-FAN training data prepared: 100 train files
+2025-10-28 23:43:14,388 - __main__ - INFO - 🏋️ Executing ATFT-GAT-FAN training with results reproduction...
+2025-10-28 23:43:14,635 - __main__ - INFO - [pipeline] Using GPU execution plan (pin_memory, prefetch_factor=4; persistent_workers=as-configured)
+2025-10-28 23:43:14,636 - __main__ - INFO - Running command: python scripts/train_atft.py data.source.data_dir=output/atft_data train.batch.train_batch_size=1024 train.optimizer.lr=0.0002 train.trainer.max_epochs=1 train.trainer.precision=16-mixed train.trainer.check_val_every_n_epoch=1 train.trainer.enable_progress_bar=true model.input_dims.total_features=82 model.input_dims.historical_features=0 model.input_dims.basic_features=82 train.batch.num_workers=0 --config-path ../configs/atft
+Using optimized data loader
+INFO:root:[logger] FileHandler attached: /workspace/gogooku3/logs/ml_training.log
+[2025-10-28 23:43:18,921][__main__][INFO] - Starting production training...
+/usr/local/lib/python3.12/dist-packages/torch/backends/__init__.py:46: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  self.setter(val)
+[2025-10-28 23:43:18,956][__main__][INFO] - 🚀 A100 optimizations enabled: TF32=True, cudnn_benchmark=True
+[2025-10-28 23:43:18,983][__main__][INFO] - 🎮 GPU: NVIDIA A100-SXM4-80GB (85.0GB)
+[2025-10-28 23:43:18,983][__main__][INFO] - [EnvOverride] train.trainer.precision = bf16-mixed
+[2025-10-28 23:43:18,984][__main__][INFO] - [EnvOverride] DEGENERACY_GUARD = True (via environment)
+[2025-10-28 23:43:18,984][__main__][INFO] - [EnvOverride] OUTPUT_NOISE_STD = 0.02 (via environment)
+[2025-10-28 23:43:18,986][src.utils.config_validator][INFO] - Configuration validation passed
+[2025-10-28 23:43:18,989][__main__][INFO] - Random seed: 42, Deterministic: False
+[2025-10-28 23:43:19,206][__main__][INFO] - Using device: cuda
+[2025-10-28 23:43:19,210][__main__][INFO] - GPU: NVIDIA A100-SXM4-80GB
+[2025-10-28 23:43:19,212][__main__][INFO] - GPU Memory: 85.0GB
+[2025-10-28 23:43:19,250][__main__][INFO] - Found hidden_size=256 at path: model.hidden_size
+[2025-10-28 23:43:19,251][__main__][WARNING] - [loader-guard] Forcing DataLoader into single-process mode (num_workers=0) to avoid worker aborts. Set ALLOW_UNSAFE_DATALOADER=auto (default) or 1 to bypass.
+[2025-10-28 23:43:19,252][__main__][INFO] - Setting up data module...
+[2025-10-28 23:43:19,253][__main__][INFO] - [Hydra-Struct] data.schema detected with keys: ['date_column', 'code_column', 'target_column', 'target_columns', 'feature_columns', 'static_columns', 'regime_columns']
+[2025-10-28 23:43:19,253][__main__][INFO] - [Hydra-Struct] data group keys: ['graph_builder', 'name', 'schema', 'use_buffered_loader', 'source', 'memory', 'distributed', 'sampling', 'time_series', 'features', 'feature_cols', 'loader', 'graph']
+[2025-10-28 23:43:19,263][src.gogooku3.training.atft.data_module][INFO] - 📂 Found 100 train, 100 val, 0 test files
+[2025-10-28 23:43:19,263][src.gogooku3.training.atft.data_module][INFO] - ✅ Using explicit target columns from config: ['target_1d', 'target_5d', 'target_10d', 'target_20d']
+[2025-10-28 23:43:19,264][src.gogooku3.training.atft.data_module][INFO] - Selected data loader implementation: iterable_v1
+[2025-10-28 23:43:19,265][src.gogooku3.training.atft.data_module][INFO] - Fitting OnlineRobustScaler on training data (max_samples=250000, files=100)...
+[2025-10-28 23:44:56,827][src.gogooku3.training.atft.data_module][INFO] - ✅ Iterable datasets ready (train_files=100, val_files=100, test_files=0, seq_len=20)
+[2025-10-28 23:44:56,829][__main__][INFO] - [data-filter] Global minimum date filter: 2016-01-01
+[2025-10-28 23:44:56,829][__main__][INFO] - [data-filter] This ensures sufficient history for computing forward-looking returns
+[2025-10-28 23:44:56,830][__main__][INFO] - Creating data loaders...
+[2025-10-28 23:44:56,831][src.gogooku3.training.atft.data_module][INFO] - Using iterable DataLoader (shuffle disabled) for training split
+[2025-10-28 23:44:56,833][__main__][INFO] - DayBatchSampler enabled (min_nodes_per_day=20)
+[2025-10-28 23:44:56,834][__main__][WARNING] - DayBatch/collate setup skipped: DataLoader with IterableDataset: expected unspecified shuffle option, but got shuffle=True
+[2025-10-28 23:45:08,102][__main__][INFO] - [input_dim] detected from data: F=82 (was: 13)
+[2025-10-28 23:45:08,112][__main__][INFO] - Train batches: unknown
+[2025-10-28 23:45:08,113][__main__][INFO] - Val batches: unknown
+[2025-10-28 23:45:08,113][__main__][INFO] - Validating label normalization...
+[2025-10-28 23:45:08,238][__main__][INFO] - Target horizon_1: mean=0.000763, std=0.008553
+[2025-10-28 23:45:08,239][__main__][INFO] - Target horizon_5: mean=0.004600, std=0.019692
+[2025-10-28 23:45:08,239][__main__][INFO] - Target horizon_10: mean=0.011444, std=0.022506
+[2025-10-28 23:45:08,240][__main__][INFO] - Target horizon_20: mean=0.022997, std=0.027307
+[2025-10-28 23:45:09,481][__main__][INFO] - [debug-first-batch-keys] ['features', 'targets', 'code', 'date']
+[2025-10-28 23:45:09,482][__main__][INFO] - [debug-first-batch-type] features: <class 'torch.Tensor'>
+[2025-10-28 23:45:09,483][__main__][INFO] - [debug-first-batch-type] targets: <class 'dict'>
+[2025-10-28 23:45:09,484][__main__][INFO] - [debug-first-batch-type] code: <class 'list'>
+[2025-10-28 23:45:09,484][__main__][INFO] - [debug-first-batch-type] date: <class 'list'>
+/workspace/gogooku3/scripts/train_atft.py:6408: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  "timestamp": datetime.utcnow().isoformat() + "Z",
+/workspace/gogooku3/scripts/train_atft.py:6431: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  / f"train_manifest_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+[2025-10-28 23:45:10,059][__main__][INFO] - Initializing model...
+[2025-10-28 23:45:10,060][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - ✅ Feature dimensions resolved from config: total=82, current=82, historical=0, static=0
+[2025-10-28 23:45:10,299][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - [GAT-INIT] gat_entropy_weight=0.001, gat_edge_weight=0.01, gat_output_dim=256
+[2025-10-28 23:45:10,339][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - ✅ [GAT-FIX] Applied 3x weight scaling + residual gate (α=0.5)
+[2025-10-28 23:45:11,095][src.atft_gat_fan.models.architectures.atft_gat_fan][INFO] - ATFT-GAT-FAN initialized with 82 dynamic features
+[2025-10-28 23:45:11,188][__main__][INFO] - ✅ [GAT-FIX] backbone_projection GAT部分の重みを2.0倍にスケーリング
+[2025-10-28 23:45:12,554][__main__][INFO] - ATFT-GAT-FAN model parameters: 22,533,021
+[2025-10-28 23:45:12,555][__main__][INFO] - [CONFIG-DEBUG] model.gat_entropy_weight=0.001
+[2025-10-28 23:45:12,556][__main__][INFO] - [CONFIG-DEBUG] model.gat_edge_weight=0.01
+[2025-10-28 23:45:12,556][__main__][INFO] - [CONFIG-DEBUG] model.gat is None: False
+[2025-10-28 23:45:12,557][__main__][INFO] - [CONFIG-DEBUG] model.gat_output_dim=256
+[2025-10-28 23:45:12,716][runtime_guards][INFO] - [runtime-guards] Installed 2 activation guard(s) on: prediction_head, gat
+[2025-10-28 23:45:12,719][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads
+[2025-10-28 23:45:12,720][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d
+[2025-10-28 23:45:12,720][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.0
+[2025-10-28 23:45:12,721][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.1
+[2025-10-28 23:45:12,722][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.2
+[2025-10-28 23:45:12,722][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_1d.3
+[2025-10-28 23:45:12,723][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d
+[2025-10-28 23:45:12,723][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.0
+[2025-10-28 23:45:12,723][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.1
+[2025-10-28 23:45:12,724][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.2
+[2025-10-28 23:45:12,724][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_5d.3
+[2025-10-28 23:45:12,725][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d
+[2025-10-28 23:45:12,726][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.0
+[2025-10-28 23:45:12,726][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.1
+[2025-10-28 23:45:12,727][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.2
+[2025-10-28 23:45:12,727][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.3
+[2025-10-28 23:45:12,727][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.4
+[2025-10-28 23:45:12,728][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_10d.5
+[2025-10-28 23:45:12,728][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d
+[2025-10-28 23:45:12,729][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.0
+[2025-10-28 23:45:12,729][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.1
+[2025-10-28 23:45:12,730][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.2
+[2025-10-28 23:45:12,731][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.3
+[2025-10-28 23:45:12,731][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.4
+[2025-10-28 23:45:12,732][__main__][INFO] - Added initial noise (std=0.05) to prediction_head.horizon_heads.horizon_20d.5
+[2025-10-28 23:45:12,732][__main__][INFO] - [AMP] GradScaler initialized: enabled=False, amp_dtype=torch.bfloat16
+[2025-10-28 23:45:12,738][__main__][INFO] - [OPT-AUDIT] ✓ Optimizer covers 22533021/22533021 trainable params
+[2025-10-28 23:45:12,738][__main__][INFO] - Batch size: 1024
+[2025-10-28 23:45:12,739][__main__][INFO] - Gradient accumulation steps: 2
+[2025-10-28 23:45:12,739][__main__][INFO] - Effective batch size: 2048
+[2025-10-28 23:45:12,740][__main__][INFO] - Starting training loop (main)...
+[2025-10-28 23:45:12,741][__main__][INFO] - Time budget: 2.0 hours
+[2025-10-28 23:45:12,741][__main__][INFO] - Eval every: 100 steps
+[2025-10-28 23:45:12,741][__main__][INFO] - Heartbeat interval: 30s
+[2025-10-28 23:45:12,762][__main__][INFO] - [GraphBuilder] return_cols extended to ['return_1d', 'feat_ret_1d', 'target_1d']
+[2025-10-28 23:45:12,762][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=100, returns_channel_index=auto
+[2025-10-28 23:45:12,763][src.graph.graph_builder][INFO] - FinancialGraphBuilder enabled (source_glob=output/atft_data/train/*.parquet, window=60)
+[2025-10-28 23:45:12,763][__main__][INFO] - [GraphBuilder] initialized from output/atft_data/train/*.parquet (lookback=60, k=15)
+[2025-10-28 23:45:12,999][__main__][INFO] - SWA enabled: averaging parameters after 0.67 of epochs (lr_factor=0.50)
+[2025-10-28 23:45:13,015][__main__][INFO] - Running first-batch probe...
+[2025-10-28 23:45:13,090][__main__][INFO] - Batch 0: features shape=torch.Size([64, 20, 82]), dtype=torch.float32, mean=-0.0000, std=0.1104
+[2025-10-28 23:45:13,279][__main__][INFO] -   Output features: shape=(64, 20), dtype=torch.float32
+[2025-10-28 23:45:13,343][__main__][INFO] - Batch 1: features shape=torch.Size([64, 20, 82]), dtype=torch.float32, mean=0.0000, std=0.0000
+[2025-10-28 23:45:13,396][__main__][INFO] -   Output features: shape=(64, 20), dtype=torch.float32
+[2025-10-28 23:45:13,481][__main__][INFO] - Batch 2: features shape=torch.Size([64, 20, 82]), dtype=torch.float32, mean=-0.0000, std=0.1104
+[2025-10-28 23:45:13,534][__main__][INFO] -   Output features: shape=(64, 20), dtype=torch.float32
+[2025-10-28 23:45:13,604][__main__][INFO] - ✓ First-batch probe passed
+[2025-10-28 23:45:13,610][__main__][INFO] - First batch probe passed
+[2025-10-28 23:45:14,728][__main__][INFO] - [SamplerCheck] first_batch_size=1024 (configured=1024)
+[2025-10-28 23:45:14,728][__main__][INFO] - 
+==================================================
+[2025-10-28 23:45:14,729][__main__][INFO] - [main] Epoch 1/1
+[2025-10-28 23:45:14,729][__main__][INFO] - Learning rate: 0.000100
+[2025-10-28 23:45:14,730][__main__][INFO] - [sched] epoch=1 knn_k=20 edge_dropout=0.05
+
+Epoch 1: 0it [00:00, ?it/s][2025-10-28 23:45:16,958][__main__][INFO] - [EDGE-TS] asof=2024-01-25 staleness_days=1
+[2025-10-28 23:45:18,494][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=1024, returns_channel_index=auto
+[2025-10-28 23:45:18,497][src.graph.graph_builder][INFO] - GraphBuilder running without source_glob; using local correlation fallback.
+[2025-10-28 23:45:18,499][src.graph.graph_builder][WARNING] - GraphBuilder fallback: returns_channel_index not provided; defaulting to channel 0. Set GBConfig.returns_channel_index or GRAPH_RET_IDX to control this selection.
+[2025-10-28 23:45:19,818][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:20,160][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:20,517][runtime_guards][WARNING] - [runtime-guards] High activation detected in 'gat' (|x|max=1.023e+03)
+[2025-10-28 23:45:20,579][__main__][INFO] - [DEBUG-EDGE] step=0, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:20,580][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-10-28 23:45:20,581][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-10-28 23:45:20,581][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-10-28 23:45:20,582][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-10-28 23:45:20,582][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-10-28 23:45:20,583][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_1', 'horizon_5', 'horizon_10', 'horizon_20']
+[2025-10-28 23:45:20,780][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+
+Epoch 1: 0it [00:06, ?it/s, loss=0.3544]
+Epoch 1: 1it [00:06,  6.16s/it, loss=0.3544][2025-10-28 23:45:22,484][__main__][INFO] - [EDGE-TS] asof=2024-06-24 staleness_days=1
+[2025-10-28 23:45:23,829][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:24,157][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:24,248][__main__][INFO] - [DEBUG-EDGE] step=0, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:24,249][__main__][INFO] - [DEBUG-KEYS] Raw model output type: <class 'dict'>
+[2025-10-28 23:45:24,249][__main__][INFO] - [DEBUG-KEYS] Raw output top-level keys: ['predictions', 'features', 'output_type']
+[2025-10-28 23:45:24,250][__main__][INFO] - [DEBUG-KEYS] predictions type: <class 'dict'>
+[2025-10-28 23:45:24,251][__main__][INFO] - [DEBUG-KEYS] predictions keys: ['horizon_1d', 'horizon_5d', 'horizon_10d', 'horizon_20d']
+[2025-10-28 23:45:24,251][__main__][INFO] - [DEBUG-KEYS] Target type: <class 'dict'>
+[2025-10-28 23:45:24,252][__main__][INFO] - [DEBUG-KEYS] Target keys: ['horizon_1', 'horizon_5', 'horizon_10', 'horizon_20']
+[2025-10-28 23:45:24,294][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+[2025-10-28 23:45:24,401][__main__][WARNING] - [GUARD] GAT grad too small: 0.00e+00 (step=0) -- tolerated in warmup
+
+Epoch 1: 2it [00:09,  4.67s/it, loss=0.3544][2025-10-28 23:45:26,320][__main__][INFO] - [EDGE-TS] asof=2024-05-21 staleness_days=1
+[2025-10-28 23:45:27,635][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:27,977][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:28,059][__main__][INFO] - [DEBUG-EDGE] step=1, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:28,102][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+
+Epoch 1: 3it [00:13,  4.22s/it, loss=0.3544][2025-10-28 23:45:29,762][__main__][INFO] - [EDGE-TS] asof=2024-04-17 staleness_days=1
+[2025-10-28 23:45:31,045][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:31,373][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:31,464][__main__][INFO] - [DEBUG-EDGE] step=1, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:31,514][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+[2025-10-28 23:45:31,686][__main__][WARNING] - [GUARD] GAT grad too small: 0.00e+00 (step=1) -- tolerated in warmup
+
+Epoch 1: 4it [00:16,  3.94s/it, loss=0.3544][2025-10-28 23:45:33,462][__main__][INFO] - [EDGE-TS] asof=2024-03-14 staleness_days=1
+[2025-10-28 23:45:34,751][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:35,087][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:35,170][__main__][INFO] - [DEBUG-EDGE] step=2, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:35,212][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+
+Epoch 1: 5it [00:20,  3.82s/it, loss=0.3544][2025-10-28 23:45:36,980][__main__][INFO] - [EDGE-TS] asof=2024-02-11 staleness_days=1
+[2025-10-28 23:45:38,483][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:38,824][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:38,915][__main__][INFO] - [DEBUG-EDGE] step=2, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:38,961][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+[2025-10-28 23:45:39,070][__main__][WARNING] - [GUARD] GAT grad too small: 0.00e+00 (step=2) -- tolerated in warmup
+
+Epoch 1: 6it [00:24,  3.80s/it, loss=0.3544][2025-10-28 23:45:40,837][__main__][INFO] - [EDGE-TS] asof=2024-07-09 staleness_days=1
+[2025-10-28 23:45:42,150][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:42,481][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:42,563][__main__][INFO] - [DEBUG-EDGE] step=3, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:42,604][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+
+Epoch 1: 7it [00:27,  3.74s/it, loss=0.3544][2025-10-28 23:45:44,326][__main__][INFO] - [EDGE-TS] asof=2024-06-05 staleness_days=1
+[2025-10-28 23:45:45,606][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:45,942][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:46,023][__main__][INFO] - [DEBUG-EDGE] step=3, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:46,065][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+[2025-10-28 23:45:46,190][__main__][WARNING] - [GUARD] GAT grad too small: 0.00e+00 (step=3) -- tolerated in warmup
+
+Epoch 1: 8it [00:31,  3.67s/it, loss=0.3544][2025-10-28 23:45:48,078][__main__][INFO] - [EDGE-TS] asof=2024-05-02 staleness_days=1
+[2025-10-28 23:45:49,385][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:49,711][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:49,805][__main__][INFO] - [DEBUG-EDGE] step=4, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:49,851][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+
+Epoch 1: 9it [00:35,  3.69s/it, loss=0.3544][2025-10-28 23:45:51,715][__main__][INFO] - [EDGE-TS] asof=2024-03-31 staleness_days=1
+[2025-10-28 23:45:53,221][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:53,548][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:53,631][__main__][INFO] - [DEBUG-EDGE] step=4, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:53,671][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+[2025-10-28 23:45:53,780][__main__][WARNING] - [GUARD] GAT grad too small: 0.00e+00 (step=4) -- tolerated in warmup
+
+Epoch 1: 10it [00:39,  3.74s/it, loss=0.3544][2025-10-28 23:45:55,536][__main__][INFO] - [EDGE-TS] asof=2024-02-26 staleness_days=1
+[2025-10-28 23:45:56,819][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:45:57,148][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:45:57,241][__main__][INFO] - [DEBUG-EDGE] step=5, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:45:57,283][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+
+Epoch 1: 10it [00:42,  3.74s/it, loss=0.3504]
+Epoch 1: 11it [00:42,  3.69s/it, loss=0.3504][2025-10-28 23:45:59,076][__main__][INFO] - [EDGE-TS] asof=2024-07-24 staleness_days=1
+[2025-10-28 23:46:00,348][src.graph.graph_builder][INFO] - Built correlation graph: nodes=1024, edges=11234, avg_deg=10.97, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:46:00,675][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=11234
+[2025-10-28 23:46:00,759][__main__][INFO] - [DEBUG-EDGE] step=5, edge_index=shape=torch.Size([2, 11234]), edge_attr=shape=torch.Size([11234, 3])
+[2025-10-28 23:46:00,804][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+[2025-10-28 23:46:00,927][__main__][WARNING] - [GUARD] GAT grad too small: 0.00e+00 (step=5) -- tolerated in warmup
+
+Epoch 1: 12it [00:46,  3.65s/it, loss=0.3504][2025-10-28 23:46:02,395][__main__][INFO] - [EDGE-TS] asof=2024-06-20 staleness_days=1
+[2025-10-28 23:46:02,427][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=812, returns_channel_index=auto
+[2025-10-28 23:46:02,428][src.graph.graph_builder][INFO] - GraphBuilder running without source_glob; using local correlation fallback.
+[2025-10-28 23:46:02,429][src.graph.graph_builder][WARNING] - GraphBuilder fallback: returns_channel_index not provided; defaulting to channel 0. Set GBConfig.returns_channel_index or GRAPH_RET_IDX to control this selection.
+[2025-10-28 23:46:03,427][src.graph.graph_builder][INFO] - Built correlation graph: nodes=812, edges=8902, avg_deg=10.96, min_deg=6, thr=0.25, k=20, min_k=5, self_loops=True
+[2025-10-28 23:46:03,699][__main__][INFO] - [edges-fallback] built correlation edges from batch: E=8902
+[2025-10-28 23:46:03,829][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - [GAT-GRAD] Low gradient detected: 0.00e+00
+
+Epoch 1: 13it [00:49,  3.45s/it, loss=0.3504]
+Epoch 1: 13it [00:49,  3.78s/it, loss=0.3504]
+[2025-10-28 23:46:03,960][__main__][INFO] - train/total_loss: 0.350052
+[2025-10-28 23:46:03,961][__main__][INFO] - Current horizon weights: {1: 0.503259065632814, 5: 0.22506429620960006, 10: 0.15914449005278597, 20: 0.11253214810480003}
+[2025-10-28 23:46:03,961][__main__][INFO] - [sanity] grad_norm(gat)=0.000000
+[2025-10-28 23:46:03,962][__main__][INFO] - GPU Memory: Used=0.41GB, Cached=16.08GB
+
+Validation: 0it [00:00, ?it/s][2025-10-28 23:46:14,147][src.graph.graph_builder][INFO] - GraphBuilder initialized with max_nodes=4600, returns_channel_index=auto
+[2025-10-28 23:46:14,149][src.graph.graph_builder][INFO] - GraphBuilder running without source_glob; using local correlation fallback.
+[2025-10-28 23:46:14,149][src.graph.graph_builder][WARNING] - GraphBuilder fallback: returns_channel_index not provided; defaulting to channel 0. Set GBConfig.returns_channel_index or GRAPH_RET_IDX to control this selection.
+[2025-10-28 23:46:19,999][src.graph.graph_builder][INFO] - Built correlation graph: nodes=4600, edges=50570, avg_deg=10.99, min_deg=6, thr=0.5, k=20, min_k=5, self_loops=True
+
+Validation: 1it [00:17, 17.90s/it]
+Validation: 1it [00:17, 17.90s/it]
+[2025-10-28 23:46:21,865][__main__][INFO] - [main] Validation loss: nan
+[2025-10-28 23:46:21,866][__main__][INFO] - [EDGE-TS] No staleness data available for validation
+[2025-10-28 23:46:21,866][__main__][INFO] - val/loss: nan
+[2025-10-28 23:46:21,867][__main__][INFO] - val/epoch: 1
+[2025-10-28 23:46:21,867][__main__][INFO] - val/step: 6
+[2025-10-28 23:46:21,868][__main__][INFO] -   horizon_1: nan
+[2025-10-28 23:46:21,868][__main__][INFO] -   horizon_5: nan
+[2025-10-28 23:46:21,868][__main__][INFO] -   horizon_10: nan
+[2025-10-28 23:46:21,869][__main__][INFO] -   horizon_20: nan
+[2025-10-28 23:46:27,539][__main__][WARNING] - [nan-guard] reshape[horizon_1]: non-finite=100
+[2025-10-28 23:46:27,541][__main__][WARNING] - [nan-guard] reshape[horizon_10]: non-finite=1000
+[2025-10-28 23:46:27,542][__main__][WARNING] - [nan-guard] reshape[horizon_20]: non-finite=2000
+[2025-10-28 23:46:27,542][__main__][WARNING] - [nan-guard] reshape[horizon_5]: non-finite=500
+[2025-10-28 23:46:27,852][__main__][INFO] - Validation Metrics Summary:
+[2025-10-28 23:46:27,853][__main__][INFO] -   Average RMSE: nan
+[2025-10-28 23:46:27,853][__main__][INFO] -   Average R²: nan
+[2025-10-28 23:46:27,854][__main__][INFO] -   Average Sharpe Ratio: nan
+[2025-10-28 23:46:27,854][__main__][INFO] - Sharpe: nan
+[2025-10-28 23:46:28,159][__main__][INFO] - [SWA] Updating BN statistics and evaluating...
+
+Validation: 0it [00:00, ?it/s][2025-10-28 23:46:34,255][__main__][WARNING] - [nan-guard] targets[val][horizon_1]: non-finite=100
+[2025-10-28 23:46:34,257][__main__][WARNING] - [nan-guard] targets[val][horizon_10]: non-finite=1000
+[2025-10-28 23:46:34,258][__main__][WARNING] - [nan-guard] targets[val][horizon_20]: non-finite=2000
+[2025-10-28 23:46:34,258][__main__][WARNING] - [nan-guard] targets[val][horizon_5]: non-finite=500
+
+Validation: 1it [00:06,  6.37s/it]
+Validation: 1it [00:06,  6.37s/it]
+[2025-10-28 23:46:34,532][__main__][WARNING] - Low prediction variance for horizon 1: scale_ratio=0.0000, yhat_std=0.000000
+[2025-10-28 23:46:34,580][root][INFO] - Val metrics (z) h=1: MAE=0.0089 RMSE=0.0111 R2=-0.0000 IC=0.0061 NAIVE_RMSE=0.0098 SCALE(yhat/y)=0.00 CAL=+0.000+1.000*yhat
+[2025-10-28 23:46:34,581][__main__][WARNING] - Low prediction variance for horizon 5: scale_ratio=0.0000, yhat_std=0.000000
+[2025-10-28 23:46:34,582][root][INFO] - Val metrics (z) h=5: MAE=0.0190 RMSE=0.0241 R2=0.0000 IC=0.0215 NAIVE_RMSE=0.0208 SCALE(yhat/y)=0.00 CAL=+0.000+1.000*yhat
+[2025-10-28 23:46:34,582][__main__][WARNING] - Low prediction variance for horizon 10: scale_ratio=0.0000, yhat_std=0.000000
+[2025-10-28 23:46:34,583][root][INFO] - Val metrics (z) h=10: MAE=0.0199 RMSE=0.0278 R2=-0.0000 IC=0.0213 NAIVE_RMSE=0.0276 SCALE(yhat/y)=0.00 CAL=+0.000+1.000*yhat
+[2025-10-28 23:46:34,584][__main__][WARNING] - Low prediction variance for horizon 20: scale_ratio=0.0000, yhat_std=0.000000
+[2025-10-28 23:46:34,585][root][INFO] - Val metrics (z) h=20: MAE=0.0207 RMSE=0.0340 R2=0.0000 IC=-0.0131 NAIVE_RMSE=0.0340 SCALE(yhat/y)=0.00 CAL=+0.000+1.000*yhat
+[2025-10-28 23:46:34,616][__main__][INFO] - [SWA] Validation loss: 0.3504
+[2025-10-28 23:46:35,252][__main__][INFO] - [SWA] Saved SWA checkpoint: models/checkpoints/swa_main.pt
+[2025-10-28 23:46:35,693][__main__][INFO] - [SWA] SWA model is new BEST; checkpoint updated: models/checkpoints/best_main.pt
+[2025-10-28 23:46:35,694][__main__][INFO] - [EXPORT] Exporting validation predictions to file ...
+[2025-10-28 23:46:37,033][__main__][WARNING] - [EXPORT] Loading checkpoint for export failed: Weights only load failed. This file can still be loaded, to do so you have two options, [1mdo those steps only if you trust the source of the checkpoint[0m. 
+	(1) In PyTorch 2.6, we changed the default value of the `weights_only` argument in `torch.load` from `False` to `True`. Re-running `torch.load` with `weights_only` set to `False` will likely succeed, but it can result in arbitrary code execution. Do it only if you got the file from a trusted source.
+	(2) Alternatively, to load with `weights_only=True` please check the recommended steps in the following error message.
+	WeightsUnpickler error: Unsupported global: GLOBAL torch.torch_version.TorchVersion was not an allowed global by default. Please use `torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])` or the `torch.serialization.safe_globals([torch.torch_version.TorchVersion])` context manager to allowlist this global if you trust this class/function.
+
+Check the documentation of torch.load to learn more about types accepted by default with weights_only https://pytorch.org/docs/stable/generated/torch.load.html.
+[2025-10-28 23:46:42,846][__main__][WARNING] - [EXPORT] Export predictions failed: ATFT_GAT_FAN.forward() takes 2 positional arguments but 5 were given
+[2025-10-28 23:46:42,849][__main__][INFO] - 
+=== Training Complete ===
+[2025-10-28 23:46:42,850][__main__][INFO] - Best validation loss: 0.3504
+[2025-10-28 23:46:44,112][__main__][INFO] - Final model saved to models/checkpoints/atft_gat_fan_final.pt
+[W1028 23:46:44.027766328 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2025-10-28 23:46:45,482 - __main__ - INFO - ✅ ATFT-GAT-FAN training completed successfully
+2025-10-28 23:46:45,483 - __main__ - INFO - 🔍 Validating training results...
+2025-10-28 23:46:48,967 - __main__ - INFO - ✅ Validation completed: 68010397 parameters
+2025-10-28 23:46:48,968 - __main__ - WARNING - Predictions file not found: runs/last/predictions_val.parquet
+2025-10-28 23:46:49,017 - __main__ - INFO - 💾 Complete training result saved: output/results/complete_training_result_20251028_234648.json
+2025-10-28 23:46:49,017 - __main__ - INFO - ✅ Complete ATFT-GAT-FAN Training Pipeline completed successfully in 226.16s
+2025-10-28 23:46:49,018 - __main__ - INFO - 🎯 Achieved Sharpe Ratio: 0.08177260619898637
+🎉 Complete training pipeline succeeded!
+📊 Results: 0.08177260619898637
