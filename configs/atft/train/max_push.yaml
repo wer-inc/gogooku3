@@ -1,0 +1,136 @@
+# Max Push Training Configuration
+# Target: Fast Sharpe lift with stable IC / RankIC prior to productionization
+
+name: max_push
+
+# Batch configuration tuned for A100 80GB (effective batch = 8192)
+batch:
+  train_batch_size: 4096
+  val_batch_size: 8192
+  test_batch_size: 8192
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
+  gradient_accumulation_steps: 2
+
+# Optimizer configuration
+optimizer:
+  type: adamw
+  lr: 0.0003
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  eps: 1e-7
+
+# Plateau-aware learning rate scheduler aligned with Sharpe improvements
+scheduler:
+  type: ReduceLROnPlateau
+  monitor: val/sharpe_ratio
+  mode: max
+  factor: 0.5
+  patience: 12
+  cooldown: 3
+  threshold: 0.0005
+  threshold_mode: rel
+  min_lr: 2e-5
+  verbose: true
+
+# Trainer configuration
+trainer:
+  max_epochs: 160
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 2
+  check_val_every_n_epoch: 1
+  val_check_interval: 1.0
+  num_sanity_val_steps: 2
+  log_every_n_steps: 25
+  enable_progress_bar: true
+  enable_model_summary: true
+  enable_checkpointing: true
+  precision: bf16-mixed
+  deterministic: false
+  benchmark: true
+  detect_anomaly: false
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  limit_test_batches: 1.0
+
+# Early stopping keyed to Sharpe
+early_stopping:
+  monitor: val/sharpe_ratio
+  mode: max
+  patience: 24
+  min_delta: 0.0005
+  verbose: true
+
+# Multi-horizon prediction weighting (Sharpe-focused)
+prediction:
+  horizons: [1, 5, 10, 20]
+  horizon_specific_architecture: true
+  horizon_weights:
+    1: 1.0
+    5: 0.9
+    10: 0.6
+    20: 0.4
+
+# Loss configuration: quantile core + aggressive RankIC / Spearman penalties
+loss:
+  type: huber_multi_horizon
+  huber_delta: 0.01
+  huber_weight: 0.2
+  use_coverage_penalty: true
+  coverage_alpha: 0.02
+  multi_horizon_weights:
+    1: 1.0
+    5: 0.9
+    10: 0.6
+    20: 0.4
+  quantile:
+    enabled: true
+    quantiles: [0.1, 0.5, 0.9]
+    weight: 0.4
+  rankic_weight: 0.5
+  sharpe_weight: 0.25
+  spearman_penalty: 0.2
+  cs_ic_weight: 0.2
+
+# Model control: freeze temporal encoder during extended warmup
+model:
+  freeze:
+    temporal_encoder: true
+    temporal_encoder_epochs: 20
+
+# Checkpointing aligns with Sharpe pursuit
+checkpoint:
+  monitor: val/sharpe_ratio
+  mode: max
+  save_top_k: 5
+  save_last: true
+  save_on_train_epoch_end: false
+  filename: 'max_push-{epoch:03d}-{val_sharpe_ratio:.5f}'
+
+# Logging configuration
+logging:
+  log_every_n_steps: 10
+  log_grad_norm: true
+  log_learning_rate: true
+  experiment_name: max_push_sharpe_drive
+
+# EMA settings retained for stability (disabled by default)
+ema:
+  enabled: false
+  decay: 0.999
+  update_every_step: true
+
+# Validation guardrails
+validation:
+  per_date_metrics: true
+  outlier_detection: true
+  outlier_threshold: 3.0
+
+# Data safety defaults
+data:
+  correlation_eps: 1e-8
+  correlation_clamp: [-0.999, 0.999]
+  nan_fill_value: 0.0

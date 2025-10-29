@@ -60,6 +60,7 @@ class CompleteATFTTrainingPipeline:
         sample_size: int | None = None,
         run_safe_pipeline: bool = False,
         extra_overrides: list[str] | None = None,
+        resume_from: str | None = None,
     ):
         self.output_dir = Path("output")
         self.logs_dir = Path("logs")
@@ -71,6 +72,7 @@ class CompleteATFTTrainingPipeline:
         self.run_safe_pipeline: bool = bool(run_safe_pipeline)
         # 追加のHydraオーバーライド（train_atft.pyへ引き渡し）
         self.extra_overrides: list[str] = list(extra_overrides or [])
+        self.resume_from = Path(resume_from).expanduser() if resume_from else None
         # 直近に使用したMLデータセットのパス（検証やSafePipeline実行に利用）
         self._last_ml_dataset_path: Path | None = None
 
@@ -105,6 +107,126 @@ class CompleteATFTTrainingPipeline:
             "AMP_DTYPE": "bf16",
         }
 
+    def _set_env_var(self, env: dict[str, str], key: str, value: float | int | str) -> None:
+        """Set environment variable in-place if value differs."""
+        value_str = str(value)
+        if env.get(key) != value_str:
+            env[key] = value_str
+
+    def _as_float(self, value: object) -> float | None:
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    def _extract_train_config_name(self, cmd: list[str]) -> str | None:
+        """Return the final train=<name> override from the Hydra command."""
+        for token in reversed(cmd):
+            if isinstance(token, str) and token.startswith("train="):
+                return token.split("=", 1)[1].strip()
+        return None
+
+    def _load_train_config_dict(self, name: str | None) -> dict | None:
+        """Load train config YAML into a dict for env derivation."""
+        if not name:
+            return None
+        normalized = name.strip()
+        if not normalized:
+            return None
+        candidates: list[Path] = []
+        suffixes = ["yaml", "yml"]
+        if normalized.endswith((".yaml", ".yml")):
+            base_paths = [Path("configs") / normalized]
+        else:
+            base_paths = [Path("configs") / normalized]
+            for suffix in suffixes:
+                base_paths.append(Path("configs") / f"{normalized}.{suffix}")
+        # Add smart fallbacks for common groups
+        short_name = normalized.split("/")[-1]
+        for suffix in suffixes:
+            candidates.append(Path("configs/atft/train") / f"{short_name}.{suffix}")
+            candidates.append(Path("configs/train") / f"{short_name}.{suffix}")
+        candidates = base_paths + candidates
+
+        for candidate in candidates:
+            if candidate.exists():
+                try:
+                    with candidate.open("r", encoding="utf-8") as fh:
+                        data = yaml.safe_load(fh)
+                    if isinstance(data, dict):
+                        return data
+                except Exception as exc:
+                    logger.warning("Failed to read train config %s: %s", candidate, exc)
+        return None
+
+    def _apply_train_config_env(self, env: dict[str, str], train_config: str | None) -> None:
+        """Derive environment variables from train config loss/freeze fields."""
+        cfg_dict = self._load_train_config_dict(train_config)
+        if not isinstance(cfg_dict, dict):
+            return
+
+        loss_cfg = cfg_dict.get("loss")
+        if isinstance(loss_cfg, dict):
+            rankic_weight = loss_cfg.get("rankic_weight")
+            if rankic_weight is not None:
+                weight_val = self._as_float(rankic_weight)
+                self._set_env_var(env, "RANKIC_WEIGHT", weight_val if weight_val is not None else rankic_weight)
+                if weight_val is not None:
+                    self._set_env_var(env, "USE_RANKIC", "1" if weight_val > 0 else "0")
+
+            sharpe_weight = loss_cfg.get("sharpe_weight")
+            if sharpe_weight is not None:
+                weight_val = self._as_float(sharpe_weight)
+                self._set_env_var(env, "SHARPE_WEIGHT", weight_val if weight_val is not None else sharpe_weight)
+                if weight_val is not None:
+                    self._set_env_var(env, "USE_SHARPE_LOSS", "1" if weight_val > 0 else "0")
+
+            spearman_penalty = loss_cfg.get("spearman_penalty")
+            if spearman_penalty is not None:
+                penalty_val = self._as_float(spearman_penalty)
+                self._set_env_var(env, "SPEARMAN_WEIGHT", penalty_val if penalty_val is not None else spearman_penalty)
+                if penalty_val is not None:
+                    self._set_env_var(env, "USE_SOFT_SPEARMAN", "1" if penalty_val > 0 else "0")
+
+            cs_ic_weight = loss_cfg.get("cs_ic_weight")
+            if cs_ic_weight is not None:
+                weight_val = self._as_float(cs_ic_weight)
+                self._set_env_var(env, "CS_IC_WEIGHT", weight_val if weight_val is not None else cs_ic_weight)
+                if weight_val is not None:
+                    self._set_env_var(env, "USE_CS_IC", "1" if weight_val > 0 else "0")
+
+            quantile_cfg = loss_cfg.get("quantile")
+            if isinstance(quantile_cfg, dict):
+                enabled = bool(quantile_cfg.get("enabled", True))
+                weight_val = quantile_cfg.get("weight", 0.0)
+                self._set_env_var(env, "ENABLE_QUANTILES", "1" if enabled else "0")
+                if enabled and weight_val is not None:
+                    pw = self._as_float(weight_val)
+                    self._set_env_var(env, "PINBALL_WEIGHT", pw if pw is not None else weight_val)
+            horizon_weights = loss_cfg.get("multi_horizon_weights")
+            if isinstance(horizon_weights, dict):
+                try:
+                    parts = []
+                    for horizon, weight in sorted(
+                        horizon_weights.items(), key=lambda item: int(item[0])
+                    ):
+                        parts.append(f"{int(horizon)}:{float(weight)}")
+                    if parts:
+                        self._set_env_var(env, "HWEIGHTS", ",".join(parts))
+                except Exception:
+                    pass
+
+        model_cfg = cfg_dict.get("model")
+        if isinstance(model_cfg, dict):
+            freeze_cfg = model_cfg.get("freeze")
+            if isinstance(freeze_cfg, dict) and freeze_cfg.get("temporal_encoder"):
+                self._set_env_var(env, "FREEZE_TEMPORAL_ENCODER", "1")
+                freeze_epochs = freeze_cfg.get("temporal_encoder_epochs", 0)
+                try:
+                    freeze_epochs_val = int(freeze_epochs)
+                except Exception:
+                    freeze_epochs_val = freeze_epochs
+                self._set_env_var(env, "TEMPORAL_FREEZE_EPOCHS", freeze_epochs_val)
     async def run_complete_training_pipeline(self) -> tuple[bool, dict]:
         """ATFT-GAT-FANの成果を完全に再現する統合学習パイプラインを実行"""
         start_time = time.time()
@@ -253,7 +375,6 @@ class CompleteATFTTrainingPipeline:
             os.environ.setdefault("NUM_WORKERS", "0")
             os.environ.setdefault("PERSISTENT_WORKERS", "0")
             os.environ.setdefault("PREFETCH_FACTOR", "0")
-            os.environ.setdefault("ATFT_TRAIN_CONFIG", "adaptive_phase3_ext")
             os.environ.setdefault("ENABLE_AUGMENTATION_PHASE", "1")
             os.environ.setdefault("PHASE4_EPOCHS", "15")
 
@@ -1008,6 +1129,9 @@ class CompleteATFTTrainingPipeline:
             if filtered_overrides:
                 cmd.extend(filtered_overrides)
 
+            if "--config-path" not in cmd:
+                cmd.extend(["--config-path", "../configs/atft"])
+
             # Ensure a train config override is always present (can be disabled via explicit override)
             has_train_override = any(
                 isinstance(arg, str) and arg.startswith("train=") for arg in cmd
@@ -1015,7 +1139,14 @@ class CompleteATFTTrainingPipeline:
             if not has_train_override:
                 train_cfg = os.getenv("ATFT_TRAIN_CONFIG", "").strip()
                 if train_cfg:
-                    cmd.append(f"train={train_cfg}")
+                    if self._load_train_config_dict(train_cfg) is None:
+                        logger.warning(
+                            "ATFT_TRAIN_CONFIG=%s not found in config groups; skipping train override",
+                            train_cfg,
+                        )
+                    else:
+                        cmd.append(f"train={train_cfg}")
+            train_config_name = self._extract_train_config_name(cmd)
 
             # まずGPU/CPU計画を判定（この結果を以降の設定に利用）
             # GPU必須モード（REQUIRE_GPU=1 or ACCELERATOR=gpu 等）の場合、
@@ -1096,6 +1227,15 @@ class CompleteATFTTrainingPipeline:
             env.setdefault("PERSISTENT_WORKERS", os.getenv("PERSISTENT_WORKERS", "0"))
             env.setdefault("PREFETCH_FACTOR", os.getenv("PREFETCH_FACTOR", "0"))
             env.setdefault("PIN_MEMORY", os.getenv("PIN_MEMORY", "0"))
+            self._apply_train_config_env(env, train_config_name)
+            if self.resume_from:
+                if self.resume_from.exists():
+                    env["RESUME_FROM_CHECKPOINT"] = str(self.resume_from)
+                else:
+                    logger.warning(
+                        "Requested resume checkpoint %s not found; proceeding without resume.",
+                        self.resume_from,
+                    )
             # GPU/CPU の実行方針に応じて DataLoader 関連を調整（上の判定を再利用）
 
             # Detect optimized config to avoid passing loader overrides that may conflict
@@ -1815,6 +1955,11 @@ async def main():
         action="store_true",
         help="Convert to ATFT format only (no training)",
     )
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        help="Resume training from a checkpoint path (model + optimizer state)",
+    )
     # 既知以外のオプションはHydraオーバーライドとしてそのままtrain_atft.pyに渡す
     args, unknown = parser.parse_known_args()
 
@@ -1837,6 +1982,7 @@ async def main():
         sample_size=args.sample_size,
         run_safe_pipeline=bool(args.run_safe_pipeline),
         extra_overrides=unknown,
+        resume_from=args.resume_from,
     )
 
     # 引数で設定を上書き（0も有効値として扱う）

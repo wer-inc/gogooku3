@@ -49,6 +49,13 @@ pre-commit install -t commit-msg
 # Enhanced Claude Code launcher (auto-detects hardware, suggests optimizations)
 tools/claude-code.sh              # Autonomous mode with health check
 tools/claude-code.sh --no-check   # Skip health check
+
+# OpenAI Codex CLI launcher (alternative agent interface)
+# Note: Sandbox is DISABLED by default for development efficiency
+tools/codex.sh                    # Interactive mode (clean terminal, no restrictions)
+tools/codex.sh --profile research # Research mode (ML-optimized, recommended)
+tools/codex.sh --sandbox          # Enable sandbox if needed
+tools/codex.sh --term-workaround  # Enable Issue #4960 workaround (if needed)
 ```
 
 ### Primary Training Commands
@@ -358,7 +365,7 @@ The plan management system uses:
 - **Auto-configuration**: Futures API, parquet paths, and categories
 - **Zero migration cost**: No code changes required
 
-See `docs/reports/analysis/jquants_standard_plan_api_report_20251019.md` for detailed API availability analysis.
+過去の詳細分析レポートは `output/reports/` に再生成できます（旧 `docs/reports/*` はアーカイブ済み）。
 
 ## High-Level Architecture
 

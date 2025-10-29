@@ -35,6 +35,13 @@ Parquet(17GB/195 files)
 
 ---
 
+### 現状メモ
+- 統合パイプラインは `scripts/integrated_ml_training_pipeline.py` が担う。GPU を強制しない設定でサンプル実行すると CPU のみで処理され、初期の調査では Parquet 読込と変換だけで約 132 秒を要した (`scripts/integrated_ml_training_pipeline.py:70`).
+- Hydra 衝突（`train=adaptive_phase3_ext`）は `ATFT_TRAIN_CONFIG` のデフォルト設定を外し、CLI 側で明示的に `--config-path ../configs/atft` を渡す運用に整理することで解消。ログは `output/reports/hydra_collision.log` に記録。
+- ベンチマーク (2025-10-28, full dataset, `--max-epochs 1`):
+  * CPU (`ACCELERATOR=cpu`, single-process OFF): `real=8m01s`, 1 epoch ≒ 1m55s。
+  * GPU (A100 80GB): `real=4m48s`, 1 epoch ≒ 3m58s、詳細は `output/reports/gpu_benchmark.log` を参照。
+
 ## 1) キーコンセプト（ATFT / GAT / FAN / SAN）
 
 ### ATFT = Adaptive Temporal Fusion Transformer
@@ -82,6 +89,11 @@ Parquet(17GB/195 files)
 
 ---
 
+### 現状メモ
+- ATFT の実装は `src/atft_gat_fan/models/architectures/atft_gat_fan.py` に集約され、Variable Selection→FAN→SAN→GAT→ヘッドの順で組み立てられている (`src/atft_gat_fan/models/architectures/atft_gat_fan.py:420`).
+- FAN/SAN の具体的な処理は `FrequencyAdaptiveNorm` / `SliceAdaptiveNorm` で定義されているが、数値安定対策（NaN 監視やスケール制限）は未導入で、極端なシナリオでの検証が必要 (`src/atft_gat_fan/models/components/adaptive_normalization.py:9`).
+- GraphBuilder は相関ベースのエッジ生成を試みるものの、入力データから時系列リターンを抽出できない場合は単純なコサイン類似にフォールバックし、エッジ属性は定数に近い (`src/graph/graph_builder.py:183`).
+
 ## 2) 何を解こうとしているか（金融時系列×大規模×本番運用）
 
 1. **非定常で騒がしい金融データ**
@@ -97,6 +109,10 @@ Parquet(17GB/195 files)
 
 ---
 
+### 現状メモ
+- Phase 学習を前提とした非定常対策はコード上に存在するが、新設した `max_push` 設定では有効化順序が未定義で、常に全機能 ON/OFF の切替に留まる (`configs/atft/train/max_push.yaml:98`).
+- 投資指標最適化は `MultiHorizonLoss` の Sharpe / RankIC 重みに集約される一方、統計推定はミニバッチ平均で、指数平滑などの安定化手法は未導入 (`scripts/train_atft.py:1040`).
+
 ## 3) 学習戦略（Phase Training）の合理性
 
 * **Phase 0（Baseline）**：まず素のTFT近傍で**強い基準線**を作る。
@@ -108,6 +124,10 @@ Parquet(17GB/195 files)
 
 ---
 
+### 現状メモ
+- `run_phase_training` は実装済みでフェーズごとの損失重み・早期終了を切り替えられるものの、通常経路では失敗時フォールバックとしてしか呼び出されず、Phase 0→3 の自動遷移は未実装 (`scripts/train_atft.py:3626`, `scripts/train_atft.py:9824`).
+- Phase 切替用の Hydra プロファイル (`configs/atft/train/phase*.yaml`) は未整備で、新設定 `max_push` から段階的に切り替える術がない。
+
 ## 4) データ工学：Parquet大規模対応のポイント
 
 設計思想は明快で、狙いは **“動く・落ちない・劣化しない”** です。
@@ -118,6 +138,11 @@ Parquet(17GB/195 files)
 * **ファイル境界≒時間境界** の仮定が崩れるとリークを産むため、**必ず時系列ベース**で分割し **パージ/エンバーゴ** を適用。
 
 ---
+
+### 現状メモ
+- `StreamingParquetDataset` は Map-style で `_build_index` 時に全ウィンドウを展開し、row-group ごとの逐次生成は未実装。17GB スケールではメモリと初期化時間がボトルネック (`src/gogooku3/training/atft/data_module.py:264`).
+- オンライン統計は `_global_median/_global_mad` を保持するものの、RobustScaler 代替は未完成で、正規化の再現性・省メモリ化は課題 (`src/gogooku3/training/atft/data_module.py:365`).
+- 最新計測では Parquet 読込とデータ変換だけで約 132 秒を要し、目標としているメモリ 40% 未満・前処理 30% 短縮は未達成。
 
 ## 5) 検証・評価：実運用で破綻しないために
 
@@ -134,6 +159,10 @@ Parquet(17GB/195 files)
 
 ---
 
+### 現状メモ
+- 評価スクリプト `scripts/evaluate_trained_model.py` は平均値ベースの Sharpe / IC を出力するのみで、信頼区間や FAN/SAN / GAT の可視化は未実装 (`scripts/evaluate_trained_model.py:1`).
+- Walk-Forward + Purge/Embargo の自動評価パイプラインは存在せず、`scripts/validate_improvements.py` 等に分散した手順を手動で呼ぶ必要がある。
+
 ## 6) 設計の強みとトレードオフ
 
 * **強み**
@@ -149,6 +178,10 @@ Parquet(17GB/195 files)
   3. 分位点 + 追加損失（Sharpe 等）は **バッチ分散の影響**を受けやすい → 安定化の工夫が要る
 
 ---
+
+### 現状メモ
+- GraphBuilder が `FinancialGraphBuilder` にフォールバックできない場合、最後はコサイン類似に頼るため、設計で期待するエッジ属性（市場・セクター類似度）は実質未使用となるケースが多い (`src/graph/graph_builder.py:183`).
+- Sharpe / RankIC ロス重みは環境変数から `MultiHorizonLoss` へ渡されるが、`scripts/integrated_ml_training_pipeline.py` が Hydra オーバーライドと環境変数を併用するためダブル設定になりやすく、新設定 `max_push` でも衝突が発生している (`scripts/integrated_ml_training_pipeline.py:162`).
 
 ## 7) 実装を読むうえでの“落とし穴”と改善提案（重要）
 
@@ -212,6 +245,10 @@ Parquet(17GB/195 files)
 
 ---
 
+### 現状メモ
+- Dataset/Graph 周りの課題はドキュメント記載通りで、現行コードも IterableDataset 化・code↔node マップ整備・オンラインスケーラの改善が未着手 (`src/gogooku3/training/atft/data_module.py:514`, `src/graph/graph_builder.py:107`).
+- 損失安定化はミニバッチ統計のままで、Sharpe の指数加重推定やミニバッチ構成の固定化は実装されていない (`scripts/train_atft.py:6600`).
+
 ## 8) どう使い分けるか（設計思想に基づく運用指針）
 
 * **デバッグ→本番** のスロープ
@@ -227,6 +264,10 @@ Parquet(17GB/195 files)
   ‣ 過学習 → Dropout上げ/正則化強化/ランキング損失の重み調整
 
 ---
+
+### 現状メモ
+- デバッグ→本番の導線は `--sample-size` や `FORCE_SINGLE_PROCESS=1` など手動フラグで代替しているが、Phase ごとの自動ステップアップやサマリーログの整備は未着手 (`scripts/integrated_ml_training_pipeline.py:1180`).
+- セクター循環対応のためのハイパラ調整は環境変数での一括上書きに依存し、Hydra プロファイルからのパラメトリック制御は実装されていない (`scripts/integrated_ml_training_pipeline.py:179`).
 
 ## 9) まとめ（要点）
 

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added explicit import of `ProductionDataModuleV2` to prevent silent failures
   - Added regression test with timeout detection to prevent future occurrences
   - Documented fix in `docs/fixes/dataloader_hanging_fix.md`
+- 🖥️ **Codex TUI OSC Queries**: Automatically skip OSC 10/11 color queries in SSH/non-truecolor terminals to prevent `10;rgb:...` garbage output ([#4945](https://github.com/openai/codex/issues/4945))
 
 ### Added
 - 🔒 **Security Hardening**: Environment variable-based credential management

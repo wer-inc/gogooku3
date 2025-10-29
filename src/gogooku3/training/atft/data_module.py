@@ -18,7 +18,12 @@ import numpy as np
 import polars as pl
 import torch
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import DataLoader, Dataset, Sampler
+from torch.utils.data import DataLoader, Dataset, IterableDataset, Sampler
+
+from data.parquet_stock_dataset import (
+    OnlineRobustScaler,
+    ParquetStockIterableDataset,
+)
 
 try:  # pragma: no cover - optional acceleration path
     import pyarrow.parquet as pq
@@ -1473,6 +1478,7 @@ class ProductionDataModuleV2:
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
+        self._loader_impl: str | None = None
 
     def setup(self) -> None:
         """Set up datasets."""
@@ -1494,6 +1500,145 @@ class ProductionDataModuleV2:
         feature_columns = self._get_feature_columns()
         target_columns = self._get_target_columns()
 
+        loader_impl = self._get_loader_implementation()
+        self._loader_impl = loader_impl
+        logger.info("Selected data loader implementation: %s", loader_impl)
+
+        if loader_impl.startswith("iterable"):
+            self._setup_iterable_datasets(
+                train_files=train_files,
+                val_files=val_files,
+                test_files=test_files,
+                feature_columns=feature_columns,
+                target_columns=target_columns,
+            )
+        else:
+            self._setup_legacy_streaming_datasets(
+                train_files=train_files,
+                val_files=val_files,
+                test_files=test_files,
+                feature_columns=feature_columns,
+                target_columns=target_columns,
+            )
+
+    def _get_loader_implementation(self) -> str:
+        impl = None
+        try:
+            impl = OmegaConf.select(self.config, "data.loader.implementation")
+        except Exception:
+            impl = None
+        if impl:
+            return str(impl)
+        # Backward compatibility: allow environment override
+        env_override = os.getenv("ATFT_LOADER_IMPL", "").strip().lower()
+        if env_override:
+            return env_override
+        return "streaming_indexed"
+
+    def _get_online_norm_cfg(self) -> dict[str, Any]:
+        cfg = None
+        try:
+            cfg = OmegaConf.select(self.config, "normalization.online_normalization")
+        except Exception:
+            cfg = None
+        if isinstance(cfg, DictConfig):
+            return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
+        if isinstance(cfg, dict):
+            return cfg
+        return {}
+
+    def _setup_iterable_datasets(
+        self,
+        *,
+        train_files: list[Path],
+        val_files: list[Path],
+        test_files: list[Path],
+        feature_columns: list[str],
+        target_columns: list[str],
+    ) -> None:
+        seq_len = int(self.config.data.time_series.sequence_length)
+        norm_cfg = self._get_online_norm_cfg()
+        normalization_enabled = bool(norm_cfg.get("enabled", True))
+        if not normalization_enabled:
+            logger.warning(
+                "Iterable loader requires online normalization; enabling scaler despite config flag."
+            )
+            normalization_enabled = True
+
+        max_samples = norm_cfg.get("max_samples", 200_000)
+        try:
+            max_samples = int(max_samples)
+        except Exception:
+            max_samples = 200_000
+        max_samples = max(1, max_samples)
+
+        raw_state = norm_cfg.get("random_state", 42)
+        try:
+            random_state = None if raw_state in (None, "null") else int(raw_state)
+        except Exception:
+            random_state = 42
+
+        train_scaler = OnlineRobustScaler(
+            max_samples=max_samples,
+            random_state=random_state,
+        )
+
+        self.train_dataset = ParquetStockIterableDataset(
+            file_paths=train_files,
+            feature_columns=feature_columns,
+            target_columns=target_columns,
+            code_column=self.config.data.schema.code_column,
+            date_column=self.config.data.schema.date_column,
+            sequence_length=seq_len,
+            scaler=train_scaler,
+        )
+        logger.info(
+            "Fitting OnlineRobustScaler on training data (max_samples=%d, files=%d)...",
+            max_samples,
+            len(train_files),
+        )
+        self.train_dataset.fit(max_samples=max_samples)
+        base_scaler = self.train_dataset.export_fitted_scaler()
+
+        if val_files:
+            self.val_dataset = ParquetStockIterableDataset(
+                file_paths=val_files,
+                feature_columns=feature_columns,
+                target_columns=target_columns,
+                code_column=self.config.data.schema.code_column,
+                date_column=self.config.data.schema.date_column,
+                sequence_length=seq_len,
+            )
+            self.val_dataset.apply_fitted_scaler(base_scaler.clone())
+
+        if test_files:
+            self.test_dataset = ParquetStockIterableDataset(
+                file_paths=test_files,
+                feature_columns=feature_columns,
+                target_columns=target_columns,
+                code_column=self.config.data.schema.code_column,
+                date_column=self.config.data.schema.date_column,
+                sequence_length=seq_len,
+            )
+            self.test_dataset.apply_fitted_scaler(base_scaler.clone())
+
+        logger.info(
+            "✅ Iterable datasets ready (train_files=%d, val_files=%d, test_files=%d, seq_len=%d)",
+            len(train_files),
+            len(val_files),
+            len(test_files),
+            seq_len,
+        )
+
+    def _setup_legacy_streaming_datasets(
+        self,
+        *,
+        train_files: list[Path],
+        val_files: list[Path],
+        test_files: list[Path],
+        feature_columns: list[str],
+        target_columns: list[str],
+    ) -> None:
         # Static / regime columns (optional)
         try:
             static_columns = list(
@@ -1508,7 +1653,6 @@ class ProductionDataModuleV2:
         except Exception:
             regime_columns = []
 
-        # Phase 2: 露出特徴量の設定
         exposure_columns = None
         if os.getenv("USE_EXPOSURE_FEATURES", "0") == "1":
             exposure_cols_env = os.getenv(
@@ -1516,12 +1660,8 @@ class ProductionDataModuleV2:
             )
             exposure_columns = exposure_cols_env.split(",")
 
-        # CRITICAL FIX (2025-10-04): Resolve cache_size based on num_workers
-        # Root cause: cache_size=10000 × num_workers × prefetch_factor = memory explosion
-        # Solution: Small cache (256) for multi-worker, large cache (10000) for single-worker
         cache_size = self._resolve_cache_size()
 
-        # Decide parquet reader engine (stability first)
         reader_engine = os.getenv("PARQUET_READER_ENGINE", "").strip().lower()
         try:
             _nw_req = int(self.config.train.batch.get("num_workers", 0))
@@ -1531,7 +1671,6 @@ class ProductionDataModuleV2:
             reader_engine = "pyarrow" if _nw_req > 0 else "polars"
         logger.info("Parquet reader engine: %s", reader_engine)
 
-        # Create datasets
         self.train_dataset = StreamingParquetDataset(
             file_paths=train_files,
             feature_columns=feature_columns,
@@ -1579,16 +1718,12 @@ class ProductionDataModuleV2:
                 regime_columns=regime_columns,
             )
 
-        logger.info(f"✅ Datasets created: train={len(self.train_dataset)} samples")
-
-        # CRITICAL FIX (2025-10-04): Pre-compute normalization stats in main process
-        # Root cause: Each DataLoader worker independently computes statistics (lazy init)
-        # This causes parallel file I/O from 8 workers → resource contention → crash
-        # Solution: Compute once in main process, share with all datasets
-        logger.info("Pre-computing global normalization statistics in main process...")
+        train_len = self._safe_len(self.train_dataset)
+        logger.info(
+            "Pre-computing global normalization statistics in main process (legacy loader)..."
+        )
         self.train_dataset._compute_global_statistics()
 
-        # Share train statistics with val/test datasets (train-only stats for data safety)
         if hasattr(self, "val_dataset") and self.val_dataset:
             self.val_dataset._global_median = self.train_dataset._global_median
             self.val_dataset._global_mad = self.train_dataset._global_mad
@@ -1599,7 +1734,24 @@ class ProductionDataModuleV2:
             self.test_dataset._global_mad = self.train_dataset._global_mad
             self.test_dataset._stats_computed = True
 
-        logger.info("✅ Global statistics computed and shared across datasets")
+        def _fmt(value: int | None) -> str:
+            return "unknown" if value is None else str(value)
+
+        logger.info(
+            "✅ Legacy datasets ready (train=%s, val=%s, test=%s samples)",
+            _fmt(train_len),
+            _fmt(self._safe_len(self.val_dataset)),
+            _fmt(self._safe_len(self.test_dataset)),
+        )
+
+    @staticmethod
+    def _safe_len(dataset: Any) -> int | None:
+        if dataset is None:
+            return None
+        try:
+            return len(dataset)
+        except TypeError:
+            return None
 
     def _resolve_cache_size(self) -> int:
         """
@@ -1750,26 +1902,40 @@ class ProductionDataModuleV2:
             self.setup()
 
         dl_params = _resolve_dl_params(self.config)
+        dataset = self.train_dataset
+        is_iterable = isinstance(dataset, IterableDataset)
 
         # Use day batch sampler if enabled
-        if self.config.data.get("use_day_batch_sampler", False):
+        if (
+            not is_iterable
+            and self.config.data.get("use_day_batch_sampler", False)
+        ):
             sampler = DayBatchSampler(
-                dataset=self.train_dataset,
+                dataset=dataset,
                 batch_size=self.config.train.batch.train_batch_size,
                 shuffle=True,
             )
             return DataLoader(
-                self.train_dataset,
+                dataset,
                 batch_sampler=sampler,
                 **_build_loader_kwargs(dl_params),
             )
-        else:
+
+        if is_iterable:
+            logger.info("Using iterable DataLoader (shuffle disabled) for training split")
             return DataLoader(
-                self.train_dataset,
+                dataset,
                 batch_size=self.config.train.batch.train_batch_size,
-                shuffle=True,
+                shuffle=False,
                 **_build_loader_kwargs(dl_params),
             )
+
+        return DataLoader(
+            dataset,
+            batch_size=self.config.train.batch.train_batch_size,
+            shuffle=True,
+            **_build_loader_kwargs(dl_params),
+        )
 
     def val_dataloader(self) -> DataLoader | None:
         """Get validation dataloader."""
@@ -1802,9 +1968,9 @@ class ProductionDataModuleV2:
     def get_data_info(self) -> dict[str, Any]:
         """Get information about the data."""
         info = {
-            "train_size": len(self.train_dataset) if self.train_dataset else 0,
-            "val_size": len(self.val_dataset) if self.val_dataset else 0,
-            "test_size": len(self.test_dataset) if self.test_dataset else 0,
+            "train_size": self._safe_len(self.train_dataset) or 0,
+            "val_size": self._safe_len(self.val_dataset) or 0,
+            "test_size": self._safe_len(self.test_dataset) or 0,
             "num_features": len(self._get_feature_columns()),
             "num_targets": len(self._get_target_columns()),
             "sequence_length": self.config.data.time_series.sequence_length,

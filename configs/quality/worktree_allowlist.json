@@ -2,7 +2,7 @@
   "groups": [
     {
       "name": "docs_migration_oct2025",
-      "description": "Legacy markdown migration into docs/reports hierarchy",
+      "description": "Legacy markdown migration (docs/reports hierarchy archived)",
       "patterns": [
         "AGENTS.md",
         "GPU_INVESTIGATION_COMPLETE.md",
@@ -24,11 +24,7 @@
         "docs/getting-started.md",
         "docs/governance/adr/ADR-0001-modern-package-migration.md",
         "docs/index.md",
-        "docs/releases/changelog.md",
-        "docs/reports/*",
-        "docs/reports/*/",
-        "docs/reports/*/*",
-        "docs/reports/*/*/*"
+        "docs/releases/changelog.md"
       ]
     },
     {
