@@ -2126,7 +2126,9 @@ def _set_requires_grad(module: nn.Module | None, requires_grad: bool) -> None:
         pass
 
 
-def _maybe_apply_temporal_encoder_freeze(model: torch.nn.Module, epoch: int | float) -> None:
+def _maybe_apply_temporal_encoder_freeze(
+    model: torch.nn.Module, epoch: int | float
+) -> None:
     freeze_flag = os.getenv("FREEZE_TEMPORAL_ENCODER", "0") == "1"
     if not freeze_flag or not hasattr(model, "tft"):
         return
@@ -2168,10 +2170,10 @@ def _maybe_apply_temporal_encoder_freeze(model: torch.nn.Module, epoch: int | fl
 
     if should_freeze and not already_frozen:
         _toggle(requires_grad=False)
-        setattr(model, "_temporal_encoder_frozen", True)
+        model._temporal_encoder_frozen = True
     elif not should_freeze and already_frozen:
         _toggle(requires_grad=True)
-        setattr(model, "_temporal_encoder_frozen", False)
+        model._temporal_encoder_frozen = False
 
 
 def train_epoch(
@@ -3138,7 +3140,9 @@ def evaluate_model_metrics(
         valid_mask = np.isfinite(pred) & np.isfinite(target)
         if not np.any(valid_mask):
             # 全てNaN/infの場合はスキップ
-            logger.warning(f"Horizon {horizon}: All values are NaN/inf, skipping metrics")
+            logger.warning(
+                f"Horizon {horizon}: All values are NaN/inf, skipping metrics"
+            )
             metrics["horizon_metrics"][horizon] = {
                 "mse": float("nan"),
                 "rmse": float("nan"),
@@ -3160,7 +3164,9 @@ def evaluate_model_metrics(
         # デバッグ: 予測値の統計情報をログ
         pred_std = np.std(pred_valid)
         target_std = np.std(target_valid)
-        logger.info(f"Horizon {horizon}: pred_std={pred_std:.6f}, target_std={target_std:.6f}, n_valid={len(pred_valid)}")
+        logger.info(
+            f"Horizon {horizon}: pred_std={pred_std:.6f}, target_std={target_std:.6f}, n_valid={len(pred_valid)}"
+        )
 
         # 基本的なメトリクス
         mse = np.mean((pred_valid - target_valid) ** 2)
@@ -3169,13 +3175,17 @@ def evaluate_model_metrics(
 
         # 相関係数（予測値の分散がゼロの場合は計算不可）
         if len(pred_valid) > 1 and pred_std > 1e-8 and target_std > 1e-8:
-            correlation = np.corrcoef(pred_valid.flatten(), target_valid.flatten())[0, 1]
+            correlation = np.corrcoef(pred_valid.flatten(), target_valid.flatten())[
+                0, 1
+            ]
             if np.isnan(correlation):
                 correlation = 0.0
         else:
             correlation = 0.0
             if pred_std <= 1e-8:
-                logger.warning(f"Horizon {horizon}: Cannot compute correlation - zero prediction variance")
+                logger.warning(
+                    f"Horizon {horizon}: Cannot compute correlation - zero prediction variance"
+                )
 
         # R²スコア
         ss_res = np.sum((target_valid - pred_valid) ** 2)
@@ -3340,9 +3350,7 @@ def validate(model, dataloader, criterion, device):
                 if isinstance(outputs, dict):
                     canonical_outputs = {}
                     for _key, _tensor in outputs.items():
-                        canon = _normalize_target_key(
-                            _key, horizons=criterion.horizons
-                        )
+                        canon = _normalize_target_key(_key, horizons=criterion.horizons)
                         if canon and canon not in outputs:
                             canonical_outputs[canon] = _tensor
                     canonical_outputs.update(outputs)
@@ -3351,9 +3359,7 @@ def validate(model, dataloader, criterion, device):
                 if isinstance(targets, dict):
                     canonical_targets = {}
                     for _key, _tensor in targets.items():
-                        canon = _normalize_target_key(
-                            _key, horizons=criterion.horizons
-                        )
+                        canon = _normalize_target_key(_key, horizons=criterion.horizons)
                         if canon and canon not in targets:
                             canonical_targets[canon] = _tensor
                     canonical_targets.update(targets)
@@ -6939,12 +6945,17 @@ def train(config: DictConfig) -> None:
         if resume_path.exists():
             try:
                 checkpoint = torch.load(resume_path, map_location=device)
-                state_dict = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
+                state_dict = checkpoint.get("model_state_dict") or checkpoint.get(
+                    "state_dict"
+                )
                 if state_dict:
-                    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                    missing, unexpected = model.load_state_dict(
+                        state_dict, strict=False
+                    )
                     if missing:
                         logger.warning(
-                            "[resume] Missing keys during load: %s", ", ".join(sorted(missing))
+                            "[resume] Missing keys during load: %s",
+                            ", ".join(sorted(missing)),
                         )
                     if unexpected:
                         logger.warning(
@@ -6956,17 +6967,25 @@ def train(config: DictConfig) -> None:
                     try:
                         optimizer.load_state_dict(optim_state)
                     except Exception as _opt_e:
-                        logger.warning("[resume] Optimizer state load skipped: %s", _opt_e)
+                        logger.warning(
+                            "[resume] Optimizer state load skipped: %s", _opt_e
+                        )
                 elif optim_state and phase_reset_optimizer:
-                    logger.info("[phase-reset] Skipping optimizer state load for phase transition")
+                    logger.info(
+                        "[phase-reset] Skipping optimizer state load for phase transition"
+                    )
                 scaler_state = checkpoint.get("scaler_state_dict")
                 if scaler_state and not phase_reset_optimizer:
                     try:
                         scaler.load_state_dict(scaler_state)
                     except Exception as _scaler_e:
-                        logger.warning("[resume] GradScaler state load skipped: %s", _scaler_e)
+                        logger.warning(
+                            "[resume] GradScaler state load skipped: %s", _scaler_e
+                        )
                 elif scaler_state and phase_reset_optimizer:
-                    logger.info("[phase-reset] Skipping GradScaler state load for phase transition")
+                    logger.info(
+                        "[phase-reset] Skipping GradScaler state load for phase transition"
+                    )
                 resume_epoch = int(checkpoint.get("epoch", 0))
                 resume_global_step = int(checkpoint.get("global_step", 0))
                 logger.info(
@@ -6978,9 +6997,15 @@ def train(config: DictConfig) -> None:
                 if phase_training_active and phase_reset_epoch:
                     resume_epoch = 0
                     resume_global_step = 0
-                    logger.info("[phase-reset] Resetting epoch/global_step to 0 for new phase training")
+                    logger.info(
+                        "[phase-reset] Resetting epoch/global_step to 0 for new phase training"
+                    )
             except Exception as _resume_err:
-                logger.error("[resume] Failed to load checkpoint %s: %s", resume_path, _resume_err)
+                logger.error(
+                    "[resume] Failed to load checkpoint %s: %s",
+                    resume_path,
+                    _resume_err,
+                )
         else:
             logger.error("[resume] Checkpoint path not found: %s", resume_path)
 
@@ -7665,9 +7690,13 @@ def train(config: DictConfig) -> None:
                                     markets_list = markets_list.tolist()
                                 if hasattr(sectors_list, "tolist"):
                                     sectors_list = sectors_list.tolist()
-                                if markets_list is not None and len(markets_list) != feats_full.size(0):
+                                if markets_list is not None and len(
+                                    markets_list
+                                ) != feats_full.size(0):
                                     markets_list = None
-                                if sectors_list is not None and len(sectors_list) != feats_full.size(0):
+                                if sectors_list is not None and len(
+                                    sectors_list
+                                ) != feats_full.size(0):
                                     sectors_list = None
                             except Exception:
                                 pass
@@ -7872,10 +7901,9 @@ def train(config: DictConfig) -> None:
                         and isinstance(edge_index, torch.Tensor)
                         and edge_index.numel() > 0
                     ):
-                        valid_mask = (
-                            (edge_index >= 0)
-                            & (edge_index < n_items)
-                        ).all(dim=0)
+                        valid_mask = ((edge_index >= 0) & (edge_index < n_items)).all(
+                            dim=0
+                        )
                         if not torch.all(valid_mask):
                             dropped = int((~valid_mask).sum().item())
                             logger.debug(
@@ -7895,9 +7923,8 @@ def train(config: DictConfig) -> None:
 
                     # Iterate micro-batches (disable slicing when GAT is active)
                     micro_bs_effective = micro_bs
-                    if (
-                        edge_index is not None
-                        and getattr(final_config.model.gat, "enabled", False)
+                    if edge_index is not None and getattr(
+                        final_config.model.gat, "enabled", False
                     ):
                         micro_bs_effective = n_items
 
@@ -8598,7 +8625,10 @@ def train(config: DictConfig) -> None:
                                             else mask != 0
                                         )
                                         # Squeeze trailing singleton dims (e.g., [B,1] -> [B])
-                                        while mask_bool.dim() > 1 and mask_bool.size(-1) == 1:
+                                        while (
+                                            mask_bool.dim() > 1
+                                            and mask_bool.size(-1) == 1
+                                        ):
                                             mask_bool = mask_bool.squeeze(-1)
                                         if mask_bool.dim() > 1:
                                             # Collapse additional feature dims by requiring validity across axis
@@ -8836,7 +8866,10 @@ def train(config: DictConfig) -> None:
                         optimizer.step()
 
                     # 🔍 LOG GAT RESIDUAL GATE GRADIENT (After optimizer step, before zero_grad)
-                    if hasattr(model, "gat_residual_gate") and model.gat_residual_gate.grad is not None:
+                    if (
+                        hasattr(model, "gat_residual_gate")
+                        and model.gat_residual_gate.grad is not None
+                    ):
                         gate_grad_norm = model.gat_residual_gate.grad.norm().item()
                         gate_val = model.gat_residual_gate.item()
                         logger.info(

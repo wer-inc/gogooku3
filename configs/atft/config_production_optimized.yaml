@@ -190,8 +190,8 @@ data:
   graph_builder:
     cache_dir: graph_cache
     ewm_halflife: 30
-    k: 24  # Increased from 20 (TODO recommendation)
-    edge_threshold: 0.18  # Reduced from 0.20 for denser graph (TODO recommendation)
+    k: 20
+    edge_threshold: 0.3
     min_edges: 75  # Increased from 50 (TODO recommendation)
     log_mktcap_col: log_mktcap
     lookback: 60

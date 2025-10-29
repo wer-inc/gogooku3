@@ -143,6 +143,7 @@ Parquet(17GB/195 files)
 - `ParquetStockIterableDataset` (2025-10-29 更新) を `ProductionDataModuleV2` がデフォルト採用 (`data.loader.implementation=iterable_v1`)。OnlineRobustScaler の統計を train→val/test へクローン配信し、row-group 単位でストリーミング。従来の `StreamingParquetDataset` はレガシー互換パスとして温存。
 - オンライン統計は `_global_median/_global_mad` を保持するものの、RobustScaler 代替は未完成で、正規化の再現性・省メモリ化は課題 (`src/gogooku3/training/atft/data_module.py:365`).
 - 最新計測では Parquet 読込とデータ変換だけで約 132 秒を要し、目標としているメモリ 40% 未満・前処理 30% 短縮は未達成。
+- FAN/SAN の多窓・スライス適応を刷新済み（2025-10-29）。`FrequencyAdaptiveNorm` は Softmax 学習重みで 3 窓を集約し、`SliceAdaptiveNorm` は重なりスライスを InstanceNorm + Softmax で統合。NaN クレンジングと勾配テストを `tests/atft/test_adaptive_normalization.py` でカバー。
 
 ## 5) 検証・評価：実運用で破綻しないために
 
@@ -180,7 +181,9 @@ Parquet(17GB/195 files)
 ---
 
 ### 現状メモ
-- GraphBuilder が `FinancialGraphBuilder` にフォールバックできない場合、最後はコサイン類似に頼るため、設計で期待するエッジ属性（市場・セクター類似度）は実質未使用となるケースが多い (`src/graph/graph_builder.py:183`).
+- GraphBuilder の相関グラフ生成を刷新済み（2025-10-29）。`lookback=60`、`k=20`、`threshold=0.3` を既定値とし、絶対相関に基づく kNN スパース化を実装。平均次数は 31±0.5 程度、エッジ数は約 5.9 万本（従来比 8 倍）を達成 (`src/graph/graph_builder.py:302` 以降)。
+- `configs/atft/*.yaml` の `graph_builder` セクションはすべて新パラメータへ統一済み。モデル側の `max_edges_per_node` も 20 に更新し、GAT での近傍情報が拡充された。
+- 既存の `FinancialGraphBuilder` もテストで検証済み（`tests/graph/test_graph_builder.py`）。キャッシュ再利用時の整合性を保ちつつ、平均次数・孤立ノードのバランスが目標値内に収まることを確認。
 - Sharpe / RankIC ロス重みは環境変数から `MultiHorizonLoss` へ渡されるが、`scripts/integrated_ml_training_pipeline.py` が Hydra オーバーライドと環境変数を併用するためダブル設定になりやすく、新設定 `max_push` でも衝突が発生している (`scripts/integrated_ml_training_pipeline.py:162`).
 
 ## 7) 実装を読むうえでの“落とし穴”と改善提案（重要）

@@ -1953,11 +1953,11 @@ def prepare_phase_training(args):
 
     # Phase config mapping
     phase_config_map = {
-        0: 'phase0_baseline',
-        1: 'phase1_gat',
-        2: 'phase2_fan',
-        3: 'phase3_san',
-        4: 'phase4_finetune',
+        0: "phase0_baseline",
+        1: "phase1_gat",
+        2: "phase2_fan",
+        3: "phase3_san",
+        4: "phase4_finetune",
     }
 
     config_name = phase_config_map[args.phase]
@@ -1971,9 +1971,9 @@ def prepare_phase_training(args):
     os.environ.setdefault("PHASE_RESET_OPTIMIZER", "1")
 
     # Override config_name (will be passed as unknown arg to Hydra)
-    if '--config-name' not in ' '.join(getattr(args, 'extra_overrides', [])):
+    if "--config-name" not in " ".join(getattr(args, "extra_overrides", [])):
         # Add to extra_overrides if not already specified
-        if not hasattr(args, 'config_name_override'):
+        if not hasattr(args, "config_name_override"):
             args.config_name_override = config_name
 
     # Auto-resume from previous phase if checkpoint exists
@@ -1990,7 +1990,7 @@ def prepare_phase_training(args):
 
     # Handle save_phase_checkpoint flag
     if args.save_phase_checkpoint:
-        os.environ['PHASE_CHECKPOINT_PREFIX'] = f'phase{args.phase}_'
+        os.environ["PHASE_CHECKPOINT_PREFIX"] = f"phase{args.phase}_"
         logger.info(f"💾 Checkpoints will be saved with prefix: phase{args.phase}_")
 
     return args
@@ -2065,8 +2065,8 @@ async def main():
     args = prepare_phase_training(args)
 
     # If phase config override is set, inject it into unknown args
-    if hasattr(args, 'config_name_override') and args.config_name_override:
-        unknown.insert(0, f'--config-name={args.config_name_override}')
+    if hasattr(args, "config_name_override") and args.config_name_override:
+        unknown.insert(0, f"--config-name={args.config_name_override}")
 
     if args.dry_run:
         print("=" * 60)
