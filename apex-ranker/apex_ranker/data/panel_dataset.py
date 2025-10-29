@@ -53,13 +53,13 @@ def build_panel_cache(
             code = code.decode("utf-8")
         dates_int = _date_series_to_int(code_df[date_col])
         feat_arr = code_df.select(feature_cols).to_numpy()
-        targ_arr = code_df.select(target_cols).to_numpy()
+        targ_arr = code_df.select(target_cols).to_numpy() if target_cols else None
         mask_arr = code_df.select(mask_cols).to_numpy() if mask_cols else None
 
         codes_data[str(code)] = {
             "dates": dates_int,
             "features": feat_arr.astype(np.float32, copy=False),
-            "targets": targ_arr.astype(np.float32, copy=False),
+            "targets": None if targ_arr is None else targ_arr.astype(np.float32, copy=False),
             "masks": None if mask_arr is None else mask_arr.astype(np.float32, copy=False),
         }
 
@@ -80,10 +80,16 @@ def build_panel_cache(
             if start < 0:
                 continue
             window = payload["features"][start : idx + 1]
-            targets = payload["targets"][idx]
 
-            if np.isnan(window).any() or np.isnan(targets).any():
+            # Check for NaN in features
+            if np.isnan(window).any():
                 continue
+
+            # Check for NaN in targets (only if targets exist)
+            if payload["targets"] is not None:
+                targets = payload["targets"][idx]
+                if np.isnan(targets).any():
+                    continue
             if payload["masks"] is not None:
                 if np.any(payload["masks"][idx] == 0):
                     continue

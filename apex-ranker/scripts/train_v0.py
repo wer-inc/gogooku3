@@ -128,9 +128,15 @@ def load_dataset(
     if include_plus30 or data_cfg.get("use_plus30"):
         groups = groups + ["plus30"]
 
+    # Feature exclusion support (pruned configs)
+    exclude_features = data_cfg.get("exclude_features", None)
+    if exclude_features:
+        print(f"[Config] Excluding {len(exclude_features)} features from selection")
+
     selection = feature_selector.select(
         groups=groups,
         optional_groups=optional_groups,
+        exclude_features=exclude_features,
         metadata_path=data_cfg.get("metadata_path"),
     )
 
