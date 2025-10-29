@@ -1,9 +1,8 @@
 """Portfolio management for backtesting."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date as Date
-from typing import Dict
 
 import numpy as np
 
@@ -68,7 +67,7 @@ class Portfolio:
         """
         self.initial_capital = initial_capital
         self.cash = initial_capital
-        self.positions: Dict[str, Position] = {}
+        self.positions: dict[str, Position] = {}
         self.history: list[dict] = []
         self.trades: list[Trade] = []
 
@@ -88,7 +87,7 @@ class Portfolio:
         return self.cash + self.equity_value
 
     @property
-    def weights(self) -> Dict[str, float]:
+    def weights(self) -> dict[str, float]:
         """Current position weights."""
         if self.total_value == 0:
             return {}
@@ -101,7 +100,7 @@ class Portfolio:
         """Number of open positions."""
         return len(self.positions)
 
-    def update_prices(self, prices: Dict[str, float], date: Date) -> None:
+    def update_prices(self, prices: dict[str, float], date: Date) -> None:
         """
         Update current prices for all positions.
 
@@ -127,10 +126,10 @@ class Portfolio:
 
     def rebalance(
         self,
-        target_weights: Dict[str, float],
-        prices: Dict[str, float],
+        target_weights: dict[str, float],
+        prices: dict[str, float],
         date: Date,
-        transaction_costs: Dict[str, float] | None = None,
+        transaction_costs: dict[str, float] | None = None,
     ) -> list[Trade]:
         """
         Rebalance portfolio to target weights.
@@ -171,11 +170,22 @@ class Portfolio:
             if trade_value > 0:
                 # Buy
                 direction = "buy"
-                shares = trade_value / prices[code]
+                # Use provided price for buying
+                if code not in prices:
+                    continue  # Skip if price not available
+                price = prices[code]
+                shares = trade_value / price
             else:
                 # Sell
                 direction = "sell"
-                shares = abs(trade_value) / prices[code]
+                # For selling existing position, use current_price if price not provided
+                if code in prices:
+                    price = prices[code]
+                elif code in self.positions:
+                    price = self.positions[code].current_price
+                else:
+                    continue  # Skip if no price available
+                shares = abs(trade_value) / price
 
             # Apply transaction costs
             cost = transaction_costs.get(code, 0.0)
@@ -185,7 +195,7 @@ class Portfolio:
                 code=code,
                 direction=direction,
                 shares=shares,
-                price=prices[code],
+                price=price,
                 value=abs(trade_value),
                 commission=cost * 0.5,  # Assume 50% commission, 50% slippage
                 slippage=cost * 0.5,
@@ -202,23 +212,23 @@ class Portfolio:
                     old_pos = self.positions[code]
                     new_shares = old_pos.shares + shares
                     new_entry_price = (
-                        (old_pos.shares * old_pos.entry_price) + (shares * prices[code])
+                        (old_pos.shares * old_pos.entry_price) + (shares * price)
                     ) / new_shares
                     self.positions[code] = Position(
                         code=code,
                         shares=new_shares,
                         entry_price=new_entry_price,
                         entry_date=old_pos.entry_date,
-                        current_price=prices[code],
+                        current_price=price,
                     )
                 else:
                     # New position
                     self.positions[code] = Position(
                         code=code,
                         shares=shares,
-                        entry_price=prices[code],
+                        entry_price=price,
                         entry_date=date,
-                        current_price=prices[code],
+                        current_price=price,
                     )
                 self.cash -= trade_value + cost
             else:
@@ -353,9 +363,7 @@ class Portfolio:
 
         return {
             "total_return": total_return,
-            "annualized_return": (
-                (1 + total_return / 100) ** (252 / len(values)) - 1
-            )
+            "annualized_return": ((1 + total_return / 100) ** (252 / len(values)) - 1)
             * 100,
             "sharpe_ratio": sharpe_ratio,
             "sortino_ratio": sortino_ratio,
