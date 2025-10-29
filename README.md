@@ -128,6 +128,25 @@ python main.py direct-api-dataset
 
 # 🎯 完全ATFT学習（内製ルート）
 python scripts/integrated_ml_training_pipeline.py
+
+# 🗺 Hydra パイプライン実行例
+# config 衝突を避けるため `--config-path ../configs/atft` を明示します
+python scripts/integrated_ml_training_pipeline.py \
+  --config-path ../configs/atft \
+  --config-name config \
+  --max-epochs 1
+
+# CPU ベースライン（単一プロセス強制）
+ACCELERATOR=cpu FORCE_SINGLE_PROCESS=1 \
+  python scripts/integrated_ml_training_pipeline.py \
+  --config-path ../configs/atft \
+  --config-name config \
+  --max-epochs 1
+
+# 参考ログ:
+#  - Hydra 衝突検証: output/reports/hydra_collision.log
+#  - CPU ベンチ: output/reports/cpu_benchmark.log
+#  - GPU ベンチ: output/reports/gpu_benchmark.log
 ```
 
 ## 🏗️ アーキテクチャ

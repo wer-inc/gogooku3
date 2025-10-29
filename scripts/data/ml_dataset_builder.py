@@ -64,9 +64,67 @@ def create_sample_data(n_stocks: int = 50, n_days: int = 120) -> pl.DataFrame:
 
 
 class MLDatasetBuilder:
+    COLUMN_CATEGORY_MAP: dict[str, list[str]] = {
+        "Volatility": [
+            "returns_1d",
+            "returns_5d",
+            "returns_10d",
+            "returns_20d",
+            "log_returns_1d",
+            "log_returns_5d",
+            "log_returns_10d",
+            "log_returns_20d",
+            "feat_ret_1d",
+            "feat_ret_5d",
+            "feat_ret_10d",
+            "feat_ret_20d",
+            "atr_14",
+        ],
+        "Volume": [
+            "Volume",
+            "volume_ratio_5",
+            "volume_ratio_20",
+        ],
+        "Momentum": [
+            "price_to_sma5",
+            "price_to_sma20",
+            "price_to_sma60",
+            "ma_gap_5_20",
+            "ma_gap_20_60",
+            "ema_5",
+            "ema_20",
+            "ema_60",
+        ],
+    }
+
     def __init__(self, output_dir: Path | None = None):
         self.output_dir = output_dir or Path("output")
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.code_column = "Code"
+        self.date_column = "Date"
+
+    def _append_margin_blocks(self, df: pl.DataFrame) -> pl.DataFrame:
+        try:
+            margin_kwargs = {
+                "daily_df": pl.DataFrame(),
+                "adv20_df": None,
+                "next_business_day": build_next_bday_expr_from_quotes,
+            }
+            df = _add_daily_margin_block(df, **margin_kwargs)
+        except Exception:
+            pass
+        try:
+            df = _add_margin_weekly_block(df=df, weekly_df=pl.DataFrame())
+        except Exception:
+            pass
+        return df
+
+    def _append_short_selling_blocks(self, df: pl.DataFrame) -> pl.DataFrame:
+        try:
+            df = _add_short_selling_block(quotes=df, short_df=pl.DataFrame())
+        except Exception:
+            pass
+        return df
 
     # ========== Core feature stages (minimal) ==========
     def create_technical_features(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -1172,6 +1230,47 @@ class MLDatasetBuilder:
         )
 
         return out
+
+    # -------- Column categories -------------------------------------------------
+    def get_columns_for_categories(
+        self, categories: Sequence[str], *, include_base: bool = True
+    ) -> list[str]:
+        selected: list[str] = []
+        for cat in categories:
+            cols = self.COLUMN_CATEGORY_MAP.get(cat)
+            if not cols:
+                logger.warning("Unknown category '%s' requested; skipping", cat)
+                continue
+            selected.extend(cols)
+        if include_base:
+            base_cols = [self.code_column, self.date_column] if hasattr(self, "code_column") else ["Code", "Date"]
+            selected = base_cols + selected
+        return list(dict.fromkeys(selected))
+
+    def build_category_dataset(
+        self,
+        categories: Sequence[str],
+        *,
+        use_sample_data: bool = False,
+        sample_args: dict | None = None,
+    ) -> tuple[pl.DataFrame, dict]:
+        if use_sample_data or sample_args:
+            kwargs = sample_args or {}
+            df = create_sample_data(**kwargs)
+        else:
+            raise ValueError(
+                "build_category_dataset requires `use_sample_data=True` or a preloaded dataframe."
+            )
+        df = self.create_technical_features(df)
+        df = self._append_margin_blocks(df)
+        df = self._append_short_selling_blocks(df)
+
+        cols = self.get_columns_for_categories(categories)
+        available = [c for c in cols if c in df.columns]
+        dataset = df.select(available)
+        metadata = self.create_metadata(dataset)
+        metadata["selected_categories"] = list(categories)
+        return dataset, metadata
 
     def add_breakdown_features(
         self,
@@ -2793,7 +2892,7 @@ class MLDatasetBuilder:
     ) -> pl.DataFrame:
         """Add sector-level target encoding with cross-fit, lag, and Bayesian smoothing.
 
-        This aligns with docs/ml/dataset_new.md (v1.1) which requires
+        This aligns with docs/ml/dataset.md (v1.1) which requires
         `te{level}_sec_{target}` columns (and alias te_sec_* when only one
         level is requested).
         """
@@ -3257,7 +3356,7 @@ class MLDatasetBuilder:
             if to_rename:
                 df = df.rename(to_rename)
 
-            # Ensure spec aliases (docs/ml/dataset_new.md) are present
+            # Ensure spec aliases (docs/ml/dataset.md) are present
             alias_map = {
                 "bb_width": "bb_bw",
                 "bb_position": "bb_pct_b",

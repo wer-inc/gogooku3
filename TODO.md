@@ -49,11 +49,7 @@ env["VAL_DEBUG_LOGGING"] = "0"  # Disable per-batch logs
 ```
 
 ### 3. Comprehensive Documentation Created ✅
-- [optimizations_applied_20251016.md](docs/reports/analysis/optimizations_applied_20251016.md) - Technical details of all fixes
-- [next_steps_optimized_training_pipeline.md](docs/reports/status/next_steps_optimized_training_pipeline.md) - Decision tree and timeline
-- [optimization_summary_20251016.md](docs/reports/analysis/optimization_summary_20251016.md) - Executive summary (12-minute session)
-- [phase0_decision_framework_20251016.md](docs/reports/status/phase0_decision_framework_20251016.md) - Early stopping logic
-- [gpu_investigation_complete.md](docs/reports/completion/gpu_investigation_complete.md) - GPU utilization analysis
+- 過去の分析レポート（optimizations_applied_20251016.md など）はアーカイブ済み。必要に応じて最新結果を `output/reports/` に再生成。
 - `TODO.md` - This file (updated)
 
 ### 4. Session Metrics & Decision
@@ -98,7 +94,7 @@ python scripts/hpo/run_optuna_atft.py \
 - ✅ Epoch time <6 minutes
 
 **If Successful** → Proceed to Step 2
-**If Failed** → Debug required (see [next_steps_optimized_training_pipeline.md](docs/reports/status/next_steps_optimized_training_pipeline.md) troubleshooting section)
+**If Failed** → Debug required（旧 `next_steps_optimized_training_pipeline.md` はアーカイブ済み。最新の検証結果を `output/reports/` 配下に生成して参照）
 
 ---
 
@@ -355,11 +351,7 @@ tail -f logs/ml_training.log | grep -i "worker\|spawn\|fork"
 
 ## 📁 Related Documentation
 
-- [optimizations_applied_20251016.md](docs/reports/analysis/optimizations_applied_20251016.md) - Detailed technical changes
-- [next_steps_optimized_training_pipeline.md](docs/reports/status/next_steps_optimized_training_pipeline.md) - Full decision tree with troubleshooting
-- [optimization_summary_20251016.md](docs/reports/analysis/optimization_summary_20251016.md) - 12-minute session summary
-- [phase0_decision_framework_20251016.md](docs/reports/status/phase0_decision_framework_20251016.md) - Early stopping criteria
-- [gpu_investigation_complete.md](docs/reports/completion/gpu_investigation_complete.md) - GPU utilization analysis
+- 旧分析レポート（optimizations_applied_20251016.md など）はアーカイブ済み。必要に応じて `output/reports/` に最新レポートを生成して参照。
 
 
 ----

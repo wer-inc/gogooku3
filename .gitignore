@@ -34,6 +34,9 @@ env/
 *~
 .DS_Store
 
+# Auto-generated environment info
+.codex-env-info.md
+
 # Project specific (anchor runtime dirs to repo root)
 /output/
 /output_smoke/
