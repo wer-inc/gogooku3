@@ -41,7 +41,7 @@ apex-ranker/
 
    - `data.parquet_path` if the dataset is stored elsewhere
    - `train.val_days` / `train.epochs` for the desired splits
-   - `feature_groups` to enable `core50` or `core50 + plus30`
+   - `feature_groups` to enable `core50` or extend with `plus30` (default) for added momentum factors
 
 3. (Optional) re-create the python environment and install deps.
 4. (Optional) run a readiness check:

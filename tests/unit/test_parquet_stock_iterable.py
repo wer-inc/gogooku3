@@ -113,9 +113,7 @@ def test_iterable_dataset_worker_sharding(tmp_path: Path) -> None:
     ]
 
     shard_dir = Path(tmp_path)
-    shard_paths = [
-        shard_dir / f"shard{i}.parquet" for i in range(4)
-    ]
+    shard_paths = [shard_dir / f"shard{i}.parquet" for i in range(4)]
 
     # Distribute rows across 4 shards (5 rows each)
     for i, shard_path in enumerate(shard_paths):

@@ -488,6 +488,6 @@ tail -f logs/ml_training.log | grep -i "worker\|spawn\|fork"
   - 既に実装済み：価格・ボラ・レンジ（Parkinson, RS, YZ, vov）、流動性 (Amihud)、信用系 (dmi_*, margin_*)、
     投資部門別 (flow_*)、業種相対 (sec_*)、相互作用 (x_*)、Graph 指標 (graph_*) 等。
 
-  抜けている部分を埋める第一歩としては、まず 空売り 
+  抜けている部分を埋める第一歩としては、まず 空売り
   と オプション を Standard プランの範囲で確実に出力させる
   ことが最も取り掛かりやすく、全仕様の完成度も一気に上がります。

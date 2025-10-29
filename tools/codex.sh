@@ -4,11 +4,19 @@
 # Repository: https://github.com/openai/codex
 #
 # Usage:
-#   ./codex.sh                          # Interactive mode (default)
+#   ./codex.sh                          # Interactive mode (clean terminal, no restrictions)
 #   ./codex.sh --no-check               # Skip health check
 #   ./codex.sh --quick                  # Quick mode (GPT-5, medium reasoning)
 #   ./codex.sh --max                    # Maximum power (GPT-5-Codex, high reasoning)
 #   ./codex.sh --exec <prompt>          # Non-interactive exec mode only
+#   ./codex.sh --sandbox                # Enable sandbox (override default)
+#   ./codex.sh --enable-sandbox         # Alias for --sandbox
+#   ./codex.sh --term-workaround        # Enable terminal workaround (Issue #4960)
+#
+# Notes:
+#   - Sandbox is DISABLED by default (full system access).
+#   - Terminal workaround (Issue #4960) is DISABLED by default.
+#   - Use --term-workaround if you see OSC sequences in output.
 #
 # FEATURES:
 #   ✅ Dynamic environment detection (GPU, CPU, Memory, CUDA)
@@ -277,6 +285,8 @@ SKIP_CHECK=false
 QUICK_MODE=false
 MAX_MODE=false
 EXEC_MODE=false
+DISABLE_SANDBOX=true  # デフォルトでサンドボックスを無効化
+DISABLE_TERM_WORKAROUND=true  # Issue #4960のワークアラウンドをデフォルトで無効化
 INITIAL_PROMPT=""
 
 while [[ $# -gt 0 ]]; do
@@ -300,6 +310,22 @@ while [[ $# -gt 0 ]]; do
                 INITIAL_PROMPT="$*"
                 break
             fi
+            ;;
+        --no-sandbox|--dangerously-bypass-sandbox)
+            DISABLE_SANDBOX=true
+            shift
+            ;;
+        --sandbox|--enable-sandbox)
+            DISABLE_SANDBOX=false
+            shift
+            ;;
+        --no-term-workaround|--disable-term-workaround)
+            DISABLE_TERM_WORKAROUND=true
+            shift
+            ;;
+        --term-workaround|--enable-term-workaround)
+            DISABLE_TERM_WORKAROUND=false
+            shift
             ;;
         *)
             # Any other argument becomes initial prompt for interactive mode
@@ -496,8 +522,72 @@ fi
 # BUILD CODEX COMMAND
 # ============================================================================
 
+# Always disable OSC color queries (Issue #4960) unless explicitly overridden.
+: "${CODEX_DISABLE_OSC_COLOR_QUERY:=1}"
+export CODEX_DISABLE_OSC_COLOR_QUERY
+
 # Session logging
 SESSION_LOG="${LOG_DIR}/session-$(date +%Y%m%d-%H%M%S).log"
+
+# Sandbox configuration
+SANDBOX_ARGS=""
+SANDBOX_STATUS_MSG=""
+if [ "$DISABLE_SANDBOX" = true ]; then
+    SANDBOX_ARGS="--dangerously-bypass-approvals-and-sandbox"
+    SANDBOX_STATUS_MSG="${RED}DISABLED (default)${NC}"
+else
+    SANDBOX_STATUS_MSG="${GREEN}ENABLED${NC}"
+    echo -e "${GREEN}✅ Sandbox enabled (all commands will require approval)${NC}"
+    echo ""
+fi
+
+# ============================================================================
+# WORKAROUND FOR ISSUE #4960: Terminal Output Corruption
+# ============================================================================
+#
+# Issue: Codex CLI causes terminal to display repeated OSC (Operating System Command)
+#        color query responses like "11;rgb:0404/0404/0404" as visible garbage text.
+#
+# Root Cause: Codex issues OSC 10/11 terminal color queries to detect theme colors.
+#             Some terminals (macOS Terminal, SSH sessions, tmux) echo the responses
+#             as plain text instead of suppressing them.
+#
+# Solution: Set terminal type to 'dumb' or disable color detection
+#
+# References:
+# - https://github.com/openai/codex/issues/4960
+# - https://github.com/openai/codex/issues/4945
+
+# Apply workaround only if explicitly enabled
+if [ "$DISABLE_TERM_WORKAROUND" = false ]; then
+    # Save original TERM value
+    ORIGINAL_TERM="${TERM:-xterm-256color}"
+
+    # Apply workaround for known problematic terminals
+    case "$ORIGINAL_TERM" in
+        xterm*|screen*|tmux*|vt100*|rxvt*)
+            # These terminals may exhibit OSC response corruption
+            # Temporarily set to 'xterm' without color query support indicators
+            export TERM="xterm"
+            export COLORTERM=""  # Disable true color detection
+            echo -e "${GREEN}✅ Terminal workaround enabled (Issue #4960):${NC}"
+            echo -e "${GREEN}   TERM changed from '$ORIGINAL_TERM' to '$TERM' to prevent output corruption${NC}"
+            echo ""
+            ;;
+        dumb)
+            # Already safe
+            echo -e "${GREEN}✅ Terminal is already safe (TERM=dumb)${NC}"
+            echo ""
+            ;;
+        *)
+            # Unknown terminal, keep original
+            ;;
+    esac
+
+    # Additional environment variables to suppress color queries
+    export TERM_PROGRAM_BACKGROUND=""   # Disable macOS Terminal background detection
+    export COLORFGBG=""                 # Disable color detection via COLORFGBG
+fi
 
 # ============================================================================
 # LAUNCH CODEX
@@ -509,6 +599,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo -e "  Model: ${MAGENTA}$SELECTED_MODEL${NC} (reasoning: $REASONING_LEVEL)"
 echo -e "  Mode: ${GREEN}Interactive${NC}"
 echo -e "  Approval Mode: ${YELLOW}$APPROVAL_DESC${NC}"
+echo -e "  Sandbox: $SANDBOX_STATUS_MSG"
 echo -e "  Session Log: ${BLUE}$SESSION_LOG${NC}"
 echo -e "  MCP Servers: ${GREEN}playwright, filesystem, git, brave-search${NC}"
 if [ -f "AGENTS.md" ]; then
@@ -525,7 +616,7 @@ if [ "$EXEC_MODE" = true ]; then
     echo ""
     # Use codex exec for non-interactive mode (with logging)
     if [ -n "$INITIAL_PROMPT" ]; then
-        codex exec --model "$SELECTED_MODEL" "$INITIAL_PROMPT" 2>&1 | tee "$SESSION_LOG"
+        codex exec --model "$SELECTED_MODEL" $SANDBOX_ARGS "$INITIAL_PROMPT" 2>&1 | tee "$SESSION_LOG"
     else
         echo -e "${RED}ERROR: --exec requires a prompt${NC}"
         exit 1
@@ -544,13 +635,13 @@ else
     echo ""
     echo -e "${CYAN}Note: Session will be logged to $SESSION_LOG${NC}"
     echo ""
-    
+
     # Interactive mode - direct execution without tee (tee breaks interactive mode)
     if [ -n "$INITIAL_PROMPT" ]; then
         echo -e "${BLUE}Starting with initial prompt: ${INITIAL_PROMPT}${NC}"
         echo ""
-        exec codex --model "$SELECTED_MODEL" "$INITIAL_PROMPT"
+        exec codex --model "$SELECTED_MODEL" $SANDBOX_ARGS "$INITIAL_PROMPT"
     else
-        exec codex --model "$SELECTED_MODEL"
+        exec codex --model "$SELECTED_MODEL" $SANDBOX_ARGS
     fi
 fi
