@@ -2,8 +2,8 @@ data:
   graph_builder:
     cache_dir: graph_cache
     ewm_halflife: 30
-    k: 15
-    edge_threshold: 0.25
+    k: 20
+    edge_threshold: 0.3
     log_mktcap_col: log_mktcap
     lookback: 60
     method: ewm_demean

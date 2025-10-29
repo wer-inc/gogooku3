@@ -123,6 +123,32 @@ def save_with_symlinks(
 ) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Drop rows missing core OHLC/Volume values to avoid label NaNs downstream
+    price_cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+    if price_cols:
+        before = df.height
+        df = df.filter(pl.all_horizontal([pl.col(c).is_not_null() for c in price_cols]))
+        dropped = before - df.height
+        if dropped > 0:
+            logger.info("🧽 Dropped %d rows with missing OHLC/Volume values", dropped)
+
+    # Fill target/forward-return NaNs with 0 (no movement) to prevent validation NaN
+    target_cols = [
+        col
+        for col in df.columns
+        if col.startswith("target_") or col.startswith("feat_ret_")
+    ]
+    if target_cols:
+        df = df.with_columns(
+            [
+                pl.col(col)
+                .fill_null(0.0)
+                .fill_nan(0.0)
+                .alias(col)
+            ]
+            for col in target_cols
+        )
+
     # Normalize column names to align with docs/ml/dataset.md (non-breaking rename)
     try:
         rename_map = {

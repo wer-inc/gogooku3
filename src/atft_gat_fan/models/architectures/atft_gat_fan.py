@@ -792,8 +792,32 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             and hasattr(self, "gat_residual_gate")
         ):
             alpha = torch.sigmoid(self.gat_residual_gate)
+
+            # 🔍 DETAILED FLOW LOGGING (Forward pass)
+            if self.training:
+                gate_raw = self.gat_residual_gate.item()
+                alpha_val = alpha.item()
+                gat_norm = gat_features.norm().item()
+                proj_norm = combined_features.norm().item()
+                logger.info(
+                    f"[GAT-FLOW] gate_raw={gate_raw:.4f}, alpha={alpha_val:.4f}, "
+                    f"(1-alpha)={1-alpha_val:.4f}, gat_norm={gat_norm:.2e}, proj_norm={proj_norm:.2e}"
+                )
+
             # Residual bypass: α*projection + (1-α)*gat_features
+            combined_features_before = combined_features
             combined_features = alpha * combined_features + (1 - alpha) * gat_features
+
+            # 🔍 DETAILED FLOW LOGGING (After combination)
+            if self.training:
+                combined_norm_after = combined_features.norm().item()
+                gat_contribution = ((1 - alpha) * gat_features).norm().item()
+                proj_contribution = (alpha * combined_features_before).norm().item()
+                logger.info(
+                    f"[GAT-FLOW] combined_norm={combined_norm_after:.2e}, "
+                    f"gat_contrib={gat_contribution:.2e}, proj_contrib={proj_contribution:.2e}"
+                )
+
             # GAT勾配モニタリング（訓練時のみ）
             if self.training and hasattr(gat_features, "register_hook"):
 
@@ -804,6 +828,8 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                             logger.warning(
                                 f"[GAT-GRAD] Low gradient detected: {grad_norm:.2e}"
                             )
+                        else:
+                            logger.info(f"[GAT-GRAD] gradient norm: {grad_norm:.2e}")
 
                 gat_features.register_hook(log_gat_grad)
         normalized_features = self.adaptive_norm(combined_features)

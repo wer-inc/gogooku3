@@ -159,9 +159,18 @@ class ParquetStockIterableDataset(IterableDataset):
         )
 
     # ------------------------------------------------------------------ Fitting
-    def fit(self, max_samples: int = 200_000) -> None:
+    def fit(
+        self,
+        max_samples: int = 200_000,
+        *,
+        max_files: int | None = None,
+    ) -> None:
         scaler = self._scaler
-        for window in self._stream_windows(self.file_paths, yield_windows=True):
+        if max_files is not None and max_files > 0:
+            candidate_files = self.file_paths[: max_files]
+        else:
+            candidate_files = self.file_paths
+        for window in self._stream_windows(candidate_files, yield_windows=True):
             features = window.select(self.feature_columns).to_numpy().astype(np.float32)
             scaler.partial_fit(features)
             if scaler._count >= max_samples:

@@ -36,9 +36,9 @@ class GBConfig:
     update_frequency: int = 10
     cache_dir: str | None = "graph_cache"
     ewm_halflife: int = 20
-    k: int = 10
+    k: int = 20
     # New safeguards for training stability
-    min_k: int = 5  # ensure at least this many neighbors per node (per direction)
+    min_k: int = 10  # ensure at least this many neighbors per node (per direction)
     add_self_loops: bool = True  # add i->i edges; many GAT variants expect this
     min_edges: int = 0  # global lower bound on total edges (0 = disabled)
     log_mktcap_col: str | None = None
@@ -65,6 +65,7 @@ class GBConfig:
         self.lookback = max(1, int(self.lookback))
         self.min_obs = max(1, int(self.min_obs))
         self.update_frequency = max(1, int(self.update_frequency))
+        self.min_k = max(0, min(int(self.min_k), self.k))
         if self.return_cols is not None:
             self.return_cols = tuple(str(col) for col in self.return_cols)
         if self.returns_channel_index is not None:
@@ -276,8 +277,8 @@ class GraphBuilder:
     def build_correlation_edges(
         self,
         data: torch.Tensor,
-        window: int = 20,
-        k: int = 10,
+        window: int | None = None,
+        k: int | None = None,
         sectors: Optional[Sequence[Any]] = None,
         markets: Optional[Sequence[Any]] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -310,8 +311,13 @@ class GraphBuilder:
         n_nodes = int(returns_matrix.shape[0])
         k = int(min(k, max(1, n_nodes - 1)))
 
-        if returns_matrix.shape[1] >= window:
-            returns = returns_matrix[:, -window:]
+        # Resolve parameters from config if not provided
+        corr_window = int(window if window is not None else self.config.lookback)
+        k_neighbors = int(k if k is not None else self.config.k)
+        k_neighbors = max(1, min(k_neighbors, n_nodes - 1))
+
+        if returns_matrix.shape[1] >= corr_window:
+            returns = returns_matrix[:, -corr_window:]
         else:
             returns = returns_matrix
 
@@ -328,7 +334,9 @@ class GraphBuilder:
         corr_matrix.fill_diagonal_(-float("inf"))
 
         # Get top-k correlations for each node
-        values, indices = torch.topk(corr_matrix, k=k, dim=1)
+        abs_corr = corr_matrix.abs()
+        abs_corr.fill_diagonal_(-float("inf"))
+        values, indices = torch.topk(abs_corr, k=k_neighbors, dim=1)
 
         # Build directed edge set with threshold, then densify to min_k if needed
         edge_set: set[tuple[int, int]] = set()
@@ -338,16 +346,19 @@ class GraphBuilder:
 
         for i in range(n_nodes):
             keep_for_i: list[tuple[int, float]] = []
-            for j_idx, corr_val in zip(indices[i], values[i], strict=False):
+            for j_idx, abs_val in zip(indices[i], values[i], strict=False):
                 j = int(j_idx.item())
-                c = float(corr_val.item())
-                if not torch.isinf(corr_val) and c > thr:
-                    keep_for_i.append((j, c))
+                if j == i:
+                    continue
+                if not torch.isinf(abs_val):
+                    actual_corr = float(corr_matrix[i, j].item())
+                    if abs(actual_corr) >= thr:
+                        keep_for_i.append((j, actual_corr))
             # If below min_k, backfill with best neighbors regardless of threshold
             if len(keep_for_i) < int(self.config.min_k):
                 needed = int(self.config.min_k) - len(keep_for_i)
                 # candidates sorted by raw correlation (already sorted by topk)
-                for j_idx, corr_val in zip(indices[i], values[i], strict=False):
+                for j_idx, abs_val in zip(indices[i], values[i], strict=False):
                     if needed <= 0:
                         break
                     j = int(j_idx.item())
@@ -355,7 +366,7 @@ class GraphBuilder:
                         continue
                     # avoid duplicates
                     if all(j != jj for jj, _ in keep_for_i):
-                        keep_for_i.append((j, float(corr_val.item())))
+                        keep_for_i.append((j, float(corr_matrix[i, j].item())))
                         needed -= 1
             # Insert directed edges (i -> j)
             for j, c in keep_for_i:
@@ -466,7 +477,8 @@ class GraphBuilder:
             min_deg = float(deg.min().item()) if deg.numel() > 0 else 0.0
         logger.info(
             f"Built correlation graph: nodes={n_nodes}, edges={int(edge_index.shape[1])}, "
-            f"avg_deg={avg_deg:.2f}, min_deg={min_deg:.0f}, thr={thr}, k={k}, min_k={self.config.min_k}, self_loops={self.config.add_self_loops}"
+            f"avg_deg={avg_deg:.2f}, min_deg={min_deg:.0f}, thr={thr}, k={k_neighbors}, "
+            f"min_k={self.config.min_k}, self_loops={self.config.add_self_loops}"
         )
 
         return edge_index, edge_attr

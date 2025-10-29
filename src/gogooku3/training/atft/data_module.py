@@ -1576,6 +1576,47 @@ class ProductionDataModuleV2:
         except Exception:
             max_samples = 200_000
         max_samples = max(1, max_samples)
+        env_override = os.getenv("NORMALIZATION_MAX_SAMPLES")
+        if env_override:
+            try:
+                env_samples = max(1, int(env_override))
+                if env_samples != max_samples:
+                    logger.info(
+                        "[norm-env] Overriding max_samples: %d → %d (NORMALIZATION_MAX_SAMPLES)",
+                        max_samples,
+                        env_samples,
+                    )
+                max_samples = env_samples
+            except Exception as _env_err:
+                logger.warning(
+                    "[norm-env] Invalid NORMALIZATION_MAX_SAMPLES=%s (%s); keeping %d",
+                    env_override,
+                    _env_err,
+                    max_samples,
+                )
+        max_files = norm_cfg.get("max_files")
+        try:
+            max_files = None if max_files in (None, "null") else int(max_files)
+        except Exception:
+            max_files = None
+        env_files = os.getenv("NORMALIZATION_MAX_FILES")
+        if env_files:
+            try:
+                env_files_int = max(1, int(env_files))
+                if env_files_int != (max_files or env_files_int):
+                    logger.info(
+                        "[norm-env] Overriding max_files: %s → %d (NORMALIZATION_MAX_FILES)",
+                        max_files,
+                        env_files_int,
+                    )
+                max_files = env_files_int
+            except Exception as _env_err:
+                logger.warning(
+                    "[norm-env] Invalid NORMALIZATION_MAX_FILES=%s (%s); keeping %s",
+                    env_files,
+                    _env_err,
+                    max_files,
+                )
 
         raw_state = norm_cfg.get("random_state", 42)
         try:
@@ -1597,12 +1638,15 @@ class ProductionDataModuleV2:
             sequence_length=seq_len,
             scaler=train_scaler,
         )
+        fit_file_count = len(train_files)
+        if isinstance(max_files, int) and max_files > 0:
+            fit_file_count = min(fit_file_count, max_files)
         logger.info(
             "Fitting OnlineRobustScaler on training data (max_samples=%d, files=%d)...",
             max_samples,
-            len(train_files),
+            fit_file_count,
         )
-        self.train_dataset.fit(max_samples=max_samples)
+        self.train_dataset.fit(max_samples=max_samples, max_files=max_files)
         base_scaler = self.train_dataset.export_fitted_scaler()
 
         if val_files:

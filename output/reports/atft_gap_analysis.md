@@ -62,6 +62,7 @@
 4. **Scalability**: Supports arbitrary dataset sizes without full-memory loading
 5. **Worker Safety**: Multi-worker DataLoader compatible (tested with num_workers=2)
 6. **NaN Handling**: OnlineRobustScaler gracefully handles missing feature values
+7. **Label Integrity (2025-10-29)**: Final dataset export now drops rows with missing OHLC/Volume and fills `target_*` / `feat_ret_*` with 0.0 to prevent validation NaNs (`src/pipeline/full_dataset.py`).
 
 #### Regression Tests Added (2025-10-28)
 
@@ -90,14 +91,19 @@
 - **優先度**: **P0 → P1 に格下げ** （コア機能は完成、multi-worker は最適化タスク）。
 
 ### 2. グラフ生成
-- **現状**: `GraphBuilder` は `FinancialGraphBuilder` を呼び出すが、returns 抽出に失敗するとコサイン類似へフォールバックし、sector/market 属性は実質未使用 (`src/graph/graph_builder.py:107`).
-- **ギャップ**: 時系列相関の再構成・edge 属性整備・code↔node マップが未実装。平均次数 20 の確保も未検証。
-- **優先度**: P1 (Phase 2 着手時に必須)。
+- **現状 (2025-10-29 更新)**: `GraphBuilder` を刷新済み。`lookback=60`、`k=20`、`threshold=0.3` を既定値とし、絶対相関ベースの kNN スパース化を採用。平均次数は **31.0**、エッジ数は **59,253** 本、ノード数 3,818（2025-10-20 時点）で目標値を満たすことを確認。
+- **ベースライン → 改善比較**:
+  - 旧設定 (k=4, threshold=0.5): 平均次数 **3.90**、エッジ 7,244 → GAT で伝播できる情報が不足
+  - 新設定 (k=20, threshold=0.3): 平均次数 **31.04**、エッジ 59,253 → 十分な近傍情報を確保
+- **相関範囲**: 0.31 ~ 0.62（正負両方向を許容）
+- **詳細レポート**: `output/reports/graph_baseline_analysis.md`, `output/reports/correlation_prototype.md`
+- **ギャップ**: FinancialGraphBuilder のキャッシュ互換性は維持済み。今後は Phase 3 以降の FAN/SAN 強化と組み合わせて性能検証を継続。
+- **優先度**: ✅ P1 → 完了（Phase 2 実装済み）。
 
 ### 3. FAN / SAN
-- **現状**: 基本ロジックは存在 (`src/atft_gat_fan/models/components/adaptive_normalization.py:9`) が、正則化・NaN 監視・勾配テストなし。設定の段階的切替が未整備。
-- **ギャップ**: UnitTest (`tests/atft/test_fan.py` など) が未整備、Phase 学習での ON/OFF 制御が未実装。
-- **優先度**: P1 (Phase 3 でのテスト整備)。
+- **現状 (2025-10-29 更新)**: `FrequencyAdaptiveNorm` / `SliceAdaptiveNorm` を多窓・スライス適応に刷新。Softmax 学習重み・NaN クリーニング・勾配検証を `tests/atft/test_adaptive_normalization.py`（4 ケース）でカバー。
+- **ギャップ**: Hydra から窓/スライス数を切替える設定が未整備。GPU 環境停止により FAN/SAN 有効時の 1 epoch スモークは未完了 (`output/reports/fan_san_smoke_*.log` に記録)。
+- **優先度**: P1 (Phase 3 継続: Hydra 設定化 + GPU スモーク + 5 epoch 検証)。
 
 ### 4. Phase Training 制御
 - **現状**: `run_phase_training` 実装済み (`scripts/train_atft.py:3626`) だが通常経路では呼ばれず、Hydra の `phase0-4` 設定が未作成。
@@ -122,18 +128,26 @@
 |-----------------------------------|--------|--------------------------------------------------------------|
 | DataLoader / スケーリング        | P0     | Phase 1 のストリーミング実装に直結。                         |
 | パイプライン設定整備             | P1     | CLI 手順の明文化と config 指定の自動化が必要。               |
-| Graph Builder                     | P1     | Phase 2 の要件。kNN 相関グラフの正しい実装が必要。           |
-| FAN / SAN + テスト               | P1     | Phase 3 のレイヤ刷新に必要。                                 |
+| Graph Builder                     | ✅     | Phase 2 完了。新設定 (k=20, thr=0.3, lookback=60) を本線に統合済み。 |
+| FAN / SAN + テスト               | P1     | Hydra 設定化・GPU スモーク・5 epoch 検証を残す Phase 3 継続タスク。 |
 | Phase Training CLI / ログ        | P1     | Phase 4 要件。フェーズ遷移・ログ出力の自動化が未達。         |
 | 評価・レポート自動化             | P2     | Phase 5 で CI95 / backtest レポート生成が求められる。        |
 | HPO & 最終レポート更新            | P2     | Phase 6 での HPO、自動レポート比較の土台整備。               |
 
 ---
 
+## 2025-10-29 Update（Phase 4 スモーク修正）
+
+- `--phase` 実行時に `PHASE_RESET_EPOCH=1` / `PHASE_RESET_OPTIMIZER=1` を自動設定。`train_atft.py` がチェックポイントの epoch / optimizer state をリセットしてから学習を再開するため、1 epoch スモークでも確実に学習が走るようになった。
+- Iterable DataLoader のスケーラ適用が `NORMALIZATION_MAX_SAMPLES` / `NORMALIZATION_MAX_FILES` 環境変数を尊重するよう更新。デフォルト 8,192 サンプルで統計を作成でき、Phase 3 で発生していた OnlineRobustScaler ハング（200k サンプル全走査）が解消。
+- GPU 復旧後、Phase 1〜4 のスモークを `--max-epochs 2 --phase N --save-phase-checkpoint` で再実行し、各フェーズのメトリクス／ログを収集する計画。
+
+---
+
 ## 推奨アクション (次ステップ)
 
 1. **Hydra CLI 手順の明文化**: README / ドキュメントに `--config-path ../configs/atft` 等の指定方法を追記し、記録用ログ (`output/reports/hydra_collision.log`) を共有。
-2. **DataLoader 刷新設計**: Phase 1 に向けて row-group IterableDataset と OnlineRobustScaler の実装方針を設計し、必要テストを洗い出す。
-3. **Graph Builder 要件定義**: 時系列整列 + kNN + 属性付与の仕様を `src/graph` 配下で整理し、メタデータ管理モジュール追加を計画。
-4. **FAN/SAN テスト計画**: 勾配チェックと NaN ガードを含むユニットテストを作成する準備 (Phase 3)。
-5. **プロファイル改善計画**: 現状の CPU/GPU ベンチ結果を基準に、メモリ 40% 以下・前処理 30% 短縮を達成する改善策を設計。
+2. **FAN/SAN 設定化 & スモーク**: Hydra 側に窓・スライス数のパラメタを追加し、GPU 環境復旧後に `--max-epochs 1` スモークを再実行してログを確定。
+3. **Phase Training 制御**: `--phase` / `--resume-checkpoint` CLI と `configs/atft/train/phase*.yaml` を整備し、フェーズ別メトリクスを自動保存。
+4. **評価・レポート自動化**: CI95・可視化・バックテストの統合を `scripts/evaluate_trained_model.py` に追加し、Phase 5 の要件を満たす。
+5. **性能プロファイル継続**: Phase 1 のベンチ結果を基準に、バッチスケジューラ／メモリ最適化の追加施策を検討。

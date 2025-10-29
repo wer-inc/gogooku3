@@ -70,8 +70,8 @@ data:
   graph_builder:
     cache_dir: output/graph_cache
     ewm_halflife: 30
-    k: 24
-    edge_threshold: 0.18
+    k: 20
+    edge_threshold: 0.3
     min_edges: 75
     log_mktcap_col: log_mktcap
     lookback: 60
