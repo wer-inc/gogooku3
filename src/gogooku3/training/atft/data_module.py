@@ -20,10 +20,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset, IterableDataset, Sampler
 
-from data.parquet_stock_dataset import (
-    OnlineRobustScaler,
-    ParquetStockIterableDataset,
-)
+from data.parquet_stock_dataset import OnlineRobustScaler, ParquetStockIterableDataset
 
 try:  # pragma: no cover - optional acceleration path
     import pyarrow.parquet as pq
@@ -322,7 +319,9 @@ class StreamingParquetDataset(Dataset):
 
         self.file_paths = cleaned_paths
         self.feature_columns = feature_columns
-        self.dynamic_feature_columns = [c for c in feature_columns if c.endswith("_cs_z")]
+        self.dynamic_feature_columns = [
+            c for c in feature_columns if c.endswith("_cs_z")
+        ]
         if not self.dynamic_feature_columns:
             self.dynamic_feature_columns = list(feature_columns)
         self.mask_feature_columns = [
@@ -463,8 +462,12 @@ class StreamingParquetDataset(Dataset):
             for col in self.exposure_columns:
                 if col in sample_columns:
                     exposure_cols_to_add.append(col)
-        static_cols_to_add = [c for c in self.static_columns if c not in exposure_cols_to_add]
-        regime_cols_to_add = [c for c in self.regime_columns if c not in exposure_cols_to_add]
+        static_cols_to_add = [
+            c for c in self.static_columns if c not in exposure_cols_to_add
+        ]
+        regime_cols_to_add = [
+            c for c in self.regime_columns if c not in exposure_cols_to_add
+        ]
 
         self._columns_needed = list(
             dict.fromkeys(
@@ -1078,7 +1081,9 @@ class StreamingParquetDataset(Dataset):
                 regime_df = window.select(self.regime_columns)
                 regime_arr = regime_df.to_numpy().astype(np.float32, copy=False)
                 if regime_arr.size == 0:
-                    regime_vec = np.zeros(len(self.regime_columns) * 2, dtype=np.float32)
+                    regime_vec = np.zeros(
+                        len(self.regime_columns) * 2, dtype=np.float32
+                    )
                 else:
                     last_vals = regime_arr[-1]
                     with np.errstate(invalid="ignore"):
@@ -1086,9 +1091,7 @@ class StreamingParquetDataset(Dataset):
                     regime_vec = np.concatenate([last_vals, mean_vals]).astype(
                         np.float32, copy=False
                     )
-                regime_vec = np.nan_to_num(
-                    regime_vec, nan=0.0, posinf=0.0, neginf=0.0
-                )
+                regime_vec = np.nan_to_num(regime_vec, nan=0.0, posinf=0.0, neginf=0.0)
                 sample["regime_features"] = torch.tensor(
                     regime_vec, dtype=torch.float32
                 )
@@ -1231,7 +1234,9 @@ class StreamingParquetDataset(Dataset):
         logger.info("Computing global normalization statistics from training data...")
 
         if not self.dynamic_feature_columns:
-            logger.info("No dynamic features detected; skipping global normalization stats")
+            logger.info(
+                "No dynamic features detected; skipping global normalization stats"
+            )
             self._stats_computed = True
             return
 
@@ -1906,10 +1911,7 @@ class ProductionDataModuleV2:
         is_iterable = isinstance(dataset, IterableDataset)
 
         # Use day batch sampler if enabled
-        if (
-            not is_iterable
-            and self.config.data.get("use_day_batch_sampler", False)
-        ):
+        if not is_iterable and self.config.data.get("use_day_batch_sampler", False):
             sampler = DayBatchSampler(
                 dataset=dataset,
                 batch_size=self.config.train.batch.train_batch_size,
@@ -1922,7 +1924,9 @@ class ProductionDataModuleV2:
             )
 
         if is_iterable:
-            logger.info("Using iterable DataLoader (shuffle disabled) for training split")
+            logger.info(
+                "Using iterable DataLoader (shuffle disabled) for training split"
+            )
             return DataLoader(
                 dataset,
                 batch_size=self.config.train.batch.train_batch_size,

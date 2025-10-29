@@ -1,6 +1,6 @@
 # Dataset Generation Guide - Up to 395 Features (Currently ~307)
 
-⚠️ **Note (2025年10月更新)**: 先物機能（88-92列）が無効化されているため、実際の生成列数は約303-307列となります。詳細は `docs/ml/dataset_new.md` Section 13.1 を参照してください。
+⚠️ **Note (2025年10月更新)**: 先物機能（88-92列）が無効化されているため、実際の生成列数は約303-307列となります。詳細は `docs/ml/dataset.md` Section 13.1 を参照してください。
 
 ## Current Status
 

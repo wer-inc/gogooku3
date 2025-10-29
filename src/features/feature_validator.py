@@ -103,7 +103,7 @@ class FeatureValidator:
                 [pl.min_horizontal(core_valid_flags).alias("is_core_valid")]
             )
 
-        # Add specific flags for dataset_new.md compatibility
+        # Add specific flags for dataset.md compatibility
         df = df.with_columns(
             [
                 (pl.col("row_idx") >= 2).cast(pl.Int8).alias("is_rsi2_valid"),
@@ -338,7 +338,7 @@ class FeatureValidator:
             冗長特徴量を削除したDataFrame
         """
         redundant_pairs = [
-            # close_to_highとclose_to_lowは和が1だが、dataset_new.mdでは両方必要なので削除しない
+            # close_to_highとclose_to_lowは和が1だが、dataset.mdでは両方必要なので削除しない
             # ("close_to_low", None),  # コメントアウト - 両方保持
             # SMAは削除してEMAに統一
             ("sma_5", None),

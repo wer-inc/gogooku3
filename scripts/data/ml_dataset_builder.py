@@ -9,10 +9,10 @@ statements) are treated as no-ops unless data and utilities are available.
 Includes integration for margin weekly block.
 """
 
+import datetime
 import json
 import logging
 import math
-import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -912,13 +912,17 @@ class MLDatasetBuilder:
         else:
             try:
                 if business_days:
-                    from src.features.calendar_utils import build_next_bday_expr_from_dates
+                    from src.features.calendar_utils import (
+                        build_next_bday_expr_from_dates,
+                    )
 
                     next_expr = build_next_bday_expr_from_dates(business_days)
                 else:
                     next_expr = build_next_bday_expr_from_quotes(df)
             except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(f"[builder] Failed to derive next business day for VIX: {exc}")
+                logger.warning(
+                    f"[builder] Failed to derive next business day for VIX: {exc}"
+                )
                 next_expr = None
 
             if next_expr is not None:
@@ -965,12 +969,12 @@ class MLDatasetBuilder:
             eps = 1e-12
             out = out.with_columns(
                 [
-                    (
-                        pl.col("macro_vix_close") - pl.col("mkt_vol_20d")
-                    ).alias("macro_vix_minus_mkt_vol_20d"),
-                    (
-                        pl.col("macro_vix_close") / (pl.col("mkt_vol_20d") + eps)
-                    ).alias("macro_vix_vs_mkt_vol_ratio"),
+                    (pl.col("macro_vix_close") - pl.col("mkt_vol_20d")).alias(
+                        "macro_vix_minus_mkt_vol_20d"
+                    ),
+                    (pl.col("macro_vix_close") / (pl.col("mkt_vol_20d") + eps)).alias(
+                        "macro_vix_vs_mkt_vol_ratio"
+                    ),
                 ]
             )
 
@@ -1000,13 +1004,17 @@ class MLDatasetBuilder:
         else:
             try:
                 if business_days:
-                    from src.features.calendar_utils import build_next_bday_expr_from_dates
+                    from src.features.calendar_utils import (
+                        build_next_bday_expr_from_dates,
+                    )
 
                     next_expr = build_next_bday_expr_from_dates(business_days)
                 else:
                     next_expr = build_next_bday_expr_from_quotes(df)
             except Exception as exc:  # pragma: no cover
-                logger.warning(f"[builder] Failed to derive next business day for FX: {exc}")
+                logger.warning(
+                    f"[builder] Failed to derive next business day for FX: {exc}"
+                )
                 next_expr = None
 
             if next_expr is not None:
@@ -1073,13 +1081,17 @@ class MLDatasetBuilder:
         else:
             try:
                 if business_days:
-                    from src.features.calendar_utils import build_next_bday_expr_from_dates
+                    from src.features.calendar_utils import (
+                        build_next_bday_expr_from_dates,
+                    )
 
                     next_expr = build_next_bday_expr_from_dates(business_days)
                 else:
                     next_expr = build_next_bday_expr_from_quotes(df)
             except Exception as exc:  # pragma: no cover
-                logger.warning(f"[builder] Failed to derive next business day for BTC: {exc}")
+                logger.warning(
+                    f"[builder] Failed to derive next business day for BTC: {exc}"
+                )
                 next_expr = None
 
             if next_expr is not None:
@@ -1118,9 +1130,9 @@ class MLDatasetBuilder:
             and "macro_btc_vix_divergence" not in out.columns
         ):
             out = out.with_columns(
-                (
-                    pl.col("macro_btc_ret_1d") - pl.col("macro_vix_ret_1d")
-                ).alias("macro_btc_vix_divergence")
+                (pl.col("macro_btc_ret_1d") - pl.col("macro_vix_ret_1d")).alias(
+                    "macro_btc_vix_divergence"
+                )
             )
 
         return out
@@ -1156,7 +1168,9 @@ class MLDatasetBuilder:
                 pl.col("MorningHigh").cast(pl.Float64, strict=False).alias("am_high"),
                 pl.col("MorningLow").cast(pl.Float64, strict=False).alias("am_low"),
                 pl.col("MorningClose").cast(pl.Float64, strict=False).alias("am_close"),
-                pl.col("MorningVolume").cast(pl.Float64, strict=False).alias("am_volume"),
+                pl.col("MorningVolume")
+                .cast(pl.Float64, strict=False)
+                .alias("am_volume"),
                 pl.col("MorningTurnoverValue")
                 .cast(pl.Float64, strict=False)
                 .alias("am_turnover"),
@@ -1177,7 +1191,18 @@ class MLDatasetBuilder:
             ]
         )
 
-        join_frame = am.select(["Code", "Date", "am_open", "am_high", "am_low", "am_close", "am_volume", "am_turnover"])
+        join_frame = am.select(
+            [
+                "Code",
+                "Date",
+                "am_open",
+                "am_high",
+                "am_low",
+                "am_close",
+                "am_volume",
+                "am_turnover",
+            ]
+        )
         out = df.join(join_frame, on=["Code", "Date"], how="left")
 
         eps = 1e-12
@@ -1191,38 +1216,39 @@ class MLDatasetBuilder:
         out = out.with_columns(
             [
                 am_ret.alias("am_ret"),
-                ((pl.col("am_high") - pl.col("am_low")) / (pl.col("am_open") + eps)).alias(
-                    "am_range"
-                ),
+                (
+                    (pl.col("am_high") - pl.col("am_low")) / (pl.col("am_open") + eps)
+                ).alias("am_range"),
                 (
                     (pl.col("am_close") - pl.col("am_low"))
                     / (pl.col("am_high") - pl.col("am_low") + eps)
                 ).alias("am_pos"),
-                (
-                    (pl.col("am_open") / (prev_close + eps)) - 1.0
-                ).alias("am_gap_prev_close"),
-                (pl.col("am_volume")
-                 / (
-                    pl.col("am_volume")
-                    .rolling_mean(window_size=20, min_periods=5)
-                    .over("Code")
-                    + eps
-                )).alias("am_vol_ratio_20"),
-                (pl.col("am_turnover")
-                 / (
-                    pl.col("am_turnover")
-                    .rolling_mean(window_size=20, min_periods=5)
-                    .over("Code")
-                    + eps
-                )).alias("am_tvr_ratio_20"),
-                ((pl.col("am_high") - pl.col("am_low")) / (pl.col("am_close") + eps)).alias(
-                    "am_spread_proxy"
+                ((pl.col("am_open") / (prev_close + eps)) - 1.0).alias(
+                    "am_gap_prev_close"
                 ),
+                (
+                    pl.col("am_volume")
+                    / (
+                        pl.col("am_volume")
+                        .rolling_mean(window_size=20, min_periods=5)
+                        .over("Code")
+                        + eps
+                    )
+                ).alias("am_vol_ratio_20"),
+                (
+                    pl.col("am_turnover")
+                    / (
+                        pl.col("am_turnover")
+                        .rolling_mean(window_size=20, min_periods=5)
+                        .over("Code")
+                        + eps
+                    )
+                ).alias("am_tvr_ratio_20"),
+                (
+                    (pl.col("am_high") - pl.col("am_low")) / (pl.col("am_close") + eps)
+                ).alias("am_spread_proxy"),
                 pl.when(pl.col("am_close").is_not_null())
-                .then(
-                    pl.col("am_ret").sign()
-                    * (pl.col("am_ret").abs() - am_median)
-                )
+                .then(pl.col("am_ret").sign() * (pl.col("am_ret").abs() - am_median))
                 .otherwise(None)
                 .alias("am_overhang"),
                 pl.col("am_close").is_not_null().cast(pl.Int8).alias("is_am_valid"),
@@ -1243,7 +1269,11 @@ class MLDatasetBuilder:
                 continue
             selected.extend(cols)
         if include_base:
-            base_cols = [self.code_column, self.date_column] if hasattr(self, "code_column") else ["Code", "Date"]
+            base_cols = (
+                [self.code_column, self.date_column]
+                if hasattr(self, "code_column")
+                else ["Code", "Date"]
+            )
             selected = base_cols + selected
         return list(dict.fromkeys(selected))
 
@@ -1325,9 +1355,9 @@ class MLDatasetBuilder:
                 (_safe("MarginBuyCloseValue") - _safe("MarginSellCloseValue")).alias(
                     "bd_credit_close_net"
                 ),
-                (_safe("ShortSellWithoutMarginValue") + _safe("MarginSellNewValue")).alias(
-                    "bd_short_flow"
-                ),
+                (
+                    _safe("ShortSellWithoutMarginValue") + _safe("MarginSellNewValue")
+                ).alias("bd_short_flow"),
             ]
         )
 
@@ -1357,11 +1387,13 @@ class MLDatasetBuilder:
         bd = bd.with_columns(
             [
                 (
-                    (pl.col("bd_net_value") - pl.col("bd_net_value")
-                     .rolling_mean(window_size=260, min_periods=20)
-                     .over("Code"))
-                    /
                     (
+                        pl.col("bd_net_value")
+                        - pl.col("bd_net_value")
+                        .rolling_mean(window_size=260, min_periods=20)
+                        .over("Code")
+                    )
+                    / (
                         pl.col("bd_net_value")
                         .rolling_std(window_size=260, min_periods=20)
                         .over("Code")
@@ -1369,11 +1401,13 @@ class MLDatasetBuilder:
                     )
                 ).alias("bd_net_z_52"),
                 (
-                    (pl.col("bd_short_flow") - pl.col("bd_short_flow")
-                     .rolling_mean(window_size=260, min_periods=20)
-                     .over("Code"))
-                    /
                     (
+                        pl.col("bd_short_flow")
+                        - pl.col("bd_short_flow")
+                        .rolling_mean(window_size=260, min_periods=20)
+                        .over("Code")
+                    )
+                    / (
                         pl.col("bd_short_flow")
                         .rolling_std(window_size=260, min_periods=20)
                         .over("Code")
@@ -1382,8 +1416,7 @@ class MLDatasetBuilder:
                 ).alias("bd_short_z_52"),
                 (
                     pl.col("bd_total")
-                    /
-                    (
+                    / (
                         pl.col("bd_total")
                         .rolling_mean(window_size=260, min_periods=20)
                         .over("Code")
@@ -1417,11 +1450,7 @@ class MLDatasetBuilder:
             [c for c in ("effective_date",) if c in bd.columns]
         )
 
-        feature_cols = [
-            c
-            for c in join_frame.columns
-            if c not in {"Code", "Date"}
-        ]
+        feature_cols = [c for c in join_frame.columns if c not in {"Code", "Date"}]
         join_frame = join_frame.select(["Code", "Date", *feature_cols])
 
         out = df.join(join_frame, on=["Code", "Date"], how="left")
@@ -1464,9 +1493,9 @@ class MLDatasetBuilder:
                 .cast(pl.Utf8, strict=False)
                 .fill_null("00:00")
                 .alias("AnnouncementTime"),
-                pl.col("ReferenceNumber").cast(pl.Utf8, strict=False).alias(
-                    "ReferenceNumber"
-                ),
+                pl.col("ReferenceNumber")
+                .cast(pl.Utf8, strict=False)
+                .alias("ReferenceNumber"),
             ]
         )
 
@@ -1521,12 +1550,14 @@ class MLDatasetBuilder:
 
         # Handle corrections by keeping latest entry per (Code, effective_date)
         div = (
-            div.sort([
-                "Code",
-                "effective_date",
-                "AnnouncementDate",
-                "AnnouncementTime",
-            ])
+            div.sort(
+                [
+                    "Code",
+                    "effective_date",
+                    "AnnouncementDate",
+                    "AnnouncementTime",
+                ]
+            )
             .group_by(["Code", "effective_date"])
             .tail(1)
         )
@@ -1534,8 +1565,9 @@ class MLDatasetBuilder:
         div = div.with_columns(
             [
                 (pl.col("div_amt") - pl.col("div_amt").shift(1).over("Code"))
-                / (pl.col("div_amt").shift(1).over("Code").abs() + 1e-12)
-                .alias("div_rev"),
+                / (pl.col("div_amt").shift(1).over("Code").abs() + 1e-12).alias(
+                    "div_rev"
+                ),
             ]
         )
 
@@ -1557,17 +1589,11 @@ class MLDatasetBuilder:
             }
             div = div.with_columns(
                 [
-                    pl.col("effective_date")
-                    .map_dict(bd_index)
-                    .alias("_eff_idx"),
-                    pl.col("ExDate")
-                    .map_dict(bd_index)
-                    .alias("_ex_idx"),
+                    pl.col("effective_date").map_dict(bd_index).alias("_eff_idx"),
+                    pl.col("ExDate").map_dict(bd_index).alias("_ex_idx"),
                 ]
             ).with_columns(
-                (
-                    pl.col("_ex_idx") - pl.col("_eff_idx")
-                ).alias("div_days_to_ex")
+                (pl.col("_ex_idx") - pl.col("_eff_idx")).alias("div_days_to_ex")
             )
         else:
             div = div.with_columns(
@@ -1579,7 +1605,9 @@ class MLDatasetBuilder:
                 .alias("div_days_to_ex")
             )
 
-        div = div.drop([c for c in ("_eff_idx", "_ex_idx", "next_bday") if c in div.columns])
+        div = div.drop(
+            [c for c in ("_eff_idx", "_ex_idx", "next_bday") if c in div.columns]
+        )
 
         div = div.select(
             [
@@ -1597,7 +1625,9 @@ class MLDatasetBuilder:
         out = df.join(div, on=["Code", "Date"], how="left")
         out = out.with_columns(
             [
-                pl.when(pl.col("div_amt").is_not_null() | pl.col("ExDate").is_not_null())
+                pl.when(
+                    pl.col("div_amt").is_not_null() | pl.col("ExDate").is_not_null()
+                )
                 .then(1)
                 .otherwise(0)
                 .cast(pl.Int8)
@@ -1616,9 +1646,7 @@ class MLDatasetBuilder:
 
         prev_close = pl.col("Close").shift(1).over("Code")
         out = out.with_columns(
-            (
-                pl.col("div_amt") / (prev_close + 1e-12)
-            ).alias("div_yield_est")
+            (pl.col("div_amt") / (prev_close + 1e-12)).alias("div_yield_est")
         )
 
         if "ExDate" in out.columns:
@@ -1676,9 +1704,7 @@ class MLDatasetBuilder:
         )
 
         if next_expr is not None:
-            fs = fs.with_columns(
-                next_expr(pl.col("Date")).alias("next_bday")
-            )
+            fs = fs.with_columns(next_expr(pl.col("Date")).alias("next_bday"))
         else:
             fs = fs.with_columns(pl.col("Date").alias("next_bday"))
 
@@ -1770,9 +1796,7 @@ class MLDatasetBuilder:
                 (pl.col("fs_cfo") / (pl.col("fs_revenue") + 1e-12)).alias(
                     "fs_cfo_margin"
                 ),
-                (pl.col("fs_cfo") / (pl.col("fs_np") + 1e-12)).alias(
-                    "fs_cfo_to_np"
-                ),
+                (pl.col("fs_cfo") / (pl.col("fs_np") + 1e-12)).alias("fs_cfo_to_np"),
                 (pl.col("fs_equity") / (pl.col("fs_assets") + 1e-12)).alias(
                     "fs_equity_ratio"
                 ),
@@ -1804,9 +1828,7 @@ class MLDatasetBuilder:
             )
         if {"div_ex_soon_3", "am_pos"}.issubset(df.columns):
             exprs.append(
-                (pl.col("div_ex_soon_3") * pl.col("am_pos")).alias(
-                    "x_div_am_position"
-                )
+                (pl.col("div_ex_soon_3") * pl.col("am_pos")).alias("x_div_am_position")
             )
         if {"am_ret", "fut_ret_1d"}.issubset(df.columns):
             exprs.append(
@@ -1814,10 +1836,9 @@ class MLDatasetBuilder:
             )
         if {"opt_iv_shock", "fut_ret_1d"}.issubset(df.columns):
             exprs.append(
-                (
-                    pl.col("opt_iv_shock")
-                    * pl.col("fut_ret_1d").sign()
-                ).alias("x_opt_vol_direction")
+                (pl.col("opt_iv_shock") * pl.col("fut_ret_1d").sign()).alias(
+                    "x_opt_vol_direction"
+                )
             )
         if not exprs:
             return df

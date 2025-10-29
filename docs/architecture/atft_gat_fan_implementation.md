@@ -69,8 +69,8 @@ Parquet(17GB/195 files)
 * イメージ（1特徴 $x_t$ に対して）:
 
   $$
-  \mu_w=\mathrm{mean}_{t-w..t}(x),\ \sigma_w=\mathrm{std}_{t-w..t}(x),\ 
-  z_w=\frac{x_t-\mu_w}{\sigma_w+\epsilon},\ 
+  \mu_w=\mathrm{mean}_{t-w..t}(x),\ \sigma_w=\mathrm{std}_{t-w..t}(x),\
+  z_w=\frac{x_t-\mu_w}{\sigma_w+\epsilon},\
   \alpha_w=\mathrm{softmax}(\mathrm{MLP}([\mu_w,\sigma_w]))
   $$
 
@@ -140,7 +140,7 @@ Parquet(17GB/195 files)
 ---
 
 ### 現状メモ
-- `StreamingParquetDataset` は Map-style で `_build_index` 時に全ウィンドウを展開し、row-group ごとの逐次生成は未実装。17GB スケールではメモリと初期化時間がボトルネック (`src/gogooku3/training/atft/data_module.py:264`).
+- `ParquetStockIterableDataset` (2025-10-29 更新) を `ProductionDataModuleV2` がデフォルト採用 (`data.loader.implementation=iterable_v1`)。OnlineRobustScaler の統計を train→val/test へクローン配信し、row-group 単位でストリーミング。従来の `StreamingParquetDataset` はレガシー互換パスとして温存。
 - オンライン統計は `_global_median/_global_mad` を保持するものの、RobustScaler 代替は未完成で、正規化の再現性・省メモリ化は課題 (`src/gogooku3/training/atft/data_module.py:365`).
 - 最新計測では Parquet 読込とデータ変換だけで約 132 秒を要し、目標としているメモリ 40% 未満・前処理 30% 短縮は未達成。
 
@@ -896,7 +896,7 @@ def build_dynamic_corr_graph(code_ids: torch.Tensor,
         c[i] = -1.0  # 自己除外
         topk = torch.topk(c, k=k).indices
         for j in topk.tolist():
-            if c[j].item() < threshold: 
+            if c[j].item() < threshold:
                 continue
             edge_index.append([i, j])
             edge_attr.append([
@@ -1052,7 +1052,7 @@ class ParquetStocksIterable(IterableDataset):
         # codeごと
         for code, g in df_day.groupby("code"):
             g = g.sort_values("date")
-            if len(g) < seq_len + Hmax: 
+            if len(g) < seq_len + Hmax:
                 continue
             # 入力窓（最後のT）
             X = g.iloc[-(seq_len+Hmax):]  # T+Hmax 取り、最後のTを入力に
@@ -1101,7 +1101,7 @@ class ParquetStocksIterable(IterableDataset):
         for d in self.dates:
             df_upto = df[df["date"]<=d]  # 当日まで
             out = self._build_sequences_for_day(df_upto)
-            if out is None: 
+            if out is None:
                 continue
             X_dyn, X_static, y_true, meta, past_ret = out
             batch = {"x_dyn": X_dyn, "x_static": X_static, "y_true": y_true, "meta": meta}
@@ -1661,7 +1661,7 @@ def correlation_penalty(y_pred, group_ids=None, target_corr=0.3, weight=0.05):
 
 ```python
 class ATFT_GAT_FAN(nn.Module):
-    def __init__(self, 
+    def __init__(self,
                  tft_backbone: nn.Module,
                  in_dyn: int, in_static: int,
                  hidden: int,
@@ -1781,7 +1781,7 @@ class StocksParquetStream(IterableDataset):
     def __iter__(self):
         for d in self._iter_dates():
             batch = self._load_day(d)
-            if batch is None: 
+            if batch is None:
                 continue
             if self.build_graph:
                 edge_index, edge_attr = self._build_graph(batch["meta"], batch["past_ret"])

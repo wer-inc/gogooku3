@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Check that a generated dataset conforms to docs/ml/dataset_new.md feature contract.
+Check that a generated dataset conforms to docs/ml/dataset.md feature contract.
 
 Usage:
   python scripts/quality/check_dataset.py --input output/ml_dataset_latest_full.parquet
@@ -108,7 +108,7 @@ def required_columns() -> dict[str, set[str]]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="dataset_new.md compliance checker")
+    ap = argparse.ArgumentParser(description="dataset.md compliance checker")
     ap.add_argument(
         "--input", type=Path, default=Path("output/ml_dataset_latest_full.parquet")
     )
@@ -129,11 +129,11 @@ def main() -> int:
             missing[k] = miss
 
     if not missing:
-        print("✅ dataset_new.md compliance: OK")
+        print("✅ dataset.md compliance: OK")
         print(f"  Rows: {len(df):,}, Cols: {len(df.columns)}")
         return 0
     else:
-        print("❌ dataset_new.md compliance: MISSING COLUMNS")
+        print("❌ dataset.md compliance: MISSING COLUMNS")
         for k, miss in missing.items():
             print(f"  - {k}: {len(miss)} missing -> {miss}")
         return 1

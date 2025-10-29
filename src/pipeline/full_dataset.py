@@ -123,7 +123,7 @@ def save_with_symlinks(
 ) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Normalize column names to align with docs/ml/dataset_new.md (non-breaking rename)
+    # Normalize column names to align with docs/ml/dataset.md (non-breaking rename)
     try:
         rename_map = {
             "is_ema_5_valid": "is_ema5_valid",
@@ -661,7 +661,7 @@ async def enrich_and_save(
     except Exception as e:
         logger.warning(f"Advanced features attach skipped: {e}")
 
-    # Finalize to match dataset_new.md spec
+    # Finalize to match dataset.md spec
     try:
         df = builder.finalize_for_spec(df)
     except Exception:
@@ -938,7 +938,7 @@ async def enrich_and_save(
     else:
         logger.warning("sector17_id not found, skipping One-Hot encoding")
 
-    # Window maturity validity flags (Phase 2.6): dataset_new.md Section 10
+    # Window maturity validity flags (Phase 2.6): dataset.md Section 10
     # Indicates when rolling window features have enough historical data to be valid
     # CRITICAL: Error stops pipeline to ensure root cause resolution
     # Add row index within each stock's time series
@@ -2439,7 +2439,7 @@ async def enrich_and_save(
     except Exception as e:
         logger.warning(f"Advanced volatility attach skipped: {e}")
 
-    # Align to dataset_new.md (strict schema) just before saving
+    # Align to dataset.md (strict schema) just before saving
     try:
         eps = 1e-12
 
@@ -2449,9 +2449,9 @@ async def enrich_and_save(
         except Exception as e:
             logger.warning(f"Interaction features attach skipped: {e}")
 
-        # Canonical, ordered schema from docs/ml/dataset_new.md
+        # Canonical, ordered schema from docs/ml/dataset.md
         DOC_COLUMNS: list[str] = [
-            # 0) Identifiers/Meta (expanded per docs/ml/dataset_new.md)
+            # 0) Identifiers/Meta (expanded per docs/ml/dataset.md)
             "Code",
             "Date",
             "Section",
@@ -3024,7 +3024,7 @@ async def enrich_and_save(
                     pl.lit(None).cast(pl.Float64).alias("turnover_rate")
                 )
 
-        # Validity flags for technical indicators (align with dataset_new spec)
+        # Validity flags for technical indicators (align with dataset spec)
         flag_sources: dict[str, str] = {
             "is_ema5_valid": "ema_5",
             "is_ema10_valid": "ema_10",
@@ -3246,7 +3246,7 @@ async def enrich_and_save(
             )
 
         # Add any missing spec columns as nulls (safe defaults)
-        # docs/ml/dataset_new.md の完全仕様に合わせ、margin_ も含めて
+        # docs/ml/dataset.md の完全仕様に合わせ、margin_ も含めて
         # すべての文書化済み列を最終スキーマに揃える
         existing = set(df.columns)
         to_add_nulls = [c for c in DOC_COLUMNS if c not in existing]
@@ -3367,7 +3367,7 @@ async def enrich_and_save(
         df = df.select(keep_cols)
         logger.info(f"Aligned dataset to docs schema (n={len(keep_cols)})")
     except Exception as _e:
-        logger.exception("dataset_new.md strict alignment skipped: %s", _e)
+        logger.exception("dataset.md strict alignment skipped: %s", _e)
 
     # Ensure (Code, Date) uniqueness (keep last occurrence)
     try:

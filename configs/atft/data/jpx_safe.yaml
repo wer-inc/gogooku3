@@ -7,6 +7,9 @@ schema:
   code_column: code
   target_column: target
 
+loader:
+  implementation: iterable_v1
+
 # データソース設定
 source:
   type: parquet

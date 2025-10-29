@@ -1,6 +1,6 @@
 # Dataset Implementation Notes (Archive)
 
-> **Canonical reference**: `docs/ml/dataset.md`.  
+> **Canonical reference**: `docs/ml/dataset.md`.
 > This memo (2025-09-07) records the operational guidance for ingesting J-Quants data, aligning feature names, and guarding against leakage during the ATFT-GAT-FAN rollout. Retain it as supplementary context alongside the main specification.
 
 ## 仕様追記（2025-09-07）
@@ -709,11 +709,11 @@ df = df.with_columns([
 
 推奨ワークフロー
 
-- 
+-
     1. ベース生成
     - J-Quantsあり: python scripts/pipelines/run_pipeline_v4_optimized.py --jquants
     - なし: python scripts/pipelines/run_pipeline_v4_optimized.py（サンプル価格で生成）
-- 
+-
     2. 後段付与（TOPIX＋trade spec＋fins statements）
     - 例（ワンショット。出力: ml_dataset_latest_enriched.parquet）:
     - python - << 'PY'

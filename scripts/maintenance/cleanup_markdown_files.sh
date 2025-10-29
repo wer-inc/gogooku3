@@ -2,6 +2,7 @@
 #
 # Markdown Files Cleanup
 # Organizes scattered .md files into proper docs/ directory structure
+# NOTE: docs/reports hierarchy was archived (2025-10). Script retained for historical reference.
 #
 # Usage:
 #   bash scripts/maintenance/cleanup_markdown_files.sh [--dry-run]

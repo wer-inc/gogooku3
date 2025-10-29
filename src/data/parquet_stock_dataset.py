@@ -11,9 +11,9 @@ It relies on `OnlineRobustScaler` to approximate per-feature median/MAD via
 reservoirサンプリング so that正規化コストを一定に保てる。
 """
 
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Generator, Iterable, Iterator, List, Sequence
 
 import numpy as np
 import polars as pl
@@ -64,7 +64,9 @@ class OnlineRobustScaler:
         if remaining > 0:
             add = min(remaining, batch[start:].shape[0])
             if add > 0:
-                self._reservoir = np.vstack([self._reservoir, batch[start:start + add]])
+                self._reservoir = np.vstack(
+                    [self._reservoir, batch[start : start + add]]
+                )
                 start += add
                 self._count += add
         for row in batch[start:]:
@@ -75,7 +77,9 @@ class OnlineRobustScaler:
 
     def finalise(self) -> None:
         if self._reservoir is None or self._reservoir.size == 0:
-            raise RuntimeError("OnlineRobustScaler received no data. Call partial_fit first.")
+            raise RuntimeError(
+                "OnlineRobustScaler received no data. Call partial_fit first."
+            )
         arr = self._reservoir
         self.median_ = np.median(arr, axis=0)
         mad = np.median(np.abs(arr - self.median_), axis=0) * 1.4826
@@ -93,7 +97,7 @@ class OnlineRobustScaler:
     def is_fitted(self) -> bool:
         return self.median_ is not None and self.mad_ is not None
 
-    def clone(self) -> "OnlineRobustScaler":
+    def clone(self) -> OnlineRobustScaler:
         """
         Create an immutable copy carrying over fitted statistics.
 
@@ -116,7 +120,7 @@ class OnlineRobustScaler:
 @dataclass
 class Sample:
     features: torch.Tensor
-    targets: Dict[str, torch.Tensor]
+    targets: dict[str, torch.Tensor]
     code: str
     date: str
 
@@ -206,7 +210,7 @@ class ParquetStockIterableDataset(IterableDataset):
     def _stream_windows(
         self, files: Iterable[Path], *, yield_windows: bool
     ) -> Iterator[pl.DataFrame]:
-        buffers: Dict[str, pl.DataFrame] = {}
+        buffers: dict[str, pl.DataFrame] = {}
         for file_path in files:
             if _HAS_PYARROW:
                 pf = pq.ParquetFile(file_path)
@@ -223,7 +227,7 @@ class ParquetStockIterableDataset(IterableDataset):
                 yield from self._emit_windows(chunk, buffers)
 
     def _emit_windows(
-        self, chunk: pl.DataFrame, buffers: Dict[str, pl.DataFrame]
+        self, chunk: pl.DataFrame, buffers: dict[str, pl.DataFrame]
     ) -> Generator[pl.DataFrame, None, None]:
         if chunk.is_empty():
             return
@@ -250,7 +254,7 @@ class ParquetStockIterableDataset(IterableDataset):
         features = self._scaler.transform(features)
         features_tensor = torch.tensor(features, dtype=torch.float32)
 
-        targets: Dict[str, torch.Tensor] = {}
+        targets: dict[str, torch.Tensor] = {}
         for col in self.target_columns:
             if col not in window.columns:
                 continue
