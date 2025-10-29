@@ -1,0 +1,160 @@
+# @package train
+# Phase 3: SAN Integration
+# Adds sample-adaptive normalization - full model active
+
+trainer:
+  max_epochs: 35
+  accelerator: cuda
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 50
+  val_check_interval: 1.0
+  accumulate_grad_batches: 1
+
+optimizer:
+  name: adamw
+  lr: 5e-4  # Peak learning rate for full model
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  weight_decay: 1e-5
+
+  # Per-layer learning rates
+  param_groups:
+    - name: san
+      lr_multiplier: 2.5  # Highest LR for new SAN layers
+    - name: fan
+      lr_multiplier: 1.0
+    - name: gat
+      lr_multiplier: 0.6
+    - name: tft
+      lr_multiplier: 0.3
+    - name: head
+      lr_multiplier: 1.5  # Boost head learning
+
+scheduler:
+  name: plateau
+  mode: max
+  monitor: val/rank_ic_5d
+  patience: 10
+  factor: 0.7
+  min_lr: 1e-7
+  threshold: 1e-4
+  cooldown: 2
+
+batch:
+  batch_size: 2048
+  shuffle: true
+  num_workers: 6  # Near maximum workers
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+  drop_last: false
+
+# Loss configuration - maximum IC/RankIC focus
+loss:
+  horizons: [1, 5, 10, 20]
+  horizon_weights:
+    1: 1.0
+    5: 1.0  # Equal weight for short/medium
+    10: 0.7
+    20: 0.5
+
+  components:
+    mse:
+      weight: 0.1  # Minimal MSE
+
+    quantile:
+      weight: 0.15
+      quantiles: [0.5]
+
+    sharpe:
+      weight: 0.35  # Strong Sharpe focus
+      target_sharpe: 0.849
+
+    ic:
+      weight: 0.4  # Dominant component
+      use_rank_ic: true
+      rank_ic_weight: 0.8  # Maximum RankIC emphasis
+
+# Model config: Full model (GAT + FAN + SAN)
+model:
+  use_graph: true  # ✅ GAT continues
+  gat:
+    num_heads: 4
+    hidden_dim: 256
+    dropout: 0.1
+    alpha: 0.2
+    concat: true
+  fan:
+    enabled: true  # ✅ FAN continues
+    num_windows: 3
+    window_sizes: [5, 10, 20]
+    use_softmax_weights: true
+  san:
+    enabled: true  # ✅ SAN enabled in Phase 3
+    num_slices: 4  # Multi-slice support (Phase 3 work)
+    slice_overlap: 0.25
+
+# Early stopping
+early_stopping:
+  monitor: val/rank_ic_5d
+  mode: max
+  patience: 18
+  min_delta: 1e-4
+  verbose: true
+
+# Validation settings
+validation:
+  metrics:
+    - ic
+    - rank_ic
+    - sharpe
+    - max_drawdown
+    - calmar
+    - sortino
+  walk_forward:
+    enabled: true
+    embargo_days: 10
+    n_splits: 5
+
+# Checkpointing
+callbacks:
+  model_checkpoint:
+    monitor: val/rank_ic_5d
+    mode: max
+    save_top_k: 3
+    save_last: true
+    filename: phase3_best
+
+  learning_rate_monitor:
+    logging_interval: step
+
+  gpu_stats_monitor:
+    memory_utilization: true
+    gpu_utilization: true
+
+  # Enable SWA for Phase 3
+  swa:
+    enabled: true
+    swa_lrs: 2e-4
+    swa_epoch_start: 0.7  # Start at 70%
+    annealing_epochs: 5
+
+# Performance optimizations (full)
+performance:
+  compile:
+    enabled: true
+    mode: reduce-overhead
+    fullgraph: false
+  gradient_checkpointing: false
+  mixed_precision: bf16
+  dataloader:
+    multiprocessing_context: spawn
+
+debug:
+  profiler: false
+  detect_anomaly: false
+  track_grad_norm: true
+  log_gpu_memory: true

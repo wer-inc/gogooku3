@@ -1,0 +1,168 @@
+# @package train
+# Phase 4: Finetuning
+# Full model refinement with lower LR and advanced techniques
+
+trainer:
+  max_epochs: 30
+  accelerator: cuda
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  log_every_n_steps: 50
+  val_check_interval: 1.0
+  accumulate_grad_batches: 2  # Effective batch_size = 4096 for stability
+
+optimizer:
+  name: adamw
+  lr: 1e-4  # Lower LR for finetuning
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  weight_decay: 1e-5
+
+  # Uniform low learning rates for finetuning
+  param_groups:
+    - name: san
+      lr_multiplier: 1.0
+    - name: fan
+      lr_multiplier: 1.0
+    - name: gat
+      lr_multiplier: 1.0
+    - name: tft
+      lr_multiplier: 0.5  # Slightly lower for frozen features
+    - name: head
+      lr_multiplier: 1.5  # Allow head to adapt
+
+scheduler:
+  name: plateau
+  mode: max
+  monitor: val/rank_ic_5d
+  patience: 12
+  factor: 0.8  # Gentler reduction for finetuning
+  min_lr: 1e-8  # Very low minimum
+  threshold: 5e-5  # Fine-grained improvements
+  cooldown: 3
+
+batch:
+  batch_size: 2048
+  shuffle: true
+  num_workers: 8  # Maximum workers for throughput
+  persistent_workers: true
+  prefetch_factor: 4
+  pin_memory: true
+  drop_last: false
+
+# Loss configuration - pure financial metrics
+loss:
+  horizons: [1, 5, 10, 20]
+  horizon_weights:
+    1: 1.0
+    5: 1.0  # Equal weights for all horizons
+    10: 0.9
+    20: 0.8
+
+  components:
+    mse:
+      weight: 0.05  # Minimal for stability only
+
+    quantile:
+      weight: 0.15
+      quantiles: [0.5]
+
+    sharpe:
+      weight: 0.4  # Maximum Sharpe focus
+      target_sharpe: 0.849
+
+    ic:
+      weight: 0.4  # Maximum IC/RankIC focus
+      use_rank_ic: true
+      rank_ic_weight: 0.9  # Pure RankIC optimization
+
+# Model config: Full model (all components active)
+model:
+  use_graph: true  # ✅ GAT
+  gat:
+    num_heads: 4
+    hidden_dim: 256
+    dropout: 0.1
+    alpha: 0.2
+    concat: true
+  fan:
+    enabled: true  # ✅ FAN
+    num_windows: 3
+    window_sizes: [5, 10, 20]
+    use_softmax_weights: true
+  san:
+    enabled: true  # ✅ SAN
+    num_slices: 4
+    slice_overlap: 0.25
+
+# Early stopping (more patient for finetuning)
+early_stopping:
+  monitor: val/rank_ic_5d
+  mode: max
+  patience: 20  # Very patient
+  min_delta: 5e-5  # Fine-grained
+  verbose: true
+
+# Validation settings (comprehensive)
+validation:
+  metrics:
+    - ic
+    - rank_ic
+    - sharpe
+    - max_drawdown
+    - calmar
+    - sortino
+    - omega
+  walk_forward:
+    enabled: true
+    embargo_days: 10
+    n_splits: 5
+
+# Checkpointing (comprehensive)
+callbacks:
+  model_checkpoint:
+    monitor: val/rank_ic_5d
+    mode: max
+    save_top_k: 5  # Keep more checkpoints
+    save_last: true
+    filename: phase4_best
+
+  learning_rate_monitor:
+    logging_interval: step
+
+  gpu_stats_monitor:
+    memory_utilization: true
+    gpu_utilization: true
+
+  # SWA (critical for finetuning)
+  swa:
+    enabled: true
+    swa_lrs: 5e-5
+    swa_epoch_start: 0.6  # Start at 60%
+    annealing_epochs: 8
+
+  # Snapshot Ensemble
+  snapshot:
+    enabled: true
+    snapshot_epochs: [15, 20, 25, 30]
+
+# Performance optimizations (maximum)
+performance:
+  compile:
+    enabled: true
+    mode: reduce-overhead  # Stable mode
+    fullgraph: false
+  gradient_checkpointing: false
+  mixed_precision: bf16
+  dataloader:
+    multiprocessing_context: spawn
+    worker_init_fn: seed_worker
+
+# Monitoring (comprehensive for final phase)
+debug:
+  profiler: false
+  detect_anomaly: false
+  track_grad_norm: true
+  log_gpu_memory: true
