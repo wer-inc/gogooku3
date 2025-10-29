@@ -61,9 +61,20 @@ class FeatureSelector:
         *,
         groups: Iterable[str],
         optional_groups: Iterable[str] | None = None,
+        exclude_features: Iterable[str] | None = None,
         metadata_path: str | Path | None = None,
     ) -> FeatureSelectionResult:
-        """Select feature columns for the provided groups."""
+        """Select feature columns for the provided groups.
+
+        Args:
+            groups: Required feature groups to include.
+            optional_groups: Optional feature groups to include.
+            exclude_features: List of feature names to exclude from selection.
+            metadata_path: Path to metadata file for validation.
+
+        Returns:
+            FeatureSelectionResult with selected features and masks.
+        """
 
         ordered_features: list[str] = []
         ordered_masks: list[str] = []
@@ -87,6 +98,15 @@ class FeatureSelector:
         if optional_groups:
             for g in optional_groups:
                 _extend(g)
+
+        # Apply exclusions
+        if exclude_features:
+            exclude_set = set(exclude_features)
+            ordered_features = [f for f in ordered_features if f not in exclude_set]
+            # Log excluded features for transparency
+            excluded_count = len([f for f in exclude_features if f in exclude_set])
+            if excluded_count > 0:
+                print(f"[FeatureSelector] Excluded {excluded_count} features from selection")
 
         if metadata_path:
             self._validate_against_metadata(metadata_path, ordered_features, ordered_masks)

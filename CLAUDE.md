@@ -253,6 +253,191 @@ make update-cache-silent       # Silent mode for cron execution
 # - With daily updates: 100% cache hit (no misses after 8am)
 ```
 
+## APEX-Ranker: Production Stock Ranking System
+
+### Overview
+
+APEX-Ranker is a PatchTST-based multi-horizon stock ranking model for Japanese equities. Separate from the main ATFT-GAT-FAN system, it provides lightweight, fast inference for daily top-K stock selection.
+
+**Current Release**: v0.1.0-pruned (2025-10-29)
+**Status**: Inference-ready, Phase 3 (long-term backtest) in progress
+**Documentation**: `apex-ranker/EXPERIMENT_STATUS.md`, `apex-ranker/INFERENCE_GUIDE.md`
+
+### Quick Start
+
+```bash
+# Daily predictions (CLI)
+python apex-ranker/scripts/inference_v0.py \
+  --model models/apex_ranker_v0_pruned.pt \
+  --config apex-ranker/configs/v0_pruned.yaml \
+  --top-k 50 \
+  --horizon 20 \
+  --output predictions_today.csv
+
+# Log predictions
+python apex-ranker/scripts/monitor_predictions.py log \
+  --predictions predictions_today.csv \
+  --log-dir logs/predictions \
+  --model-version v0_pruned
+
+# Generate summary
+python apex-ranker/scripts/monitor_predictions.py summary \
+  --log-dir logs/predictions
+```
+
+### Model Specifications
+
+**Architecture**: APEXRankerV0 (PatchTST + Multi-horizon Heads)
+
+```yaml
+Model Checkpoint: models/apex_ranker_v0_pruned.pt
+Features: 64 (pruned from 89)
+Lookback: 180 days
+Horizons: [1d, 5d, 10d, 20d]
+
+Hyperparameters:
+  d_model: 192
+  depth: 3
+  patch_len: 16
+  stride: 8
+  n_heads: 8
+  dropout: 0.1
+
+Performance (Validation):
+  20d P@K (Top-50): 0.5405
+  Training time: ~11.5 hours
+  Inference: <1 second (GPU)
+```
+
+### Training Commands
+
+```bash
+# Train pruned model (64 features)
+python apex-ranker/scripts/train_v0.py \
+  --config apex-ranker/configs/v0_pruned.yaml \
+  --output models/apex_ranker_v0_pruned.pt \
+  --max-epochs 50
+
+# Train enhanced model (89 features)
+python apex-ranker/scripts/train_v0.py \
+  --config apex-ranker/configs/v0_base.yaml \
+  --output models/apex_ranker_v0_enhanced.pt \
+  --max-epochs 50
+
+# Feature importance analysis
+python apex-ranker/scripts/feature_importance_v0.py \
+  --model models/apex_ranker_v0_enhanced.pt \
+  --config apex-ranker/configs/v0_base.yaml \
+  --output results/feature_importance.json
+```
+
+### Backtest & Validation
+
+```bash
+# Short-term backtest (100 days)
+python apex-ranker/scripts/backtest_v0.py \
+  --model models/apex_ranker_v0_pruned.pt \
+  --config apex-ranker/configs/v0_pruned.yaml \
+  --start-date 2025-06-01 \
+  --end-date 2025-09-30 \
+  --output results/backtest_pruned.json
+
+# Long-term backtest (Phase 3 - in progress)
+# Walk-forward validation over 2-3 years with transaction costs
+```
+
+### Available Models
+
+| Model | Features | 20d P@K | Status | Use Case |
+|-------|----------|---------|--------|----------|
+| **v0_pruned** | 64 | 0.5405 | ✅ Production | Daily inference (recommended) |
+| **v0_enhanced** | 89 | 0.5765 | ✅ Baseline | Feature comparison |
+| **v0_baseline** | 89 | 0.4800 | ⚠️ Deprecated | Initial baseline |
+
+**Model Selection Guidance**:
+- **Production use**: `v0_pruned` (simpler, 64 features, P@K 0.5405)
+- **Maximum accuracy**: `v0_enhanced` (89 features, P@K 0.5765, +6.2%)
+- **Pending decision**: Need same-period comparison for Phase 3
+
+### Key Files
+
+```
+apex-ranker/
+├── configs/
+│   ├── v0_base.yaml          # Enhanced model config (89 features)
+│   ├── v0_pruned.yaml         # Pruned model config (64 features)
+│   └── feature_groups.yaml    # Feature group definitions
+├── scripts/
+│   ├── train_v0.py            # Training script
+│   ├── inference_v0.py        # Production inference (CLI)
+│   ├── monitor_predictions.py # Logging & monitoring
+│   ├── backtest_v0.py         # Backtest evaluation
+│   └── feature_importance_v0.py  # Feature analysis
+├── apex_ranker/
+│   ├── data/                  # Dataset & cache utilities
+│   ├── models/                # APEXRankerV0, PatchTST
+│   └── utils/                 # Helper functions
+├── EXPERIMENT_STATUS.md       # Current status & results
+├── INFERENCE_GUIDE.md         # Production usage guide
+└── README.md                  # Project overview
+
+models/
+├── apex_ranker_v0_pruned.pt   # v0.1.0-pruned (recommended)
+├── apex_ranker_v0_enhanced.pt # v0.1.0-baseline (comparison)
+└── apex_ranker_v0_baseline.pt # v0.0.1 (deprecated)
+
+results/
+├── backtest_pruned.json       # Backtest results (pruned)
+├── backtest_enhanced.json     # Backtest results (enhanced)
+└── feature_importance*.json   # Feature analysis results
+```
+
+### Development Status
+
+**Phase 1: Feature Pruning** ✅ Complete (2025-10-29)
+- Removed 25 underperforming features (10 negative, 15 zero impact)
+- Trained pruned model with 64 features
+- Validation 20d P@K: 0.5405
+
+**Phase 2: Inference Infrastructure** ✅ Complete (2025-10-29)
+- CLI inference script with multi-horizon support
+- Monitoring utilities (logging + summary reports)
+- Production usage documentation
+- Bug fixes: Panel cache, model output format
+
+**Phase 3: Long-term Backtest** ⏳ In Progress
+- Walk-forward validation (2-3 years)
+- Transaction cost simulation
+- Market microstructure modeling
+- Performance metrics (Sharpe, drawdown, turnover)
+
+**Phase 4: Production Deployment** 📋 Planned
+- Panel cache persistence
+- FastAPI server wrapper
+- Prometheus metrics export
+- Docker containerization
+
+### Known Issues
+
+1. **Panel cache rebuild**: Full rebuild on every inference (~2 min for 10.6M samples)
+   - **Workaround**: Accept latency for now
+   - **Fix planned**: Cache serialization (Phase 4)
+
+2. **No real-time data**: Requires pre-processed parquet dataset
+   - **Workaround**: Update dataset daily with `make dataset-bg`
+   - **Fix planned**: Streaming data pipeline (Phase 4)
+
+3. **Model selection pending**: Need same-period comparison (pruned vs enhanced)
+   - **Action**: Re-evaluate on identical validation period
+   - **Blocker for**: Phase 3 primary model decision
+
+### Related Systems
+
+**APEX-Ranker vs ATFT-GAT-FAN**:
+- **APEX-Ranker**: Lightweight PatchTST, fast inference, production-ready
+- **ATFT-GAT-FAN**: Complex GAT+FAN, research-grade, higher capacity
+- **Complementary**: APEX for daily trading, ATFT for research/validation
+
 ## J-Quants Plan Management
 
 ### Current Plan: Standard (10-year data)
