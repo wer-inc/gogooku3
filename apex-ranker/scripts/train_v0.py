@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 from typing import Iterable
 
@@ -22,6 +23,70 @@ from apex_ranker.models import APEXRankerV0
 from apex_ranker.utils import load_config, precision_at_k, spearman_ic
 
 
+class EarlyStopping:
+    """Early stopping to stop training when validation metric stops improving.
+
+    Args:
+        patience: Number of epochs to wait after last improvement
+        mode: 'max' to maximize metric, 'min' to minimize
+        min_delta: Minimum change to qualify as improvement
+    """
+    def __init__(self, patience: int = 3, mode: str = "max", min_delta: float = 0.0):
+        self.patience = patience
+        self.mode = mode
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_score = None
+        self.best_epoch = 0
+        self.early_stop = False
+        self.best_state = None
+
+    def __call__(self, score: float, epoch: int, model_state: dict) -> bool:
+        """Check if training should stop.
+
+        Returns:
+            True if training should stop, False otherwise
+        """
+        if self.best_score is None:
+            self.best_score = score
+            self.best_epoch = epoch
+            self.best_state = model_state
+            return False
+
+        if self.mode == "max":
+            improved = score > (self.best_score + self.min_delta)
+        else:
+            improved = score < (self.best_score - self.min_delta)
+
+        if improved:
+            self.best_score = score
+            self.best_epoch = epoch
+            self.best_state = model_state
+            self.counter = 0
+            print(f"[EarlyStopping] New best: {score:.4f} at epoch {epoch}")
+        else:
+            self.counter += 1
+            print(f"[EarlyStopping] No improvement for {self.counter}/{self.patience} epochs (best: {self.best_score:.4f} at epoch {self.best_epoch})")
+
+            if self.counter >= self.patience:
+                self.early_stop = True
+                print(f"[EarlyStopping] Stopping training! Best epoch: {self.best_epoch}, Best score: {self.best_score:.4f}")
+                return True
+
+        return False
+
+
+def clone_state_dict(state_dict: dict) -> dict:
+    """Create a detached CPU clone of a model state dict."""
+    cloned: dict = {}
+    for key, value in state_dict.items():
+        if torch.is_tensor(value):
+            cloned[key] = value.detach().cpu().clone()
+        else:
+            cloned[key] = copy.deepcopy(value)
+    return cloned
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train APEX-Ranker v0 baseline.")
     parser.add_argument("--config", required=True, help="Path to YAML configuration.")
@@ -31,6 +96,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-val-days", type=int, default=None, help="Limit number of validation days (recent).")
     parser.add_argument("--max-train-steps", type=int, default=None, help="Stop each epoch after N optimisation steps.")
     parser.add_argument("--log-interval", type=int, default=None, help="Override log interval for training loss prints.")
+    parser.add_argument("--early-stopping-patience", type=int, default=None, help="Enable early stopping with patience N (epochs).")
+    parser.add_argument(
+        "--early-stopping-metric",
+        default=None,
+        help="Metric to monitor for early stopping (e.g., 20d_pak). Defaults to config value when omitted.",
+    )
     return parser.parse_args()
 
 
@@ -214,14 +285,40 @@ def main() -> None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
 
+    total_epochs = int(train_cfg["epochs"])
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=train_cfg["lr"],
         weight_decay=train_cfg["weight_decay"],
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=train_cfg["epochs"]
-    )
+    warmup_epochs = max(0, int(train_cfg.get("warmup_epochs", 0)))
+    warmup_start_factor = float(train_cfg.get("warmup_start_factor", 0.1))
+    if warmup_epochs >= total_epochs:
+        warmup_epochs = max(0, total_epochs - 1)
+
+    if warmup_epochs > 0:
+        cosine_epochs = max(1, total_epochs - warmup_epochs)
+        warmup_start_factor = min(1.0, max(1e-3, warmup_start_factor))
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=warmup_start_factor,
+            total_iters=warmup_epochs,
+        )
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=cosine_epochs,
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_epochs],
+        )
+        print(f"[INFO] LR warmup enabled: epochs={warmup_epochs}, start_factor={warmup_start_factor}")
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=total_epochs,
+        )
     device_type = "cuda" if device.startswith("cuda") else "cpu"
     amp_enabled = bool(train_cfg.get("amp", True) and device_type == "cuda")
     if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
@@ -250,6 +347,19 @@ def main() -> None:
     if not train_dataset:
         print("[ERROR] No training days available after masking; aborting.")
         return
+
+    # Initialize early stopping if requested (config or CLI)
+    early_stopping = None
+    early_cfg = train_cfg.get("early_stopping", {}) or {}
+    patience = args.early_stopping_patience if args.early_stopping_patience is not None else early_cfg.get("patience")
+    monitor_metric = args.early_stopping_metric or early_cfg.get("metric", "20d_pak")
+    min_delta = float(early_cfg.get("min_delta", 0.0))
+    if patience is not None:
+        early_stopping = EarlyStopping(patience=int(patience), mode="max", min_delta=min_delta)
+        print(
+            "[INFO] Early stopping enabled: patience=%s, metric=%s, min_delta=%.4f"
+            % (patience, monitor_metric, min_delta)
+        )
 
     for epoch in range(1, train_cfg["epochs"] + 1):
         print(f"[INFO] Starting epoch {epoch}/{train_cfg['epochs']}")
@@ -321,6 +431,8 @@ def main() -> None:
                     k = max(1, min(50, target.numel() // 10))
                     metrics[horizon]["p@k"].append(precision_at_k(s, target, k))
 
+        # Compute and print validation metrics
+        metric_results = {}
         for horizon in horizons:
             icvals = metrics[horizon]["ic"]
             pkvals = metrics[horizon]["p@k"]
@@ -328,6 +440,8 @@ def main() -> None:
                 continue
             ic_mean = sum(icvals) / len(icvals)
             pk_mean = sum(pkvals) / len(pkvals) if pkvals else float("nan")
+            metric_results[f"{horizon}d_ic"] = ic_mean
+            metric_results[f"{horizon}d_pak"] = pk_mean
             print(
                 "[Val] h=%2dd RankIC=%.4f  P@K=%.4f  (panels=%d)"
                 % (horizon, ic_mean, pk_mean, len(icvals))
@@ -336,6 +450,20 @@ def main() -> None:
             print("[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day.")
         else:
             print(f"[INFO] Processed {val_panel_count} validation panels.")
+
+        # Check early stopping
+        if early_stopping is not None and metric_results:
+            if monitor_metric in metric_results:
+                score = metric_results[monitor_metric]
+                model_state = clone_state_dict(model.state_dict())
+                should_stop = early_stopping(score, epoch, model_state)
+
+                if should_stop:
+                    print(f"[INFO] Restoring best model from epoch {early_stopping.best_epoch}")
+                    model.load_state_dict(early_stopping.best_state)
+                    break
+            else:
+                print(f"[WARN] Early stopping metric '{monitor_metric}' not found in results. Available: {list(metric_results.keys())}")
 
     if args.output:
         out_path = Path(args.output)

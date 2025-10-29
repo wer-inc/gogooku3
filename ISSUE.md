@@ -350,7 +350,7 @@ RuntimeError: DataLoader worker (pid 1084361) is killed by signal: Aborted
 
 ### 参考資料
 
-- Tier 1レポート: `docs/reports/experiments/tier1_sharpe_weight_optimization_20251021.md`
+- Tier 1レポート: `output/reports/tier1_sharpe_weight_optimization_20251021.md`（生成後参照）
 - Model Preservation: `docs/playbooks/model_preservation_playbook.md`
 - Loss Curriculum: `scripts/utils/loss_curriculum.py`
 

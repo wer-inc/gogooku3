@@ -1,6 +1,6 @@
 # ATFT Gap Analysis (Phase 0)
 
-作成日: 2025-10-28  
+作成日: 2025-10-28
 対象: `docs/architecture/atft_gat_fan_implementation.md` と実装との差分
 
 ---

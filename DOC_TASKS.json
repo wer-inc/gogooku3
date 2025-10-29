@@ -30,7 +30,7 @@
     "impact": "探索性・保守性の大幅向上",
     "risk": "low",
     "files_to_touch": 20,
-    "commands": "mkdir -p docs/{architecture,operations,development,ml,security,releases,governance/adr,ja,_archive}",
+    "commands": "mkdir -p docs/{architecture,operations,development,ml,security,releases,governance/adr,ja}",
     "estimated_minutes": 15,
     "owner": "you",
     "status": "planned"
