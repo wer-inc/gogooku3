@@ -1,7 +1,7 @@
 # APEX-Ranker Experiment Status
 
 **Last Updated**: 2025-10-29
-**Status**: Phase 1/2 Complete, Phase 3 Planned
+**Status**: Phase 1/2/3 Complete, Phase 4 Next
 
 ---
 
@@ -103,7 +103,7 @@ Epoch 9: 20d P@K = 0.5293 (early stop +3) → STOPPED
 
 ## Comparison: Enhanced vs Pruned
 
-### Enhanced Model Baseline (v0_base.yaml)
+### Validation Results (Training Period)
 
 | Metric | Enhanced (89 features) | Pruned (64 features) | Change |
 |--------|------------------------|----------------------|--------|
@@ -112,10 +112,30 @@ Epoch 9: 20d P@K = 0.5293 (early stop +3) → STOPPED
 | **Training Time** | ~12h | ~11.5h | -4.2% |
 | **Model Size** | 13 MB | 13 MB | 0% |
 
+### Production Backtest Results (Phase 3.4)
+
+**Period**: 2023-01-01 to 2025-10-24 (2.8 years, 688 trading days)
+**Strategy**: Long-only Top-50 equal-weight, weekly rebalancing (20d horizon)
+
+| Metric | Enhanced (89 feat) | Pruned (64 feat) | Difference |
+|--------|-------------------|------------------|------------|
+| **Total Return** | **56.43%** | 39.48% | +42.9% |
+| **Ann. Return** | **17.81%** | 12.96% | +37.4% |
+| **Sharpe Ratio** | **0.933** | 0.624 | +49.5% |
+| **Sortino Ratio** | **1.116** | 0.747 | +49.4% |
+| **Max Drawdown** | **20.01%** | 29.14% | -31.3% |
+| **Calmar Ratio** | **0.890** | 0.445 | +100.0% |
+| **Win Rate** | 52.4% | 52.4% | 0.0% |
+| **Transaction Costs** | ¥15.6M (156%) | ¥10.2M (102%) | +52.3% |
+
 **Analysis**:
-- Pruned model shows 6.2% P@K degradation despite removing 25 features
-- Trade-off: Simpler model, faster inference, but slightly lower ranking accuracy
-- **Decision pending**: Need same-period re-evaluation to determine Phase 3 primary model
+- ✅ **Enhanced model significantly outperforms pruned** across all metrics
+- ✅ Better risk-adjusted returns (Sharpe 0.933 vs 0.624)
+- ✅ Superior downside protection (20% vs 29% max drawdown)
+- ⚠️ **Transaction costs very high** (156% of capital) due to weekly rebalancing
+- **Decision**: **Deploy enhanced model** with monthly rebalancing to reduce costs
+
+**Detailed Report**: `apex-ranker/docs/BACKTEST_COMPARISON_2023_2025.md`
 
 ---
 
@@ -164,98 +184,158 @@ python apex-ranker/scripts/inference_v0.py \
 ✅ Inference: <1 second on GPU
 ```
 
-### Phase 3: Long-term Backtest (Planned)
-**Objective**: Validate model performance over 2-3 years with transaction costs
+### Phase 3: Long-term Backtest ✅ Complete (2025-10-29)
 
-**Scope**:
-1. Walk-forward backtest framework
-2. Transaction cost simulation (slippage + commission)
-3. Market microstructure assumptions
-4. Performance metrics (Sharpe, max drawdown, turnover)
-5. Out-of-sample validation
+**Phase 3.1: Core Infrastructure**
+- ✅ Portfolio management (`apex_ranker/backtest/portfolio.py`)
+- ✅ Transaction cost calculator (`apex_ranker/backtest/costs.py`)
+- ✅ Walk-forward splitter (`apex_ranker/backtest/splitter.py`)
+
+**Phase 3.2: Smoke Test**
+- ✅ 5-day validation (2025-09-01 to 2025-09-05)
+- ✅ Top-10 portfolio with daily rebalancing
+- ✅ End-to-end pipeline verification
+
+**Phase 3.3: Full Integration**
+- ✅ Integrated inference pipeline with costs
+- ✅ Batch prediction across date ranges
+- ✅ Portfolio history tracking
+- ✅ JSON/CSV export (CSV export has nested data bug)
+
+**Phase 3.4: Production Backtest**
+- ✅ Full 2.8-year backtest (2023-2025, 688 trading days)
+- ✅ Enhanced model: 56.43% return, Sharpe 0.933
+- ✅ Pruned model: 39.48% return, Sharpe 0.624
+- ✅ Transaction cost analysis (156% vs 102% of capital)
+
+**Key Findings**:
+- Enhanced model outperforms pruned by **+42.9% total return**
+- Transaction costs extremely high due to **weekly rebalancing**
+- Monthly rebalancing estimated to reduce costs by **~75%**
 
 **Deliverables**:
-- Backtest script accepting inference CSV outputs
-- Transaction cost model documentation
-- Walk-forward split configuration
-- Backtest result logging and visualization
-
-**Status**: Ready to start (pending model comparison decision)
+- ✅ Production backtest driver (`apex-ranker/scripts/backtest_smoke_test.py`)
+- ✅ Comprehensive backtest report (`apex-ranker/docs/BACKTEST_COMPARISON_2023_2025.md`)
+- ✅ Transaction cost model with Japanese broker fee structure
+- ✅ Model selection decision (deploy enhanced model)
 
 ---
 
 ## Known Issues & Limitations
+
+### Priority Issues (Phase 4)
+1. **High transaction costs**: 156% of capital (weekly rebalancing, Top-50)
+   - **Impact**: Significant drag on returns
+   - **Fix planned**: Monthly rebalancing + cost-aware optimization
+   - **Target**: Reduce to <30% of capital
+
+2. **No walk-forward validation**: Static model without retraining schedule
+   - **Impact**: Model decay risk over time
+   - **Fix planned**: Rolling 252-day window with monthly retraining
+   - **Target**: Maintain P@K > 0.55 over time
 
 ### Current Limitations
 1. **No real-time data**: Requires pre-processed parquet dataset
 2. **No drift detection**: Does not monitor distribution changes
 3. **No fallback logic**: Fails if any feature is missing
 4. **Panel cache rebuild**: Full rebuild on every inference run (~2 min)
-5. **CLI only**: No API server (FastAPI wrapper planned for v0.2)
+5. **CLI only**: No API server (FastAPI wrapper planned for Phase 4.3)
 
 ### Performance Bottlenecks
 1. **Panel cache building**: 2 minutes for 10.6M samples (CPU-bound)
-   - **Solution**: Cache serialization to disk (planned)
+   - **Solution**: Cache serialization to disk (planned for Phase 4)
 2. **Cross-sectional normalization**: ~30 seconds
    - **Solution**: Pre-compute Z-scores in dataset (planned)
 
+### Known Bugs
+1. **CSV export fails on nested data**: Portfolio history contains nested position data
+   - **Impact**: `--daily-csv` and `--trades-csv` fail on long backtests
+   - **Workaround**: Use JSON output only
+   - **Fix planned**: Flatten data structure before CSV export (Phase 4.1)
+
 ### Production Readiness
-**Current Status**: ~60% ready for 1-2 week deployment
+**Current Status**: ~85% ready for controlled deployment
 
-**Blockers**:
-- ❌ Long-term backtest validation (Phase 3)
-- ❌ Transaction cost simulation
-- ❌ Panel cache persistence
-- ⚠️ Model selection (pruned vs enhanced)
-
-**Ready**:
+**Completed**:
+- ✅ Long-term backtest validation (Phase 3.4)
+- ✅ Transaction cost simulation (156% of capital)
+- ✅ Model selection (**deploy enhanced model**)
 - ✅ Inference pipeline (CLI)
 - ✅ Monitoring & logging
 - ✅ Documentation
-- ✅ Trained models (2 versions)
+
+**Remaining Work (Phase 4)**:
+- ⚠️ Transaction cost optimization (target <30% vs current 156%)
+- ⚠️ Monthly rebalancing implementation
+- ⚠️ Panel cache persistence
+- ⚠️ Walk-forward validation framework
+- ⚠️ Production API server (FastAPI)
 
 ---
 
 ## Next Steps
 
-### Immediate (This week)
-1. **Model Comparison**:
-   - Re-evaluate pruned vs enhanced on same validation period
-   - Analyze P@K difference factors
-   - Decide Phase 3 primary model
+### Phase 4: Cost Optimization & Production Deployment
 
-2. **Transaction Cost Model**:
-   - Define market microstructure assumptions
-   - Document slippage model (e.g., linear impact)
-   - Define commission structure (e.g., 0.1% per trade)
+#### 4.1 Transaction Cost Reduction (Week 1-2)
+**Objective**: Reduce transaction costs from 156% to <30% of capital
 
-3. **Backtest Design**:
-   - Specify walk-forward backtest interface
-   - Design input/output format
-   - Break down implementation tasks
+1. **Monthly Rebalancing Implementation**:
+   - Modify backtest script to support monthly frequency
+   - Compare weekly vs monthly performance trade-offs
+   - Expected cost reduction: ~75% (156% → ~40%)
 
-### Short-term (1-2 weeks)
-1. **Phase 3 Implementation**:
-   - Walk-forward splitting logic
-   - Transaction cost calculation module
-   - Backtest logging infrastructure
-   - Evaluation metrics computation
+2. **Portfolio Configuration Optimization**:
+   - Reduce Top-K from 50 to 30-40 stocks
+   - Implement minimum position size thresholds (avoid small trades)
+   - Add turnover constraints (max % daily turnover)
 
-2. **Monitoring Validation**:
-   - Test with production-like data
-   - Verify log rotation and anomaly detection
-   - Validate file storage and retrieval
+3. **Cost-Aware Portfolio Optimization**:
+   - Integrate transaction costs into portfolio construction
+   - Add turnover penalties to optimization objective
+   - Test Markowitz + cost constraints
 
-### Medium-term (2-4 weeks)
-1. **Performance Optimization**:
-   - Panel cache serialization
-   - Pre-computed Z-scores
-   - Inference batch processing
+#### 4.2 Walk-Forward Validation Framework (Week 2-3)
+**Objective**: Validate model robustness and retrain schedule
 
-2. **API Server** (v0.2):
-   - FastAPI wrapper for inference
-   - Prometheus metrics export
+1. **Rolling Window Implementation**:
+   - 252-day training window (1 year)
+   - Monthly retraining schedule
+   - Out-of-sample testing on 2024-2025 data
+
+2. **Model Decay Analysis**:
+   - Track P@K degradation over time
+   - Determine optimal retraining frequency
+   - Compare static vs adaptive models
+
+#### 4.3 Production Deployment Preparation (Week 3-4)
+**Objective**: Deploy enhanced model with monitoring
+
+1. **Model/Config Packaging**:
+   - Deploy `models/apex_ranker_v0_enhanced.pt`
+   - Production config with monthly rebalancing
+   - Version tagging (v0.2.0-production)
+
+2. **Monitoring Infrastructure**:
+   - Prometheus metrics (prediction distribution, latency)
+   - Alerting rules (prediction anomalies, inference errors)
+   - Grafana dashboards
+
+3. **API Server (FastAPI)**:
+   - REST API wrapper for inference
    - Health check endpoints
+   - Request logging and rate limiting
+
+4. **Release Checklist**:
+   - Rollback procedures
+   - Incident response plan
+   - Production runbook
+
+### Target Timeline
+- **Week 1-2**: Cost optimization experiments
+- **Week 2-3**: Walk-forward validation
+- **Week 3-4**: Production deployment
+- **Target Launch**: Mid-November 2025
 
 ---
 

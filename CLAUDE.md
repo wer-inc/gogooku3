@@ -333,31 +333,74 @@ python apex-ranker/scripts/feature_importance_v0.py \
 
 ### Backtest & Validation
 
+**Phase 3 Complete** ✅ (2025-10-29): Full 2.8-year backtest with transaction costs
+
 ```bash
-# Short-term backtest (100 days)
-python apex-ranker/scripts/backtest_v0.py \
+# Production backtest driver (Phase 3.3+)
+python apex-ranker/scripts/backtest_smoke_test.py \
+  --start-date 2023-01-01 \
+  --end-date 2025-10-24 \
+  --top-k 50 \
+  --model models/apex_ranker_v0_enhanced.pt \
+  --config apex-ranker/configs/v0_base.yaml \
+  --horizon 20 \
+  --output results/backtest_enhanced.json \
+  --daily-csv results/backtest_daily.csv \
+  --trades-csv results/backtest_trades.csv
+
+# Quick smoke test (5 days)
+python apex-ranker/scripts/backtest_smoke_test.py \
+  --start-date 2025-09-01 \
+  --end-date 2025-09-05 \
+  --top-k 10 \
   --model models/apex_ranker_v0_pruned.pt \
   --config apex-ranker/configs/v0_pruned.yaml \
-  --start-date 2025-06-01 \
-  --end-date 2025-09-30 \
-  --output results/backtest_pruned.json
+  --horizon 20 \
+  --output /tmp/backtest_test.json
 
-# Long-term backtest (Phase 3 - in progress)
-# Walk-forward validation over 2-3 years with transaction costs
+# Mock predictions mode (testing without model)
+python apex-ranker/scripts/backtest_smoke_test.py \
+  --start-date 2025-09-01 \
+  --end-date 2025-09-05 \
+  --top-k 10 \
+  --use-mock-predictions \
+  --output /tmp/backtest_mock.json
+
+# Compare models
+python apex-ranker/scripts/compare_models.py \
+  --model1 models/apex_ranker_v0_pruned.pt \
+  --config1 apex-ranker/configs/v0_pruned.yaml \
+  --model2 models/apex_ranker_v0_enhanced.pt \
+  --config2 apex-ranker/configs/v0_base.yaml \
+  --output results/model_comparison.json
 ```
+
+**Phase 3.4 Results** (2023-2025, 688 trading days):
+
+| Model | Return | Sharpe | Max DD | Costs |
+|-------|--------|--------|--------|-------|
+| **Enhanced (89 feat)** | **56.43%** | **0.933** | **20.01%** | ¥15.6M (156%) |
+| Pruned (64 feat) | 39.48% | 0.624 | 29.14% | ¥10.2M (102%) |
+
+**Key Insights**:
+- Enhanced model: +42.9% better return, +49.5% Sharpe improvement
+- Transaction costs are high (>100% of capital) due to weekly rebalancing
+- **Recommendation**: Use enhanced model with monthly rebalancing
+
+**Documentation**: See `apex-ranker/docs/BACKTEST_COMPARISON_2023_2025.md` for full analysis
 
 ### Available Models
 
-| Model | Features | 20d P@K | Status | Use Case |
-|-------|----------|---------|--------|----------|
-| **v0_pruned** | 64 | 0.5405 | ✅ Production | Daily inference (recommended) |
-| **v0_enhanced** | 89 | 0.5765 | ✅ Baseline | Feature comparison |
-| **v0_baseline** | 89 | 0.4800 | ⚠️ Deprecated | Initial baseline |
+| Model | Features | 20d P@K | Backtest (2023-2025) | Status | Use Case |
+|-------|----------|---------|----------------------|--------|----------|
+| **v0_enhanced** | 89 | 0.5765 | 56.43% (Sharpe 0.933) | ✅ Production | **Recommended** for deployment |
+| **v0_pruned** | 64 | 0.5405 | 39.48% (Sharpe 0.624) | ✅ Baseline | Comparison baseline |
+| **v0_baseline** | 89 | 0.4800 | N/A | ⚠️ Deprecated | Initial baseline |
 
-**Model Selection Guidance**:
-- **Production use**: `v0_pruned` (simpler, 64 features, P@K 0.5405)
-- **Maximum accuracy**: `v0_enhanced` (89 features, P@K 0.5765, +6.2%)
-- **Pending decision**: Need same-period comparison for Phase 3
+**Model Selection Guidance** (Updated 2025-10-29):
+- **Production deployment**: `v0_enhanced` (89 features, **56.43% return**, Sharpe 0.933)
+- **Cost-optimized**: Monthly rebalancing (vs weekly) to reduce transaction costs
+- **Comparison complete**: Enhanced model significantly outperforms pruned (+42.9% return)
 
 ### Key Files
 
@@ -405,31 +448,40 @@ results/
 - Production usage documentation
 - Bug fixes: Panel cache, model output format
 
-**Phase 3: Long-term Backtest** ⏳ In Progress
-- Walk-forward validation (2-3 years)
-- Transaction cost simulation
-- Market microstructure modeling
-- Performance metrics (Sharpe, drawdown, turnover)
+**Phase 3: Long-term Backtest** ✅ Complete (2025-10-29)
+- **Phase 3.1**: Core infrastructure (Portfolio, Costs, Splitter)
+- **Phase 3.2**: Smoke test (5-day validation)
+- **Phase 3.3**: Full integration (inference + costs)
+- **Phase 3.4**: Production backtest (2023-2025, 688 days)
+- **Results**: Enhanced model 56.43% return, Sharpe 0.933
+- **Decision**: Deploy enhanced model with monthly rebalancing
 
-**Phase 4: Production Deployment** 📋 Planned
-- Panel cache persistence
-- FastAPI server wrapper
-- Prometheus metrics export
-- Docker containerization
+**Phase 4: Cost Optimization & Deployment** 📋 Next
+- Transaction cost reduction (target <30% vs current 156%)
+- Monthly rebalancing implementation
+- Cost-aware portfolio optimization
+- Walk-forward validation framework
+- Production deployment (FastAPI + monitoring)
 
 ### Known Issues
 
-1. **Panel cache rebuild**: Full rebuild on every inference (~2 min for 10.6M samples)
+1. **High transaction costs**: 156% of capital (weekly rebalancing, Top-50)
+   - **Impact**: Significant drag on returns (net vs gross)
+   - **Fix planned**: Monthly rebalancing + cost-aware optimization (Phase 4)
+   - **Target**: Reduce to <30% of capital
+
+2. **Panel cache rebuild**: Full rebuild on every inference (~2 min for 10.6M samples)
    - **Workaround**: Accept latency for now
    - **Fix planned**: Cache serialization (Phase 4)
 
-2. **No real-time data**: Requires pre-processed parquet dataset
+3. **No real-time data**: Requires pre-processed parquet dataset
    - **Workaround**: Update dataset daily with `make dataset-bg`
    - **Fix planned**: Streaming data pipeline (Phase 4)
 
-3. **Model selection pending**: Need same-period comparison (pruned vs enhanced)
-   - **Action**: Re-evaluate on identical validation period
-   - **Blocker for**: Phase 3 primary model decision
+4. **CSV export bug**: Nested data in portfolio history causes Polars error
+   - **Impact**: `--daily-csv` and `--trades-csv` fail on long backtests
+   - **Workaround**: Use JSON output only
+   - **Fix planned**: Flatten data structure before CSV export
 
 ### Related Systems
 
