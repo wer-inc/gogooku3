@@ -676,7 +676,6 @@ class CompleteATFTTrainingPipeline:
         for group_name in group_names:
             group = group_spec.get(group_name) or {}
             for col in group.get("include", []) or []:
-                col_name = col
                 base_name = col.removesuffix("_cs_z") if col.endswith("_cs_z") else col
                 if col in columns:
                     seen_features.setdefault(col, None)

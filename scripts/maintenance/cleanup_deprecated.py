@@ -23,11 +23,10 @@ You can schedule via cron to run daily. Example (runs at 03:10):
 from __future__ import annotations
 
 import argparse
+import re
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-import shutil
-import re
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = ROOT / "scripts"

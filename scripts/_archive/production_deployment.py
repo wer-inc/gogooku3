@@ -5,21 +5,19 @@ ATFT-GAT-FAN Production Deployment Script
 本番環境移行支援スクリプト
 """
 
-import os
-import sys
-import logging
 import argparse
 import json
+import logging
 import shutil
-from pathlib import Path
+import sys
 from datetime import datetime
-import subprocess
+from pathlib import Path
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from scripts.validate_improvements import validate_performance, run_detailed_comparison
+from scripts.validate_improvements import run_detailed_comparison, validate_performance
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -75,7 +73,7 @@ class ProductionDeploymentManager:
     def _load_config_template(self):
         """設定テンプレート読み込み"""
         import yaml
-        with open(self.config_path, 'r', encoding='utf-8') as f:
+        with open(self.config_path, encoding='utf-8') as f:
             return yaml.safe_load(f)
 
     def _apply_phase1_settings(self, config):

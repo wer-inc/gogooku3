@@ -4,15 +4,16 @@ ATFT-GAT-FAN Monitoring Dashboard
 本番運用時の監視ダッシュボード
 """
 
-import os
-import sys
-import logging
 import json
-import time
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+import logging
+import os
 import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 import psutil
 
 # プロジェクトルートをパスに追加
@@ -64,7 +65,7 @@ class MonitoringDashboard:
             'gpu_memory': 0.95,  # GPUメモリ95%以上でアラート
         }
 
-    def start_tensorboard(self, port: int = 6006) -> Optional[subprocess.Popen]:
+    def start_tensorboard(self, port: int = 6006) -> subprocess.Popen | None:
         """TensorBoardサーバーを起動"""
         if not TENSORBOARD_AVAILABLE:
             logger.warning("TensorBoard is not available")
@@ -100,7 +101,7 @@ class MonitoringDashboard:
             logger.error(f"Failed to start TensorBoard: {e}")
             return None
 
-    def check_wandb_status(self) -> Dict[str, Any]:
+    def check_wandb_status(self) -> dict[str, Any]:
         """W&Bの状態を確認"""
         status = {
             'available': WANDB_AVAILABLE,
@@ -130,7 +131,7 @@ class MonitoringDashboard:
 
         return status
 
-    def collect_system_metrics(self) -> Dict[str, Any]:
+    def collect_system_metrics(self) -> dict[str, Any]:
         """システムメトリクスを収集"""
         metrics = {
             'timestamp': datetime.now().isoformat(),
@@ -174,7 +175,7 @@ class MonitoringDashboard:
 
         return metrics
 
-    def check_training_status(self) -> Dict[str, Any]:
+    def check_training_status(self) -> dict[str, Any]:
         """トレーニング状態を確認"""
         status = {
             'active_runs': [],
@@ -225,7 +226,7 @@ class MonitoringDashboard:
 
         return status
 
-    def check_alerts(self, metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def check_alerts(self, metrics: dict[str, Any]) -> list[dict[str, Any]]:
         """アラート条件を確認"""
         alerts = []
 
@@ -274,7 +275,7 @@ class MonitoringDashboard:
 
         return alerts
 
-    def generate_report(self) -> Dict[str, Any]:
+    def generate_report(self) -> dict[str, Any]:
         """総合レポートを生成"""
         system_metrics = self.collect_system_metrics()
         training_status = self.check_training_status()
@@ -305,7 +306,7 @@ class MonitoringDashboard:
 
         return report
 
-    def save_report(self, report: Dict[str, Any]):
+    def save_report(self, report: dict[str, Any]):
         """レポートを保存"""
         report_file = self.monitoring_dir / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(report_file, 'w', encoding='utf-8') as f:
@@ -313,7 +314,7 @@ class MonitoringDashboard:
 
         logger.info(f"Report saved: {report_file}")
 
-    def display_dashboard(self, report: Dict[str, Any]):
+    def display_dashboard(self, report: dict[str, Any]):
         """ダッシュボードを表示"""
         print("\n" + "="*80)
         print("ATFT-GAT-FAN MONITORING DASHBOARD")
@@ -331,7 +332,7 @@ class MonitoringDashboard:
 
         # トレーニングステータス
         train_status = report['training_status']
-        print(f"\n🔄 TRAINING STATUS")
+        print("\n🔄 TRAINING STATUS")
         print(f"  Active Runs: {len(train_status['active_runs'])}")
         for run in train_status['active_runs'][:3]:  # 最大3件表示
             print(f"    PID {run['pid']}: {run['command']}")
@@ -342,7 +343,7 @@ class MonitoringDashboard:
 
         # W&Bステータス
         wandb_status = report['wandb_status']
-        print(f"\n📈 W&B STATUS")
+        print("\n📈 W&B STATUS")
         print(f"  Available: {'✅' if wandb_status['available'] else '❌'}")
         print(f"  Logged In: {'✅' if wandb_status['logged_in'] else '❌'}")
         print(f"  API Key Set: {'✅' if wandb_status['api_key_set'] else '❌'}")
@@ -358,9 +359,9 @@ class MonitoringDashboard:
                 icon = "⚠️" if alert['type'] == 'warning' else "🚨"
                 print(f"  {icon} {alert['message']}")
         else:
-            print(f"\n✅ NO ACTIVE ALERTS")
+            print("\n✅ NO ACTIVE ALERTS")
 
-        print(f"\n📋 SUMMARY")
+        print("\n📋 SUMMARY")
         print(f"  Total Alerts: {report['alerts_count']}")
         print(f"  Metrics History: {report['metrics_count']} entries")
         print(f"  Report Time: {report['timestamp']}")

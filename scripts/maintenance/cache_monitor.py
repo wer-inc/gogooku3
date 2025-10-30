@@ -13,9 +13,8 @@ import argparse
 import json
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
 
 
 def format_size(bytes_val: int) -> str:
@@ -27,7 +26,7 @@ def format_size(bytes_val: int) -> str:
     return f"{bytes_val:.1f}TB"
 
 
-def get_cache_stats(cache_dir: Path) -> Dict:
+def get_cache_stats(cache_dir: Path) -> dict:
     """Collect comprehensive cache statistics."""
     if not cache_dir.exists():
         return {
@@ -54,7 +53,7 @@ def get_cache_stats(cache_dir: Path) -> Dict:
     }
 
     now = datetime.now()
-    all_files: List[Dict] = []
+    all_files: list[dict] = []
 
     # Walk through cache directory
     for file_path in cache_dir.rglob("*"):
@@ -113,7 +112,7 @@ def get_cache_stats(cache_dir: Path) -> Dict:
     return stats
 
 
-def print_report(stats: Dict, verbose: bool = False):
+def print_report(stats: dict, verbose: bool = False):
     """Print human-readable cache report."""
     if not stats["exists"]:
         print(f"Cache directory does not exist: {stats['path']}")

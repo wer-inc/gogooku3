@@ -9,7 +9,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -31,7 +30,7 @@ def run_simple_hpo(
     n_trials: int = 5,
     timeout: int = 300,
     study_name: str = "atft_simple_hpo",
-    storage_url: Optional[str] = None,
+    storage_url: str | None = None,
     resume: bool = False,
 ):
     """
@@ -111,7 +110,7 @@ def run_simple_hpo(
 
 
 def get_study_status(
-    study_name: str = "atft_simple_hpo", storage_url: Optional[str] = None
+    study_name: str = "atft_simple_hpo", storage_url: str | None = None
 ):
     """
     Get status of an existing study
@@ -177,7 +176,7 @@ def run_mock_hpo(n_trials: int = 3):
 
         # Initialize components
         objective_func = MultiHorizonObjective()
-        extractor = MetricsExtractor()
+        MetricsExtractor()
 
         def mock_objective(trial):
             """Mock objective function that simulates training results"""
@@ -311,12 +310,12 @@ def main():
 
     try:
         if args.action == "mock":
-            study = run_mock_hpo(args.trials)
+            run_mock_hpo(args.trials)
         elif args.action == "status":
             get_study_status(args.study_name, args.storage)
             return 0
         elif args.action == "resume":
-            study = run_simple_hpo(
+            run_simple_hpo(
                 n_trials=args.trials,
                 timeout=args.timeout,
                 study_name=args.study_name,
@@ -324,7 +323,7 @@ def main():
                 resume=True,
             )
         else:  # "run"
-            study = run_simple_hpo(
+            run_simple_hpo(
                 n_trials=args.trials,
                 timeout=args.timeout,
                 study_name=args.study_name,

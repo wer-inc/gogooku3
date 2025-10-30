@@ -5,12 +5,12 @@ Apply Best Practices to gogooku3
 gogooku3にベストプラクティスを適用する統合スクリプト
 """
 
-import sys
-import logging
 import json
-from pathlib import Path
-from typing import Dict
+import logging
+import sys
 from datetime import datetime
+from pathlib import Path
+
 import polars as pl
 
 # パスを追加
@@ -18,8 +18,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 # ベストプラクティスモジュールのインポート
 from scripts.data_optimizer import DataOptimizer, DataValidator
-from scripts.performance_optimizer import PerformanceOptimizer, DataPipelineOptimizer
-from scripts.monitoring_system import MetricsCollector, ModelMonitor, DataQualityMonitor
+from scripts.performance_optimizer import DataPipelineOptimizer, PerformanceOptimizer
+
+from scripts.monitoring_system import DataQualityMonitor, MetricsCollector, ModelMonitor
 
 # ログ設定
 logging.basicConfig(
@@ -58,7 +59,7 @@ class BestPracticesApplier:
             "recommendations": [],
         }
 
-    def apply_all_best_practices(self) -> Dict:
+    def apply_all_best_practices(self) -> dict:
         """すべてのベストプラクティスを適用"""
         logger.info("🚀 Starting best practices application...")
 
@@ -306,7 +307,7 @@ class BestPracticesApplier:
 
         self.application_results["phases"]["integration_tests"] = phase_results
 
-    def _test_data_optimization(self) -> Dict:
+    def _test_data_optimization(self) -> dict:
         """データ最適化テスト"""
         try:
             # 最適化されたファイルの存在確認
@@ -318,7 +319,7 @@ class BestPracticesApplier:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _test_performance_optimization(self) -> Dict:
+    def _test_performance_optimization(self) -> dict:
         """パフォーマンス最適化テスト"""
         try:
             # システムメトリクスの取得
@@ -331,7 +332,7 @@ class BestPracticesApplier:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def _test_monitoring_system(self) -> Dict:
+    def _test_monitoring_system(self) -> dict:
         """モニタリングシステムテスト"""
         try:
             # データベースの存在確認

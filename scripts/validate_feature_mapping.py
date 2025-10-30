@@ -48,7 +48,7 @@ def analyze_mapping(
     """Analyze mapping between actual features and categories."""
 
     # Normalize feature names (lowercase for matching)
-    actual_set = set(f.lower() for f in actual_features)
+    actual_set = {f.lower() for f in actual_features}
 
     results = {
         "mapped": {},

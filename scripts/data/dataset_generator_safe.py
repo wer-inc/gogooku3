@@ -26,11 +26,11 @@ import asyncio
 import json
 import logging
 import os
-import psutil
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+
+import psutil
 
 # Add project root to path
 ROOT = Path(__file__).resolve().parents[2]
@@ -96,9 +96,9 @@ class MemorySafeDatasetGenerator:
 
         # State
         self.checkpoint_file = CHECKPOINT_DIR / f"dataset_{start_date}_{end_date}.json"
-        self.checkpoint_data: Dict = {}
-        self.chunks: List[Tuple[datetime, datetime]] = []
-        self.completed_chunks: List[int] = []
+        self.checkpoint_data: dict = {}
+        self.chunks: list[tuple[datetime, datetime]] = []
+        self.completed_chunks: list[int] = []
 
         # Memory tracking
         self.total_memory = psutil.virtual_memory().total / (1024**3)  # GB
@@ -107,7 +107,7 @@ class MemorySafeDatasetGenerator:
         logger.info(f"Total memory: {self.total_memory:.1f} GB")
         logger.info(f"Memory limit: {self.memory_limit_gb:.1f} GB ({self.memory_limit_pct}%)")
 
-    def create_chunks(self) -> List[Tuple[datetime, datetime]]:
+    def create_chunks(self) -> list[tuple[datetime, datetime]]:
         """Create date range chunks."""
         chunks = []
         current = self.start_date
@@ -134,7 +134,7 @@ class MemorySafeDatasetGenerator:
             return False
 
         try:
-            with open(self.checkpoint_file, "r") as f:
+            with open(self.checkpoint_file) as f:
                 self.checkpoint_data = json.load(f)
 
             self.completed_chunks = self.checkpoint_data.get("completed_chunks", [])
@@ -171,7 +171,7 @@ class MemorySafeDatasetGenerator:
         except Exception as e:
             logger.error(f"Failed to save checkpoint: {e}")
 
-    def check_memory(self) -> Tuple[float, float]:
+    def check_memory(self) -> tuple[float, float]:
         """Check current memory usage.
 
         Returns:
@@ -182,7 +182,7 @@ class MemorySafeDatasetGenerator:
         used_pct = vm.percent
         return used_gb, used_pct
 
-    async def generate_chunk(self, chunk_idx: int, start: datetime, end: datetime) -> Optional[Path]:
+    async def generate_chunk(self, chunk_idx: int, start: datetime, end: datetime) -> Path | None:
         """Generate dataset for a single chunk.
 
         Args:
@@ -275,7 +275,7 @@ class MemorySafeDatasetGenerator:
             # Restore sys.argv
             sys.argv = original_argv
 
-    async def merge_chunks(self, chunk_paths: List[Path]) -> Optional[Path]:
+    async def merge_chunks(self, chunk_paths: list[Path]) -> Path | None:
         """Merge chunk files into final dataset.
 
         Args:
@@ -355,7 +355,7 @@ class MemorySafeDatasetGenerator:
             return 1
 
         # Process chunks
-        chunk_paths: List[Path] = []
+        chunk_paths: list[Path] = []
 
         for idx, (start, end) in enumerate(self.chunks):
             # Skip completed chunks

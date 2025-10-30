@@ -17,12 +17,9 @@ from __future__ import annotations
 
 import glob
 import os
-import sys
 from pathlib import Path
-from typing import Iterable
 
 import polars as pl
-
 
 TARGET_CANDIDATES = [
     # common variants
@@ -61,7 +58,7 @@ def main() -> int:
     date_col = "date" if "date" in cols else ("Date" if "Date" in cols else None)
     code_col = "code" if "code" in cols else ("Code" if "Code" in cols else None)
     if not date_col or not code_col:
-        print(f"[dataset-sanity] Missing id columns: date/date or code/Code not found.")
+        print("[dataset-sanity] Missing id columns: date/date or code/Code not found.")
         return 1
 
     # target columns

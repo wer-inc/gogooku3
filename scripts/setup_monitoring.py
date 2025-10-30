@@ -4,12 +4,11 @@ ATFT-GAT-FAN Monitoring Setup
 監視システムの初期設定スクリプト
 """
 
-import os
-import sys
 import logging
+import os
 import subprocess
+import sys
 from pathlib import Path
-from typing import Optional
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -52,7 +51,7 @@ class MonitoringSetup:
             except Exception as e:
                 logger.warning(f"Error installing {package}: {e}")
 
-    def setup_wandb(self, api_key: Optional[str] = None, project_name: str = "ATFT-GAT-FAN"):
+    def setup_wandb(self, api_key: str | None = None, project_name: str = "ATFT-GAT-FAN"):
         """W&Bのセットアップ"""
         logger.info("Setting up Weights & Biases...")
 

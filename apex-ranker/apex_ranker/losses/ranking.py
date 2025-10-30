@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 from torch import nn
 
@@ -9,7 +7,7 @@ from torch import nn
 class ListNetLoss(nn.Module):
     """ListNet loss with optional Top-K reweighting."""
 
-    def __init__(self, tau: float = 0.5, topk: Optional[int] = None, eps: float = 1e-12) -> None:
+    def __init__(self, tau: float = 0.5, topk: int | None = None, eps: float = 1e-12) -> None:
         super().__init__()
         self.tau = tau
         self.topk = topk
@@ -40,7 +38,7 @@ class ListNetLoss(nn.Module):
 class RankNetLoss(nn.Module):
     """Pairwise RankNet loss with optional negative sampling."""
 
-    def __init__(self, neg_sample: Optional[int] = None) -> None:
+    def __init__(self, neg_sample: int | None = None) -> None:
         super().__init__()
         self.neg_sample = neg_sample
 
@@ -78,8 +76,8 @@ class CompositeLoss(nn.Module):
         ranknet_weight: float = 0.5,
         mse_weight: float = 0.1,
         listnet_tau: float = 0.5,
-        listnet_topk: Optional[int] = None,
-        ranknet_neg_sample: Optional[int] = None,
+        listnet_topk: int | None = None,
+        ranknet_neg_sample: int | None = None,
     ) -> None:
         super().__init__()
         self.listnet_weight = listnet_weight

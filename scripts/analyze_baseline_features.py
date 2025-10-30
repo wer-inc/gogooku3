@@ -115,7 +115,7 @@ def analyze_feature_importance(data_path="output/ml_dataset_future_returns.parqu
 
         # Top10特徴量
         print("   Top 10 features:")
-        for idx, row in importance.head(10).iterrows():
+        for _idx, row in importance.head(10).iterrows():
             print(f"     {row['feature']}: {row['importance']:.0f}")
 
     # 全体の特徴量重要度集計
@@ -153,7 +153,7 @@ def analyze_feature_importance(data_path="output/ml_dataset_future_returns.parqu
     )
 
     print("\nTop 20 Most Important Features (Averaged):")
-    for idx, row in aggregated_df.head(20).iterrows():
+    for _idx, row in aggregated_df.head(20).iterrows():
         print(
             f"  {row['feature']}: avg={row['avg_importance']:.1f}, max={row['max_importance']:.1f}"
         )

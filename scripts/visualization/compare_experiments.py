@@ -8,18 +8,16 @@ Compare multiple training runs to find the best configuration.
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List
 
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from scipy import stats
 
 
 class ExperimentComparison:
     """Compare multiple ATFT-GAT-FAN experiments"""
 
-    def __init__(self, run_dirs: List[Path]):
+    def __init__(self, run_dirs: list[Path]):
         """
         Initialize with multiple run directories
 
@@ -29,7 +27,7 @@ class ExperimentComparison:
         self.run_dirs = [Path(d) for d in run_dirs]
         self.experiments = self._load_experiments()
 
-    def _load_experiments(self) -> Dict:
+    def _load_experiments(self) -> dict:
         """Load metrics from all experiments"""
         experiments = {}
 

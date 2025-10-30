@@ -5,15 +5,15 @@ Data Management Best Practices for gogooku3
 データ管理のベストプラクティス実装
 """
 
-import sys
-import logging
 import hashlib
-from pathlib import Path
-from typing import Dict, List
-from functools import lru_cache
-import polars as pl
-from datetime import datetime, timedelta
 import json
+import logging
+import sys
+from datetime import datetime, timedelta
+from functools import lru_cache
+from pathlib import Path
+
+import polars as pl
 
 # パスを追加
 sys.path.append(str(Path(__file__).parent.parent))
@@ -49,7 +49,7 @@ class DataOptimizer:
         # キャッシュ設定
         self.cache_settings = {"max_size": 100, "ttl_hours": 24}
 
-    def optimize_parquet_files(self, input_dir: str, output_dir: str = None) -> Dict:
+    def optimize_parquet_files(self, input_dir: str, output_dir: str = None) -> dict:
         """parquetファイルの最適化"""
         if output_dir is None:
             output_dir = self.compressed_dir
@@ -152,8 +152,8 @@ class DataOptimizer:
         return df
 
     def batch_load_data(
-        self, stock_codes: List[str], batch_size: int = 10
-    ) -> List[pl.DataFrame]:
+        self, stock_codes: list[str], batch_size: int = 10
+    ) -> list[pl.DataFrame]:
         """バッチローディング"""
         results = []
 
@@ -174,7 +174,7 @@ class DataOptimizer:
 
         return results
 
-    def create_data_metadata(self, data_dir: str) -> Dict:
+    def create_data_metadata(self, data_dir: str) -> dict:
         """データメタデータの作成"""
         data_path = Path(data_dir)
         metadata = {
@@ -242,7 +242,7 @@ class DataValidator:
             "max_null_ratio": 0.1,
         }
 
-    def validate_dataset(self, df: pl.DataFrame) -> Dict:
+    def validate_dataset(self, df: pl.DataFrame) -> dict:
         """データセットの品質検証"""
         validation_results = {
             "valid": True,

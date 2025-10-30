@@ -14,7 +14,6 @@ Usage:
 import argparse
 import re
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import pandas as pd
 
@@ -27,10 +26,10 @@ class SweepEvaluator:
         self.log_dir = self.sweep_dir / "logs"
         self.results = []
 
-    def extract_metrics(self, log_file: Path) -> Dict[str, float] | None:
+    def extract_metrics(self, log_file: Path) -> dict[str, float] | None:
         """Extract final metrics from log file"""
         try:
-            with open(log_file, "r") as f:
+            with open(log_file) as f:
                 content = f.read()
 
             # Check if training completed
@@ -83,11 +82,11 @@ class SweepEvaluator:
             print(f"❌ Error parsing {log_file.name}: {e}")
             return None
 
-    def load_config_meta(self, meta_file: Path) -> Dict[str, str]:
+    def load_config_meta(self, meta_file: Path) -> dict[str, str]:
         """Load configuration metadata"""
         config = {}
         if meta_file.exists():
-            with open(meta_file, "r") as f:
+            with open(meta_file) as f:
                 for line in f:
                     if "=" in line:
                         key, value = line.strip().split("=", 1)
@@ -208,7 +207,7 @@ class SweepEvaluator:
             print(f"TOP {len(ranked)} CONFIGURATIONS (by composite score)")
             print("=" * 80)
 
-            for idx, row in ranked.iterrows():
+            for _idx, row in ranked.iterrows():
                 print(f"\n{row['config_id']}:")
                 print(f"  Score:       {row['score']:.4f}")
                 print(f"  pred_std:    {row['pred_std']:.4f} (> 0.010 ✅)")
@@ -216,7 +215,7 @@ class SweepEvaluator:
                 print(f"  Avg Sharpe:   {row['avg_sharpe']:.4f}")
                 print(f"  Final RankIC: {row['final_rankic']:.4f}")
                 print(f"  Avg RankIC:   {row['avg_rankic']:.4f}")
-                print(f"  Config:")
+                print("  Config:")
                 print(f"    TURNOVER_WEIGHT={row.get('TURNOVER_WEIGHT', 'N/A')}")
                 print(f"    PRED_VAR_WEIGHT={row.get('PRED_VAR_WEIGHT', 'N/A')}")
                 print(f"    OUTPUT_NOISE_STD={row.get('OUTPUT_NOISE_STD', 'N/A')}")
@@ -260,7 +259,7 @@ def main():
 
     print("\n✅ Evaluation complete!")
     print(
-        f"\nNext step: Run 10-epoch validation on top config(s) or proceed to full training"
+        "\nNext step: Run 10-epoch validation on top config(s) or proceed to full training"
     )
     print(f"  bash scripts/run_best_config.sh {args.sweep_dir}")
 

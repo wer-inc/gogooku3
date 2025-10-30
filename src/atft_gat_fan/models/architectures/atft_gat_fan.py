@@ -3,6 +3,7 @@ ATFT-GAT-FAN アーキテクチャ実装
 Adaptive Temporal Fusion Transformer with Graph Attention and Frequency Adaptive Normalization
 """
 import logging
+import os
 import re
 
 # import pytorch_lightning as pl  # DISABLED due to std::bad_alloc error
@@ -195,6 +196,8 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         self.gat_output_dim = 0
         self.gat_edge_weight = 0.0
         self.gat_entropy_weight = 0.0
+        self.gat_output_norm: nn.LayerNorm | None = None
+        self.gat_residual_clip: float = 0.0
 
         # Variable Selection Network (feature-wise gating)
         self.variable_selection = self._build_variable_selection()
@@ -219,6 +222,10 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             self.combined_feature_dim, self.hidden_size
         )
 
+        self.enable_nan_guard = os.getenv("ENABLE_ATFT_NAN_GUARD", "1") == "1"
+        self.nan_guard_max_log = int(os.getenv("ATFT_NAN_GUARD_MAX_LOG", "5"))
+        self._nan_guard_counts: dict[str, int] = {}
+
         # GAT Residual Bypass修正 (Phase 2)
         if self.gat is not None:
             with torch.no_grad():
@@ -227,6 +234,19 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                 self.backbone_projection.weight.data[:, gat_start_idx:] *= 3.0
             # Residual接続用の学習可能なゲート（α初期値=0.5）
             self.gat_residual_gate = nn.Parameter(torch.tensor(0.0))  # sigmoid(0)=0.5
+            # GAT出力の安定化: LayerNorm + optional clamp
+            self.gat_output_norm = nn.LayerNorm(self.gat_output_dim)
+            clip_cfg = None
+            try:
+                clip_cfg = self.config.model.gat.residual_clip
+            except Exception:
+                clip_cfg = None
+            if clip_cfg is None:
+                clip_cfg = os.getenv("GAT_RESIDUAL_CLIP", "10.0")
+            try:
+                self.gat_residual_clip = float(clip_cfg) if clip_cfg else 0.0
+            except (TypeError, ValueError):
+                self.gat_residual_clip = 10.0
             logger.info(
                 "✅ [GAT-FIX] Applied 3x weight scaling + residual gate (α=0.5)"
             )
@@ -701,6 +721,7 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         # Graph Attention Network（有効な場合）
         gat_features = None
+        gat_residual_base: torch.Tensor | None = None
         self._gat_attention_entropy = None
         self._gat_edge_reg_value = None
         if self.gat is not None and edge_index is not None:
@@ -710,6 +731,7 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             )
 
             last_step = tft_output[:, -1, :]  # [batch, hidden]
+            self._nan_guard(last_step, "last_step_before_gat")
             if return_attention:
                 logger.debug(
                     "[RETURN-ATT] Taking return_attention=True branch - computing GAT loss metrics"
@@ -734,9 +756,20 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                 gat_emb = self.gat(last_step, edge_index, edge_attr)
                 self._last_attention_weights = None
 
-            gat_features = gat_emb.unsqueeze(1).expand(-1, tft_output.size(1), -1)
+            if self.gat_output_norm is not None:
+                gat_emb = self.gat_output_norm(gat_emb)
+            if self.gat_residual_clip > 0:
+                gat_emb = torch.clamp(
+                    gat_emb, -self.gat_residual_clip, self.gat_residual_clip
+                )
+            self._nan_guard(gat_emb, "gat_emb_post_norm")
+            gat_residual_base = gat_emb
+            # 🔧 FIX (2025-10-20): use repeat instead of expand to keep gradient flow
+            gat_features = (
+                gat_emb.unsqueeze(1).repeat(1, tft_output.size(1), 1).contiguous()
+            )
             logger.debug(
-                f"[GAT-EXEC] GAT output shape={gat_emb.shape}, expanded={gat_features.shape}"
+                f"[GAT-EXEC] GAT output shape={gat_emb.shape}, repeated={gat_features.shape}"
             )
             # 🔧 DEBUG (2025-10-06): Verify gat_features status
             logger.debug(f"[GAT-DEBUG] gat_features is None: {gat_features is None}")
@@ -744,6 +777,7 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                 logger.debug(
                     f"[GAT-DEBUG] gat_features.shape={gat_features.shape}, requires_grad={gat_features.requires_grad}"
                 )
+            self._nan_guard(gat_features, "gat_features_expanded")
 
         # Combine temporal and graph context
         # 🔧 FIX (2025-10-06): Always use consistent dimensions to prevent backbone_projection recreation
@@ -781,45 +815,59 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         if self.freq_dropout is not None and self.training:
             combined_features = self.freq_dropout(combined_features)
 
-        # Project back to hidden size and apply adaptive normalization
-        # 🔧 FIX (2025-10-06): No longer need dynamic dimension check - dimensions are now fixed
-        combined_features = self.backbone_projection(combined_features)
+        # Project back to hidden size
+        projected_features = self.backbone_projection(combined_features)
+        self._nan_guard(projected_features, "projected_features")
 
-        # GAT Residual Bypass適用 (Phase 2)
+        # Apply adaptive normalization (operates on temporal backbone features)
+        normalized_features = self.adaptive_norm(projected_features)
+        self._nan_guard(normalized_features, "normalized_features_pre_residual")
+
+        # GAT Residual Bypass適用 (Phase 2) - post-normalization so FAN/SAN do not zero-out GAT signal
         if (
             self.gat is not None
-            and gat_features is not None
+            and gat_residual_base is not None
             and hasattr(self, "gat_residual_gate")
         ):
             alpha = torch.sigmoid(self.gat_residual_gate)
+            gat_residual = (
+                gat_residual_base.unsqueeze(1)
+                .repeat(1, normalized_features.size(1), 1)
+                .contiguous()
+            )
+            if self.gat_residual_clip > 0:
+                gat_residual = torch.clamp(
+                    gat_residual,
+                    -self.gat_residual_clip,
+                    self.gat_residual_clip,
+                )
 
-            # 🔍 DETAILED FLOW LOGGING (Forward pass)
             if self.training:
                 gate_raw = self.gat_residual_gate.item()
                 alpha_val = alpha.item()
-                gat_norm = gat_features.norm().item()
-                proj_norm = combined_features.norm().item()
+                gat_norm = gat_residual.norm().item()
+                norm_feat = normalized_features.norm().item()
                 logger.info(
                     f"[GAT-FLOW] gate_raw={gate_raw:.4f}, alpha={alpha_val:.4f}, "
-                    f"(1-alpha)={1-alpha_val:.4f}, gat_norm={gat_norm:.2e}, proj_norm={proj_norm:.2e}"
+                    f"(1-alpha)={1-alpha_val:.4f}, gat_norm={gat_norm:.2e}, "
+                    f"norm_feat_norm={norm_feat:.2e}"
                 )
 
-            # Residual bypass: α*projection + (1-α)*gat_features
-            combined_features_before = combined_features
-            combined_features = alpha * combined_features + (1 - alpha) * gat_features
+            normalized_before = normalized_features
+            normalized_features = (
+                alpha * normalized_features + (1 - alpha) * gat_residual
+            )
 
-            # 🔍 DETAILED FLOW LOGGING (After combination)
             if self.training:
-                combined_norm_after = combined_features.norm().item()
-                gat_contribution = ((1 - alpha) * gat_features).norm().item()
-                proj_contribution = (alpha * combined_features_before).norm().item()
+                combined_norm_after = normalized_features.norm().item()
+                gat_contribution = ((1 - alpha) * gat_residual).norm().item()
+                proj_contribution = (alpha * normalized_before).norm().item()
                 logger.info(
                     f"[GAT-FLOW] combined_norm={combined_norm_after:.2e}, "
                     f"gat_contrib={gat_contribution:.2e}, proj_contrib={proj_contribution:.2e}"
                 )
 
-            # GAT勾配モニタリング（訓練時のみ）
-            if self.training and hasattr(gat_features, "register_hook"):
+            if self.training and hasattr(gat_residual_base, "register_hook"):
 
                 def log_gat_grad(grad):
                     if grad is not None:
@@ -831,11 +879,11 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                         else:
                             logger.info(f"[GAT-GRAD] gradient norm: {grad_norm:.2e}")
 
-                gat_features.register_hook(log_gat_grad)
-        normalized_features = self.adaptive_norm(combined_features)
+                gat_residual_base.register_hook(log_gat_grad)
+        self._nan_guard(normalized_features, "normalized_features_post_residual")
         # 🔧 DEBUG (2025-10-06): Check gradient flow
         logger.debug(
-            f"[GAT-DEBUG] combined_features.requires_grad={combined_features.requires_grad}, normalized.requires_grad={normalized_features.requires_grad}"
+            f"[GAT-DEBUG] projected_features.requires_grad={projected_features.requires_grad}, normalized.requires_grad={normalized_features.requires_grad}"
         )
 
         # 予測（Multi-horizon対応 + レジーム特徴量対応）
@@ -853,10 +901,16 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         if isinstance(predictions, dict):
             # Multi-horizon: {horizon_1d: tensor, horizon_5d: tensor, ...}
             output_type = "multi_horizon"
+            predictions = {
+                key: self._sanitize_prediction_tensor(val, key)
+                for key, val in predictions.items()
+            }
         else:
             # Single-horizon (backward compatibility)
             output_type = "single_horizon"
-            predictions = {"single": predictions}
+            predictions = {
+                "single": self._sanitize_prediction_tensor(predictions, "single")
+            }
 
         # 出力にレジーム特徴量も含める（分析用）
         output = {
@@ -877,6 +931,35 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                 pass
 
         return output
+
+    def _nan_guard(self, tensor: torch.Tensor | None, name: str) -> None:
+        if not self.enable_nan_guard or tensor is None:
+            return
+        if torch.isfinite(tensor).all():
+            return
+        nan_count = torch.isnan(tensor).sum().item()
+        inf_count = torch.isinf(tensor).sum().item()
+        total = tensor.numel()
+        if self._nan_guard_counts.get(name, 0) < self.nan_guard_max_log:
+            logger.error(
+                f"[NAN-GUARD] {name}: non-finite detected "
+                f"(nan={nan_count}, inf={inf_count}, total={total})"
+            )
+            self._nan_guard_counts[name] = self._nan_guard_counts.get(name, 0) + 1
+        with torch.no_grad():
+            tensor.copy_(torch.nan_to_num(tensor, nan=0.0, posinf=1e6, neginf=-1e6))
+
+    def _sanitize_prediction_tensor(
+        self, tensor: torch.Tensor, name: str
+    ) -> torch.Tensor:
+        if not torch.is_tensor(tensor):
+            return tensor
+        if not self.enable_nan_guard:
+            return torch.nan_to_num(tensor, nan=0.0, posinf=1e6, neginf=-1e6)
+        if torch.isfinite(tensor).all():
+            return tensor
+        self._nan_guard(tensor, f"prediction[{name}]")
+        return tensor
 
     # Removed Lightning callback - will be called manually from training loop if needed
     # def on_train_epoch_start(self) -> None:

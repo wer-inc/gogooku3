@@ -18,13 +18,14 @@ Updates three data sources:
     3. TOPIX (index data)          - 2018-11-07 to today
 """
 
+import asyncio
+import logging
 import os
 import sys
-import asyncio
-import aiohttp
-import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import aiohttp
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -39,8 +40,9 @@ if str(ROOT) not in sys.path:
 
 # Import required components
 sys.path.append(str(Path(__file__).parents[1]))
-from components.trading_calendar_fetcher import TradingCalendarFetcher
 from components.market_code_filter import MarketCodeFilter
+from components.trading_calendar_fetcher import TradingCalendarFetcher
+
 
 # Performance tracker (simplified for cache updates)
 class SimpleCacheTracker:

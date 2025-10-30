@@ -5,22 +5,24 @@ ATFT-GAT-FAN Production Training Script
 本番環境での完全トレーニング実行スクリプト
 """
 
+import logging
 import os
 import sys
-import torch
-import wandb
-import logging
 from pathlib import Path
 from types import SimpleNamespace
+
+import torch
+import wandb
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
-import pandas as pd
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import StandardScaler
+
+from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -200,12 +202,12 @@ class ProductionTrainer:
         import yaml
 
         # 設定ファイル読み込み
-        with open(self.config_path, 'r') as f:
+        with open(self.config_path) as f:
             config_dict = yaml.safe_load(f)
 
         # data設定ファイルも読み込み
         data_config_path = project_root / "configs" / "atft" / "data" / "jpx_large_scale.yaml"
-        with open(data_config_path, 'r') as f:
+        with open(data_config_path) as f:
             data_config_dict = yaml.safe_load(f)
 
         # data.featuresをメイン設定に統合

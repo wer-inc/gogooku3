@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 import torch
 from torch import nn
@@ -115,7 +114,7 @@ class PatchTSTEncoder(nn.Module):
         )
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: Time series tensor ``[B, L, F]``.

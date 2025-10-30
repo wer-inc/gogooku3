@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import Dict, List, Any
 import json
+from pathlib import Path
+from typing import Any
 
-import polars as pl
 import numpy as np
+import polars as pl
 
 from gogooku3.training.metrics import rank_ic
 
@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def calculate_metrics(df: pl.DataFrame, pred_col: str, target_col: str) -> Dict[str, float]:
+def calculate_metrics(df: pl.DataFrame, pred_col: str, target_col: str) -> dict[str, float]:
     """Calculate comprehensive metrics for a prediction column."""
     # Filter valid rows
     valid_df = df.filter(
@@ -79,7 +79,7 @@ def calculate_metrics(df: pl.DataFrame, pred_col: str, target_col: str) -> Dict[
     }
 
 
-def run_ablation_analysis(df: pl.DataFrame, target_col: str, horizons: List[int]) -> Dict[str, Any]:
+def run_ablation_analysis(df: pl.DataFrame, target_col: str, horizons: list[int]) -> dict[str, Any]:
     """Run ablation analysis across different feature sets."""
     ablation_results = {}
 
@@ -124,7 +124,7 @@ def run_ablation_analysis(df: pl.DataFrame, target_col: str, horizons: List[int]
 
 
 def analyze_stability(df: pl.DataFrame, pred_col: str, target_col: str,
-                     universe_col: str = "sector33_id") -> Dict[str, Any]:
+                     universe_col: str = "sector33_id") -> dict[str, Any]:
     """Analyze prediction stability across time periods and universes."""
     stability_results = {}
 
@@ -174,7 +174,7 @@ def analyze_stability(df: pl.DataFrame, pred_col: str, target_col: str,
     return stability_results
 
 
-def generate_html_report(results: Dict[str, Any], output_path: Path) -> None:
+def generate_html_report(results: dict[str, Any], output_path: Path) -> None:
     """Generate HTML report from results."""
     html_template = """
     <!DOCTYPE html>
@@ -300,7 +300,7 @@ def main() -> None:
     print("📊 EVALUATION REPORT")
     print("="*60)
 
-    print(f"\n✅ Overall Metrics:")
+    print("\n✅ Overall Metrics:")
     for k, v in overall_metrics.items():
         if isinstance(v, float):
             print(f"  {k}: {v:.4f}")
@@ -308,14 +308,14 @@ def main() -> None:
             print(f"  {k}: {v}")
 
     if args.ablation and "ablation" in results:
-        print(f"\n🔬 Ablation Analysis:")
+        print("\n🔬 Ablation Analysis:")
         for stage, data in results["ablation"].items():
             if "metrics" in data:
                 ric = data["metrics"].get("rank_ic", 0)
                 print(f"  {stage}: RankIC={ric:.4f}, Features={data.get('n_features', 0)}")
 
     if "stability" in results:
-        print(f"\n🔄 Stability Analysis:")
+        print("\n🔄 Stability Analysis:")
         if "fold_variance" in results["stability"]:
             fv = results["stability"]["fold_variance"]
             print(f"  Fold CV: {fv.get('cv', 0):.2%}")

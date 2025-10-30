@@ -4,14 +4,15 @@ MLflow Model Registry Integration
 モデルレジストリ管理
 """
 
-import mlflow
-from mlflow.tracking import MlflowClient
-from mlflow.models import ModelSignature
-from mlflow.types.schema import Schema, ColSpec
-import os
-from typing import Dict, List, Optional, Any
-from datetime import datetime
 import logging
+import os
+from datetime import datetime
+from typing import Any
+
+import mlflow
+from mlflow.models import ModelSignature
+from mlflow.tracking import MlflowClient
+from mlflow.types.schema import ColSpec, Schema
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class ModelRegistry:
         self,
         model_uri: str,
         name: str,
-        tags: Dict[str, str] = None,
+        tags: dict[str, str] = None,
         description: str = None,
     ) -> str:
         """
@@ -117,8 +118,8 @@ class ModelRegistry:
     def get_model(
         self,
         name: str,
-        version: Optional[str] = None,
-        stage: Optional[str] = None,
+        version: str | None = None,
+        stage: str | None = None,
     ) -> Any:
         """
         モデルを取得
@@ -143,7 +144,7 @@ class ModelRegistry:
 
         return model
 
-    def list_models(self) -> List[Dict[str, Any]]:
+    def list_models(self) -> list[dict[str, Any]]:
         """
         登録されているモデル一覧を取得
 
@@ -184,8 +185,8 @@ class ModelRegistry:
     def get_model_versions(
         self,
         name: str,
-        stages: List[str] = None,
-    ) -> List[Dict[str, Any]]:
+        stages: list[str] = None,
+    ) -> list[dict[str, Any]]:
         """
         モデルのバージョン一覧を取得
 
@@ -228,9 +229,9 @@ class ModelRegistry:
     def compare_models(
         self,
         name: str,
-        versions: List[str] = None,
-        metrics: List[str] = None,
-    ) -> Dict[str, Any]:
+        versions: list[str] = None,
+        metrics: list[str] = None,
+    ) -> dict[str, Any]:
         """
         モデルバージョンを比較
 
@@ -295,8 +296,8 @@ class ModelRegistry:
 
     def create_model_signature(
         self,
-        input_columns: List[tuple],
-        output_columns: List[tuple],
+        input_columns: list[tuple],
+        output_columns: list[tuple],
     ) -> ModelSignature:
         """
         モデルシグネチャを作成
@@ -352,7 +353,7 @@ class ModelRegistry:
         self,
         name: str,
         stage: str = "Production",
-        target_version: Optional[str] = None,
+        target_version: str | None = None,
     ):
         """
         モデルをロールバック

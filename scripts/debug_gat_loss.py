@@ -3,8 +3,9 @@
 
 import sys
 from pathlib import Path
-import torch
+
 import hydra
+import torch
 from omegaconf import DictConfig
 
 # プロジェクトルートを追加
@@ -68,7 +69,7 @@ def main(cfg: DictConfig):
     try:
         # ATFT_GAT_FAN.forward() takes a batch dict
         outputs = model(dummy_input)
-        print(f"✅ Forward pass successful")
+        print("✅ Forward pass successful")
         print(f"  Output keys: {list(outputs.keys())}")
         for key, val in outputs.items():
             if torch.is_tensor(val):
@@ -99,7 +100,7 @@ def main(cfg: DictConfig):
     edge_cond1 = model._gat_edge_reg_value is not None
     edge_cond2 = isinstance(model._gat_edge_reg_value, torch.Tensor) if edge_cond1 else False
     edge_cond3 = model.gat_edge_weight > 0
-    print(f"  Edge regularization:")
+    print("  Edge regularization:")
     print(f"    - _gat_edge_reg_value is not None: {edge_cond1}")
     print(f"    - isinstance(Tensor): {edge_cond2}")
     print(f"    - gat_edge_weight > 0: {edge_cond3}")
@@ -109,7 +110,7 @@ def main(cfg: DictConfig):
     entropy_cond1 = model._gat_attention_entropy is not None
     entropy_cond2 = isinstance(model._gat_attention_entropy, torch.Tensor) if entropy_cond1 else False
     entropy_cond3 = model.gat_entropy_weight > 0
-    print(f"  Entropy regularization:")
+    print("  Entropy regularization:")
     print(f"    - _gat_attention_entropy is not None: {entropy_cond1}")
     print(f"    - isinstance(Tensor): {entropy_cond2}")
     print(f"    - gat_entropy_weight > 0: {entropy_cond3}")
@@ -121,13 +122,13 @@ def main(cfg: DictConfig):
         edge_reg = model.gat_edge_weight * model._gat_edge_reg_value
         print(f"  ✅ Edge regularization would be: {edge_reg.item():.6f}")
     else:
-        print(f"  ❌ Edge regularization NOT calculated (conditions not met)")
+        print("  ❌ Edge regularization NOT calculated (conditions not met)")
 
     if entropy_cond1 and entropy_cond2 and entropy_cond3:
         entropy_reg = -model.gat_entropy_weight * model._gat_attention_entropy
         print(f"  ✅ Entropy regularization would be: {entropy_reg.item():.6f}")
     else:
-        print(f"  ❌ Entropy regularization NOT calculated (conditions not met)")
+        print("  ❌ Entropy regularization NOT calculated (conditions not met)")
 
     print("\n" + "=" * 80)
     print("Diagnostic Complete")

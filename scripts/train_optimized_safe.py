@@ -5,8 +5,8 @@ Uses single-worker DataLoader to ensure stability.
 """
 
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 # Add project root to path
@@ -82,7 +82,7 @@ def main():
     print("-" * 60)
 
     try:
-        result = subprocess.run(cmd, env=env, check=True)
+        subprocess.run(cmd, env=env, check=True)
         print("\n✅ Training completed successfully!")
         return 0
     except subprocess.CalledProcessError as e:

@@ -5,21 +5,22 @@ ATFT-GAT-FAN Model Evaluation Script
 632銘柄モデルの性能評価を実施
 """
 
+import logging
 import os
 import sys
-import torch
-import pandas as pd
-import numpy as np
 from pathlib import Path
-import logging
-from typing import Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+import torch
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
 import wandb
+
+from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,7 +43,7 @@ class ATFTModelEvaluator:
         if torch.cuda.is_available():
             logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    def load_model(self) -> Tuple[ATFT_GAT_FAN, Dict]:
+    def load_model(self) -> tuple[ATFT_GAT_FAN, dict]:
         """モデルの読み込み"""
         logger.info(f"Loading model from {self.model_path}")
 
@@ -50,15 +51,16 @@ class ATFTModelEvaluator:
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
 
         # モデル設定の作成（トレーニング時と同じ）
-        import yaml
         from types import SimpleNamespace
+
+        import yaml
 
         config_path = project_root / "configs" / "atft" / "config.yaml"
         data_config_path = project_root / "configs" / "atft" / "data" / "jpx_large_scale.yaml"
 
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             config_dict = yaml.safe_load(f)
-        with open(data_config_path, 'r') as f:
+        with open(data_config_path) as f:
             data_config_dict = yaml.safe_load(f)
 
         config_dict['data'] = config_dict.get('data', {})
@@ -142,7 +144,7 @@ class ATFTModelEvaluator:
         else:
             raise ValueError("Invalid checkpoint format")
 
-    def load_evaluation_data(self) -> Tuple[torch.Tensor, torch.Tensor, pd.DataFrame]:
+    def load_evaluation_data(self) -> tuple[torch.Tensor, torch.Tensor, pd.DataFrame]:
         """評価用データの読み込み"""
         logger.info(f"Loading evaluation data from {self.data_path}")
 
@@ -159,7 +161,7 @@ class ATFTModelEvaluator:
 
         return test_df
 
-    def create_evaluation_sequences(self, df: pd.DataFrame) -> Tuple[torch.Tensor, torch.Tensor]:
+    def create_evaluation_sequences(self, df: pd.DataFrame) -> tuple[torch.Tensor, torch.Tensor]:
         """評価用のシーケンス作成"""
         sequences = []
         targets = []
@@ -201,7 +203,7 @@ class ATFTModelEvaluator:
 
         return torch.tensor(sequences), torch.tensor(targets)
 
-    def evaluate_model(self, model: ATFT_GAT_FAN, sequences: torch.Tensor, targets: torch.Tensor) -> Dict:
+    def evaluate_model(self, model: ATFT_GAT_FAN, sequences: torch.Tensor, targets: torch.Tensor) -> dict:
         """モデルの評価"""
         logger.info("Starting model evaluation...")
 
@@ -269,7 +271,7 @@ class ATFTModelEvaluator:
         logger.info("✅ Model evaluation completed")
         return results
 
-    def log_to_wandb(self, results: Dict, model_info: Dict = None):
+    def log_to_wandb(self, results: dict, model_info: dict = None):
         """W&Bへの結果ログ"""
         try:
             wandb.init(
@@ -299,7 +301,7 @@ class ATFTModelEvaluator:
         except Exception as e:
             logger.warning(f"W&B logging failed: {e}")
 
-    def run_evaluation(self) -> Dict:
+    def run_evaluation(self) -> dict:
         """評価実行"""
         logger.info("🚀 Starting ATFT-GAT-FAN model evaluation")
 

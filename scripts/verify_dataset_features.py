@@ -12,12 +12,11 @@ Currently ~303-307 features are generated (88-92 futures features disabled).
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
 
 import polars as pl
 
 
-def load_dataset_columns(dataset_path: Path) -> List[str]:
+def load_dataset_columns(dataset_path: Path) -> list[str]:
     """Load column names from a parquet dataset."""
     try:
         df = pl.scan_parquet(dataset_path)
@@ -27,7 +26,7 @@ def load_dataset_columns(dataset_path: Path) -> List[str]:
         sys.exit(1)
 
 
-def categorize_features(columns: List[str]) -> Dict[str, List[str]]:
+def categorize_features(columns: list[str]) -> dict[str, list[str]]:
     """Categorize features by their prefix/type."""
     categories = {
         # Identifiers and metadata
@@ -146,7 +145,7 @@ def categorize_features(columns: List[str]) -> Dict[str, List[str]]:
     return categories
 
 
-def check_required_interactions() -> List[str]:
+def check_required_interactions() -> list[str]:
     """Return the list of required interaction features from documentation."""
     # High priority interactions (Section A)
     high_priority = [
@@ -181,7 +180,7 @@ def check_required_interactions() -> List[str]:
     return high_priority + medium_priority
 
 
-def verify_dataset(dataset_path: Path) -> Tuple[bool, Dict]:
+def verify_dataset(dataset_path: Path) -> tuple[bool, dict]:
     """Verify dataset completeness and return results."""
     columns = load_dataset_columns(dataset_path)
     categories = categorize_features(columns)
@@ -220,7 +219,7 @@ def verify_dataset(dataset_path: Path) -> Tuple[bool, Dict]:
     metadata_path = dataset_path.parent / f"{dataset_path.stem}_metadata.json"
     if metadata_path.exists():
         try:
-            with open(metadata_path, 'r') as f:
+            with open(metadata_path) as f:
                 metadata = json.load(f)
                 results["metadata"] = {
                     "columns_total": metadata.get("columns", {}).get("total"),
@@ -240,7 +239,7 @@ def verify_dataset(dataset_path: Path) -> Tuple[bool, Dict]:
     return passed, results
 
 
-def print_results(results: Dict) -> None:
+def print_results(results: dict) -> None:
     """Print verification results in a formatted way."""
     print("\n" + "="*60)
     print("📊 DATASET FEATURE VERIFICATION REPORT")
@@ -276,7 +275,7 @@ def print_results(results: Dict) -> None:
     if inter["missing"]:
         print(f"  ❌ Missing: {', '.join(inter['missing'])}")
     else:
-        print(f"  ✅ All required interactions present!")
+        print("  ✅ All required interactions present!")
 
     # Daily margin features
     print("\n💹 Daily Margin Features (dmi_*):")
@@ -287,7 +286,7 @@ def print_results(results: Dict) -> None:
         if dmi["features"]:
             print(f"  Examples: {', '.join(dmi['features'][:3])}...")
     else:
-        print(f"  ❌ Not enabled - daily margin features missing!")
+        print("  ❌ Not enabled - daily margin features missing!")
 
     # Metadata info
     if "metadata" in results:

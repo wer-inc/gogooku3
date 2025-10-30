@@ -15,13 +15,17 @@ from dataclasses import asdict
 from datetime import date as Date
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import polars as pl
 import torch
-
-from apex_ranker.backtest import CostCalculator, Portfolio, Trade
+from apex_ranker.backtest import (
+    CostCalculator,
+    Portfolio,
+    Trade,
+    normalise_frequency,
+    should_rebalance,
+)
 from apex_ranker.data import (
     FeatureSelector,
     add_cross_sectional_zscores,
@@ -235,9 +239,7 @@ class BacktestInferenceEngine:
         )
 
         clip_sigma = config.get("normalization", {}).get("clip_sigma", 5.0)
-        feature_frame = frame.select(
-            [self.date_col, self.code_col] + self.feature_cols
-        )
+        feature_frame = frame.select([self.date_col, self.code_col] + self.feature_cols)
         feature_frame = add_cross_sectional_zscores(
             feature_frame,
             columns=self.feature_cols,
@@ -363,6 +365,7 @@ def run_backtest_smoke_test(
     use_mock: bool = False,
     daily_metrics_path: Path | None = None,
     trades_path: Path | None = None,
+    rebalance_freq: str = "weekly",
 ) -> dict:
     """
     Execute backtest using either mock predictions or model inference.
@@ -373,6 +376,8 @@ def run_backtest_smoke_test(
     print("\n" + "=" * 80)
     print("Phase 3: Backtest Driver")
     print("=" * 80)
+
+    rebalance_mode = normalise_frequency(rebalance_freq)
 
     config: dict | None = None
     feature_cols: list[str] | None = None
@@ -437,6 +442,10 @@ def run_backtest_smoke_test(
     print(f"[Backtest] Horizon: {horizon}d")
 
     daily_results: list[dict] = []
+    rebalance_count = 0
+    last_rebalance_date: Date | None = None
+    last_predictions: dict[str, float] | None = None
+    last_prediction_source: str | None = None
 
     for idx, current_date in enumerate(trading_dates[:-1]):
         next_date = trading_dates[idx + 1]
@@ -451,7 +460,7 @@ def run_backtest_smoke_test(
             code: float(price)
             for code, price in zip(
                 current_frame["Code"].to_list(),
-                current_frame["Close"].to_list(),
+                current_frame["Close"].to_list(), strict=False,
             )
             if price is not None
         }
@@ -465,76 +474,92 @@ def run_backtest_smoke_test(
             codes,
             turnover_values,
             volumes,
-            closes,
+            closes, strict=False,
         ):
             if turnover_value is not None and turnover_value > 0:
                 volume_map[code] = float(turnover_value)
             elif volume is not None and close is not None:
                 volume_map[code] = float(volume) * float(close)
 
-        predictions: dict[str, float] = {}
-        prediction_source = "mock"
-
-        if inference_engine is not None and not use_mock:
-            if current_date not in prediction_dates:
-                print(f"[Backtest] {current_date}: insufficient lookback, skipping day")
-                continue
-
-            rankings = inference_engine.predict(
-                target_date=current_date,
-                horizon=horizon,
-                top_k=top_k * 3,
-            )
-
-            if rankings.is_empty():
-                print(f"[Backtest] {current_date}: model produced no candidates")
-                continue
-
-            available_codes = set(price_map.keys())
-            filtered = (
-                rankings.filter(pl.col("Code").is_in(list(available_codes))).sort("Rank")
-            )
-            if filtered.is_empty():
-                print(
-                    f"[Backtest] {current_date}: "
-                    "no overlap between predictions and price data"
-                )
-                continue
-
-            filtered = filtered.head(top_k)
-            predictions = {
-                row["Code"]: row["Score"]
-                for row in filtered.iter_rows(named=True)
-            }
-            prediction_source = "model"
-        else:
-            predictions = generate_mock_predictions(current_frame, top_k)
-
-        if not predictions:
-            print(f"[Backtest] {current_date}: no predictions generated, skipping")
-            continue
-
-        num_positions = len(predictions)
-        target_weights = {
-            code: 1.0 / num_positions for code in predictions.keys()
-        }
-
-        trades = portfolio.rebalance(
-            target_weights=target_weights,
-            prices=price_map,
-            date=current_date,
-            cost_calculator=cost_calculator,
-            volumes=volume_map,
+        prediction_source = last_prediction_source or (
+            "model" if inference_engine is not None and not use_mock else "mock"
         )
+        predictions: dict[str, float] | None = None
+        trades: list[Trade] = []
+        daily_cost = 0.0
+        did_rebalance = False
 
-        daily_cost = sum(trade.total_cost for trade in trades)
+        if should_rebalance(current_date, last_rebalance_date, rebalance_mode):
+            if inference_engine is not None and not use_mock:
+                if current_date not in prediction_dates:
+                    print(
+                        f"[Backtest] {current_date}: insufficient lookback, skipping "
+                        "rebalance attempt"
+                    )
+                else:
+                    rankings = inference_engine.predict(
+                        target_date=current_date,
+                        horizon=horizon,
+                        top_k=top_k * 3,
+                    )
+
+                    if rankings.is_empty():
+                        print(
+                            f"[Backtest] {current_date}: model produced no candidates"
+                        )
+                    else:
+                        available_codes = set(price_map.keys())
+                        filtered = rankings.filter(
+                            pl.col("Code").is_in(list(available_codes))
+                        ).sort("Rank")
+                        if filtered.is_empty():
+                            print(
+                                f"[Backtest] {current_date}: "
+                                "no overlap between predictions and price data"
+                            )
+                        else:
+                            filtered = filtered.head(top_k)
+                            predictions = {
+                                row["Code"]: row["Score"]
+                                for row in filtered.iter_rows(named=True)
+                            }
+                            prediction_source = "model"
+            else:
+                predictions = generate_mock_predictions(current_frame, top_k)
+                prediction_source = "mock"
+
+            if predictions:
+                num_positions = len(predictions)
+                target_weights = dict.fromkeys(predictions.keys(), 1.0 / num_positions)
+
+                trades = portfolio.rebalance(
+                    target_weights=target_weights,
+                    prices=price_map,
+                    date=current_date,
+                    cost_calculator=cost_calculator,
+                    volumes=volume_map,
+                )
+
+                daily_cost = sum(trade.total_cost for trade in trades)
+                last_rebalance_date = current_date
+                last_predictions = predictions
+                last_prediction_source = prediction_source
+                rebalance_count += 1
+                did_rebalance = True
+            else:
+                predictions = last_predictions
+
+        if predictions is None:
+            predictions = last_predictions
+
+        active_predictions = predictions or {}
         daily_turnover = portfolio.calculate_turnover(trades)
 
         next_prices = {
             code: float(price)
             for code, price in zip(
                 next_frame["Code"].to_list(),
-                next_frame["Close"].to_list(),
+                next_frame["Close"].to_list(), strict=False,
             )
             if price is not None
         }
@@ -547,13 +572,21 @@ def run_backtest_smoke_test(
             transaction_cost=daily_cost,
         )
         state["prediction_date"] = str(current_date)
-        state["prediction_source"] = prediction_source
-        state["selection_count"] = num_positions
-        state["selected_codes"] = list(predictions.keys())
-        state["avg_prediction_score"] = float(
-            np.mean(list(predictions.values()))
+        state["prediction_source"] = (
+            last_prediction_source if last_prediction_source else prediction_source
+        )
+        state["selection_count"] = len(portfolio.positions)
+        state["selected_codes"] = list(portfolio.positions.keys())
+        state["avg_prediction_score"] = (
+            float(np.mean(list(active_predictions.values())))
+            if active_predictions
+            else None
         )
         state["num_trades"] = len(trades)
+        state["rebalanced"] = did_rebalance
+        state["last_rebalance_date"] = (
+            str(last_rebalance_date) if last_rebalance_date else None
+        )
         daily_results.append(state)
 
         if idx % 5 == 0:
@@ -580,7 +613,9 @@ def run_backtest_smoke_test(
     print("Backtest Results")
     print("=" * 80)
     print(f"  Prediction mode: {'Model' if inference_engine else 'Mock'}")
+    print(f"  Rebalance frequency: {rebalance_mode}")
     print(f"  Trading days simulated: {len(daily_results)}")
+    print(f"  Rebalances executed: {rebalance_count}")
     print(f"  Total trades: {total_trades}")
     print(f"  Total return: {metrics.get('total_return', 0.0):.2f}%")
     print(f"  Annualized return: {metrics.get('annualized_return', 0.0):.2f}%")
@@ -594,9 +629,7 @@ def run_backtest_smoke_test(
         f"  Total transaction costs: ¥{tx_costs.get('total_cost', 0.0):,.0f} "
         f"({tx_costs.get('cost_pct_of_pv', 0.0):.2f}% of capital)"
     )
-    print(
-        f"  Avg daily cost: {tx_costs.get('avg_daily_cost_bps', 0.0):.2f} bps"
-    )
+    print(f"  Avg daily cost: {tx_costs.get('avg_daily_cost_bps', 0.0):.2f} bps")
 
     trades_records = [trade_to_dict(trade) for trade in portfolio.get_trades()]
     history_records = portfolio.get_history()
@@ -609,6 +642,7 @@ def run_backtest_smoke_test(
             "initial_capital": initial_capital,
             "top_k": top_k,
             "horizon": horizon,
+            "rebalance_frequency": rebalance_mode,
             "model_path": str(model_path) if model_path else None,
             "config_path": str(config_path) if config_path else None,
             "device": device,
@@ -621,6 +655,7 @@ def run_backtest_smoke_test(
             "prediction_days_available": len(prediction_dates)
             if inference_engine
             else len(trading_dates),
+            "rebalance_count": rebalance_count,
         },
         "performance": metrics,
         "daily_results_sample": history_records[:10],
@@ -659,9 +694,7 @@ def run_backtest_smoke_test(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="APEX-Ranker Phase 3 backtest driver"
-    )
+    parser = argparse.ArgumentParser(description="APEX-Ranker Phase 3 backtest driver")
     parser.add_argument(
         "--data",
         default="output/ml_dataset_latest_full.parquet",
@@ -713,6 +746,12 @@ def parse_args() -> argparse.Namespace:
         help="Device to run inference on",
     )
     parser.add_argument(
+        "--rebalance-freq",
+        default="weekly",
+        choices=["daily", "weekly", "monthly"],
+        help="Rebalance frequency (default: weekly)",
+    )
+    parser.add_argument(
         "--use-mock-predictions",
         action="store_true",
         help="Force mock predictions even if a model path is supplied.",
@@ -759,6 +798,7 @@ def main() -> None:
         use_mock=args.use_mock_predictions,
         daily_metrics_path=daily_metrics_path,
         trades_path=trades_path,
+        rebalance_freq=args.rebalance_freq,
     )
 
 

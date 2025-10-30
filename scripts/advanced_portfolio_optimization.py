@@ -10,7 +10,6 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -23,14 +22,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class InputSpec:
-    path: Optional[str] = None
+    path: str | None = None
     date_col: str = "date"
     code_col: str = "Code"
     pred_col: str = "predicted_return"
-    ret_col: Optional[str] = None  # 例: returns_1d / target
+    ret_col: str | None = None  # 例: returns_1d / target
 
 
-def _infer_return_column(df: pd.DataFrame) -> Optional[str]:
+def _infer_return_column(df: pd.DataFrame) -> str | None:
     candidates = [
         "actual_return",
         "returns_1d",
@@ -89,7 +88,7 @@ def _daily_long_short_returns(
                 weights[str(code)] = weights.get(str(code), 0.0) - w
 
         # 当日リターン
-        ret_map = dict(zip(g[code_col].astype(str).values, g[ret_col].values))
+        ret_map = dict(zip(g[code_col].astype(str).values, g[ret_col].values, strict=False))
         gross = sum(weights.get(k, 0.0) * ret_map.get(k, 0.0) for k in weights.keys())
 
         # ターンオーバーコスト（単純化）：前日との差のL1ノルム×cost_bps
@@ -187,11 +186,11 @@ def demo() -> dict:
     for d in dates:
         preds = rng.normal(0, 0.05, size=n_assets)
         rets = rng.normal(0, 0.01, size=n_assets)
-        for c, p, r in zip(codes, preds, rets):
+        for c, p, r in zip(codes, preds, rets, strict=False):
             rows.append({"date": d, "Code": c, "predicted_return": p, "returns_1d": r})
     df = pd.DataFrame(rows)
 
-    spec = InputSpec(path=None)
+    InputSpec(path=None)
     # ロングショート20/20、コスト5bps、符号反転ありで試す
     daily_df, sharpe = _daily_long_short_returns(
         df, "date", "Code", "predicted_return", "returns_1d", 0.2, 0.2, "ls", True, 5.0

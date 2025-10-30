@@ -6,14 +6,14 @@ Comprehensive end-to-end testing of incremental dataset update functionality
 
 from __future__ import annotations
 
+import argparse
 import json
 import shutil
 import subprocess
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
-import argparse
+from typing import Any
 
 import polars as pl
 
@@ -39,7 +39,7 @@ class E2EIncrementalTester:
 
         print("✅ Test environment ready")
 
-    def run_base_dataset_creation(self, start_date: str, end_date: str) -> Dict[str, Any]:
+    def run_base_dataset_creation(self, start_date: str, end_date: str) -> dict[str, Any]:
         """Create base dataset for incremental testing"""
         print(f"📊 Creating base dataset ({start_date} to {end_date})...")
 
@@ -74,7 +74,7 @@ class E2EIncrementalTester:
             "memory_usage_mb": df_base.estimated_size("mb")
         }
 
-    def run_incremental_update(self, since_date: str) -> Dict[str, Any]:
+    def run_incremental_update(self, since_date: str) -> dict[str, Any]:
         """Run incremental update test"""
         print(f"🔄 Running incremental update (since {since_date})...")
 
@@ -105,7 +105,7 @@ class E2EIncrementalTester:
             "memory_usage_mb": df_updated.estimated_size("mb")
         }
 
-    def run_full_pipeline_comparison(self, start_date: str, end_date: str) -> Dict[str, Any]:
+    def run_full_pipeline_comparison(self, start_date: str, end_date: str) -> dict[str, Any]:
         """Run full pipeline for comparison"""
         print(f"📈 Running full pipeline for comparison ({start_date} to {end_date})...")
 
@@ -135,7 +135,7 @@ class E2EIncrementalTester:
             "memory_usage_mb": df_full.estimated_size("mb")
         }
 
-    def verify_data_consistency(self) -> Dict[str, Any]:
+    def verify_data_consistency(self) -> dict[str, Any]:
         """Verify incremental vs full pipeline data consistency"""
         print("🔍 Verifying data consistency...")
 
@@ -176,7 +176,7 @@ class E2EIncrementalTester:
             "full_date_range": (df_full["date"].min(), df_full["date"].max())
         }
 
-    def check_lineage_tracking(self) -> Dict[str, Any]:
+    def check_lineage_tracking(self) -> dict[str, Any]:
         """Verify lineage tracking functionality"""
         print("📊 Checking lineage tracking...")
 
@@ -185,7 +185,7 @@ class E2EIncrementalTester:
             return {"error": "Lineage file not found"}
 
         lineage_entries = []
-        with open(lineage_file, 'r') as f:
+        with open(lineage_file) as f:
             for line in f:
                 if line.strip():
                     lineage_entries.append(json.loads(line))
@@ -201,7 +201,7 @@ class E2EIncrementalTester:
             "latest_entries": lineage_entries[-3:] if len(lineage_entries) >= 3 else lineage_entries
         }
 
-    def check_quality_reports(self) -> Dict[str, Any]:
+    def check_quality_reports(self) -> dict[str, Any]:
         """Check data quality reports"""
         print("🔍 Checking quality reports...")
 
@@ -217,12 +217,12 @@ class E2EIncrementalTester:
 
         quality_data = {}
         if quality_summary.exists():
-            with open(quality_summary, 'r') as f:
+            with open(quality_summary) as f:
                 quality_data = json.load(f)
 
         profiling_data = {}
         if profiling_report.exists():
-            with open(profiling_report, 'r') as f:
+            with open(profiling_report) as f:
                 profiling_data = json.load(f)
 
         return {
@@ -369,18 +369,18 @@ def main():
         output_path = base_dir / args.output
         tester.save_results(output_path)
 
-        print(f"\n🎉 E2E Testing Complete!")
+        print("\n🎉 E2E Testing Complete!")
         print(f"📊 Results saved to: {output_path}")
         print(f"📝 Report saved to: {output_path.with_suffix('.md')}")
 
         # Print summary
-        print(f"\n📈 Performance Summary:")
+        print("\n📈 Performance Summary:")
         if "performance_metrics" in results:
             perf = results["performance_metrics"]
             print(f"   Time Savings: {perf['time_savings_percent']:.1f}%")
             print(f"   Incremental Efficiency: {perf['incremental_efficiency']:.2%}")
 
-        print(f"\n✅ Data Consistency:")
+        print("\n✅ Data Consistency:")
         if "consistency_check" in results:
             consistency = results["consistency_check"]
             print(f"   Records Match: {consistency['record_count_match']}")

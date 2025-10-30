@@ -6,10 +6,10 @@ This script provides a clean, structured approach to training with RankIC optimi
 by properly setting environment variables and using dedicated Hydra configuration files.
 """
 
-import os
-import sys
-import subprocess
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 # Setup logging
@@ -175,23 +175,23 @@ def main():
     logger.info("🚀 RANKIC BOOST TRAINING - FUNDAMENTAL SOLUTION")
     logger.info("=" * 80)
     logger.info("Configuration:")
-    logger.info(f"  Config: configs/atft/config_rankic_boost.yaml")
-    logger.info(f"  Train Config: configs/atft/train/rankic_boost.yaml")
+    logger.info("  Config: configs/atft/config_rankic_boost.yaml")
+    logger.info("  Train Config: configs/atft/train/rankic_boost.yaml")
     logger.info(f"  Data: {atft_data_path}")
-    logger.info(f"  Hidden Size: 256")
-    logger.info(f"  Batch Size: 2048 (Optimized for A100)")
-    logger.info(f"  Val Batch Size: 4096")
-    logger.info(f"  Learning Rate: 5e-4")
-    logger.info(f"  Max Epochs: 120")
+    logger.info("  Hidden Size: 256")
+    logger.info("  Batch Size: 2048 (Optimized for A100)")
+    logger.info("  Val Batch Size: 4096")
+    logger.info("  Learning Rate: 5e-4")
+    logger.info("  Max Epochs: 120")
     logger.info("GPU Optimization:")
-    logger.info(f"  Mixed Precision: BF16 enabled")
-    logger.info(f"  Workers: 8 (parallel data loading)")
-    logger.info(f"  Persistent Workers: Yes")
-    logger.info(f"  Torch Compile: max-autotune")
+    logger.info("  Mixed Precision: BF16 enabled")
+    logger.info("  Workers: 8 (parallel data loading)")
+    logger.info("  Persistent Workers: Yes")
+    logger.info("  Torch Compile: max-autotune")
     logger.info("Loss Weights:")
-    logger.info(f"  RankIC Weight: 0.5 (maximum)")
-    logger.info(f"  Sharpe Weight: 0.3")
-    logger.info(f"  CS-IC Weight: 0.2")
+    logger.info("  RankIC Weight: 0.5 (maximum)")
+    logger.info("  Sharpe Weight: 0.3")
+    logger.info("  CS-IC Weight: 0.2")
     logger.info("=" * 80)
 
     # Execute training

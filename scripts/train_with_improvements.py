@@ -11,17 +11,16 @@ Improvements based on performance analysis:
 """
 
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
-from typing import Dict, Any
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def setup_improved_environment() -> Dict[str, str]:
+def setup_improved_environment() -> dict[str, str]:
     """Set up environment variables for improved performance."""
 
     env_vars = {
@@ -198,13 +197,13 @@ def run_improved_training(config_path: Path = None):
         "+compile.mode=max-autotune"
     ]
 
-    print(f"\n🔧 Running command:")
+    print("\n🔧 Running command:")
     print(" ".join(cmd))
     print("\n" + "-"*60 + "\n")
 
     # Run training with improved settings
     try:
-        result = subprocess.run(
+        subprocess.run(
             cmd,
             env=env,
             check=True,

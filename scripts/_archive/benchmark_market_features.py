@@ -12,17 +12,17 @@ TOPIX市場特徴量ベンチマーク評価スクリプト
 python scripts/benchmark_market_features.py --data-path data/processed/ml_dataset_enhanced.parquet
 """
 
+import argparse
+import json
+import logging
 import sys
-import os
+from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 import pandas as pd
 import polars as pl
-import numpy as np
-import argparse
-from datetime import datetime, timedelta
-from typing import Dict, List, Any, Optional
-import logging
-import json
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -55,7 +55,7 @@ class MarketFeaturesBenchmark:
             'performance_summary': {}
         }
 
-    def run_full_benchmark(self) -> Dict[str, Any]:
+    def run_full_benchmark(self) -> dict[str, Any]:
         """フルベンチマーク実行"""
         logger.info("🚀 Starting TOPIX Market Features Benchmark")
 
@@ -95,7 +95,7 @@ class MarketFeaturesBenchmark:
         logger.info(f"Loaded {len(df)} rows, {len(df.columns)} columns")
         return df
 
-    def analyze_data_info(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def analyze_data_info(self, df: pl.DataFrame) -> dict[str, Any]:
         """データ情報分析"""
         info = {
             'total_rows': len(df),
@@ -113,7 +113,7 @@ class MarketFeaturesBenchmark:
         logger.info(f"Data analysis: {info['unique_stocks']} stocks, {info['market_features_count']} market features")
         return info
 
-    def analyze_rank_ic(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def analyze_rank_ic(self, df: pl.DataFrame) -> dict[str, Any]:
         """RankIC分析"""
         logger.info("Analyzing RankIC performance")
 
@@ -166,7 +166,7 @@ class MarketFeaturesBenchmark:
         return results
 
     def calculate_rank_ic(self, df: pl.DataFrame, feature_col: str, target_col: str,
-                         min_periods: int = 50) -> Optional[float]:
+                         min_periods: int = 50) -> float | None:
         """RankIC計算"""
         try:
             # 日付ごとにRankICを計算
@@ -208,7 +208,7 @@ class MarketFeaturesBenchmark:
             logger.error(f"Error calculating RankIC for {feature_col}: {e}")
             return None
 
-    def analyze_feature_importance(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def analyze_feature_importance(self, df: pl.DataFrame) -> dict[str, Any]:
         """特徴量重要度分析"""
         logger.info("Analyzing feature importance")
 
@@ -252,7 +252,7 @@ class MarketFeaturesBenchmark:
 
         return results
 
-    def analyze_regime_effectiveness(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def analyze_regime_effectiveness(self, df: pl.DataFrame) -> dict[str, Any]:
         """レジーム有効性分析"""
         logger.info("Analyzing regime effectiveness")
 
@@ -307,7 +307,7 @@ class MarketFeaturesBenchmark:
 
         return results
 
-    def create_performance_summary(self) -> Dict[str, Any]:
+    def create_performance_summary(self) -> dict[str, Any]:
         """パフォーマンスサマリー作成"""
         summary = {
             'market_features_count': self.results['data_info'].get('market_features_count', 0),
@@ -379,7 +379,7 @@ class MarketFeaturesBenchmark:
         print("="*70)
 
         data_info = self.results.get('data_info', {})
-        print(f"📈 データ情報:")
+        print("📈 データ情報:")
         print(f"   • 総行数: {data_info.get('total_rows', 0):,}")
         print(f"   • 特徴量数: {data_info.get('total_features', 0)}")
         print(f"   • 銘柄数: {data_info.get('unique_stocks', 0)}")
@@ -388,7 +388,7 @@ class MarketFeaturesBenchmark:
 
         rank_ic = self.results.get('rank_ic_analysis', {})
         if rank_ic:
-            print(f"\n🎯 RankIC分析:")
+            print("\n🎯 RankIC分析:")
             for target, data in rank_ic.items():
                 stats = data.get('market_ic_stats', {})
                 if stats:
@@ -396,7 +396,7 @@ class MarketFeaturesBenchmark:
 
         regime = self.results.get('regime_effectiveness', {})
         if regime:
-            print(f"\n⚡ レジーム有効性:")
+            print("\n⚡ レジーム有効性:")
             for regime_name, data in regime.items():
                 power = data.get('predictive_power', {})
                 effect_size = power.get('effect_size', 0)
@@ -407,7 +407,7 @@ class MarketFeaturesBenchmark:
 
         recommendations = self.results.get('performance_summary', {}).get('recommendations', [])
         if recommendations:
-            print(f"\n💡 レコメンデーション:")
+            print("\n💡 レコメンデーション:")
             for rec in recommendations:
                 print(f"   • {rec}")
 
@@ -430,7 +430,7 @@ def main():
         output_dir=Path(args.output_dir)
     )
 
-    results = benchmark.run_full_benchmark()
+    benchmark.run_full_benchmark()
 
     logger.info("Benchmark completed successfully!")
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import yaml
 
@@ -15,7 +15,9 @@ class FeatureSelectionResult:
     features: list[str]
     masks: list[str]
 
-    def with_suffix(self, suffix: str, *, existing: Iterable[str] | None = None) -> list[str]:
+    def with_suffix(
+        self, suffix: str, *, existing: Iterable[str] | None = None
+    ) -> list[str]:
         """Return feature names with the given suffix appended.
 
         Args:
@@ -82,7 +84,9 @@ class FeatureSelector:
         def _extend(group_name: str) -> None:
             group_cfg = self.groups.get(group_name)
             if not group_cfg:
-                raise KeyError(f"Feature group '{group_name}' is not defined in {self.config_path}")
+                raise KeyError(
+                    f"Feature group '{group_name}' is not defined in {self.config_path}"
+                )
 
             for key in ("include", "masks"):
                 if key not in group_cfg:
@@ -106,10 +110,14 @@ class FeatureSelector:
             # Log excluded features for transparency
             excluded_count = len([f for f in exclude_features if f in exclude_set])
             if excluded_count > 0:
-                print(f"[FeatureSelector] Excluded {excluded_count} features from selection")
+                print(
+                    f"[FeatureSelector] Excluded {excluded_count} features from selection"
+                )
 
         if metadata_path:
-            self._validate_against_metadata(metadata_path, ordered_features, ordered_masks)
+            self._validate_against_metadata(
+                metadata_path, ordered_features, ordered_masks
+            )
 
         return FeatureSelectionResult(features=ordered_features, masks=ordered_masks)
 
@@ -128,10 +136,12 @@ class FeatureSelector:
 
         available_columns: set[str] = set()
         if isinstance(doc, dict):
-            for key, value in doc.items():
+            for _key, value in doc.items():
                 if isinstance(value, list):
                     available_columns.update(value)
 
         missing = [col for col in (*features, *masks) if col not in available_columns]
         if missing:
-            raise ValueError(f"Columns missing from metadata {metadata_path}: {missing}")
+            raise ValueError(
+                f"Columns missing from metadata {metadata_path}: {missing}"
+            )

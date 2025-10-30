@@ -10,9 +10,10 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+
 import hydra
-from omegaconf import DictConfig, OmegaConf
 import torch
+from omegaconf import DictConfig
 
 # Add paths
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -20,8 +21,8 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 # Import modular components
-from gogooku3.training.atft.environment import ATFTEnvironment
 from gogooku3.training.atft.data_module import ProductionDataModuleV2
+from gogooku3.training.atft.environment import ATFTEnvironment
 from gogooku3.training.atft.trainer import ATFTTrainer
 
 # Import model (assuming it exists)

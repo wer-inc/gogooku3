@@ -14,13 +14,11 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.subplots as sp
 import polars as pl
 import seaborn as sns
 from plotly.subplots import make_subplots
@@ -48,7 +46,7 @@ class ATFTVisualization:
         self.predictions = self._load_predictions()
         self.config = self._load_config()
 
-    def _load_metrics(self) -> Dict:
+    def _load_metrics(self) -> dict:
         """Load metrics from JSON files"""
         metrics_files = [
             "metrics_summary.json",
@@ -66,7 +64,7 @@ class ATFTVisualization:
 
         return metrics
 
-    def _load_predictions(self) -> Optional[pl.DataFrame]:
+    def _load_predictions(self) -> pl.DataFrame | None:
         """Load predictions parquet if available"""
         pred_path = self.run_dir / "predictions_val.parquet"
         if pred_path.exists():
@@ -74,7 +72,7 @@ class ATFTVisualization:
             return pl.read_parquet(pred_path)
         return None
 
-    def _load_config(self) -> Dict:
+    def _load_config(self) -> dict:
         """Load training configuration"""
         config_path = self.run_dir / "config.yaml"
         if config_path.exists():
@@ -84,7 +82,7 @@ class ATFTVisualization:
                 return yaml.safe_load(f)
         return {}
 
-    def plot_training_curves(self, save_path: Optional[Path] = None):
+    def plot_training_curves(self, save_path: Path | None = None):
         """Plot training curves with multiple metrics"""
         if "metrics_summary" not in self.metrics:
             logger.warning("No metrics_summary found")
@@ -115,7 +113,7 @@ class ATFTVisualization:
                     y=metrics_data["train_loss"],
                     mode="lines",
                     name="Train Loss",
-                    line=dict(color="blue"),
+                    line={"color": "blue"},
                 ),
                 row=1,
                 col=1,
@@ -127,7 +125,7 @@ class ATFTVisualization:
                     y=metrics_data["val_loss"],
                     mode="lines",
                     name="Val Loss",
-                    line=dict(color="red"),
+                    line={"color": "red"},
                 ),
                 row=1,
                 col=1,
@@ -145,7 +143,7 @@ class ATFTVisualization:
                         y=metrics_data[train_key],
                         mode="lines",
                         name=f"Train IC {horizon}d",
-                        line=dict(dash="solid"),
+                        line={"dash": "solid"},
                     ),
                     row=1,
                     col=2,
@@ -158,7 +156,7 @@ class ATFTVisualization:
                         y=metrics_data[val_key],
                         mode="lines",
                         name=f"Val IC {horizon}d",
-                        line=dict(dash="dash"),
+                        line={"dash": "dash"},
                     ),
                     row=1,
                     col=2,
@@ -187,7 +185,7 @@ class ATFTVisualization:
                     y=metrics_data["val_sharpe"],
                     mode="lines",
                     name="Validation Sharpe",
-                    line=dict(color="green", width=2),
+                    line={"color": "green", "width": 2},
                 ),
                 row=2,
                 col=2,
@@ -208,7 +206,7 @@ class ATFTVisualization:
         else:
             fig.show()
 
-    def plot_predictions_analysis(self, save_path: Optional[Path] = None):
+    def plot_predictions_analysis(self, save_path: Path | None = None):
         """Analyze predictions vs actual returns"""
         if self.predictions is None:
             logger.warning("No predictions available")
@@ -235,7 +233,7 @@ class ATFTVisualization:
                     x=df["target_1d"],
                     y=df["pred_1d"],
                     mode="markers",
-                    marker=dict(size=3, opacity=0.5),
+                    marker={"size": 3, "opacity": 0.5},
                     name="Predictions",
                 ),
                 row=1,
@@ -250,7 +248,7 @@ class ATFTVisualization:
                     x=[min_val, max_val],
                     y=[min_val, max_val],
                     mode="lines",
-                    line=dict(color="red", dash="dash"),
+                    line={"color": "red", "dash": "dash"},
                     name="Perfect Prediction",
                 ),
                 row=1,
@@ -317,7 +315,7 @@ class ATFTVisualization:
         else:
             fig.show()
 
-    def plot_portfolio_performance(self, save_path: Optional[Path] = None):
+    def plot_portfolio_performance(self, save_path: Path | None = None):
         """Analyze portfolio performance based on predictions"""
         if self.predictions is None:
             logger.warning("No predictions available")
@@ -363,7 +361,7 @@ class ATFTVisualization:
                     y=cumulative_ls.values,
                     mode="lines",
                     name="Long-Short Portfolio",
-                    line=dict(color="green"),
+                    line={"color": "green"},
                 ),
                 row=1,
                 col=1,
@@ -405,7 +403,7 @@ class ATFTVisualization:
                     mode="lines",
                     fill="tozeroy",
                     name="Drawdown (%)",
-                    line=dict(color="red"),
+                    line={"color": "red"},
                 ),
                 row=2,
                 col=2,
@@ -422,7 +420,7 @@ class ATFTVisualization:
             max_dd = drawdown.min()
             win_rate = (ls_returns > 0).mean()
 
-            print(f"\n📊 Portfolio Statistics:")
+            print("\n📊 Portfolio Statistics:")
             print(f"  Sharpe Ratio: {sharpe:.3f}")
             print(f"  Max Drawdown: {max_dd:.1%}")
             print(f"  Win Rate: {win_rate:.1%}")
@@ -437,7 +435,7 @@ class ATFTVisualization:
             else:
                 fig.show()
 
-    def plot_attention_weights(self, save_path: Optional[Path] = None):
+    def plot_attention_weights(self, save_path: Path | None = None):
         """Visualize GAT attention weights if available"""
         attention_path = self.run_dir / "attention_weights.npy"
 
@@ -452,7 +450,7 @@ class ATFTVisualization:
             data=go.Heatmap(
                 z=attention[:50, :50],  # Show first 50x50 for clarity
                 colorscale="Viridis",
-                colorbar=dict(title="Attention Weight"),
+                colorbar={"title": "Attention Weight"},
             )
         )
 
@@ -469,10 +467,10 @@ class ATFTVisualization:
         else:
             fig.show()
 
-    def create_dashboard(self, save_path: Optional[Path] = None):
+    def create_dashboard(self, save_path: Path | None = None):
         """Create comprehensive interactive dashboard"""
-        from dash import Dash, dcc, html
         import dash_bootstrap_components as dbc
+        from dash import Dash, html
 
         app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
@@ -560,7 +558,7 @@ class ATFTVisualization:
             fluid=True,
         )
 
-        logger.info(f"Dashboard created. Access at http://localhost:8050")
+        logger.info("Dashboard created. Access at http://localhost:8050")
         return app
 
 

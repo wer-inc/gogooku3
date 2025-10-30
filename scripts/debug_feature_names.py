@@ -43,8 +43,8 @@ def main():
     all_cols = df.columns
     features = [c for c in all_cols if c not in exclude]
 
-    print(f"\n📊 FEATURE ANALYSIS")
-    print(f"=" * 80)
+    print("\n📊 FEATURE ANALYSIS")
+    print("=" * 80)
     print(f"Total columns in parquet: {len(all_cols)}")
     print(f"Excluded columns: {len(exclude & set(all_cols))}")
     print(f"Feature columns: {len(features)}")

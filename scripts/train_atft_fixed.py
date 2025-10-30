@@ -6,32 +6,31 @@
 - A100 GPU最適化設定
 """
 
+import atexit
+import faulthandler
+import gc
+import inspect
+import json
+import logging
+import os
+import re
+import subprocess
+import sys
+import time
+import traceback
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import hydra
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
-import logging
-from pathlib import Path
-import sys
-from omegaconf import OmegaConf
-import pandas as pd
-import numpy as np
 from tqdm import tqdm
-import gc
-from typing import Optional
-import hydra
-from omegaconf import DictConfig
-import re
-from datetime import datetime
-from zoneinfo import ZoneInfo
-import subprocess
-import inspect
-import json
-import os
-import time
-import atexit
-import faulthandler
-import traceback
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -42,48 +41,50 @@ def _finite_or_nan_fix_tensor(tensor):
     """Fix non-finite values in tensor using clamp and nan_to_num."""
     if not torch.is_tensor(tensor):
         return tensor
-    
+
     # Replace NaN/Inf with finite values
     tensor = torch.nan_to_num(tensor, nan=0.0, posinf=1e6, neginf=-1e6)
-    
+
     # Clamp to reasonable range
     tensor = torch.clamp(tensor, min=-1e6, max=1e6)
-    
+
     return tensor
 
-def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
+def _normalize_target_key(raw_key, horizons=None):
     """Normalize various target key formats to horizon_{h} format."""
     # Direct horizon format
+    if horizons is None:
+        horizons = [1, 5, 10, 20]
     if raw_key.startswith('horizon_'):
         return raw_key
-    
+
     # Extract number from various formats
     patterns = [
         r'return_(\d+)d?',
-        r'target_(\d+)d?', 
+        r'target_(\d+)d?',
         r'label_ret_(\d+)_bps',
         r'(\d+)d?',
         r'^(\d+)$'
     ]
-    
+
     for pattern in patterns:
         match = re.search(pattern, str(raw_key))
         if match:
             h = int(match.group(1))
             if h in horizons:
                 return f'horizon_{h}'
-    
+
     return None
 
 def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
     """Reshape tensors to [B] format, taking last timestep if needed."""
     reshaped = {}
-    
+
     for key, tensor in tensor_dict.items():
         if not torch.is_tensor(tensor):
             # Skip metadata entries (e.g., codes/date) that are not tensors
             continue
-            
+
         # Fix non-finite values first (use newer guard signature)
         try:
             tensor = _finite_or_nan_fix_tensor(
@@ -92,7 +93,7 @@ def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
         except TypeError:
             # Backward compatibility if older signature is active
             tensor = _finite_or_nan_fix_tensor(tensor)
-        
+
         # Handle different shapes
         if tensor.dim() == 1:
             # Already [B] - keep as is
@@ -109,7 +110,7 @@ def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
         else:
             # Squeeze extra dimensions
             reshaped[key] = tensor.squeeze()
-            
+
     return reshaped
 
 # ---- Label clipping helper -------------------------------------------------
@@ -190,34 +191,34 @@ def _apply_phase_loss_weights(criterion, phase_idx: int, sched: dict[int, dict[s
         # Huber
         if "huber" in weights:
             if hasattr(criterion, "use_huber"):
-                setattr(criterion, "use_huber", weights["huber"] > 0)
+                criterion.use_huber = weights["huber"] > 0
             if hasattr(criterion, "huber_weight"):
-                setattr(criterion, "huber_weight", float(weights["huber"]))
+                criterion.huber_weight = float(weights["huber"])
         # Quantile (pinball)
         if "quantile" in weights:
             if hasattr(criterion, "use_pinball"):
-                setattr(criterion, "use_pinball", weights["quantile"] > 0)
+                criterion.use_pinball = weights["quantile"] > 0
             if hasattr(criterion, "pinball_weight"):
-                setattr(criterion, "pinball_weight", float(weights["quantile"]))
+                criterion.pinball_weight = float(weights["quantile"])
         # RankIC
         if "rankic" in weights or "rank_ic" in weights:
             w = weights.get("rankic", weights.get("rank_ic", 0.0))
             if hasattr(criterion, "use_rankic"):
-                setattr(criterion, "use_rankic", w > 0)
+                criterion.use_rankic = w > 0
             if hasattr(criterion, "rankic_weight"):
-                setattr(criterion, "rankic_weight", float(w))
+                criterion.rankic_weight = float(w)
         # Sharpe (portfolio returns)
         if "sharpe" in weights:
             # Some implementations include sharpe_weight; if present, set it
             if hasattr(criterion, "sharpe_weight"):
-                setattr(criterion, "sharpe_weight", float(weights["sharpe"]))
+                criterion.sharpe_weight = float(weights["sharpe"])
         # Student-t NLL
         if "t_nll" in weights or "nll" in weights:
             w = weights.get("t_nll", weights.get("nll", 0.0))
             if hasattr(criterion, "use_t_nll"):
-                setattr(criterion, "use_t_nll", w > 0)
+                criterion.use_t_nll = w > 0
             if hasattr(criterion, "nll_weight"):
-                setattr(criterion, "nll_weight", float(w))
+                criterion.nll_weight = float(w)
     except Exception:
         pass
 
@@ -377,8 +378,8 @@ _apply_train_profile()
 # Import unified metrics utilities
 try:
     from src.utils.metrics_utils import (
-        compute_pred_std_batch,
         collect_metrics_from_outputs,
+        compute_pred_std_batch,
     )
 except ImportError:
     compute_pred_std_batch = None
@@ -406,11 +407,11 @@ IC_EMA_H1 = None  # type: ignore
 use_optimized = os.getenv("USE_OPTIMIZED_LOADER", "1") == "1"
 if use_optimized:
     try:
-        from src.data.loaders.production_loader_v2_optimized import (  # noqa: E402
-            ProductionDatasetOptimized as ProductionDatasetV2,
-        )
         from src.data.loaders.production_loader_v2 import (  # noqa: E402
             ProductionDataModuleV2,
+        )
+        from src.data.loaders.production_loader_v2_optimized import (  # noqa: E402
+            ProductionDatasetOptimized as ProductionDatasetV2,
         )
 
         print("Using optimized data loader")
@@ -432,9 +433,11 @@ else:
         ProductionDatasetV2 = None  # type: ignore
         print(f"Standard loader not available ({e}); will use smoke fallback if enabled")
 from src.data.samplers.day_batch_sampler import DayBatchSampler  # noqa: E402
+
 # DayBatchSamplerFixed is not needed, using DayBatchSampler instead
 DayBatchSamplerFixed = DayBatchSampler  # Alias for compatibility
 from src.graph.graph_builder import GBConfig, GraphBuilder  # noqa: E402
+
 try:
     from src.data.utils.graph_builder import (  # noqa: E402
         FinancialGraphBuilder as AdvFinancialGraphBuilder,
@@ -443,10 +446,14 @@ except Exception:
     AdvFinancialGraphBuilder = None  # type: ignore
 
 try:
-    from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN  # noqa: E402
+    from src.atft_gat_fan.models.architectures.atft_gat_fan import (
+        ATFT_GAT_FAN,  # noqa: E402
+    )
 except ImportError:
     try:
-        from src.models.architectures.atft_gat_fan import ATFT_GAT_FAN  # type: ignore # noqa: E402
+        from src.models.architectures.atft_gat_fan import (
+            ATFT_GAT_FAN,  # type: ignore # noqa: E402
+        )
     except ImportError:
         ATFT_GAT_FAN = None
 from src.data.validation.normalization_check import NormalizationValidator  # noqa: E402
@@ -502,8 +509,8 @@ if ProductionDataModuleV2 is None:  # type: ignore
 
 # Attach file logger for live tailing (logs/ml_training.log)
 try:
-    from pathlib import Path as _Path
     import logging as _logging
+    from pathlib import Path as _Path
 
     _log_dir = _Path("logs")
     _log_dir.mkdir(parents=True, exist_ok=True)
@@ -543,7 +550,7 @@ RUN_DIR = Path(os.getenv("RUN_DIR", "runs/last"))
 RUN_DIR.mkdir(parents=True, exist_ok=True)
 
 # Optional W&B logger (via our integrated monitoring utility)
-WBLogger: Optional[object] = None  # type: ignore
+WBLogger: object | None = None  # type: ignore
 try:
     from src.utils.monitoring import ComprehensiveLogger as _WBLogger  # type: ignore
     WBLogger = _WBLogger  # alias for type hints
@@ -659,7 +666,7 @@ def collate_day(items):
             tgt_keys &= set(it["targets"].keys())
         except Exception:
             pass
-    tgt_keys = sorted(list(tgt_keys))
+    tgt_keys = sorted(tgt_keys)
     if not tgt_keys:
         # Fallback: build empty dict to avoid crash; upstream will handle
         y = {}
@@ -705,19 +712,19 @@ def _resolve_dl_params(final_config: DictConfig) -> dict:
     """
     # Try config values
     try:
-        nw_cfg = getattr(final_config.train.batch, "num_workers")
+        nw_cfg = final_config.train.batch.num_workers
     except Exception:
         nw_cfg = None
     try:
-        pf_cfg = getattr(final_config.train.batch, "prefetch_factor")
+        pf_cfg = final_config.train.batch.prefetch_factor
     except Exception:
         pf_cfg = None
     try:
-        pm_cfg = getattr(final_config.train.batch, "pin_memory")
+        pm_cfg = final_config.train.batch.pin_memory
     except Exception:
         pm_cfg = None
     try:
-        pw_cfg = getattr(final_config.train.batch, "persistent_workers")
+        pw_cfg = final_config.train.batch.persistent_workers
     except Exception:
         pw_cfg = None
 
@@ -765,7 +772,7 @@ class MultiHorizonLoss(nn.Module):
 
     def __init__(
         self,
-        horizons=[1, 5, 10, 20],
+        horizons=None,
         use_rankic: bool = False,
         rankic_weight: float = 0.0,
         # 追加: CS相関(IC)補助ロス
@@ -792,6 +799,8 @@ class MultiHorizonLoss(nn.Module):
         pred_var_min: float = 0.0,
         pred_var_weight: float = 0.0,
     ):
+        if horizons is None:
+            horizons = [1, 5, 10, 20]
         super().__init__()
         self.horizons = horizons
         self.mse = nn.MSELoss(reduction="mean")
@@ -1162,23 +1171,23 @@ class MultiHorizonLoss(nn.Module):
                 positions = -torch.sign(predictions)  # 符号を反転
             else:
                 positions = torch.sign(predictions)
-            
+
             # ポートフォリオリターン = ポジション × 実際のリターン
             portfolio_returns = positions * targets
-            
+
             # Sharpe比 = 平均リターン / リターンの標準偏差
             if len(portfolio_returns) < 2:
                 return 0.0
-                
+
             mean_return = portfolio_returns.mean()
             std_return = portfolio_returns.std()
-            
+
             if std_return < 1e-8:
                 return 0.0
-                
+
             sharpe = mean_return / std_return
             return sharpe.item()
-    
+
     @staticmethod
     def compute_ic(predictions: torch.Tensor, targets: torch.Tensor) -> float:
         """Compute Information Coefficient (IC)"""
@@ -1186,29 +1195,29 @@ class MultiHorizonLoss(nn.Module):
             # Flatten tensors
             pred_flat = predictions.flatten()
             targ_flat = targets.flatten()
-            
+
             # Remove NaN/Inf
             valid_mask = torch.isfinite(pred_flat) & torch.isfinite(targ_flat)
             if valid_mask.sum() < 2:
                 return 0.0
-            
+
             pred_valid = pred_flat[valid_mask]
             targ_valid = targ_flat[valid_mask]
-            
+
             # Pearson correlation
             pred_mean = pred_valid.mean()
             targ_mean = targ_valid.mean()
-            
+
             pred_centered = pred_valid - pred_mean
             targ_centered = targ_valid - targ_mean
-            
+
             cov = (pred_centered * targ_centered).mean()
             pred_std = pred_centered.std() + 1e-8
             targ_std = targ_centered.std() + 1e-8
-            
+
             ic = cov / (pred_std * targ_std)
             return ic.item()
-    
+
     @staticmethod
     def compute_rank_ic(predictions: torch.Tensor, targets: torch.Tensor) -> float:
         """Compute Rank IC (Spearman correlation)"""
@@ -1216,24 +1225,24 @@ class MultiHorizonLoss(nn.Module):
             # Flatten tensors
             pred_flat = predictions.flatten()
             targ_flat = targets.flatten()
-            
+
             # Remove NaN/Inf
             valid_mask = torch.isfinite(pred_flat) & torch.isfinite(targ_flat)
             if valid_mask.sum() < 2:
                 return 0.0
-            
+
             pred_valid = pred_flat[valid_mask]
             targ_valid = targ_flat[valid_mask]
-            
+
             # Compute ranks
             pred_ranks = pred_valid.argsort().argsort().float()
             targ_ranks = targ_valid.argsort().argsort().float()
-            
+
             # Spearman correlation on ranks
-            n = pred_ranks.shape[0]
+            pred_ranks.shape[0]
             pred_ranks = (pred_ranks - pred_ranks.mean()) / (pred_ranks.std() + 1e-8)
             targ_ranks = (targ_ranks - targ_ranks.mean()) / (targ_ranks.std() + 1e-8)
-            
+
             rank_ic = (pred_ranks * targ_ranks).mean()
             return rank_ic.item()
 
@@ -1391,10 +1400,10 @@ def train_epoch(
                 canon = _normalize_target_key(k)
                 if canon is not None:
                     targets[canon] = v.to(device, non_blocking=True)
-            
+
             # Reshape targets to [B] format
             targets = _reshape_to_batch_only(targets)
-            
+
             if not targets:
                 try:
                     raw_keys = list(raw_targets.keys())
@@ -1458,10 +1467,10 @@ def train_epoch(
                             mixed_targets[k] = lam * v + (1 - lam) * v2
                         targets = mixed_targets
                     outputs = model(features)
-                    
+
                     # Reshape outputs to [B] format and fix non-finite values
                     outputs = _reshape_to_batch_only(outputs)
-                    
+
                     # Optional: add small Gaussian noise to outputs for warmup (point heads only)
                     if (
                         output_noise_std > 0.0
@@ -1509,7 +1518,7 @@ def train_epoch(
                 loss_result = criterion(
                     predictions_fp32, targets_fp32, valid_masks=valid_masks
                 )
-                
+
                 # Handle both single value and tuple return
                 if isinstance(loss_result, tuple):
                     loss, losses = loss_result
@@ -1522,10 +1531,10 @@ def train_epoch(
                         "Loss tensor detached: type=%s requires_grad=%s pred_keys=%s target_keys=%s",
                         type(loss),
                         getattr(loss, "requires_grad", None),
-                        sorted(list(predictions_fp32.keys()))
+                        sorted(predictions_fp32.keys())
                         if isinstance(predictions_fp32, dict)
                         else type(predictions_fp32).__name__,
-                        sorted(list(targets_fp32.keys()))
+                        sorted(targets_fp32.keys())
                         if isinstance(targets_fp32, dict)
                         else type(targets_fp32).__name__,
                     )
@@ -1575,11 +1584,11 @@ def train_epoch(
             if batch_idx == 0 and epoch == 1:
                 try:
                     logger.info(f"criterion reduction: {criterion.mse.reduction}")
-                    
+
                     # Use FP32 shaped outputs/targets for debugging
                     stable_outputs = _reshape_to_batch_only(predictions_fp32)
                     stable_targets = _reshape_to_batch_only(targets_fp32)
-                    
+
                     for h in criterion.horizons:
                         pred_key = (
                             f"point_horizon_{h}"
@@ -1590,17 +1599,17 @@ def train_epoch(
                         if pred_key in stable_outputs and targ_key in stable_targets:
                             pred_t = stable_outputs[pred_key]
                             targ_t = stable_targets[targ_key]
-                            
+
                             # Ensure both are [B] format
                             if pred_t.dim() > 1:
                                 pred_t = pred_t.squeeze()
                             if targ_t.dim() > 1:
                                 targ_t = targ_t.squeeze()
-                                
+
                             # Fix non-finite values before computing MSE
                             pred_t = _finite_or_nan_fix_tensor(pred_t)
                             targ_t = _finite_or_nan_fix_tensor(targ_t)
-                            
+
                             mse_h = torch.nn.functional.mse_loss(
                                 pred_t, targ_t, reduction="mean"
                             ).detach()
@@ -1992,7 +2001,7 @@ def evaluate_model_metrics(
                 break
 
             features = batch["features"].to(device)
-            
+
             # Normalize and reshape targets for validation
             raw_targets = batch.get("targets", {})
             targets = {}
@@ -2000,19 +2009,19 @@ def evaluate_model_metrics(
                 canon = _normalize_target_key(k)
                 if canon is not None:
                     targets[canon] = v.to(device, non_blocking=True)
-            
+
             # Reshape targets to [B] format
             targets = _reshape_to_batch_only(targets)
-            
+
             if not targets:
                 logger.warning(f"[val-phase] no canonical targets found; raw target keys={list(raw_targets.keys())}")
                 continue
 
             outputs = model(features)
-            
+
             # Reshape outputs to [B] format and fix non-finite values
             outputs = _reshape_to_batch_only(outputs)
-            
+
             # Ensure FP32 and proper shaping for loss computation
             outputs_fp32 = _reshape_to_batch_only({
                 k: (v.float() if torch.is_tensor(v) else v) for k, v in outputs.items()
@@ -2020,9 +2029,9 @@ def evaluate_model_metrics(
             targets_fp32 = _reshape_to_batch_only({
                 k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()
             })
-            
+
             loss_result = criterion(outputs_fp32, targets_fp32)
-            
+
             # Handle both single value and tuple return
             if isinstance(loss_result, tuple):
                 loss, _ = loss_result
@@ -2201,7 +2210,7 @@ def validate(model, dataloader, criterion, device):
                 })
 
                 loss_result = criterion(outputs, targets, valid_masks=valid_masks)
-                
+
                 # Handle both single value and tuple return
                 if isinstance(loss_result, tuple):
                     loss, losses = loss_result
@@ -2468,11 +2477,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     """Phase Training実行 (A+アプローチ)"""
     import torch.nn as nn
     import torch.optim as optim
-    
+
     logger.info("=" * 80)
     logger.info("Starting Phase Training (A+ Approach)")
     logger.info("=" * 80)
-    
+
     # Phase定義
     phase_epochs_override = int(os.getenv("PHASE_MAX_EPOCHS", "0"))
     max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "100"))
@@ -2510,7 +2519,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             "grad_clip": 0.5
         }
     ]
-    
+
     # Optimizer初期化
     optimizer = optim.AdamW(
         model.parameters(),
@@ -2522,7 +2531,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     fuse_start_phase = int(os.getenv("FUSE_START_PHASE", "2"))
     # Base alpha_min from config or model attribute
     try:
-        base_alpha_min = float(getattr(getattr(config.model, "gat"), "alpha_min"))
+        base_alpha_min = float(config.model.gat.alpha_min)
     except Exception:
         base_alpha_min = float(getattr(model, "alpha_graph_min", 0.1))
     alpha_warm_min = float(os.getenv("GAT_ALPHA_WARMUP_MIN", "0.30"))
@@ -2534,7 +2543,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         logger.info("[Scheduler] Using ReduceLROnPlateau (phase-scoped)")
     else:
         logger.info(f"[Scheduler] Using Warmup+Cosine (warmup_epochs={warmup_epochs_phase})")
-    
+
     # Loss初期化 - Fixed to use correct constructor
     criterion = MultiHorizonLoss(
         horizons=config.data.time_series.prediction_horizons,
@@ -2542,7 +2551,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         huber_delta=0.01,
         huber_weight=0.3
     )
-    
+
     best_val_loss = float('inf')
     checkpoint_path = Path("output/checkpoints")
     checkpoint_path.mkdir(parents=True, exist_ok=True)
@@ -2558,26 +2567,26 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             return (curr > best + delta) if maximize else (curr < best - delta)
         except Exception:
             return False
-    
+
     for phase_idx, phase in enumerate(phases):
         logger.info(f"\n{'='*60}")
         logger.info(f"{phase['name']}")
         logger.info(f"{'='*60}")
-        
+
         # モデルトグル適用
         if hasattr(model, 'fan') and hasattr(model, 'san'):
             if not phase["toggles"]["use_fan"]:
                 model.fan = nn.Identity()
             if not phase["toggles"]["use_san"]:
                 model.san = nn.Identity()
-        
+
         # GAT有効/無効化（FUSE_FORCE_MODE反映）
         if hasattr(model, 'use_gat'):
             use_gat_flag = phase["toggles"]["use_gat"]
             if fuse_mode == "tft_only" and phase_idx < fuse_start_phase:
                 use_gat_flag = False
             model.use_gat = use_gat_flag
-        
+
         # 学習率調整
         for g in optimizer.param_groups:
             g["lr"] = phase["lr"]
@@ -2601,7 +2610,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 prog = (e_idx - warm_e) / max(1, total_e - warm_e)
                 return 0.5 * (1.0 + np.cos(np.pi * prog))
             phase_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
-        
+
         # 損失重み更新（実装に応じて安全に適用）
         try:
             # Phaseに応じて重み調整（正規化はset_preset_weights側で実施）
@@ -2624,18 +2633,18 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             _apply_phase_loss_weights(criterion, phase_idx, _phase_loss_sched)
         except Exception:
             pass
-        
+
         # 早期終了の設定（フェーズ内）
         try:
             early_stop_patience = int(os.getenv("EARLY_STOP_PATIENCE", "9"))
         except Exception:
             early_stop_patience = 9
-        
+
         # Early stopping with min_delta
         early_stop_min_delta = float(os.getenv("EARLY_STOP_MIN_DELTA", "1e-4"))
         _phase_best = -float("inf") if early_stop_maximize else float("inf")
         _no_improve = 0
-        
+
         # ReduceLROnPlateau scheduler for this phase (if selected)
         if sched_choice == "plateau":
             phase_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -2649,13 +2658,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             train_loss = 0.0
             train_batches = 0
             train_metrics = {'sharpe': [], 'ic': [], 'rank_ic': []}
-            
+
             for batch_idx, batch in enumerate(train_loader):
                 if batch_idx >= max_batches_per_epoch:  # バッチ数制限（デフォルト100）
                     break
-                    
+
                 optimizer.zero_grad()
-                
+
                 # Forward pass
                 features_b = batch["features"].to(device, non_blocking=True)
                 # Call model with a robust fallback across different forward signatures
@@ -2670,7 +2679,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         )
                     except Exception:
                         predictions = model(features_b)
-                
+
                 # Loss計算（targetsは辞書型）: 各種キーを正規化して 'horizon_{h}' に統一
                 targets_dict = {}
                 for k, target_tensor in batch.get("targets", {}).items():
@@ -2732,8 +2741,8 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 else:
                     loss = loss_result
                     losses = {}
-                
-                
+
+
                 # Backward pass (skip if loss is not a tensor or has no grad)
                 try:
                     if hasattr(loss, "requires_grad") and loss.requires_grad:
@@ -2744,7 +2753,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     logger.warning(f"[train-phase] backward skipped due to: {_be}")
                 torch.nn.utils.clip_grad_norm_(model.parameters(), phase["grad_clip"])
                 optimizer.step()
-                
+
                 # Compute metrics for main horizon (1d)
                 # Try multiple key patterns
                 pred_1d, targ_1d = None, None
@@ -2756,13 +2765,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     if targ_key in targets_dict:
                         targ_1d = targets_dict[targ_key].detach()
                         break
-                
+
                 if pred_1d is not None and targ_1d is not None:
                     # Compute metrics
                     sharpe = MultiHorizonLoss.compute_sharpe_ratio(pred_1d, targ_1d)
                     ic = MultiHorizonLoss.compute_ic(pred_1d, targ_1d)
                     rank_ic = MultiHorizonLoss.compute_rank_ic(pred_1d, targ_1d)
-                    
+
                     train_metrics['sharpe'].append(sharpe)
                     train_metrics['ic'].append(ic)
                     train_metrics['rank_ic'].append(rank_ic)
@@ -2770,13 +2779,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     # Debug: Log available keys
                     logger.debug(f"[DEBUG] Prediction keys: {list(predictions.keys())}")
                     logger.debug(f"[DEBUG] Target keys: {list(targets_dict.keys())}")
-                
+
                 try:
                     train_loss += float(loss.item() if hasattr(loss, "item") else float(loss))
                 except Exception:
                     pass
                 train_batches += 1
-            
+
             # Validation
             model.eval()
             val_loss = 0.0
@@ -2788,12 +2797,12 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             # Accumulate predictions/targets for Sharpe
             _val_preds: dict[int, list] = {h: [] for h in criterion.horizons}
             _val_targs: dict[int, list] = {h: [] for h in criterion.horizons}
-            
+
             with torch.no_grad():
                 for batch_idx, batch in enumerate(val_loader):
                     if batch_idx >= 50:  # 最初の50バッチで評価
                         break
-                        
+
                     predictions = model(
                         batch["features"].to(device),
                         batch.get("static_features", None),
@@ -2850,7 +2859,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     except Exception:
                         pass
                     val_batches += 1
-                    
+
                     # Compute validation metrics for main horizon (1d)
                     # Try multiple key patterns
                     pred_1d, targ_1d = None, None
@@ -2862,13 +2871,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         if targ_key in tdict:
                             targ_1d = tdict[targ_key].detach()
                             break
-                    
+
                     if pred_1d is not None and targ_1d is not None:
                         # Compute metrics
                         sharpe = MultiHorizonLoss.compute_sharpe_ratio(pred_1d, targ_1d)
                         ic = MultiHorizonLoss.compute_ic(pred_1d, targ_1d)
                         rank_ic = MultiHorizonLoss.compute_rank_ic(pred_1d, targ_1d)
-                        
+
                         val_metrics['sharpe'].append(sharpe)
                         val_metrics['ic'].append(ic)
                         val_metrics['rank_ic'].append(rank_ic)
@@ -2882,7 +2891,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         # Debug: Log available keys
                         logger.debug(f"[DEBUG] Val Prediction keys: {list(predictions.keys())}")
                         logger.debug(f"[DEBUG] Val Target keys: {list(tdict.keys())}")
-                    
+
                     # Store for Sharpe computation
                     try:
                         for h in criterion.horizons:
@@ -2904,7 +2913,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                     )
                     except Exception:
                         pass
-            
+
             avg_train_loss = train_loss / max(1, train_batches)
             avg_val_loss = val_loss / max(1, val_batches)
             # Compute Hit Rate on horizon=1 if available
@@ -2923,11 +2932,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             avg_train_sharpe = np.mean(train_metrics['sharpe']) if train_metrics['sharpe'] else 0.0
             avg_train_ic = np.mean(train_metrics['ic']) if train_metrics['ic'] else 0.0
             avg_train_rank_ic = np.mean(train_metrics['rank_ic']) if train_metrics['rank_ic'] else 0.0
-            
+
             avg_val_sharpe = np.mean(val_metrics['sharpe']) if val_metrics['sharpe'] else 0.0
             avg_val_ic = np.mean(val_metrics['ic']) if val_metrics['ic'] else 0.0
             avg_val_rank_ic = np.mean(val_metrics['rank_ic']) if val_metrics['rank_ic'] else 0.0
-            
+
             logger.info(
                 f"Epoch {epoch+1}/{phase['epochs']}: "
                 f"Train Loss={avg_train_loss:.4f}, Val Loss={avg_val_loss:.4f}, "
@@ -2943,7 +2952,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             try:
                 if hasattr(model, "alpha_logit"):
                     alpha_min_now = float(getattr(model, "alpha_graph_min", base_alpha_min))
-                    alpha_val = alpha_min_now + (1 - alpha_min_now) * torch.sigmoid(getattr(model, "alpha_logit")).mean().item()
+                    alpha_val = alpha_min_now + (1 - alpha_min_now) * torch.sigmoid(model.alpha_logit).mean().item()
                     logger.info(f"  Fusion alpha (mean): {alpha_val:.4f} (alpha_min={alpha_min_now:.2f})")
             except Exception:
                 pass
@@ -3039,7 +3048,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     )
             except Exception as _swe2:
                 logger.debug(f"metrics_summary.json fallback write skipped: {_swe2}")
-            
+
             # Best model保存（選択メトリクスで評価、保存メタに値を記録）
             chosen_curr = avg_val_loss
             try:
@@ -3079,7 +3088,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     phase_scheduler.step()
             except Exception:
                 pass
-            
+
             # Early stopping (phase scoped)
             curr_for_es = chosen_curr
             if _is_better(curr_for_es, _phase_best, early_stop_maximize, early_stop_min_delta):
@@ -3090,11 +3099,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 if _no_improve >= early_stop_patience:
                     logger.info(f"⏹ Early stopping phase {phase_idx} after {epoch+1} epochs (best_{early_stop_metric}={_phase_best:.4f})")
                     break
-    
+
     logger.info("=" * 80)
     logger.info(f"Phase Training Complete. Best Val Loss: {best_val_loss:.4f}; EarlyStop Metric: {early_stop_metric}")
     logger.info("=" * 80)
-    
+
     return model
 
 
@@ -3353,6 +3362,7 @@ def fix_seed(seed: int = 42, deterministic: bool = False):
     """Fix random seeds for reproducibility"""
     import os
     import random
+
     import numpy as np
 
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -3699,7 +3709,7 @@ def train(config: DictConfig) -> None:
             proj = os.getenv("WANDB_PROJECT", None)
             if proj:
                 # Attach project name into config for the logger
-                setattr(final_config, "wandb_project", proj)
+                final_config.wandb_project = proj
         except Exception:
             pass
         if use_wandb and WBLogger is not None:
@@ -3761,7 +3771,7 @@ def train(config: DictConfig) -> None:
             # Try to fetch alpha_min from config if present
             alpha_min_cfg = None
             try:
-                alpha_min_cfg = getattr(getattr(final_config.model, "gat"), "alpha_min")
+                alpha_min_cfg = final_config.model.gat.alpha_min
             except Exception:
                 alpha_min_cfg = None
             mlf.log_params(
@@ -3789,7 +3799,7 @@ def train(config: DictConfig) -> None:
     # Ensure required keys exist (Hydra struct safety) using OmegaConf-safe updates
     try:
         # Ensure model exists as mapping
-        if "model" not in final_config or getattr(final_config, "model") is None:
+        if "model" not in final_config or final_config.model is None:
             final_config.model = OmegaConf.create({})
         # Ensure model.gat exists as mapping
         if OmegaConf.select(final_config, "model.gat") is None:
@@ -3866,7 +3876,7 @@ def train(config: DictConfig) -> None:
         if tft_temporal is not None:
             cur_max = getattr(tft_temporal, "max_sequence_length", None)
             if cur_max is None or int(cur_max) < int(seq_len_cfg):
-                setattr(tft_temporal, "max_sequence_length", int(seq_len_cfg))
+                tft_temporal.max_sequence_length = int(seq_len_cfg)
                 logger.info(
                     f"[PE] Set model.tft.temporal.max_sequence_length={seq_len_cfg}"
                 )
@@ -4070,7 +4080,7 @@ def train(config: DictConfig) -> None:
             margin_days = seq_len + max_h
             embargo = pd.to_timedelta(embargo_days, unit="D")
             selected_idx = None
-            for i, (vs, ve) in enumerate(fold_ranges):
+            for i, (vs, _ve) in enumerate(fold_ranges):
                 train_end_eff_i = pd.Timestamp(vs) - embargo
                 if train_end_eff_i >= (
                     pd.Timestamp(min_date) + pd.Timedelta(days=margin_days)
@@ -4195,6 +4205,7 @@ def train(config: DictConfig) -> None:
                         def _winit(worker_id: int):
                             s = base_seed + worker_id
                             import random
+
                             import numpy as _np
 
                             random.seed(s)
@@ -4272,6 +4283,7 @@ def train(config: DictConfig) -> None:
                     def _winit_v(worker_id: int):
                         s = int(os.getenv("DL_SEED", "42")) + worker_id
                         import random
+
                         import numpy as _np
 
                         random.seed(s)
@@ -4363,6 +4375,7 @@ def train(config: DictConfig) -> None:
             def _winit2(worker_id: int):
                 s = int(os.getenv("DL_SEED", "42")) + worker_id
                 import random
+
                 import numpy as _np
 
                 random.seed(s)
@@ -4402,6 +4415,7 @@ def train(config: DictConfig) -> None:
             def _winit3(worker_id: int):
                 s = int(os.getenv("DL_SEED", "42")) + worker_id
                 import random
+
                 import numpy as _np
 
                 random.seed(s)
@@ -4482,8 +4496,8 @@ def train(config: DictConfig) -> None:
         if isinstance(tr_cols, list) and isinstance(va_cols, list):
             s_tr, s_va = set(tr_cols), set(va_cols)
             if tr_cols != va_cols:
-                only_tr = sorted(list(s_tr - s_va))[:10]
-                only_va = sorted(list(s_va - s_tr))[:10]
+                only_tr = sorted(s_tr - s_va)[:10]
+                only_va = sorted(s_va - s_tr)[:10]
                 msg = f"[feature-cols] mismatch: train={len(tr_cols)} val={len(va_cols)}; only_train={only_tr} only_val={only_va}"
                 logger.error(msg)
                 raise RuntimeError(msg)
@@ -4502,7 +4516,7 @@ def train(config: DictConfig) -> None:
             logger.info(f"✅ Train batches: {len(train_loader)}")
         except Exception:
             logger.info("Train batches: unknown")
-    
+
     if val_loader is None:
         logger.warning("⚠️  Val loader: None (validation disabled)")
     else:
@@ -4567,8 +4581,8 @@ def train(config: DictConfig) -> None:
                 try:
                     if (
                         hasattr(data_module, "available_dates")
-                        and getattr(data_module, "available_dates") is not None
-                        and len(getattr(data_module, "available_dates")) > 0
+                        and data_module.available_dates is not None
+                        and len(data_module.available_dates) > 0
                     ):
                         data_min = pd.Timestamp(
                             data_module.available_dates[0]
@@ -5238,7 +5252,7 @@ def train(config: DictConfig) -> None:
         swa_scheduler = None
         if use_swa:
             try:
-                from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
+                from torch.optim.swa_utils import SWALR, AveragedModel, update_bn
 
                 swa_model = AveragedModel(model)
                 swa_scheduler = SWALR(
@@ -5349,7 +5363,7 @@ def train(config: DictConfig) -> None:
 
                 def _supports_graph(mdl) -> bool:
                     try:
-                        if hasattr(mdl, "gat") and getattr(mdl, "gat") is not None:
+                        if hasattr(mdl, "gat") and mdl.gat is not None:
                             return True
                         sig = inspect.signature(mdl.forward)
                         return ("edge_index" in sig.parameters) or (
@@ -5529,12 +5543,12 @@ def train(config: DictConfig) -> None:
                             try:
                                 thr = None
                                 try:
-                                    thr = float(getattr(getattr(final_config.data, "graph_builder", {}), "edge_threshold"))
+                                    thr = float(getattr(final_config.data, "graph_builder", {}).edge_threshold)
                                 except Exception:
                                     pass
                                 if thr is None:
                                     try:
-                                        thr = float(getattr(getattr(final_config.data, "graph", {}), "edge_threshold"))
+                                        thr = float(getattr(final_config.data, "graph", {}).edge_threshold)
                                     except Exception:
                                         thr = None
                                 if thr is None:
@@ -5542,7 +5556,8 @@ def train(config: DictConfig) -> None:
                             except Exception:
                                 thr = 0.3
                             # Use local correlation edge builder (batch-level)
-                            from src.graph.graph_builder import GraphBuilder as _GBL, GBConfig as _GBC
+                            from src.graph.graph_builder import GBConfig as _GBC
+                            from src.graph.graph_builder import GraphBuilder as _GBL
 
                             _gb_local = _GBL(
                                 _GBC(max_nodes=int(feats_full.size(0)), edge_threshold=float(thr))
@@ -5647,9 +5662,7 @@ def train(config: DictConfig) -> None:
                         try:
                             if hasattr(model, "alpha_graph_min"):
                                 base_alpha_min = float(
-                                    getattr(
-                                        getattr(final_config.model, "gat"), "alpha_min"
-                                    )
+                                    final_config.model.gat.alpha_min
                                     if hasattr(final_config, "model")
                                     else getattr(model, "alpha_graph_min", 0.1)
                                 )
@@ -5763,8 +5776,10 @@ def train(config: DictConfig) -> None:
                             ):
                                 try:
                                     from src.graph.graph_builder import (
-                                        GraphBuilder as _GBL2,
                                         GBConfig as _GBC2,
+                                    )
+                                    from src.graph.graph_builder import (
+                                        GraphBuilder as _GBL2,
                                     )
 
                                     try:
@@ -5776,20 +5791,14 @@ def train(config: DictConfig) -> None:
                                         thr = None
                                         try:
                                             thr = float(
-                                                getattr(
-                                                    getattr(final_config.data, "graph_builder", {}),
-                                                    "edge_threshold",
-                                                )
+                                                getattr(final_config.data, "graph_builder", {}).edge_threshold
                                             )
                                         except Exception:
                                             pass
                                         if thr is None:
                                             try:
                                                 thr = float(
-                                                    getattr(
-                                                        getattr(final_config.data, "graph", {}),
-                                                        "edge_threshold",
-                                                    )
+                                                    getattr(final_config.data, "graph", {}).edge_threshold
                                                 )
                                             except Exception:
                                                 thr = None
@@ -6246,7 +6255,7 @@ def train(config: DictConfig) -> None:
                         with torch.no_grad():
                             alpha_min = float(getattr(model, "alpha_graph_min", 0.0))
                             alpha = alpha_min + (1 - alpha_min) * torch.sigmoid(
-                                getattr(model, "alpha_logit")
+                                model.alpha_logit
                             )
                             alpha_mean = float(alpha.mean().item())
                             logger.info(
@@ -6298,7 +6307,7 @@ def train(config: DictConfig) -> None:
                             try:
                                 if (
                                     hasattr(mdl, "gat")
-                                    and getattr(mdl, "gat") is not None
+                                    and mdl.gat is not None
                                 ):
                                     return True
                                 sig = inspect.signature(mdl.forward)
@@ -6425,8 +6434,10 @@ def train(config: DictConfig) -> None:
                             ):
                                 try:
                                     from src.graph.graph_builder import (
-                                        GraphBuilder as _GBL2,
                                         GBConfig as _GBC2,
+                                    )
+                                    from src.graph.graph_builder import (
+                                        GraphBuilder as _GBL2,
                                     )
                                     # Resolve codes list for this batch (full day-batch might be preferable, but use what we have)
                                     try:
@@ -6798,7 +6809,7 @@ def train(config: DictConfig) -> None:
                         # バッチ内の全行に同一日付を適用（day-batch前提）
                         dates = [str(date_val) if date_val is not None else None] * int(yhat.shape[0])
 
-                        for c, d, p, a in zip(codes, dates, yhat.numpy().tolist(), ([] if y is None else y.numpy().tolist())):
+                        for c, d, p, a in zip(codes, dates, yhat.numpy().tolist(), ([] if y is None else y.numpy().tolist()), strict=False):
                             rows.append({
                                 "date": d,
                                 "Code": str(c) if c is not None else None,
@@ -7003,7 +7014,7 @@ def train(config: DictConfig) -> None:
             elif _pt_env in ("1", "true", "on"):
                 class _PT: pass
                 _pt_cfg = _PT()
-                setattr(_pt_cfg, "enabled", True)
+                _pt_cfg.enabled = True
 
             if _pt_cfg is not None and bool(getattr(_pt_cfg, "enabled", False)):
                 logger.info("[PhaseTraining] enabled; running phase-wise training")
@@ -7163,10 +7174,14 @@ def train(config: DictConfig) -> None:
                 mem_gb = 6.0
             # Import pipeline
             try:
-                from gogooku3.training.safe_training_pipeline import SafeTrainingPipeline
+                from gogooku3.training.safe_training_pipeline import (
+                    SafeTrainingPipeline,
+                )
             except Exception:
                 try:
-                    from src.gogooku3.training.safe_training_pipeline import SafeTrainingPipeline
+                    from src.gogooku3.training.safe_training_pipeline import (
+                        SafeTrainingPipeline,
+                    )
                 except Exception as _ie:
                     logger.warning(f"[SafeEval] SafeTrainingPipeline import failed: {_ie}")
                     return
@@ -7265,7 +7280,7 @@ def _maybe_output_hpo_metrics(final_config, best_val_loss, run_manifest):
                 if metrics_files:
                     # Get the latest metrics file
                     latest_metrics = max(metrics_files, key=lambda p: p.stat().st_mtime)
-                    with open(latest_metrics, 'r') as f:
+                    with open(latest_metrics) as f:
                         metrics_data = json.load(f)
 
                     # Extract metrics

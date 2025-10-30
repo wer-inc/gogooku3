@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import polars as pl
@@ -59,12 +59,19 @@ def build_panel_cache(
         codes_data[str(code)] = {
             "dates": dates_int,
             "features": feat_arr.astype(np.float32, copy=False),
-            "targets": None if targ_arr is None else targ_arr.astype(np.float32, copy=False),
-            "masks": None if mask_arr is None else mask_arr.astype(np.float32, copy=False),
+            "targets": None
+            if targ_arr is None
+            else targ_arr.astype(np.float32, copy=False),
+            "masks": None
+            if mask_arr is None
+            else mask_arr.astype(np.float32, copy=False),
         }
 
     unique_dates = (
-        sorted_df.select(pl.col(date_col).unique()).to_series().to_numpy().astype("datetime64[D]")
+        sorted_df.select(pl.col(date_col).unique())
+        .to_series()
+        .to_numpy()
+        .astype("datetime64[D]")
     )
     unique_date_ints = np.unique(unique_dates.astype("int64"))
 

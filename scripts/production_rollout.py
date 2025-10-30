@@ -6,15 +6,14 @@ Production rollout helper
 - Optionally runs Walk-Forward + Embargo evaluation per seed
 """
 
-import os
-import sys
-import json
-import time
-import shutil
 import argparse
+import json
+import os
+import shutil
 import subprocess
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
 
 
 def run(cmd: list[str], env: dict | None = None, cwd: str | None = None) -> int:
@@ -188,7 +187,7 @@ def main() -> int:
                 # Pick latest summary json in folder
                 try:
                     latest = max(eval_out.glob("wf_summary_*.json"), key=lambda p: p.stat().st_mtime)
-                    with open(latest, "r") as f:
+                    with open(latest) as f:
                         eval_result = json.load(f)
                 except Exception:
                     eval_result = None

@@ -4,13 +4,11 @@ Phase 0: Diagnose target variable distribution
 目的: returns_*d の分布を確認し、学習可能な状態かを検証
 """
 
-import pandas as pd
-import numpy as np
-import polars as pl
 from pathlib import Path
-import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy import stats
+
+import numpy as np
+import pandas as pd
+
 
 def analyze_target_distribution():
     """ターゲット変数の分布を詳細に分析"""
@@ -87,7 +85,7 @@ def analyze_target_distribution():
         print(f"  Kurtosis:     {stats_dict['kurtosis']:.3f}")
 
         # 分位点
-        print(f"\n  Quantiles:")
+        print("\n  Quantiles:")
         print(f"    1%:         {stats_dict['q01']:.6f}")
         print(f"    5%:         {stats_dict['q05']:.6f}")
         print(f"    25%:        {stats_dict['q25']:.6f}")
@@ -96,7 +94,7 @@ def analyze_target_distribution():
         print(f"    99%:        {stats_dict['q99']:.6f}")
 
         # 問題の検出
-        print(f"\n  ⚠️ Potential Issues:")
+        print("\n  ⚠️ Potential Issues:")
         print(f"    Zero ratio:      {stats_dict['zero_ratio']:.2%}")
         print(f"    Near-zero ratio: {stats_dict['near_zero_ratio']:.2%}")
         print(f"    Unique values:   {stats_dict['unique_values']:,}")
@@ -104,17 +102,17 @@ def analyze_target_distribution():
         # スケールの問題判定
         if stats_dict['std'] < 0.001:
             print(f"    🔴 CRITICAL: Standard deviation too small ({stats_dict['std']:.6f})")
-            print(f"       → Model cannot learn from such small variations!")
+            print("       → Model cannot learn from such small variations!")
         elif stats_dict['std'] < 0.01:
             print(f"    🟡 WARNING: Small standard deviation ({stats_dict['std']:.6f})")
-            print(f"       → May cause learning difficulties")
+            print("       → May cause learning difficulties")
         else:
             print(f"    🟢 OK: Standard deviation acceptable ({stats_dict['std']:.6f})")
 
         # IQRチェック
         if stats_dict['iqr'] < 0.001:
             print(f"    🔴 CRITICAL: IQR too small ({stats_dict['iqr']:.6f})")
-            print(f"       → Most values are nearly identical!")
+            print("       → Most values are nearly identical!")
 
         # 外れ値の検出
         outlier_threshold = 3

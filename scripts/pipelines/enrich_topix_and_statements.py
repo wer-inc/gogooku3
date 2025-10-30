@@ -21,10 +21,10 @@ Writes a new enriched file and updates the ml_dataset_latest_full.parquet symlin
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from datetime import datetime
 import json
 import sys
+from datetime import datetime
+from pathlib import Path
 
 import polars as pl
 

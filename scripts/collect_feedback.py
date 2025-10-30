@@ -4,13 +4,12 @@ ATFT-GAT-FAN Team Feedback Collection
 チームフィードバック収集スクリプト
 """
 
-import os
-import sys
 import json
 import logging
-from pathlib import Path
+import sys
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from pathlib import Path
+from typing import Any
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -50,7 +49,7 @@ class FeedbackCollector:
             "additional_notes": ""
         }
 
-    def create_feedback_template(self, reviewer_name: str, role: str) -> Dict[str, Any]:
+    def create_feedback_template(self, reviewer_name: str, role: str) -> dict[str, Any]:
         """フィードバックテンプレートを作成"""
         template = self.feedback_template.copy()
         template["reviewer"] = reviewer_name
@@ -58,7 +57,7 @@ class FeedbackCollector:
         template["timestamp"] = datetime.now().isoformat()
         return template
 
-    def save_feedback(self, feedback: Dict[str, Any]):
+    def save_feedback(self, feedback: dict[str, Any]):
         """フィードバックを保存"""
         reviewer = feedback["reviewer"].replace(" ", "_").lower()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -71,12 +70,12 @@ class FeedbackCollector:
         logger.info(f"Feedback saved: {feedback_file}")
         return feedback_file
 
-    def load_feedback(self, feedback_file: Path) -> Dict[str, Any]:
+    def load_feedback(self, feedback_file: Path) -> dict[str, Any]:
         """フィードバックを読み込み"""
-        with open(feedback_file, 'r', encoding='utf-8') as f:
+        with open(feedback_file, encoding='utf-8') as f:
             return json.load(f)
 
-    def generate_feedback_summary(self) -> Dict[str, Any]:
+    def generate_feedback_summary(self) -> dict[str, Any]:
         """フィードバック要約を生成"""
         feedback_files = list(self.feedback_dir.glob("feedback_*.json"))
 
@@ -123,7 +122,7 @@ class FeedbackCollector:
         # 統計計算
         total_rating = 0
         approved_count = 0
-        category_totals = {cat: 0 for cat in summary["category_averages"].keys()}
+        category_totals = dict.fromkeys(summary["category_averages"].keys(), 0)
 
         for feedback in all_feedback:
             # 全体評価
@@ -174,7 +173,7 @@ class FeedbackCollector:
 
         return summary
 
-    def display_feedback_summary(self, summary: Dict[str, Any]):
+    def display_feedback_summary(self, summary: dict[str, Any]):
         """フィードバック要約を表示"""
         print("\n" + "="*80)
         print("ATFT-GAT-FAN TEAM FEEDBACK SUMMARY")
@@ -184,35 +183,35 @@ class FeedbackCollector:
             print("❌ No feedback collected yet")
             return
 
-        print(f"\n📊 OVERVIEW")
+        print("\n📊 OVERVIEW")
         print(f"  Total Reviews: {summary['total_reviews']}")
         print(f"  Average Rating: {summary['overall_stats']['average_rating']}/5")
         print(f"  Approval Rate: {summary['overall_stats']['approval_rate']}%")
         print(f"  Blocking Issues: {summary['overall_stats']['blocking_issues_count']}")
         print(f"  Overall Status: {summary['approval_status'].upper()}")
 
-        print(f"\n📈 CATEGORY RATINGS")
+        print("\n📈 CATEGORY RATINGS")
         for category, rating in summary['category_averages'].items():
             print(f"  {category.replace('_', ' ').title()}: {rating}/5")
 
-        print(f"\n✅ COMMON STRENGTHS")
+        print("\n✅ COMMON STRENGTHS")
         sorted_strengths = sorted(summary['common_strengths'].items(), key=lambda x: x[1], reverse=True)
         for strength, count in sorted_strengths[:5]:  # Top 5
             print(f"  {strength} ({count} mentions)")
 
         if summary['common_weaknesses']:
-            print(f"\n⚠️ COMMON WEAKNESSES")
+            print("\n⚠️ COMMON WEAKNESSES")
             sorted_weaknesses = sorted(summary['common_weaknesses'].items(), key=lambda x: x[1], reverse=True)
             for weakness, count in sorted_weaknesses[:5]:  # Top 5
                 print(f"  {weakness} ({count} mentions)")
 
         if summary['common_suggestions']:
-            print(f"\n💡 COMMON SUGGESTIONS")
+            print("\n💡 COMMON SUGGESTIONS")
             sorted_suggestions = sorted(summary['common_suggestions'].items(), key=lambda x: x[1], reverse=True)
             for suggestion, count in sorted_suggestions[:5]:  # Top 5
                 print(f"  {suggestion} ({count} mentions)")
 
-        print(f"\n👥 REVIEWERS")
+        print("\n👥 REVIEWERS")
         for reviewer in summary['reviewers']:
             status_icon = "✅" if reviewer['status'] == 'approved' else "❌" if reviewer['status'] == 'rejected' else "⏳"
             print(f"  {status_icon} {reviewer['name']} ({reviewer['role']}): {reviewer['rating']}/5")

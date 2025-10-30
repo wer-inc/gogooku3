@@ -256,7 +256,7 @@ def main():
         logger.info("  Mode: DRY RUN (no files uploaded)")
         logger.info("  Run without --dry-run to execute upload")
     else:
-        logger.info(f"  ✅ Sync complete")
+        logger.info("  ✅ Sync complete")
 
     logger.info("=" * 80)
 

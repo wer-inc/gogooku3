@@ -4,9 +4,11 @@ Create clean dataset without data leakage
 目的: データリークを除去したクリーンなデータセットを作成
 """
 
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
 
 def create_clean_dataset():
     """データリークを除去したクリーンなデータセットを作成"""
@@ -95,14 +97,14 @@ def create_clean_dataset():
                        if col not in meta_cols + target_cols
                        and clean_df[col].dtype in ['float64', 'float32', 'int64', 'int32']]
 
-    print(f"\n📊 Feature types:")
+    print("\n📊 Feature types:")
     print(f"   Numeric features: {len(numeric_features)}")
     print(f"   Non-numeric features: {len([c for c in clean_df.columns if c not in meta_cols + target_cols]) - len(numeric_features)}")
 
     # 5. 保存
     print(f"\n💾 Saving clean dataset to: {output_path}")
     clean_df.to_parquet(output_path, index=False)
-    print(f"✅ Clean dataset saved successfully!")
+    print("✅ Clean dataset saved successfully!")
 
     # 6. 簡単な検証
     print("\n" + "=" * 60)

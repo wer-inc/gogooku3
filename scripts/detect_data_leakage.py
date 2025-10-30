@@ -4,8 +4,8 @@ Critical: Detect and fix data leakage
 目的: ターゲット変数が特徴量に含まれていないか確認
 """
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 
 def check_normalization_stats(df, feature_cols, verbose=True):

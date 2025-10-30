@@ -7,13 +7,14 @@ This script runs a real production scenario:
 - Expected: Partial match detected, only 3 days fetched from API
 """
 
+import asyncio
+import logging
 import os
 import sys
-import asyncio
-import aiohttp
-import logging
 from datetime import datetime
 from pathlib import Path
+
+import aiohttp
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -45,11 +46,11 @@ async def main():
     start_date = "2025-09-30"
     end_date = "2025-10-16"
 
-    logger.info(f"Test scenario:")
+    logger.info("Test scenario:")
     logger.info(f"  Request range: {start_date} to {end_date}")
-    logger.info(f"  Existing cache: 2015-10-16 to 2025-10-13")
-    logger.info(f"  Expected: Partial match (~90% coverage)")
-    logger.info(f"  Should fetch only: 2025-10-14 to 2025-10-16 (3 days)")
+    logger.info("  Existing cache: 2015-10-16 to 2025-10-13")
+    logger.info("  Expected: Partial match (~90% coverage)")
+    logger.info("  Should fetch only: 2025-10-14 to 2025-10-16 (3 days)")
     logger.info("")
 
     # Get credentials
@@ -63,8 +64,9 @@ async def main():
     try:
         # Import components
         sys.path.append(str(Path(__file__).parents[1]))
-        from components.trading_calendar_fetcher import TradingCalendarFetcher
-        from scripts.pipelines.run_pipeline_v4_optimized import JQuantsOptimizedFetcherV4
+        from scripts.pipelines.run_pipeline_v4_optimized import (
+            JQuantsOptimizedFetcherV4,
+        )
 
         async with aiohttp.ClientSession() as session:
             # Create performance tracker
@@ -73,7 +75,9 @@ async def main():
             tracker = PerformanceTracker()
 
             # Create fetcher (will authenticate)
-            from scripts.pipelines.run_pipeline_v4_optimized import JQuantsOptimizedFetcherV4
+            from scripts.pipelines.run_pipeline_v4_optimized import (
+                JQuantsOptimizedFetcherV4,
+            )
             fetcher = JQuantsOptimizedFetcherV4(email, password, tracker)
             await fetcher.authenticate(session)
 
@@ -150,7 +154,7 @@ async def main():
 
             if cache_path.exists():
                 cache_size_mb = cache_path.stat().st_size / (1024 * 1024)
-                logger.info(f"✅ Extended cache created:")
+                logger.info("✅ Extended cache created:")
                 logger.info(f"   File: {cache_name}")
                 logger.info(f"   Size: {cache_size_mb:.1f} MB")
             else:
@@ -163,8 +167,8 @@ async def main():
             if cache_stats.get('cache_hits', 0) > 0:
                 if elapsed < 10:  # Partial match should be much faster than full fetch
                     logger.info("✅ SUCCESS: Partial match cache working correctly!")
-                    logger.info(f"   Time saved: ~35-40s compared to full API fetch")
-                    logger.info(f"   Efficiency: Only fetched missing 3 days instead of full range")
+                    logger.info("   Time saved: ~35-40s compared to full API fetch")
+                    logger.info("   Efficiency: Only fetched missing 3 days instead of full range")
                 else:
                     logger.warning(f"⚠️  WARNING: Cache hit recorded but time is high ({elapsed:.1f}s)")
             else:

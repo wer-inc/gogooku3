@@ -17,6 +17,7 @@ sys.path.insert(0, str(project_root))
 
 import aiohttp
 from dotenv import load_dotenv
+
 from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher
 
 # Load environment variables
@@ -171,12 +172,12 @@ async def test_api_endpoints():
         for r in results:
             if not r["available"] and "PREMIUM REQUIRED" in r["status"]:
                 print(f"\n❌ Disable: {r['name']}")
-                print(f"   This API requires Premium plan subscription.")
-                print(f"   Update run_full_dataset.py to disable by default.")
+                print("   This API requires Premium plan subscription.")
+                print("   Update run_full_dataset.py to disable by default.")
             elif not r["available"] and "NOT FOUND" in r["status"]:
                 print(f"\n❌ Remove: {r['name']}")
-                print(f"   This endpoint may not exist in J-Quants API.")
-                print(f"   Consider removing this feature entirely.")
+                print("   This endpoint may not exist in J-Quants API.")
+                print("   Consider removing this feature entirely.")
 
         print("\n" + "=" * 80)
 

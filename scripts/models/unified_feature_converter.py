@@ -7,9 +7,9 @@ Converts ML dataset to ATFT-compatible format with proper time-series structure
 import json
 import logging
 import os
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import polars as pl
@@ -24,7 +24,7 @@ class UnifiedFeatureConverter:
     def __init__(
         self,
         sequence_length: int = 60,
-        prediction_horizons: List[int] = None,
+        prediction_horizons: list[int] = None,
         min_samples_per_code: int = 100,
     ):
         """
@@ -135,7 +135,7 @@ class UnifiedFeatureConverter:
             logger.warning(f"Could not create targets for horizons: {need}")
         return out
 
-    def _detect_feature_columns(self, df: pl.DataFrame) -> List[str]:
+    def _detect_feature_columns(self, df: pl.DataFrame) -> list[str]:
         """Auto-detect feature columns (numeric columns excluding metadata)"""
         exclude_cols = {"Code", "Date", "code", "date", "index", "split_fold"}
         # Exclude obvious label/return columns to prevent leakage
@@ -186,7 +186,7 @@ class UnifiedFeatureConverter:
         self,
         df: pl.DataFrame,
         code: str
-    ) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """
         Create time-series sequences for a single stock
 
@@ -204,7 +204,7 @@ class UnifiedFeatureConverter:
         feature_values = code_df.select(self.all_feature_columns).to_numpy()
 
         # Prepare per-horizon target vectors (prefer standardized target_{h}d)
-        target_series_by_h: Dict[int, np.ndarray] = {}
+        target_series_by_h: dict[int, np.ndarray] = {}
         for h in self.prediction_horizons:
             std_col = f"target_{h}d"
             if std_col in code_df.columns:
@@ -272,11 +272,11 @@ class UnifiedFeatureConverter:
         train_ratio: float = 0.7,
         val_ratio: float = 0.15,
         test_ratio: float = 0.15,
-        feature_columns: Optional[Sequence[str]] = None,
-        static_columns: Optional[Sequence[str]] = None,
-        regime_columns: Optional[Sequence[str]] = None,
-        mask_columns: Optional[Sequence[str]] = None,
-    ) -> Dict[str, Union[List[str], Dict]]:
+        feature_columns: Sequence[str] | None = None,
+        static_columns: Sequence[str] | None = None,
+        regime_columns: Sequence[str] | None = None,
+        mask_columns: Sequence[str] | None = None,
+    ) -> dict[str, list[str] | dict]:
         """
         Convert ML dataset to ATFT format and save as parquet files
 
@@ -304,7 +304,7 @@ class UnifiedFeatureConverter:
             df = df.drop(dup_cols)
 
         # Detect or override feature columns (used by downstream metadata)
-        override_features: List[str] = []
+        override_features: list[str] = []
         if feature_columns:
             unique_override = list(dict.fromkeys(feature_columns))
             override_features = [c for c in unique_override if c in df.columns]
@@ -400,11 +400,11 @@ class UnifiedFeatureConverter:
         codes = df["Code"].unique().to_list()
         logger.info(f"Processing {len(codes)} unique stocks")
 
-        train_files: List[str] = []
-        val_files: List[str] = []
-        test_files: List[str] = []
+        train_files: list[str] = []
+        val_files: list[str] = []
+        test_files: list[str] = []
 
-        diagnostics: List[Dict[str, Union[str, int, float, bool]]] = []
+        diagnostics: list[dict[str, str | int | float | bool]] = []
 
         stats = {
             "train_rows": 0,
@@ -443,7 +443,7 @@ class UnifiedFeatureConverter:
                 )
                 continue
 
-            diag_entry: Dict[str, Union[str, int, float, bool]] = {
+            diag_entry: dict[str, str | int | float | bool] = {
                 "code": code,
                 "rows": n_rows,
                 "train_rows": 0,
@@ -475,13 +475,11 @@ class UnifiedFeatureConverter:
             test_start = val_end
             test_end = n_rows
 
-            winsor_applied = False
-            winsor_clip_min: Optional[float] = None
-            winsor_clip_max: Optional[float] = None
+            winsor_clip_min: float | None = None
+            winsor_clip_max: float | None = None
 
             code_df, winsor_meta = self._maybe_winsorize(code_df, train_end)
             if winsor_meta is not None:
-                winsor_applied = True
                 winsor_clip_min, winsor_clip_max = winsor_meta
                 diag_entry["winsorized"] = True
                 diag_entry["winsor_clip_min"] = winsor_clip_min
@@ -561,9 +559,9 @@ class UnifiedFeatureConverter:
                     test_start, test_end = train_end, train_end
 
             # Slice per split and persist
-            train_slice: Optional[pl.DataFrame] = None
-            val_slice: Optional[pl.DataFrame] = None
-            test_slice: Optional[pl.DataFrame] = None
+            train_slice: pl.DataFrame | None = None
+            val_slice: pl.DataFrame | None = None
+            test_slice: pl.DataFrame | None = None
 
             train_slice = code_df.slice(0, train_end)
             train_slice = self._apply_cross_sectional_zscores(
@@ -649,7 +647,7 @@ class UnifiedFeatureConverter:
         self,
         code_df: pl.DataFrame,
         train_end: int,
-    ) -> Tuple[pl.DataFrame, Optional[Tuple[float, float]]]:
+    ) -> tuple[pl.DataFrame, tuple[float, float] | None]:
         """Apply per-code winsorization using statistics from the training slice."""
 
         enable = os.getenv("ENABLE_WINSORIZE", "1").lower() in {"1", "true", "yes", "on"}
@@ -698,7 +696,7 @@ class UnifiedFeatureConverter:
             logger.warning("Winsor quantiles produced all-NaN bounds; skipping winsorization")
             return code_df, None
 
-        clip_exprs: List[pl.Expr] = []
+        clip_exprs: list[pl.Expr] = []
         min_clip = float("inf")
         max_clip = float("-inf")
         for idx, column in enumerate(feature_names):
@@ -720,7 +718,7 @@ class UnifiedFeatureConverter:
 
     def _write_quality_report(
         self,
-        diagnostics: List[Dict[str, Union[str, int, float, bool]]],
+        diagnostics: list[dict[str, str | int | float | bool]],
         output_path: Path,
     ) -> None:
         """Persist per-code diagnostics (parquet + summary json) under _logs."""
@@ -743,10 +741,10 @@ class UnifiedFeatureConverter:
 
         summary = {
             "total_codes": int(diag_df.height),
-            "winsorized_codes": int(diag_df.filter(pl.col("winsorized") == True).height),
-            "merged_val_codes": int(diag_df.filter(pl.col("merged_val") == True).height),
-            "merged_test_codes": int(diag_df.filter(pl.col("merged_test") == True).height),
-            "dropped_short_codes": int(diag_df.filter(pl.col("dropped_short_split") == True).height),
+            "winsorized_codes": int(diag_df.filter(pl.col("winsorized")).height),
+            "merged_val_codes": int(diag_df.filter(pl.col("merged_val")).height),
+            "merged_test_codes": int(diag_df.filter(pl.col("merged_test")).height),
+            "dropped_short_codes": int(diag_df.filter(pl.col("dropped_short_split")).height),
             "total_rows": int(diag_df.select(pl.col("rows").sum()).item()),
             "train_rows": int(diag_df.select(pl.col("train_rows").sum()).item()),
             "val_rows": int(diag_df.select(pl.col("val_rows").sum()).item()),
@@ -767,7 +765,7 @@ class UnifiedFeatureConverter:
         output_dir: Path,
         prefix: str,
         chunk_size: int = 100000
-    ) -> List[str]:
+    ) -> list[str]:
         """Save DataFrame as chunked parquet files"""
         files = []
         n_chunks = (len(df) + chunk_size - 1) // chunk_size
@@ -788,7 +786,7 @@ class UnifiedFeatureConverter:
         input_path: str,
         output_dir: str = "output/atft_data",
         **kwargs
-    ) -> Dict[str, Union[List[str], Dict]]:
+    ) -> dict[str, list[str] | dict]:
         """
         Convenience method to convert from a parquet file
 

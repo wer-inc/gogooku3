@@ -2,16 +2,19 @@
 Simple GAT gradient flow test
 Test if gradients flow through GAT layer with simple MSE loss
 """
+import sys
+from pathlib import Path
+
 import torch
 import torch.nn as nn
-from pathlib import Path
-import sys
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from omegaconf import OmegaConf
+
 from atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
-from omegaconf import DictConfig, OmegaConf
+
 
 def test_gat_gradient_flow():
     """Test if gradients flow to GAT layers with simple loss"""

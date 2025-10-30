@@ -16,8 +16,9 @@ Output: parquet with columns: Date, Code, score, weight
 
 import argparse
 from pathlib import Path
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 
 def neutralize(df: pd.DataFrame, by_cols: list[str]) -> pd.Series:

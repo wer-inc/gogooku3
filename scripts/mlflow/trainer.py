@@ -4,19 +4,20 @@ MLflow Model Training Integration
 MLflowを使用したモデル学習とトラッキング
 """
 
+import json
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 import mlflow
 import mlflow.pytorch
 import mlflow.sklearn
-from mlflow.tracking import MlflowClient
-import os
-import json
-from pathlib import Path
-from typing import Dict, Any, Union
-import pandas as pd
 import numpy as np
+import pandas as pd
 import polars as pl
-from datetime import datetime
-import logging
+from mlflow.tracking import MlflowClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ class MLflowTrainer:
     def start_run(
         self,
         run_name: str = None,
-        tags: Dict[str, str] = None,
+        tags: dict[str, str] = None,
         nested: bool = False,
     ):
         """
@@ -98,7 +99,7 @@ class MLflowTrainer:
             nested=nested,
         )
 
-    def log_params(self, params: Dict[str, Any]):
+    def log_params(self, params: dict[str, Any]):
         """パラメータをログ"""
         for key, value in params.items():
             if isinstance(value, (list, dict)):
@@ -107,14 +108,14 @@ class MLflowTrainer:
             else:
                 mlflow.log_param(key, value)
 
-    def log_metrics(self, metrics: Dict[str, float], step: int = None):
+    def log_metrics(self, metrics: dict[str, float], step: int = None):
         """メトリクスをログ"""
         for key, value in metrics.items():
             mlflow.log_metric(key, value, step=step)
 
     def log_dataset(
         self,
-        df: Union[pd.DataFrame, pl.DataFrame],
+        df: pd.DataFrame | pl.DataFrame,
         name: str = "dataset",
         description: str = None,
     ):
@@ -214,7 +215,7 @@ class MLflowTrainer:
 
         logger.info(f"Model {model_name} logged and registered")
 
-    def log_artifacts(self, artifact_paths: Dict[str, str]):
+    def log_artifacts(self, artifact_paths: dict[str, str]):
         """
         アーティファクトをログ
 
@@ -246,8 +247,8 @@ class MLflowTrainer:
     def track_experiment(
         self,
         train_fn: callable,
-        params: Dict[str, Any],
-        data: Dict[str, Any],
+        params: dict[str, Any],
+        data: dict[str, Any],
         model_name: str = None,
     ) -> Any:
         """

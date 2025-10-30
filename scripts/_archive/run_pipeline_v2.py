@@ -4,16 +4,16 @@ Complete ML Dataset Pipeline with JQuants Integration V2
 正しいデータフロー: daily_quotes と listed_info の内部結合版
 """
 
+import asyncio
+import logging
 import os
 import sys
-import asyncio
+import time
+from datetime import datetime
+from pathlib import Path
+
 import aiohttp
 import polars as pl
-from datetime import datetime, timedelta
-from pathlib import Path
-import logging
-import time
-from typing import List, Optional, Dict, Tuple
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -23,9 +23,9 @@ if env_path.exists():
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
-from data.ml_dataset_builder import MLDatasetBuilder
-from components.trading_calendar_fetcher import TradingCalendarFetcher
 from components.market_code_filter import MarketCodeFilter
+from components.trading_calendar_fetcher import TradingCalendarFetcher
+from data.ml_dataset_builder import MLDatasetBuilder
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -87,7 +87,7 @@ class JQuantsAsyncFetcherV2:
                 if response.status == 200:
                     data = await response.json()
                     df = pl.DataFrame(data.get("info", []))
-                    
+
                     if not df.is_empty():
                         # Market Codeフィルタリング
                         df = MarketCodeFilter.filter_stocks(df)
@@ -95,12 +95,12 @@ class JQuantsAsyncFetcherV2:
                         keep_cols = ["Code", "MarketCode", "CompanyName", "Sector17Code", "Sector33Code"]
                         available_cols = [col for col in keep_cols if col in df.columns]
                         df = df.select(available_cols)
-                    
+
                     return df
-                    
+
         except Exception as e:
             logger.warning(f"Failed to fetch listed info for {date}: {e}")
-        
+
         return pl.DataFrame()
 
     async def get_daily_quotes_for_date(
@@ -109,20 +109,20 @@ class JQuantsAsyncFetcherV2:
         """Get all daily quotes for a specific date."""
         url = f"{self.base_url}/prices/daily_quotes"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        
+
         all_quotes = []
         pagination_key = None
-        
+
         # 日付形式をAPIの要求形式に変換 (YYYY-MM-DD -> YYYYMMDD)
         date_api = date.replace("-", "")
-        
+
         logger.debug(f"Fetching daily quotes for {date} (API format: {date_api})")
-        
+
         while True:
             params = {"date": date_api}
             if pagination_key:
                 params["pagination_key"] = pagination_key
-            
+
             try:
                 async with self.semaphore:
                     async with session.get(url, headers=headers, params=params) as response:
@@ -130,30 +130,30 @@ class JQuantsAsyncFetcherV2:
                             text = await response.text()
                             logger.warning(f"Failed to fetch quotes for {date}: {response.status} - {text}")
                             break
-                        
+
                         data = await response.json()
                         quotes = data.get("daily_quotes", [])
-                        
+
                         logger.debug(f"Got {len(quotes)} quotes for {date}")
-                        
+
                         if quotes:
                             all_quotes.extend(quotes)
-                        
+
                         # Check for pagination
                         pagination_key = data.get("pagination_key")
                         if not pagination_key:
                             break
-                            
+
             except Exception as e:
                 logger.error(f"Error fetching quotes for {date}: {e}")
                 break
-        
+
         if all_quotes:
             df = pl.DataFrame(all_quotes)
             # Ensure Date column (keep in YYYY-MM-DD format)
             df = df.with_columns(pl.lit(date).alias("Date"))
             return df
-        
+
         return pl.DataFrame()
 
     async def process_single_day(
@@ -163,59 +163,59 @@ class JQuantsAsyncFetcherV2:
         1日分のデータ処理: daily_quotes と listed_info を内部結合
         """
         logger.info(f"Processing {date}...")
-        
+
         # 並列で取得
         quotes_task = self.get_daily_quotes_for_date(session, date)
         listed_task = self.get_listed_info_for_date(session, date)
-        
+
         quotes_df, listed_df = await asyncio.gather(quotes_task, listed_task)
-        
+
         if quotes_df.is_empty() or listed_df.is_empty():
             logger.warning(f"No data for {date}")
             return pl.DataFrame()
-        
+
         logger.info(f"  Raw: {len(quotes_df)} quotes, {len(listed_df)} listed stocks")
-        
+
         # 内部結合（Code列で結合）
         merged_df = quotes_df.join(listed_df, on="Code", how="inner")
-        
+
         logger.info(f"  After join: {len(merged_df)} records")
-        
+
         # 重複除去（もしあれば）
         if "Code" in merged_df.columns and "Date" in merged_df.columns:
             merged_df = merged_df.unique(subset=["Code", "Date"])
-        
+
         # Adjustment列を優先的に使用
         columns_to_rename = {}
-        
+
         if "AdjustmentClose" in merged_df.columns:
             columns_to_rename["AdjustmentClose"] = "Close"
             if "Close" in merged_df.columns:
                 merged_df = merged_df.drop("Close")
-        
+
         if "AdjustmentOpen" in merged_df.columns:
             columns_to_rename["AdjustmentOpen"] = "Open"
             if "Open" in merged_df.columns:
                 merged_df = merged_df.drop("Open")
-        
+
         if "AdjustmentHigh" in merged_df.columns:
             columns_to_rename["AdjustmentHigh"] = "High"
             if "High" in merged_df.columns:
                 merged_df = merged_df.drop("High")
-        
+
         if "AdjustmentLow" in merged_df.columns:
             columns_to_rename["AdjustmentLow"] = "Low"
             if "Low" in merged_df.columns:
                 merged_df = merged_df.drop("Low")
-        
+
         if "AdjustmentVolume" in merged_df.columns:
             columns_to_rename["AdjustmentVolume"] = "Volume"
             if "Volume" in merged_df.columns:
                 merged_df = merged_df.drop("Volume")
-        
+
         if columns_to_rename:
             merged_df = merged_df.rename(columns_to_rename)
-        
+
         return merged_df
 
     async def fetch_topix_data(
@@ -309,7 +309,7 @@ class JQuantsPipelineV2:
         async with aiohttp.ClientSession() as session:
             # Authenticate
             await self.fetcher.authenticate(session)
-            
+
             # Step 1: 営業日カレンダー取得
             logger.info(f"Step 1: 営業日カレンダー取得中 ({start_date} - {end_date})...")
             calendar_data = await self.calendar_fetcher.get_trading_calendar(
@@ -317,7 +317,7 @@ class JQuantsPipelineV2:
             )
             business_days = calendar_data.get("business_days", [])
             logger.info(f"✅ 営業日数: {len(business_days)}日")
-            
+
             if not business_days:
                 logger.error("営業日データが取得できませんでした")
                 return pl.DataFrame(), pl.DataFrame()
@@ -326,38 +326,38 @@ class JQuantsPipelineV2:
             logger.info("Step 2: 営業日ごとのデータ処理中...")
             all_data = []
             batch_size = 10  # 10日分ずつ並列処理
-            
+
             for i in range(0, len(business_days), batch_size):
                 batch_days = business_days[i:i+batch_size]
                 logger.info(f"  Batch {i//batch_size + 1}/{(len(business_days)-1)//batch_size + 1}: {batch_days[0]} - {batch_days[-1]}")
-                
+
                 # バッチ内の日付を並列処理
                 tasks = [
                     self.fetcher.process_single_day(session, date)
                     for date in batch_days
                 ]
-                
+
                 results = await asyncio.gather(*tasks)
-                
+
                 # 結果を追加（空でないもののみ）
                 for df in results:
                     if not df.is_empty():
                         all_data.append(df)
-                
+
                 logger.info(f"    累積レコード数: {sum(len(df) for df in all_data)}")
-            
+
             # 全データ結合
             if all_data:
                 price_df = pl.concat(all_data)
                 logger.info(f"✅ データ取得完了: {len(price_df)}レコード")
-                
+
                 # 銘柄・日付でソート
                 price_df = price_df.sort(["Code", "Date"])
-                
+
                 # 統計情報
                 logger.info(f"  ユニーク銘柄数: {price_df['Code'].n_unique()}")
                 logger.info(f"  期間: {price_df['Date'].min()} - {price_df['Date'].max()}")
-                
+
             else:
                 price_df = pl.DataFrame()
                 logger.error("データが取得できませんでした")
@@ -371,7 +371,7 @@ class JQuantsPipelineV2:
             return price_df, topix_df
 
     def process_pipeline(
-        self, price_df: pl.DataFrame, topix_df: Optional[pl.DataFrame] = None
+        self, price_df: pl.DataFrame, topix_df: pl.DataFrame | None = None
     ) -> tuple:
         """Process the complete pipeline with technical indicators."""
         logger.info("=" * 60)

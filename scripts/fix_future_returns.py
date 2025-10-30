@@ -8,9 +8,10 @@ Fix returns to be FUTURE returns instead of PAST returns
 """
 
 import argparse
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 
 def fix_future_returns(input_path: Path, output_path: Path) -> Path:
@@ -116,7 +117,7 @@ def fix_future_returns(input_path: Path, output_path: Path) -> Path:
     print(f"\n💾 Saving corrected dataset to: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(output_path, index=False)
-    print(f"✅ Dataset with future returns saved successfully!")
+    print("✅ Dataset with future returns saved successfully!")
 
     # Print summary statistics
     print("\n📊 Summary of future returns:")

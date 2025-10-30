@@ -15,8 +15,8 @@ Usage:
 
 import argparse
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import polars as pl
 
@@ -63,7 +63,7 @@ def main() -> int:
         print("ERROR: dataset or splits JSON not found")
         return 1
 
-    with open(args.splits_json, "r", encoding="utf-8") as f:
+    with open(args.splits_json, encoding="utf-8") as f:
         splits = json.load(f)
     if not isinstance(splits, list) or not splits:
         print("ERROR: invalid or empty splits JSON")

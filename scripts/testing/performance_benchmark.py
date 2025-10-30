@@ -6,17 +6,17 @@ Detailed performance analysis and benchmarking for pipeline components
 
 from __future__ import annotations
 
+import argparse
 import json
-import psutil
 import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Any
-import argparse
+from typing import Any
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import psutil
 
 
 class PipelinePerformanceBenchmark:
@@ -43,7 +43,7 @@ class PipelinePerformanceBenchmark:
 
         print("✅ Benchmark environment ready")
 
-    def benchmark_data_size_scaling(self, date_ranges: List[tuple]) -> Dict[str, Any]:
+    def benchmark_data_size_scaling(self, date_ranges: list[tuple]) -> dict[str, Any]:
         """Benchmark performance across different data sizes"""
         print("📊 Benchmarking data size scaling...")
 
@@ -99,7 +99,7 @@ class PipelinePerformanceBenchmark:
 
         return {"scaling_results": scaling_results}
 
-    def benchmark_incremental_vs_full(self, base_period_days: int = 30, incremental_days: int = 7) -> Dict[str, Any]:
+    def benchmark_incremental_vs_full(self, base_period_days: int = 30, incremental_days: int = 7) -> dict[str, Any]:
         """Benchmark incremental vs full pipeline performance"""
         print("⚡ Benchmarking incremental vs full pipeline...")
 
@@ -187,7 +187,7 @@ class PipelinePerformanceBenchmark:
 
         return results
 
-    def benchmark_component_performance(self) -> Dict[str, Any]:
+    def benchmark_component_performance(self) -> dict[str, Any]:
         """Benchmark individual component performance"""
         print("🔧 Benchmarking individual components...")
 
@@ -211,13 +211,13 @@ class PipelinePerformanceBenchmark:
         component_results = {}
 
         if profiling_file.exists():
-            with open(profiling_file, 'r') as f:
+            with open(profiling_file) as f:
                 profiling_data = json.load(f)
                 component_results = profiling_data
 
         return {"component_performance": component_results}
 
-    def benchmark_memory_usage(self, test_duration: int = 60) -> Dict[str, Any]:
+    def benchmark_memory_usage(self, test_duration: int = 60) -> dict[str, Any]:
         """Monitor memory usage during pipeline execution"""
         print("💾 Benchmarking memory usage...")
 
@@ -323,7 +323,7 @@ class PipelinePerformanceBenchmark:
             ax.grid(True, alpha=0.3)
 
             # Add value labels on bars
-            for bar, time_val in zip(bars, times):
+            for bar, time_val in zip(bars, times, strict=False):
                 height = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2., height,
                        f'{time_val:.1f}s', ha='center', va='bottom')
@@ -453,7 +453,7 @@ def main():
         with open(report_path, 'w') as f:
             f.write(benchmark.generate_benchmark_report())
 
-        print(f"\n🎉 Benchmark Complete!")
+        print("\n🎉 Benchmark Complete!")
         print(f"📊 Results saved to: {output_path}")
         print(f"📝 Report saved to: {report_path}")
         print(f"📈 Plots saved to: {base_dir}/benchmark_output/plots/")
@@ -461,7 +461,7 @@ def main():
         # Print key metrics
         if "incremental_vs_full" in results and "efficiency_metrics" in results["incremental_vs_full"]:
             eff = results["incremental_vs_full"]["efficiency_metrics"]
-            print(f"\n⚡ Key Performance Metrics:")
+            print("\n⚡ Key Performance Metrics:")
             print(f"   Efficiency Gain: {eff['efficiency_gain_percent']:.1f}%")
             print(f"   Speedup Factor: {eff['speedup_factor']:.2f}x")
 

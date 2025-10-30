@@ -4,16 +4,16 @@ Complete ML Dataset Pipeline with JQuants Integration
 Fetches real data and applies all bug fixes from P0-P2
 """
 
+import asyncio
+import logging
 import os
 import sys
-import asyncio
+import time
+from datetime import datetime
+from pathlib import Path
+
 import aiohttp
 import polars as pl
-from datetime import datetime, timedelta
-from pathlib import Path
-import logging
-import time
-from typing import List, Optional
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -24,10 +24,10 @@ if env_path.exists():
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
-from data.ml_dataset_builder import MLDatasetBuilder  # noqa: E402
-from components.trading_calendar_fetcher import TradingCalendarFetcher  # noqa: E402
-from components.market_code_filter import MarketCodeFilter  # noqa: E402
 from components.daily_stock_fetcher import DailyStockFetcher  # noqa: E402
+from components.market_code_filter import MarketCodeFilter  # noqa: E402
+from components.trading_calendar_fetcher import TradingCalendarFetcher  # noqa: E402
+from data.ml_dataset_builder import MLDatasetBuilder  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -74,7 +74,7 @@ class JQuantsAsyncFetcher:
 
         logger.info("✅ JQuants authentication successful")
 
-    async def get_listed_info(self, session: aiohttp.ClientSession, date: Optional[str] = None) -> pl.DataFrame:
+    async def get_listed_info(self, session: aiohttp.ClientSession, date: str | None = None) -> pl.DataFrame:
         """Get listed company information with Market Code filtering."""
         url = f"{self.base_url}/listed/info"
         headers = {"Authorization": f"Bearer {self.id_token}"}
@@ -94,7 +94,7 @@ class JQuantsAsyncFetcher:
 
     async def fetch_price_batch(
         self, session: aiohttp.ClientSession, code: str, from_date: str, to_date: str
-    ) -> Optional[pl.DataFrame]:
+    ) -> pl.DataFrame | None:
         """Fetch price data for a single stock."""
         async with self.semaphore:
             url = f"{self.base_url}/prices/daily_quotes"
@@ -118,7 +118,7 @@ class JQuantsAsyncFetcher:
     async def fetch_all_prices(
         self,
         session: aiohttp.ClientSession,
-        codes: List[str],
+        codes: list[str],
         from_date: str,
         to_date: str,
     ) -> pl.DataFrame:
@@ -253,7 +253,7 @@ class JQuantsPipeline:
         async with aiohttp.ClientSession() as session:
             # Authenticate
             await self.fetcher.authenticate(session)
-            
+
             # Step 1: 営業日カレンダー取得
             logger.info(f"Step 1: 営業日カレンダー取得中 ({start_date} - {end_date})...")
             calendar_data = await self.calendar_fetcher.get_trading_calendar(
@@ -261,7 +261,7 @@ class JQuantsPipeline:
             )
             business_days = calendar_data.get("business_days", [])
             logger.info(f"✅ 営業日数: {len(business_days)}日")
-            
+
             if not business_days:
                 logger.error("営業日データが取得できませんでした")
                 return pl.DataFrame(), pl.DataFrame()
@@ -272,26 +272,26 @@ class JQuantsPipeline:
                 business_days,  # 全営業日分を取得
                 session
             )
-            
+
             if not daily_listings:
                 logger.error("銘柄情報が取得できませんでした")
                 return pl.DataFrame(), pl.DataFrame()
-            
+
             # 統計情報表示
             stats = self.daily_stock_fetcher.get_statistics(daily_listings)
             logger.info(f"✅ 期間中のユニーク銘柄数: {stats['total_unique_stocks']}")
             logger.info(f"✅ 日次平均銘柄数: {stats['avg_daily_stocks']:.0f}")
-            
+
             # Step 3: 営業日ごとに価格データ取得
-            logger.info(f"Step 3: 価格データ取得中...")
+            logger.info("Step 3: 価格データ取得中...")
             all_price_data = []
             total_stocks = sum(len(df) for df in daily_listings.values())
             processed_stocks = 0
-            
+
             for idx, (date, stocks_df) in enumerate(daily_listings.items(), 1):
                 logger.info(f"  [{idx}/{len(daily_listings)}] {date}: {len(stocks_df)}銘柄の価格データ取得中...")
                 codes = stocks_df["Code"].to_list()
-                
+
                 # その日の価格データ取得
                 daily_prices = await self.fetcher.fetch_all_prices(
                     session,
@@ -299,17 +299,17 @@ class JQuantsPipeline:
                     date,
                     date,
                 )
-                
+
                 if not daily_prices.is_empty():
                     all_price_data.append(daily_prices)
                     processed_stocks += len(stocks_df)
                     logger.info(f"    ✓ {len(daily_prices)}レコード取得 (進捗: {processed_stocks}/{total_stocks}銘柄)")
-                
+
                 # メモリ管理: 定期的にデータを保存
                 if len(all_price_data) >= 30:  # 30日分ごとに中間保存
                     temp_df = pl.concat(all_price_data)
                     logger.info(f"    中間データ: {len(temp_df)}レコード")
-            
+
             # 全データ結合
             if all_price_data:
                 price_df = pl.concat(all_price_data)
@@ -366,12 +366,12 @@ class JQuantsPipeline:
 
             # Sort by Code and Date
             price_df = price_df.sort(["Code", "Date"])
-            
+
             # Step 4: 営業日でフィルタリング
             logger.info("Step 4: 営業日フィルタリング中...")
-            business_days_set = set(business_days)
+            set(business_days)
             original_count = len(price_df)
-            
+
             # Date列を文字列に変換してフィルタリング
             if "Date" in price_df.columns:
                 price_df = price_df.with_columns(
@@ -380,7 +380,7 @@ class JQuantsPipeline:
                 price_df = price_df.filter(
                     pl.col("Date").is_in(business_days)
                 )
-            
+
             filtered_count = len(price_df)
             logger.info(f"✅ 営業日フィルタリング: {original_count} → {filtered_count} レコード")
 
@@ -393,7 +393,7 @@ class JQuantsPipeline:
             return price_df, topix_df
 
     def process_pipeline(
-        self, price_df: pl.DataFrame, topix_df: Optional[pl.DataFrame] = None
+        self, price_df: pl.DataFrame, topix_df: pl.DataFrame | None = None
     ) -> tuple:
         """Process the complete pipeline with bug fixes."""
         logger.info("=" * 60)

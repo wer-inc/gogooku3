@@ -4,16 +4,16 @@ Complete ML Dataset Pipeline V3 - 最適化版
 効率的なデータフロー: daily_quotes先行取得 → listed_infoでフィルタリング
 """
 
+import asyncio
+import logging
 import os
 import sys
-import asyncio
+import time
+from datetime import datetime
+from pathlib import Path
+
 import aiohttp
 import polars as pl
-from datetime import datetime, timedelta
-from pathlib import Path
-import logging
-import time
-from typing import List, Optional, Dict, Set
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -23,9 +23,9 @@ if env_path.exists():
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
-from data.ml_dataset_builder import MLDatasetBuilder
-from components.trading_calendar_fetcher import TradingCalendarFetcher
 from components.market_code_filter import MarketCodeFilter
+from components.trading_calendar_fetcher import TradingCalendarFetcher
+from data.ml_dataset_builder import MLDatasetBuilder
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -71,19 +71,19 @@ class JQuantsOptimizedFetcher:
         logger.info("✅ JQuants authentication successful")
 
     async def get_all_listed_info(
-        self, session: aiohttp.ClientSession, business_days: List[str]
-    ) -> Dict[str, Set[str]]:
+        self, session: aiohttp.ClientSession, business_days: list[str]
+    ) -> dict[str, set[str]]:
         """
         期間内の全上場銘柄情報を取得し、Market Codeでフィルタリング
-        
+
         Returns:
             {code: set(market_codes)} の辞書
         """
         logger.info("全期間の上場銘柄情報を取得中...")
-        
+
         # 銘柄ごとのMarket Code情報を集約
         code_to_markets = {}
-        
+
         # サンプリング: 期間の最初、中間、最後の日付で取得
         sample_dates = []
         if len(business_days) > 0:
@@ -91,37 +91,37 @@ class JQuantsOptimizedFetcher:
             if len(business_days) > 1:
                 sample_dates.append(business_days[len(business_days)//2])  # 中間
                 sample_dates.append(business_days[-1])  # 最後
-        
+
         for date in sample_dates:
             date_api = date.replace("-", "")
             url = f"{self.base_url}/listed/info"
             headers = {"Authorization": f"Bearer {self.id_token}"}
             params = {"date": date_api}
-            
+
             try:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
                         info_list = data.get("info", [])
-                        
+
                         for info in info_list:
                             code = info.get("Code")
                             market_code = info.get("MarketCode")
-                            
+
                             if code and market_code:
                                 if code not in code_to_markets:
                                     code_to_markets[code] = set()
                                 code_to_markets[code].add(market_code)
-                        
+
                         logger.info(f"  {date}: {len(info_list)}銘柄の情報取得")
-                        
+
             except Exception as e:
                 logger.warning(f"Failed to fetch listed info for {date}: {e}")
-        
+
         # フィルタリング対象のMarket Codeを持つ銘柄を特定
         target_codes = set()
         excluded_codes = set()
-        
+
         for code, market_codes in code_to_markets.items():
             # いずれかのターゲット市場に上場していればOK
             if any(mc in MarketCodeFilter.TARGET_MARKET_CODES for mc in market_codes):
@@ -129,13 +129,13 @@ class JQuantsOptimizedFetcher:
             # 除外市場のみの場合は除外
             elif all(mc in MarketCodeFilter.EXCLUDE_MARKET_CODES for mc in market_codes):
                 excluded_codes.add(code)
-        
+
         logger.info(f"✅ 対象銘柄: {len(target_codes)}銘柄, 除外: {len(excluded_codes)}銘柄")
-        
+
         return target_codes
 
     async def fetch_listed_info_range(
-        self, session: aiohttp.ClientSession, business_days: List[str]
+        self, session: aiohttp.ClientSession, business_days: list[str]
     ) -> pl.DataFrame:
         """期間内のlisted/infoを日次で取得して集約（Section interval作成用の素材）。"""
         url = f"{self.base_url}/listed/info"
@@ -160,44 +160,44 @@ class JQuantsOptimizedFetcher:
     async def fetch_daily_quotes_bulk(
         self,
         session: aiohttp.ClientSession,
-        business_days: List[str],
+        business_days: list[str],
         batch_size: int = 30
     ) -> pl.DataFrame:
         """
         営業日を指定してdaily_quotesを一括取得
-        
+
         Args:
             business_days: 営業日リスト
             batch_size: 一度に処理する日数
         """
         logger.info(f"Daily quotes一括取得中 ({len(business_days)}営業日)...")
-        
+
         all_quotes = []
-        
+
         for i in range(0, len(business_days), batch_size):
             batch_days = business_days[i:i+batch_size]
             logger.info(f"  Batch {i//batch_size + 1}: {batch_days[0]} - {batch_days[-1]}")
-            
+
             # バッチ内の日付を並列処理
             tasks = []
             for date in batch_days:
                 date_api = date.replace("-", "")
                 task = self._fetch_daily_quotes_for_date(session, date, date_api)
                 tasks.append(task)
-            
+
             results = await asyncio.gather(*tasks)
-            
+
             for df in results:
                 if not df.is_empty():
                     all_quotes.append(df)
-            
+
             logger.info(f"    累積: {sum(len(df) for df in all_quotes)}レコード")
-        
+
         if all_quotes:
             combined_df = pl.concat(all_quotes)
             logger.info(f"✅ Daily quotes取得完了: {len(combined_df)}レコード")
             return combined_df
-        
+
         return pl.DataFrame()
 
     async def _fetch_daily_quotes_for_date(
@@ -206,43 +206,43 @@ class JQuantsOptimizedFetcher:
         """特定日の全銘柄のdaily_quotesを取得（ページネーション対応）"""
         url = f"{self.base_url}/prices/daily_quotes"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        
+
         all_quotes = []
         pagination_key = None
         page_count = 0
-        
+
         while True:
             params = {"date": date_api}
             if pagination_key:
                 params["pagination_key"] = pagination_key
-            
+
             try:
                 async with self.semaphore:
                     async with session.get(url, headers=headers, params=params) as response:
                         if response.status != 200:
                             logger.debug(f"No quotes for {date}: {response.status}")
                             break
-                        
+
                         data = await response.json()
                         quotes = data.get("daily_quotes", [])
-                        
+
                         if quotes:
                             all_quotes.extend(quotes)
                             page_count += 1
-                        
+
                         pagination_key = data.get("pagination_key")
                         if not pagination_key:
                             break
-                            
+
             except Exception as e:
                 logger.error(f"Error fetching quotes for {date}: {e}")
                 break
-        
+
         if all_quotes:
             df = pl.DataFrame(all_quotes)
             logger.debug(f"  {date}: {len(all_quotes)}レコード取得 ({page_count}ページ)")
             return df
-        
+
         return pl.DataFrame()
 
     async def fetch_topix_data(
@@ -251,7 +251,7 @@ class JQuantsOptimizedFetcher:
         """Fetch TOPIX index data."""
         url = f"{self.base_url}/indices/topix"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        
+
         from_api = from_date.replace("-", "")
         to_api = to_date.replace("-", "")
 
@@ -305,7 +305,7 @@ class JQuantsOptimizedFetcher:
         """Fetch trades specification (売買内訳) data."""
         url = f"{self.base_url}/markets/trades_spec"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        
+
         from_api = from_date.replace("-", "")
         to_api = to_date.replace("-", "")
 
@@ -345,22 +345,22 @@ class JQuantsOptimizedFetcher:
         return pl.DataFrame()
 
     async def fetch_statements(
-        self, session: aiohttp.ClientSession, codes: List[str]
+        self, session: aiohttp.ClientSession, codes: list[str]
     ) -> pl.DataFrame:
         """Fetch financial statements (財務諸表) data for specified stocks."""
         url = f"{self.base_url}/fins/statements"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        
+
         all_statements = []
-        
+
         # バッチ処理（一度に複数銘柄を取得）
         batch_size = 100
         for i in range(0, len(codes), batch_size):
             batch_codes = codes[i:i+batch_size]
             code_str = ",".join(batch_codes)
-            
+
             params = {"code": code_str}
-            
+
             try:
                 async with self.semaphore:
                     async with session.get(url, headers=headers, params=params) as response:
@@ -381,47 +381,47 @@ class JQuantsOptimizedFetcher:
         if all_statements:
             df = pl.DataFrame(all_statements)
             logger.info(f"✅ Fetched {len(df)} financial statements")
-            
+
             # 正規化処理
             df = self.normalize_statements(df)
-            
+
             return df
 
         return pl.DataFrame()
-    
+
     async def fetch_statements_by_date(
-        self, session: aiohttp.ClientSession, business_days: List[str]
+        self, session: aiohttp.ClientSession, business_days: list[str]
     ) -> pl.DataFrame:
         """
         Fetch financial statements by date (営業日軸で取得 - 空振り削減版)
-        
+
         Args:
             session: aiohttp ClientSession
             business_days: 営業日リスト (YYYY-MM-DD形式)
-            
+
         Returns:
             財務諸表データのDataFrame
         """
         url = f"{self.base_url}/fins/statements"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        
+
         all_statements = []
         valid_days = 0
         empty_days = 0
-        
+
         logger.info(f"Fetching statements for {len(business_days)} business days...")
-        
+
         # 営業日ごとに取得（開示があった日のみデータが返る）
         for date in business_days:
             date_api = date.replace("-", "")
             params = {"date": date_api}
             pagination_key = None
             statements_for_date = []
-            
+
             while True:
                 if pagination_key:
                     params["pagination_key"] = pagination_key
-                
+
                 try:
                     async with self.semaphore:
                         async with session.get(url, headers=headers, params=params) as response:
@@ -432,63 +432,63 @@ class JQuantsOptimizedFetcher:
                             elif response.status != 200:
                                 logger.debug(f"Failed to fetch statements for {date}: {response.status}")
                                 break
-                            
+
                             data = await response.json()
                             statements = data.get("statements", [])
-                            
+
                             if statements:
                                 statements_for_date.extend(statements)
-                            
+
                             pagination_key = data.get("pagination_key")
                             if not pagination_key:
                                 break
-                
+
                 except Exception as e:
                     logger.debug(f"Error fetching statements for {date}: {e}")
                     break
-            
+
             if statements_for_date:
                 all_statements.extend(statements_for_date)
                 valid_days += 1
                 logger.debug(f"  {date}: {len(statements_for_date)} statements")
-        
+
         logger.info(f"✅ Statements found on {valid_days}/{len(business_days)} days "
                    f"(empty: {empty_days} days)")
-        
+
         if all_statements:
             df = pl.DataFrame(all_statements)
             logger.info(f"✅ Total {len(df)} financial statements fetched")
-            
+
             # 正規化処理
             df = self.normalize_statements(df)
-            
+
             # 重複除去（LocalCode + DisclosureNumberで一意）
             if "LocalCode" in df.columns and "DisclosureNumber" in df.columns:
                 df = df.unique(subset=["LocalCode", "DisclosureNumber"])
-            
+
             return df
-        
+
         return pl.DataFrame()
-    
+
     async def fetch_statements_by_code_for_missing(
-        self, session: aiohttp.ClientSession, codes: List[str]
+        self, session: aiohttp.ClientSession, codes: list[str]
     ) -> pl.DataFrame:
         """
         欠損補完用：特定銘柄の財務諸表を銘柄軸で取得
-        
+
         Args:
             session: aiohttp ClientSession
             codes: 補完が必要な銘柄コードリスト
-            
+
         Returns:
             財務諸表データのDataFrame
         """
         if not codes:
             return pl.DataFrame()
-        
+
         logger.info(f"Fetching missing statements for {len(codes)} stocks...")
         return await self.fetch_statements(session, codes)
-    
+
     def normalize_statements(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         財務諸表データの正規化
@@ -497,7 +497,7 @@ class JQuantsOptimizedFetcher:
         - 日付/時刻の処理
         """
         logger.info("Normalizing financial statements data...")
-        
+
         # コード正規化（LocalCode → Code）
         if "LocalCode" in df.columns:
             df = df.with_columns([
@@ -507,39 +507,39 @@ class JQuantsOptimizedFetcher:
             df = df.with_columns([
                 pl.col("Code").cast(pl.Utf8).str.zfill(4)
             ])
-        
+
         # 日付/時刻処理
         if "DisclosedDate" in df.columns:
             df = df.with_columns([
                 pl.col("DisclosedDate").cast(pl.Date).alias("disclosed_date")
             ])
-        
+
         if "DisclosedTime" in df.columns:
             # タイムスタンプを作成（時刻情報がある場合）
             df = df.with_columns([
                 pl.datetime(
                     pl.col("disclosed_date").dt.year(),
-                    pl.col("disclosed_date").dt.month(), 
+                    pl.col("disclosed_date").dt.month(),
                     pl.col("disclosed_date").dt.day(),
                     pl.col("DisclosedTime").str.slice(0, 2).cast(pl.Int32, strict=False).fill_null(0),
                     pl.col("DisclosedTime").str.slice(3, 2).cast(pl.Int32, strict=False).fill_null(0),
                     0
                 ).alias("disclosed_ts")
             ])
-        
+
         # 数値列の型変換（カンマ除去→float変換）
         num_cols = [
             "NetSales", "OperatingProfit", "Profit", "EarningsPerShare",
             "Equity", "TotalAssets", "CashAndEquivalents",
-            "ForecastNetSales", "ForecastOperatingProfit", "ForecastProfit", 
+            "ForecastNetSales", "ForecastOperatingProfit", "ForecastProfit",
             "ForecastEarningsPerShare",
-            "ResultDividendPerShare2ndQuarter", 
-            "ForecastDividendPerShareFiscalYearEnd", 
+            "ResultDividendPerShare2ndQuarter",
+            "ForecastDividendPerShareFiscalYearEnd",
             "ForecastDividendPerShareAnnual",
             "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock",
             "AverageNumberOfShares"
         ]
-        
+
         for col in num_cols:
             if col in df.columns:
                 df = df.with_columns([
@@ -549,29 +549,29 @@ class JQuantsOptimizedFetcher:
                     .cast(pl.Float64, strict=False)
                     .alias(col)
                 ])
-        
+
         logger.info(f"✅ Normalized {len(df)} statements")
         return df
-    
+
     def save_statements(self, df: pl.DataFrame, output_path: Path = None) -> Path:
         """
         財務諸表データを保存
-        
+
         Args:
             df: 正規化済み財務諸表データ
             output_path: 保存先パス（省略時は自動生成）
-        
+
         Returns:
             保存したファイルのパス
         """
         if output_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_path = self.output_dir / f"event_raw_statements_{timestamp}.parquet"
-        
+
         # Parquet形式で保存
         df.write_parquet(output_path)
         logger.info(f"✅ Saved statements to {output_path}")
-        
+
         return output_path
 
 
@@ -612,7 +612,7 @@ class JQuantsPipelineV3:
         async with aiohttp.ClientSession() as session:
             # Authenticate
             await self.fetcher.authenticate(session)
-            
+
             # Step 1: 営業日カレンダー取得
             logger.info(f"Step 1: 営業日カレンダー取得中 ({start_date} - {end_date})...")
             calendar_data = await self.calendar_fetcher.get_trading_calendar(
@@ -620,7 +620,7 @@ class JQuantsPipelineV3:
             )
             business_days = calendar_data.get("business_days", [])
             logger.info(f"✅ 営業日数: {len(business_days)}日")
-            
+
             if not business_days:
                 logger.error("営業日データが取得できませんでした")
                 return pl.DataFrame(), pl.DataFrame()
@@ -630,53 +630,53 @@ class JQuantsPipelineV3:
             price_df = await self.fetcher.fetch_daily_quotes_bulk(
                 session, business_days
             )
-            
+
             if price_df.is_empty():
                 logger.error("価格データが取得できませんでした")
                 return pl.DataFrame(), pl.DataFrame()
-            
+
             logger.info(f"  取得データ: {len(price_df)}レコード, {price_df['Code'].n_unique()}銘柄")
 
             # Step 3: Listed info取得してMarket Codeでフィルタリング
             logger.info("Step 3: Market Codeベースでフィルタリング中...")
             target_codes = await self.fetcher.get_all_listed_info(session, business_days)
-            
+
             # フィルタリング実行
             original_count = len(price_df)
             price_df = price_df.filter(pl.col("Code").is_in(target_codes))
             filtered_count = len(price_df)
-            
+
             logger.info(f"✅ フィルタリング完了: {original_count} → {filtered_count}レコード")
             logger.info(f"  残存銘柄数: {price_df['Code'].n_unique()}")
 
             # Step 4: Adjustment列の処理
             columns_to_rename = {}
-            
+
             if "AdjustmentClose" in price_df.columns:
                 columns_to_rename["AdjustmentClose"] = "Close"
                 if "Close" in price_df.columns:
                     price_df = price_df.drop("Close")
-            
+
             if "AdjustmentOpen" in price_df.columns:
                 columns_to_rename["AdjustmentOpen"] = "Open"
                 if "Open" in price_df.columns:
                     price_df = price_df.drop("Open")
-            
+
             if "AdjustmentHigh" in price_df.columns:
                 columns_to_rename["AdjustmentHigh"] = "High"
                 if "High" in price_df.columns:
                     price_df = price_df.drop("High")
-            
+
             if "AdjustmentLow" in price_df.columns:
                 columns_to_rename["AdjustmentLow"] = "Low"
                 if "Low" in price_df.columns:
                     price_df = price_df.drop("Low")
-            
+
             if "AdjustmentVolume" in price_df.columns:
                 columns_to_rename["AdjustmentVolume"] = "Volume"
                 if "Volume" in price_df.columns:
                     price_df = price_df.drop("Volume")
-            
+
             if columns_to_rename:
                 price_df = price_df.rename(columns_to_rename)
                 logger.info(f"Adjustment列を使用: {list(columns_to_rename.keys())}")
@@ -696,7 +696,8 @@ class JQuantsPipelineV3:
 
             # Step 5: TOPIXデータ取得（ウォームアップ期間を確保して取得）
             logger.info("Step 5: TOPIXデータ取得中 (with warmup)...")
-            from datetime import datetime as _dt, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
             try:
                 sd_dt = _dt.strptime(start_date, "%Y-%m-%d")
                 warmup_start = (sd_dt - _td(days=1200)).strftime("%Y-%m-%d")
@@ -727,12 +728,12 @@ class JQuantsPipelineV3:
     def process_pipeline(
         self,
         price_df: pl.DataFrame,
-        topix_df: Optional[pl.DataFrame] = None,
-        trades_df: Optional[pl.DataFrame] = None,
-        statements_df: Optional[pl.DataFrame] = None,
-        listed_info_df: Optional[pl.DataFrame] = None,
+        topix_df: pl.DataFrame | None = None,
+        trades_df: pl.DataFrame | None = None,
+        statements_df: pl.DataFrame | None = None,
+        listed_info_df: pl.DataFrame | None = None,
         *,
-        weekly_margin_df: Optional[pl.DataFrame] = None,
+        weekly_margin_df: pl.DataFrame | None = None,
         enable_margin_weekly: bool = False,
         margin_weekly_lag: int = 3,
         adv_window_days: int = 20,
@@ -747,12 +748,12 @@ class JQuantsPipelineV3:
 
         # Add pandas-ta features
         df = self.builder.add_pandas_ta_features(df)
-        
+
         # Add TOPIX market features and cross features
         if topix_df is not None and not topix_df.is_empty():
             logger.info(f"  Adding TOPIX market features: {len(topix_df)} TOPIX records")
             df = self.builder.add_topix_features(df, topix_df)
-            
+
             # Log feature counts
             market_cols = [c for c in df.columns if c.startswith('mkt_')]
             cross_cols = ['beta_60d', 'alpha_1d', 'alpha_5d', 'rel_strength_5d',
@@ -762,12 +763,12 @@ class JQuantsPipelineV3:
             logger.info(f"    → Added {len(cross_cols)} cross features")
         else:
             logger.info("  No TOPIX data available, skipping market features")
-        
+
         # Add flow features from trades_spec data
         if trades_df is not None and not trades_df.is_empty():
             logger.info(f"  Adding flow features from trades_spec data: {len(trades_df)} records")
             df = self.builder.add_flow_features(df, trades_df, listed_info_df)
-            
+
             # Log flow feature counts
             flow_cols = [
                 "flow_foreign_net_ratio", "flow_individual_net_ratio",
@@ -780,7 +781,7 @@ class JQuantsPipelineV3:
             logger.info(f"    → Added {len(flow_cols)} flow features")
         else:
             logger.info("  No trades_spec data available, skipping flow features")
-            
+
         # 財務諸表データを結合（もし存在すれば）
         if statements_df is not None and not statements_df.is_empty():
             logger.info(f"  財務諸表データを結合中: {len(statements_df)}レコード")
@@ -830,7 +831,7 @@ class JQuantsPipelineV3:
         end_date: str = None,
         *,
         enable_margin_weekly: bool = False,
-        weekly_margin_parquet: Optional[str] = None,
+        weekly_margin_parquet: str | None = None,
         margin_weekly_lag: int = 3,
         adv_window_days: int = 20,
     ):
@@ -846,7 +847,7 @@ class JQuantsPipelineV3:
         topix_df = None
         trades_df = None
         statements_df = None
-        
+
         if use_jquants:
             logger.info("Fetching data from JQuants API...")
             price_df, topix_df, trades_df, statements_df, listed_info_df = await self.fetch_jquants_data(start_date, end_date)
@@ -872,7 +873,7 @@ class JQuantsPipelineV3:
             logger.info(f"  Including trades_spec data: {len(trades_df)} records")
         if statements_df is not None and not statements_df.is_empty():
             logger.info(f"  Including financial statements: {len(statements_df)} records")
-            
+
         # Weekly margin parquet (optional)
         weekly_margin_df = None
         if weekly_margin_parquet:

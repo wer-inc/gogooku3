@@ -11,13 +11,14 @@ Usage:
     python scripts/cache/test_partial_match.py
 """
 
+import asyncio
+import logging
 import os
 import sys
-import asyncio
-import aiohttp
-import logging
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import aiohttp
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -135,8 +136,9 @@ async def test_helper_function():
 
 async def test_daily_quotes_partial_fetch(session, id_token):
     """Test partial fetch for daily quotes."""
-    from scripts.pipelines.run_pipeline_v4_optimized import JQuantsAsyncFetcher
     from components.trading_calendar_fetcher import TradingCalendarFetcher
+
+    from scripts.pipelines.run_pipeline_v4_optimized import JQuantsAsyncFetcher
 
     logger.info("=" * 80)
     logger.info("TEST 2: Daily Quotes - Partial Fetch and Merge")
@@ -163,7 +165,7 @@ async def test_daily_quotes_partial_fetch(session, id_token):
 
     logger.info(f"Cache ends: {cache_end_dt.strftime('%Y-%m-%d')}")
     logger.info(f"Test range: {test_start} to {test_end}")
-    logger.info(f"Expected: Use cache for first part, fetch only last 5 days\n")
+    logger.info("Expected: Use cache for first part, fetch only last 5 days\n")
 
     try:
         # Setup fetcher
@@ -208,7 +210,7 @@ async def test_daily_quotes_partial_fetch(session, id_token):
 
         # Check tracker stats
         tracker_stats = fetcher.tracker.get_stats()
-        logger.info(f"\nTracker stats:")
+        logger.info("\nTracker stats:")
         logger.info(f"  API calls: {tracker_stats.get('api_calls', 0)}")
         logger.info(f"  Cache hits: {tracker_stats.get('cache_hits', 0)}")
         logger.info(f"  Cache misses: {tracker_stats.get('cache_misses', 0)}")
@@ -233,8 +235,9 @@ async def test_daily_quotes_partial_fetch(session, id_token):
 
 async def test_statements_partial_fetch(session, id_token):
     """Test partial fetch for statements."""
-    from scripts.pipelines.run_pipeline_v4_optimized import JQuantsAsyncFetcher
     from components.trading_calendar_fetcher import TradingCalendarFetcher
+
+    from scripts.pipelines.run_pipeline_v4_optimized import JQuantsAsyncFetcher
 
     logger.info("=" * 80)
     logger.info("TEST 3: Statements - Partial Fetch and Merge")

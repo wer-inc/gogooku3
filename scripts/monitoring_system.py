@@ -4,22 +4,22 @@ Monitoring System Best Practices for gogooku3
 モニタリングシステムのベストプラクティス実装
 """
 
-import sys
-import logging
-import time
 import json
-import sqlite3
-from pathlib import Path
-from typing import Dict, Optional, Union
-from datetime import datetime
-import threading
+import logging
 import queue
-import psutil
-import torch
+import sqlite3
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from dataclasses import dataclass
-import matplotlib.pyplot as plt
+import psutil
+import torch
 
 # パスを追加
 sys.path.append(str(Path(__file__).parent.parent))
@@ -38,9 +38,9 @@ class PerformanceMetrics:
     timestamp: datetime
     cpu_usage: float
     memory_usage_gb: float
-    gpu_memory_gb: Optional[float] = None
-    execution_time: Optional[float] = None
-    throughput: Optional[float] = None
+    gpu_memory_gb: float | None = None
+    execution_time: float | None = None
+    throughput: float | None = None
     error_count: int = 0
     success_count: int = 0
 
@@ -278,7 +278,7 @@ class MetricsCollector:
         conn.commit()
         conn.close()
 
-    def queue_metric(self, metric: Union[ModelMetrics, DataQualityMetrics]):
+    def queue_metric(self, metric: ModelMetrics | DataQualityMetrics):
         """メトリクスをキューに追加"""
         self.metrics_queue.put(metric)
 
@@ -486,16 +486,16 @@ class MonitoringDashboard:
     def __init__(self, db_path: str = "monitoring.db"):
         self.db_path = db_path
 
-    def generate_performance_report(self, hours: int = 24) -> Dict:
+    def generate_performance_report(self, hours: int = 24) -> dict:
         """パフォーマンスレポート生成"""
         conn = sqlite3.connect(self.db_path)
 
         # 最新のメトリクス取得
-        query = """
+        query = f"""
             SELECT * FROM performance_metrics
-            WHERE timestamp >= datetime('now', '-{} hours')
+            WHERE timestamp >= datetime('now', '-{hours} hours')
             ORDER BY timestamp DESC
-        """.format(hours)
+        """
 
         df = pl.read_database(query, conn)
         conn.close()
@@ -528,15 +528,15 @@ class MonitoringDashboard:
 
         return report
 
-    def generate_model_report(self, hours: int = 24) -> Dict:
+    def generate_model_report(self, hours: int = 24) -> dict:
         """モデルレポート生成"""
         conn = sqlite3.connect(self.db_path)
 
-        query = """
+        query = f"""
             SELECT * FROM model_metrics
-            WHERE timestamp >= datetime('now', '-{} hours')
+            WHERE timestamp >= datetime('now', '-{hours} hours')
             ORDER BY timestamp DESC
-        """.format(hours)
+        """
 
         df = pl.read_database(query, conn)
         conn.close()
@@ -571,11 +571,11 @@ class MonitoringDashboard:
         """パフォーマンストレンドの可視化"""
         conn = sqlite3.connect(self.db_path)
 
-        query = """
+        query = f"""
             SELECT * FROM performance_metrics
-            WHERE timestamp >= datetime('now', '-{} hours')
+            WHERE timestamp >= datetime('now', '-{hours} hours')
             ORDER BY timestamp
-        """.format(hours)
+        """
 
         df = pl.read_database(query, conn)
         conn.close()

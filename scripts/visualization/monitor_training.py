@@ -15,7 +15,6 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import psutil
 import torch
@@ -23,7 +22,6 @@ from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 
@@ -48,7 +46,7 @@ class TrainingMonitor:
         self.metrics_history = []
         self.start_time = time.time()
 
-    def read_latest_metrics(self) -> Dict:
+    def read_latest_metrics(self) -> dict:
         """Read latest metrics from files"""
         metrics = {}
 
@@ -70,7 +68,7 @@ class TrainingMonitor:
 
         return metrics
 
-    def get_system_stats(self) -> Dict:
+    def get_system_stats(self) -> dict:
         """Get system resource usage"""
         stats = {
             "cpu_percent": psutil.cpu_percent(interval=1),
@@ -88,7 +86,7 @@ class TrainingMonitor:
 
         return stats
 
-    def create_metrics_table(self, metrics: Dict) -> Table:
+    def create_metrics_table(self, metrics: dict) -> Table:
         """Create metrics display table"""
         table = Table(title="Training Metrics", expand=True)
         table.add_column("Metric", style="cyan", no_wrap=True)
@@ -143,7 +141,7 @@ class TrainingMonitor:
 
         return table
 
-    def create_system_panel(self, stats: Dict) -> Panel:
+    def create_system_panel(self, stats: dict) -> Panel:
         """Create system stats panel"""
         content = ""
 
@@ -164,7 +162,7 @@ class TrainingMonitor:
 
         return Panel(content, title="System Resources", expand=True)
 
-    def create_alerts_panel(self, metrics: Dict, stats: Dict) -> Panel:
+    def create_alerts_panel(self, metrics: dict, stats: dict) -> Panel:
         """Create alerts panel for anomalies"""
         alerts = []
 
@@ -201,7 +199,7 @@ class TrainingMonitor:
         content = "\n".join(alerts)
         return Panel(content, title="Alerts", expand=True)
 
-    def create_layout(self, metrics: Dict, stats: Dict) -> Layout:
+    def create_layout(self, metrics: dict, stats: dict) -> Layout:
         """Create rich layout for display"""
         layout = Layout()
 
@@ -259,7 +257,7 @@ def launch_tensorboard(logdir: Path):
     """Launch TensorBoard in background"""
     import subprocess
 
-    console.print(f"[cyan]Launching TensorBoard at http://localhost:6006[/cyan]")
+    console.print("[cyan]Launching TensorBoard at http://localhost:6006[/cyan]")
     subprocess.Popen(
         ["tensorboard", "--logdir", str(logdir), "--port", "6006"],
         stdout=subprocess.DEVNULL,
@@ -267,7 +265,7 @@ def launch_tensorboard(logdir: Path):
     )
 
 
-def setup_wandb(project_name: str = "ATFT-GAT-FAN", entity: Optional[str] = None):
+def setup_wandb(project_name: str = "ATFT-GAT-FAN", entity: str | None = None):
     """Setup Weights & Biases tracking"""
     try:
         import wandb

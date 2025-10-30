@@ -183,7 +183,7 @@ def test_resume_functionality():
             storage_url = f"sqlite:///{db_path}"
 
             # Initial optimizer
-            optimizer1 = ATFTHPOOptimizer(
+            ATFTHPOOptimizer(
                 study_name="resume_test", storage=storage_url, n_trials=3, timeout=5
             )
 

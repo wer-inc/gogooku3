@@ -6,12 +6,12 @@ Comprehensive quality gate validation for CI/CD integration
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
-from pathlib import Path
-from typing import Dict, List, Any, Optional
 from datetime import datetime
-import argparse
+from pathlib import Path
+from typing import Any
 
 
 class QualityGateValidator:
@@ -29,7 +29,7 @@ class QualityGateValidator:
             "consistency_match_min": 0.98  # Min 98% data consistency
         }
 
-    def validate_data_quality(self, output_dir: Path) -> Dict[str, Any]:
+    def validate_data_quality(self, output_dir: Path) -> dict[str, Any]:
         """Validate data quality metrics against thresholds"""
         print("🔍 Validating data quality...")
 
@@ -41,7 +41,7 @@ class QualityGateValidator:
                 "quality_file_exists": False
             }
 
-        with open(quality_file, 'r') as f:
+        with open(quality_file) as f:
             quality_data = json.load(f)
 
         validations = {}
@@ -72,7 +72,7 @@ class QualityGateValidator:
             "overall_pass": all_quality_checks_pass
         }
 
-    def validate_performance(self, output_dir: Path) -> Dict[str, Any]:
+    def validate_performance(self, output_dir: Path) -> dict[str, Any]:
         """Validate performance metrics against thresholds"""
         print("⚡ Validating performance metrics...")
 
@@ -84,7 +84,7 @@ class QualityGateValidator:
                 "profiling_file_exists": False
             }
 
-        with open(profiling_file, 'r') as f:
+        with open(profiling_file) as f:
             profiling_data = json.load(f)
 
         validations = {}
@@ -114,7 +114,7 @@ class QualityGateValidator:
             "overall_pass": all_performance_checks_pass
         }
 
-    def validate_lineage_integrity(self, output_dir: Path) -> Dict[str, Any]:
+    def validate_lineage_integrity(self, output_dir: Path) -> dict[str, Any]:
         """Validate data lineage integrity"""
         print("📊 Validating lineage integrity...")
 
@@ -128,7 +128,7 @@ class QualityGateValidator:
 
         # Read lineage entries
         lineage_entries = []
-        with open(lineage_file, 'r') as f:
+        with open(lineage_file) as f:
             for line in f:
                 if line.strip():
                     lineage_entries.append(json.loads(line))
@@ -151,7 +151,7 @@ class QualityGateValidator:
             "overall_pass": validations["has_complete_chain"]
         }
 
-    def validate_output_artifacts(self, output_dir: Path) -> Dict[str, Any]:
+    def validate_output_artifacts(self, output_dir: Path) -> dict[str, Any]:
         """Validate required output artifacts exist"""
         print("📦 Validating output artifacts...")
 
@@ -180,7 +180,7 @@ class QualityGateValidator:
             "overall_pass": all_artifacts_exist
         }
 
-    def validate_incremental_consistency(self, incremental_dir: Path, full_dir: Path) -> Dict[str, Any]:
+    def validate_incremental_consistency(self, incremental_dir: Path, full_dir: Path) -> dict[str, Any]:
         """Validate consistency between incremental and full pipeline results"""
         print("🔄 Validating incremental consistency...")
 
@@ -242,7 +242,7 @@ class QualityGateValidator:
                 "error": str(e)
             }
 
-    def run_pipeline_for_validation(self, config_overrides: Dict[str, str] = None) -> Path:
+    def run_pipeline_for_validation(self, config_overrides: dict[str, str] = None) -> Path:
         """Run pipeline for validation with specified configuration"""
         test_dir = self.base_dir / "quality_gate_test"
         test_dir.mkdir(exist_ok=True)
@@ -269,7 +269,7 @@ class QualityGateValidator:
 
         return test_dir
 
-    def run_comprehensive_quality_gate(self) -> Dict[str, Any]:
+    def run_comprehensive_quality_gate(self) -> dict[str, Any]:
         """Run comprehensive quality gate validation"""
         print("🚀 Starting Phase 3 Quality Gate Validation...")
 
@@ -362,7 +362,7 @@ class QualityGateValidator:
             "summary": self.generate_validation_summary(validations, overall_status)
         }
 
-    def generate_validation_summary(self, validations: Dict[str, Any], overall_status: str) -> Dict[str, Any]:
+    def generate_validation_summary(self, validations: dict[str, Any], overall_status: str) -> dict[str, Any]:
         """Generate validation summary"""
         summary = {
             "total_checks": 0,
@@ -390,7 +390,7 @@ class QualityGateValidator:
 
         return summary
 
-    def generate_quality_gate_report(self, results: Dict[str, Any]) -> str:
+    def generate_quality_gate_report(self, results: dict[str, Any]) -> str:
         """Generate quality gate report"""
         report = []
         report.append("# Phase 3 Quality Gate Validation Report")
@@ -435,7 +435,7 @@ class QualityGateValidator:
 
         return "\n".join(report)
 
-    def save_results(self, results: Dict[str, Any], output_file: Path):
+    def save_results(self, results: dict[str, Any], output_file: Path):
         """Save validation results"""
         with open(output_file, 'w') as f:
             json.dump(results, f, indent=2, default=str)
@@ -458,7 +458,7 @@ def main():
 
     # Load custom thresholds if provided
     if args.thresholds and Path(args.thresholds).exists():
-        with open(args.thresholds, 'r') as f:
+        with open(args.thresholds) as f:
             custom_thresholds = json.load(f)
             validator.quality_thresholds.update(custom_thresholds)
 
@@ -469,7 +469,7 @@ def main():
         output_path = base_dir / args.output
         validator.save_results(results, output_path)
 
-        print(f"\n🎉 Quality Gate Validation Complete!")
+        print("\n🎉 Quality Gate Validation Complete!")
         print(f"📊 Results saved to: {output_path}")
         print(f"📝 Report saved to: {output_path.with_suffix('.md')}")
 

@@ -135,7 +135,7 @@ class Portfolio:
         date: Date,
         transaction_costs: dict[str, float] | None = None,
         *,
-        cost_calculator: "CostCalculator" | None = None,
+        cost_calculator: CostCalculator | None = None,
         volumes: dict[str, float] | None = None,
     ) -> list[Trade]:
         """

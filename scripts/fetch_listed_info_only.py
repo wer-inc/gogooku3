@@ -13,18 +13,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import aiohttp
 import polars as pl
 
-import sys
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.gogooku3.components.jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
+from src.gogooku3.components.jquants_async_fetcher import (
+    JQuantsAsyncFetcher,  # type: ignore
+)
 
 
 async def fetch_listed_info(date: str | None) -> pl.DataFrame:

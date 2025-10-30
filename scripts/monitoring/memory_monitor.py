@@ -20,13 +20,12 @@ Features:
 import argparse
 import logging
 import os
-import psutil
-import signal
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+
+import psutil
 
 # Setup logging
 LOG_DIR = Path("_logs")
@@ -49,7 +48,7 @@ class MemoryMonitor:
 
     def __init__(
         self,
-        pid: Optional[int] = None,
+        pid: int | None = None,
         warn_threshold: float = 80.0,
         stop_threshold: float = 90.0,
         check_interval: float = 5.0,
@@ -65,7 +64,7 @@ class MemoryMonitor:
             gpu_monitor: Enable GPU memory monitoring
         """
         self.pid = pid
-        self.process: Optional[psutil.Process] = None
+        self.process: psutil.Process | None = None
         self.warn_threshold = warn_threshold
         self.stop_threshold = stop_threshold
         self.check_interval = check_interval
