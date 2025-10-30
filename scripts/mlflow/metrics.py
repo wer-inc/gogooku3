@@ -4,24 +4,24 @@ MLflow Metrics Tracking
 メトリクス追跡とモニタリング
 """
 
+import logging
 import os
+from datetime import datetime
+from pathlib import Path
+
 import mlflow
-from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional
-from datetime import datetime
-import logging
-from pathlib import Path
+from mlflow.tracking import MlflowClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def track_metrics(
-    metrics: Dict[str, float],
-    step: Optional[int] = None,
-    run_id: Optional[str] = None,
+    metrics: dict[str, float],
+    step: int | None = None,
+    run_id: str | None = None,
 ):
     """
     メトリクスをトラッキング
@@ -63,8 +63,8 @@ class MetricsTracker:
 
     def log_batch_metrics(
         self,
-        metrics_list: List[Dict[str, float]],
-        run_id: Optional[str] = None,
+        metrics_list: list[dict[str, float]],
+        run_id: str | None = None,
     ):
         """
         バッチでメトリクスをログ
@@ -98,8 +98,8 @@ class MetricsTracker:
         epoch: int,
         train_loss: float,
         val_loss: float,
-        train_metrics: Dict[str, float] = None,
-        val_metrics: Dict[str, float] = None,
+        train_metrics: dict[str, float] = None,
+        val_metrics: dict[str, float] = None,
         learning_rate: float = None,
     ):
         """
@@ -151,11 +151,11 @@ class MetricsTracker:
         """
         from sklearn.metrics import (
             accuracy_score,
-            precision_recall_fscore_support,
-            roc_auc_score,
-            mean_squared_error,
             mean_absolute_error,
+            mean_squared_error,
+            precision_recall_fscore_support,
             r2_score,
+            roc_auc_score,
         )
 
         # Check if classification or regression
@@ -253,7 +253,7 @@ class MetricsTracker:
 
     def track_feature_importance(
         self,
-        feature_names: List[str],
+        feature_names: list[str],
         importance_scores: np.ndarray,
         top_k: int = 20,
     ):
@@ -289,7 +289,7 @@ class MetricsTracker:
     def get_metrics_history(
         self,
         run_id: str,
-        metric_keys: List[str] = None,
+        metric_keys: list[str] = None,
     ) -> pd.DataFrame:
         """
         メトリクス履歴を取得
@@ -323,8 +323,8 @@ class MetricsTracker:
 
     def compare_runs_metrics(
         self,
-        run_ids: List[str],
-        metric_keys: List[str],
+        run_ids: list[str],
+        metric_keys: list[str],
     ) -> pd.DataFrame:
         """
         複数の実行のメトリクスを比較

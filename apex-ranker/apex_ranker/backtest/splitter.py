@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date as Date, timedelta
-from typing import List
+from datetime import date as Date
 
 import numpy as np
 import polars as pl
@@ -63,7 +62,7 @@ class WalkForwardSplitter:
         self,
         dataset: pl.DataFrame,
         date_col: str = "Date",
-    ) -> List[Date]:
+    ) -> list[Date]:
         """
         Extract unique sorted trading dates from dataset.
 
@@ -79,10 +78,10 @@ class WalkForwardSplitter:
 
     def split(
         self,
-        trading_dates: List[Date],
+        trading_dates: list[Date],
         start_date: Date | None = None,
         end_date: Date | None = None,
-    ) -> List[Split]:
+    ) -> list[Split]:
         """
         Generate walk-forward splits.
 
@@ -152,7 +151,7 @@ class WalkForwardSplitter:
         date_col: str = "Date",
         start_date: Date | None = None,
         end_date: Date | None = None,
-    ) -> List[Split]:
+    ) -> list[Split]:
         """
         Generate splits directly from dataset.
 
@@ -198,7 +197,7 @@ class WalkForwardSplitter:
 
         return train_data, val_data
 
-    def summary(self, splits: List[Split]) -> dict:
+    def summary(self, splits: list[Split]) -> dict:
         """
         Generate summary statistics for splits.
 
@@ -249,7 +248,7 @@ def generate_splits_for_backtest(
     train_days: int = 252,
     val_days: int = 63,
     step_days: int = 21,
-) -> List[Split]:
+) -> list[Split]:
     """
     Convenience function to generate splits from dataset file.
 

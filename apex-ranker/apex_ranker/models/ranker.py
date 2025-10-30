@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable
+from collections.abc import Iterable
 
 import torch
 from torch import nn
@@ -20,8 +20,8 @@ class MultiHorizonHead(nn.Module):
     def _key(horizon: int) -> str:
         return f"h{int(horizon)}"
 
-    def forward(self, z: torch.Tensor) -> Dict[int, torch.Tensor]:
-        outputs: Dict[int, torch.Tensor] = {}
+    def forward(self, z: torch.Tensor) -> dict[int, torch.Tensor]:
+        outputs: dict[int, torch.Tensor] = {}
         for h in self.horizons:
             head = self.heads[self._key(h)]
             outputs[h] = head(z).squeeze(-1)
@@ -59,11 +59,11 @@ class APEXRankerV0(nn.Module):
         self.head = MultiHorizonHead(d_model, self.horizons)
         self.loss_fn = loss_fn
 
-    def forward(self, X: torch.Tensor) -> Dict[int, torch.Tensor]:
+    def forward(self, X: torch.Tensor) -> dict[int, torch.Tensor]:
         pooled, _ = self.encoder(X)
         return self.head(pooled)
 
-    def compute_loss(self, scores: Dict[int, torch.Tensor], targets: torch.Tensor) -> torch.Tensor:
+    def compute_loss(self, scores: dict[int, torch.Tensor], targets: torch.Tensor) -> torch.Tensor:
         if self.loss_fn is None:
             raise RuntimeError("loss_fn was not provided to APEXRankerV0")
 

@@ -4,17 +4,18 @@ Modular Data Updater for JQuants API
 各APIエンドポイントを独立して更新可能なモジュール化システム
 """
 
+import argparse
+import asyncio
+import json
+import logging
 import os
 import sys
-import asyncio
-import aiohttp
-import polars as pl
 from datetime import datetime, timedelta
 from pathlib import Path
-import logging
-import argparse
-import json
-from typing import Dict, List, Any
+from typing import Any
+
+import aiohttp
+import polars as pl
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -23,8 +24,8 @@ if env_path.exists():
     load_dotenv(env_path)
 
 sys.path.append(str(Path(__file__).parent.parent))
-from pipelines.run_pipeline import JQuantsAsyncFetcher  # noqa: E402
 from core.ml_dataset_builder import MLDatasetBuilder  # noqa: E402
+from pipelines.run_pipeline import JQuantsAsyncFetcher  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 class DataComponent:
     """Base class for data components"""
 
-    def __init__(self, name: str, endpoint: str, required_cols: List[str]):
+    def __init__(self, name: str, endpoint: str, required_cols: list[str]):
         self.name = name
         self.endpoint = endpoint
         self.required_cols = required_cols
@@ -44,7 +45,7 @@ class DataComponent:
         self,
         fetcher: JQuantsAsyncFetcher,
         session: aiohttp.ClientSession,
-        params: Dict[str, Any],
+        params: dict[str, Any],
     ) -> pl.DataFrame:
         """Fetch data from API endpoint"""
         raise NotImplementedError
@@ -72,7 +73,7 @@ class PriceDataComponent(DataComponent):
         self,
         fetcher: JQuantsAsyncFetcher,
         session: aiohttp.ClientSession,
-        params: Dict[str, Any],
+        params: dict[str, Any],
     ) -> pl.DataFrame:
         """Fetch price data for specified stocks"""
         codes = params.get("codes", [])
@@ -98,7 +99,7 @@ class TopixComponent(DataComponent):
         self,
         fetcher: JQuantsAsyncFetcher,
         session: aiohttp.ClientSession,
-        params: Dict[str, Any],
+        params: dict[str, Any],
     ) -> pl.DataFrame:
         """Fetch TOPIX index data"""
         from_date = params.get("from", "")
@@ -126,7 +127,7 @@ class TradesSpecComponent(DataComponent):
         self,
         fetcher: JQuantsAsyncFetcher,
         session: aiohttp.ClientSession,
-        params: Dict[str, Any],
+        params: dict[str, Any],
     ) -> pl.DataFrame:
         """Fetch trades specification data"""
         from_date = params.get("from", "")
@@ -185,7 +186,7 @@ class ListedInfoComponent(DataComponent):
         self,
         fetcher: JQuantsAsyncFetcher,
         session: aiohttp.ClientSession,
-        params: Dict[str, Any],
+        params: dict[str, Any],
     ) -> pl.DataFrame:
         """Fetch listed company information"""
         return await fetcher.get_listed_info(session)
@@ -237,7 +238,7 @@ class ModularDataUpdater:
         self.builder = MLDatasetBuilder(output_dir=self.output_dir)
 
     async def fetch_component(
-        self, component_name: str, params: Dict[str, Any]
+        self, component_name: str, params: dict[str, Any]
     ) -> pl.DataFrame:
         """Fetch data for a specific component"""
         if component_name not in self.components:
@@ -268,7 +269,7 @@ class ModularDataUpdater:
             return data
 
     def update_dataset(
-        self, base_df: pl.DataFrame, updates: Dict[str, pl.DataFrame]
+        self, base_df: pl.DataFrame, updates: dict[str, pl.DataFrame]
     ) -> pl.DataFrame:
         """Update dataset with multiple components"""
         df = base_df

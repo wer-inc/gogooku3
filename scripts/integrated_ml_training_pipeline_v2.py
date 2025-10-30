@@ -11,7 +11,6 @@ PDFで提案された改善を実装:
 """
 
 import argparse
-import asyncio
 import logging
 import sys
 from pathlib import Path

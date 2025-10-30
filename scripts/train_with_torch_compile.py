@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import torch
 
@@ -55,7 +55,7 @@ def setup_torch_compile_env():
         return False
 
 
-def compile_model_with_options(model, compile_config: Optional[dict[str, Any]] = None):
+def compile_model_with_options(model, compile_config: dict[str, Any] | None = None):
     """
     Compile model with PyTorch 2.x torch.compile.
 

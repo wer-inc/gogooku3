@@ -20,7 +20,6 @@ from pathlib import Path
 
 import polars as pl
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 # Setup logging
 logging.basicConfig(
@@ -100,9 +99,9 @@ def precompute_arrow_cache(input_path: str, output_path: str) -> None:
     logger.info("ARROW CACHE PERFORMANCE SUMMARY")
     logger.info("=" * 60)
     logger.info(f"Total processing time: {load_time + convert_time + write_time:.2f}s")
-    logger.info(f"Expected DataLoader speedup: 2-3x (zero-copy, no GIL)")
+    logger.info("Expected DataLoader speedup: 2-3x (zero-copy, no GIL)")
     logger.info(f"File size: {output_size_mb:.1f} MB")
-    logger.info(f"Random access latency: <1ms (memory-mapped)")
+    logger.info("Random access latency: <1ms (memory-mapped)")
     logger.info("=" * 60)
 
 

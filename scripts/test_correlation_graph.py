@@ -19,8 +19,8 @@ import argparse
 import math
 import sys
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import polars as pl

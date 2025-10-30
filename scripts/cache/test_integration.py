@@ -4,11 +4,12 @@
 Tests the full fetch -> merge -> save pipeline with real API calls.
 """
 
+import asyncio
 import os
 import sys
-import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -39,6 +40,7 @@ print(f"Size: {latest_cache.stat().st_size / (1024*1024):.1f} MB")
 
 # Parse cache date range
 import re
+
 match = re.search(r"_(\d{8})_(\d{8})\.parquet$", latest_cache.name)
 if not match:
     print("❌ Could not parse cache filename")
@@ -52,23 +54,24 @@ print()
 test_start = (cache_end_dt - timedelta(days=7)).strftime("%Y-%m-%d")
 test_end = (cache_end_dt + timedelta(days=2)).strftime("%Y-%m-%d")
 
-print(f"Test scenario:")
+print("Test scenario:")
 print(f"  Request: {test_start} to {test_end}")
-print(f"  Expected behavior:")
-print(f"    - Detect partial match (~78% coverage)")
+print("  Expected behavior:")
+print("    - Detect partial match (~78% coverage)")
 print(f"    - Load cached data for {test_start} to {cache_end_dt.strftime('%Y-%m-%d')}")
 print(f"    - Fetch only {(cache_end_dt + timedelta(days=1)).strftime('%Y-%m-%d')} to {test_end} from API")
-print(f"    - Merge cached + new data")
-print(f"    - Save extended cache")
+print("    - Merge cached + new data")
+print("    - Save extended cache")
 print()
 
 # Now run a minimal fetch test
 async def run_test():
     # Import here to avoid early failures
     sys.path.append(str(Path(__file__).parents[1]))
-    from components.trading_calendar_fetcher import TradingCalendarFetcher
-    from scripts.pipelines.run_pipeline_v4_optimized import JQuantsAsyncFetcher
     import aiohttp
+    from components.trading_calendar_fetcher import TradingCalendarFetcher
+
+    from scripts.pipelines.run_pipeline_v4_optimized import JQuantsAsyncFetcher
 
     # Get credentials
     email = os.getenv("JQUANTS_AUTH_EMAIL", "")

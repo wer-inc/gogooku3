@@ -183,7 +183,7 @@ def test_integration():
         # Initialize components
         objective = MultiHorizonObjective()
         extractor = MetricsExtractor()
-        optimizer = ATFTHPOOptimizer(
+        ATFTHPOOptimizer(
             study_name="integration_test", n_trials=1, timeout=10
         )
 

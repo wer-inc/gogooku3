@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Check production dataset for valid targets"""
 
-import pandas as pd
+
 import numpy as np
-from pathlib import Path
+import pandas as pd
+
 
 def main():
     dataset_path = "output/ml_dataset_latest_full.parquet"
@@ -68,7 +69,7 @@ def main():
     print("=" * 60)
 
     recent = df[pd.to_datetime(df[date_col]) >= '2018-01-01']
-    print(f"\nData from 2018-01-01:")
+    print("\nData from 2018-01-01:")
     print(f"  Samples: {len(recent):,} ({100*len(recent)/len(df):.1f}% of total)")
     print(f"  Date range: {recent[date_col].min()} to {recent[date_col].max()}")
 
@@ -109,9 +110,9 @@ def main():
 
         if good_horizons:
             print("✅ Ready for training with:")
-            print(f"   - Date filter: 2018-01-01 or later")
+            print("   - Date filter: 2018-01-01 or later")
             print(f"   - Target columns: {good_horizons[:4]}")
-            print(f"   - Use: make -f Makefile.production train-production")
+            print("   - Use: make -f Makefile.production train-production")
         else:
             print("⚠️ Low quality targets detected")
             print("   - Try filtering to 2020+ data")

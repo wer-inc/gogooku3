@@ -5,7 +5,6 @@ Implements the cost model defined in TRANSACTION_COST_MODEL.md.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
 
 
 @dataclass
@@ -13,7 +12,9 @@ class CostConfig:
     """Transaction cost configuration parameters."""
 
     # Commission parameters (Japanese broker fee structure)
-    commission_tiers: list[tuple[float, float, float, float]] = None  # (max_value, rate, min_fee, max_fee)
+    commission_tiers: list[
+        tuple[float, float, float, float]
+    ] = None  # (max_value, rate, min_fee, max_fee)
 
     # Slippage parameters
     base_spread_bps: float = 5.0  # Base bid-ask spread (bps)
@@ -104,7 +105,7 @@ def calculate_total_cost(
     daily_volume_jpy: float,
     direction: str,
     config: CostConfig | None = None,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Calculate total transaction cost for a single trade.
 
@@ -128,7 +129,9 @@ def calculate_total_cost(
     slippage = calculate_slippage(trade_value_jpy, daily_volume_jpy, direction, config)
 
     total_cost = commission + slippage
-    total_cost_bps = (total_cost / trade_value_jpy) * 10000 if trade_value_jpy > 0 else 0.0
+    total_cost_bps = (
+        (total_cost / trade_value_jpy) * 10000 if trade_value_jpy > 0 else 0.0
+    )
 
     return {
         "commission": commission,
@@ -142,7 +145,7 @@ def calculate_round_trip_cost(
     position_value_jpy: float,
     daily_volume_jpy: float,
     config: CostConfig | None = None,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Calculate round-trip cost (buy + sell).
 
@@ -158,10 +161,14 @@ def calculate_round_trip_cost(
         config = CostConfig()
 
     buy_cost = calculate_total_cost(position_value_jpy, daily_volume_jpy, "buy", config)
-    sell_cost = calculate_total_cost(position_value_jpy, daily_volume_jpy, "sell", config)
+    sell_cost = calculate_total_cost(
+        position_value_jpy, daily_volume_jpy, "sell", config
+    )
 
     total_cost = buy_cost["total_cost"] + sell_cost["total_cost"]
-    total_cost_bps = (total_cost / position_value_jpy) * 10000 if position_value_jpy > 0 else 0.0
+    total_cost_bps = (
+        (total_cost / position_value_jpy) * 10000 if position_value_jpy > 0 else 0.0
+    )
 
     return {
         "buy_commission": buy_cost["commission"],
@@ -213,7 +220,7 @@ class CostCalculator:
         trade_value_jpy: float,
         daily_volume_jpy: float,
         direction: str,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Calculate cost for a single trade."""
         return calculate_total_cost(
             trade_value_jpy,
@@ -224,9 +231,9 @@ class CostCalculator:
 
     def calculate_portfolio_costs(
         self,
-        trades: list[Dict],
-        volumes: Dict[str, float],
-    ) -> Dict[str, float]:
+        trades: list[dict],
+        volumes: dict[str, float],
+    ) -> dict[str, float]:
         """
         Calculate costs for multiple trades.
 
@@ -272,7 +279,7 @@ class CostCalculator:
         turnover: float,
         avg_position_value: float,
         avg_daily_volume: float,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Estimate daily transaction cost.
 
@@ -296,7 +303,9 @@ class CostCalculator:
         )
 
         total_cost = sample_cost["total_cost"] * num_trades * 2  # *2 for round-trip
-        cost_bps = (total_cost / portfolio_value) * 10000 if portfolio_value > 0 else 0.0
+        cost_bps = (
+            (total_cost / portfolio_value) * 10000 if portfolio_value > 0 else 0.0
+        )
 
         return {
             "traded_value": traded_value,

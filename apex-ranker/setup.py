@@ -1,6 +1,6 @@
 """Setup configuration for APEX-Ranker package."""
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name="apex-ranker",

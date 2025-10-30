@@ -21,12 +21,10 @@ import argparse
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import polars as pl
 import torch
-
 from apex_ranker.data import (
     FeatureSelector,
     add_cross_sectional_zscores,
@@ -203,7 +201,9 @@ def prepare_features(
         target_date_parsed = datetime.strptime(target_date, "%Y-%m-%d").date()
         available_dates = frame[date_col].unique().sort()
         if target_date_parsed not in available_dates:
-            closest = min(available_dates, key=lambda d: abs((d - target_date_parsed).days))
+            closest = min(
+                available_dates, key=lambda d: abs((d - target_date_parsed).days)
+            )
             print(f"[Warning] Date {target_date} not found. Using closest: {closest}")
             target_date = closest
         else:
@@ -211,7 +211,7 @@ def prepare_features(
 
     # Apply cross-sectional normalization
     if verbose:
-        print(f"[Inference] Applying cross-sectional Z-score normalization...")
+        print("[Inference] Applying cross-sectional Z-score normalization...")
 
     frame = add_cross_sectional_zscores(
         frame,
@@ -266,7 +266,9 @@ def prepare_features(
         features_list.append(window)
         valid_codes.append(code)
 
-    features_array = np.stack(features_list, axis=0)  # Shape: (N_stocks, lookback, n_features)
+    features_array = np.stack(
+        features_list, axis=0
+    )  # Shape: (N_stocks, lookback, n_features)
     stock_codes = valid_codes
 
     # Convert to tensor
@@ -321,12 +323,14 @@ def generate_rankings(
     ranks = list(range(1, len(ranked_codes) + 1))
 
     # Create DataFrame
-    df = pl.DataFrame({
-        "Rank": ranks,
-        "Code": ranked_codes,
-        "Score": ranked_scores,
-        "Horizon": [f"{horizon}d"] * len(ranks),
-    })
+    df = pl.DataFrame(
+        {
+            "Rank": ranks,
+            "Code": ranked_codes,
+            "Score": ranked_scores,
+            "Horizon": [f"{horizon}d"] * len(ranks),
+        }
+    )
 
     return df
 
@@ -345,7 +349,7 @@ def main():
     # Load model
     print(f"[Inference] Loading model: {args.model}")
     model = load_model_checkpoint(args.model, config, device)
-    print(f"[Inference] Model loaded successfully")
+    print("[Inference] Model loaded successfully")
 
     # Prepare features
     print(f"[Inference] Preparing features from: {args.data}")
@@ -379,18 +383,22 @@ def main():
         print(f"\n[Success] Rankings saved to: {args.output}")
     else:
         print("\n" + "=" * 80)
-        print(f"APEX-Ranker v0 - Top {args.top_k} Predictions ({args.horizon}d horizon)")
+        print(
+            f"APEX-Ranker v0 - Top {args.top_k} Predictions ({args.horizon}d horizon)"
+        )
         print(f"Date: {actual_date}")
         print("=" * 80)
         print(rankings)
 
     # Summary statistics
-    print(f"\n[Summary]")
+    print("\n[Summary]")
     print(f"  Date: {actual_date}")
     print(f"  Total stocks: {len(stock_codes)}")
     print(f"  Top-K returned: {len(rankings)}")
     print(f"  Horizon: {args.horizon}d")
-    print(f"  Score range: [{rankings['Score'].min():.4f}, {rankings['Score'].max():.4f}]")
+    print(
+        f"  Score range: [{rankings['Score'].min():.4f}, {rankings['Score'].max():.4f}]"
+    )
 
 
 if __name__ == "__main__":

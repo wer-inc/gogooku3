@@ -13,11 +13,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-import polars as pl
 
 # Ensure project root on path for imports
 import sys
+from pathlib import Path
+
+import polars as pl
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))

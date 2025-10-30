@@ -9,9 +9,9 @@ an untrained state_dict checkpoint to output/checkpoints/dummy_model.pth
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
-import logging
 
 import torch
 from omegaconf import OmegaConf
@@ -24,7 +24,7 @@ logger = logging.getLogger("create_dummy_checkpoint")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def build_minimal_model_config() -> "OmegaConf":
+def build_minimal_model_config() -> OmegaConf:
     """Build a minimal DictConfig the model can consume.
 
     The evaluation script loads configs/model/atft_gat_fan_v1.yaml which lacks

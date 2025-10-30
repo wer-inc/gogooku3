@@ -4,17 +4,15 @@ ATFT-GAT-FAN Real Hyperparameter Tuning
 実際のトレーニングに接続したハイパーパラメータ最適化
 """
 
-import os
-import sys
 import json
 import logging
+import os
 import subprocess
-import tempfile
-from pathlib import Path
+import sys
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
-import torch
-import numpy as np
+from pathlib import Path
+from typing import Any
+
 import yaml
 
 # プロジェクトルートをパスに追加
@@ -43,29 +41,29 @@ except ImportError:
 
 class MLflowOptunaCallback:
     """MLflow統合Optunaコールバック"""
-    
+
     def __init__(self, experiment_name: str = "ATFT-GAT-FAN-Optuna"):
         self.experiment_name = experiment_name
         if MLFLOW_AVAILABLE:
             mlflow.set_experiment(experiment_name)
-    
+
     def __call__(self, study, trial):
         if MLFLOW_AVAILABLE:
-            with mlflow.start_run(nested=True) as run:
+            with mlflow.start_run(nested=True):
                 # パラメータをログ
                 mlflow.log_params(trial.params)
-                
+
                 # メトリクスをログ
                 mlflow.log_metric("trial_number", trial.number)
                 mlflow.log_metric("sharpe_ratio", trial.value if trial.value else -999)
-                
+
                 # 中間値もログ
                 for step, intermediate_value in trial.intermediate_values.items():
                     mlflow.log_metric("intermediate_value", intermediate_value, step=step)
-                
+
                 # 状態をログ
                 mlflow.set_tag("trial_state", str(trial.state))
-                
+
                 if trial.value is not None:
                     mlflow.log_metric("objective_value", trial.value)
 
@@ -86,17 +84,17 @@ class RealHyperparameterTuner:
         self.max_data_files = max_data_files  # データファイル制限
         self.tuning_results_dir = project_root / "tuning_results"
         self.tuning_results_dir.mkdir(exist_ok=True)
-        
+
         # 最適化結果
         self.best_params = {}
         self.best_score = -float('inf')
-        
+
         # MLflowコールバック
         self.mlflow_callback = MLflowOptunaCallback()
 
-    def get_phase_search_space(self, phase: int) -> Dict[str, Any]:
+    def get_phase_search_space(self, phase: int) -> dict[str, Any]:
         """Phase別の探索空間を定義"""
-        
+
         if phase == 1:  # 基本パラメータ
             return {
                 'lr': ('log_uniform', 1e-5, 5e-4),
@@ -125,10 +123,10 @@ class RealHyperparameterTuner:
         else:
             raise ValueError(f"Unknown phase: {phase}")
 
-    def suggest_params(self, trial, search_space: Dict[str, Any]) -> Dict[str, Any]:
+    def suggest_params(self, trial, search_space: dict[str, Any]) -> dict[str, Any]:
         """試行パラメータを生成"""
         params = {}
-        
+
         for param_name, (dist_type, *args) in search_space.items():
             if dist_type == 'uniform':
                 params[param_name] = trial.suggest_float(param_name, args[0], args[1])
@@ -140,13 +138,13 @@ class RealHyperparameterTuner:
                 params[param_name] = trial.suggest_categorical(param_name, args[0])
             else:
                 raise ValueError(f"Unknown distribution type: {dist_type}")
-        
+
         return params
 
-    def create_hydra_overrides(self, params: Dict[str, Any]) -> List[str]:
+    def create_hydra_overrides(self, params: dict[str, Any]) -> list[str]:
         """Hydraオーバーライドコマンドを生成"""
         overrides = []
-        
+
         # 基本パラメータ
         if 'lr' in params:
             overrides.append(f'train.optimizer.lr={params["lr"]}')
@@ -158,7 +156,7 @@ class RealHyperparameterTuner:
             overrides.append(f'train.scheduler.warmup_steps={params["warmup_steps"]}')
         if 'scheduler_gamma' in params:
             overrides.append(f'train.scheduler.gamma={params["scheduler_gamma"]}')
-            
+
         # グラフパラメータ
         if 'graph_k' in params:
             overrides.append(f'data.graph_builder.k={params["graph_k"]}')
@@ -170,7 +168,7 @@ class RealHyperparameterTuner:
             overrides.append(f'data.graph_builder.shrinkage_gamma={params["shrinkage_gamma"]}')
         if 'graph_symmetric' in params:
             overrides.append(f'data.graph_builder.symmetric={params["graph_symmetric"]}')
-            
+
         # FAN/TFT融合
         if 'freq_dropout_p' in params:
             overrides.append(f'improvements.freq_dropout_p={params["freq_dropout_p"]}')
@@ -178,17 +176,17 @@ class RealHyperparameterTuner:
             overrides.append(f'improvements.freq_dropout_max_width={params["freq_dropout_max_width"]}')
         if 'ema_decay' in params:
             overrides.append(f'improvements.ema_decay={params["ema_decay"]}')
-            
+
         return overrides
 
-    def execute_training(self, params: Dict[str, Any], trial: optuna.Trial = None) -> Dict[str, float]:
+    def execute_training(self, params: dict[str, Any], trial: optuna.Trial = None) -> dict[str, float]:
         """実際のトレーニングを実行してメトリクスを取得"""
         logger.info(f"Executing training with params: {params}")
-        
+
         try:
             # Hydraオーバーライド生成
             overrides = self.create_hydra_overrides(params)
-            
+
             # 短縮モード設定
             overrides.extend([
                 f'train.trainer.max_epochs={self.n_epochs_trial}',
@@ -196,25 +194,25 @@ class RealHyperparameterTuner:
                 'train.trainer.enable_progress_bar=false',  # 出力を簡潔に
                 'train.trainer.enable_model_summary=false',
             ])
-            
+
             # 環境変数設定
             env = os.environ.copy()
             env['SMOKE_DATA_MAX_FILES'] = str(self.max_data_files)
             env['MINIMAL_COLUMNS'] = '1'
             env['OPTUNA_TRIAL'] = '1'  # オプトゥナトライアル指示
-            
+
             # MLflow無効化（ネストランが複雑になるため）
             env['MLFLOW'] = '0'
-            
+
             # コマンド構築
             cmd = [
                 'python', str(project_root / 'scripts' / 'train_atft.py'),
                 '--config-path', str(project_root / 'configs' / 'atft'),
                 '--config-name', 'config'
             ] + overrides
-            
+
             logger.info(f"Running command: {' '.join(cmd)}")
-            
+
             # 実行
             result = subprocess.run(
                 cmd,
@@ -224,27 +222,27 @@ class RealHyperparameterTuner:
                 env=env,
                 cwd=project_root
             )
-            
+
             if result.returncode != 0:
                 logger.error(f"Training failed with return code {result.returncode}")
                 logger.error(f"STDOUT: {result.stdout}")
                 logger.error(f"STDERR: {result.stderr}")
                 return {'sharpe': -1.0, 'ic': 0.0, 'rankic': 0.0, 'loss': 999.0}
-            
+
             # ログから結果を抽出
             metrics = self.parse_training_output(result.stdout, result.stderr)
-            
+
             # 中間値報告（プルーニング用）
             if trial is not None and 'sharpe' in metrics:
                 trial.report(metrics['sharpe'], step=self.n_epochs_trial)
-                
+
                 # プルーニング判定
                 if trial.should_prune():
                     logger.info(f"Trial {trial.number} pruned at step {self.n_epochs_trial}")
                     raise optuna.TrialPruned()
-            
+
             return metrics
-            
+
         except subprocess.TimeoutExpired:
             logger.error("Training timeout")
             return {'sharpe': -1.0, 'ic': 0.0, 'rankic': 0.0, 'loss': 999.0}
@@ -254,14 +252,14 @@ class RealHyperparameterTuner:
             logger.error(f"Training execution failed: {e}")
             return {'sharpe': -1.0, 'ic': 0.0, 'rankic': 0.0, 'loss': 999.0}
 
-    def parse_training_output(self, stdout: str, stderr: str) -> Dict[str, float]:
+    def parse_training_output(self, stdout: str, stderr: str) -> dict[str, float]:
         """トレーニング出力からメトリクスを抽出"""
         metrics = {'sharpe': -1.0, 'ic': 0.0, 'rankic': 0.0, 'loss': 999.0, 'hit_rate': 0.0}
-        
+
         try:
             # 最後のエポックのメトリクスを抽出
             lines = stdout.split('\n') + stderr.split('\n')
-            
+
             for line in reversed(lines):  # 後ろから探索
                 if 'Sharpe:' in line:
                     # "Sharpe: 0.0084" のような行から値を抽出
@@ -273,7 +271,7 @@ class RealHyperparameterTuner:
                             break
                         except (ValueError, IndexError):
                             continue
-                            
+
             # IC/RankICも同様に抽出
             for line in reversed(lines):
                 if 'Val Metrics' in line and 'IC:' in line:
@@ -283,7 +281,7 @@ class RealHyperparameterTuner:
                         if len(parts) > 1:
                             ic_part = parts[1].split(',')[0].strip()
                             metrics['ic'] = float(ic_part)
-                            
+
                         if 'RankIC:' in line:
                             rankic_part = line.split('RankIC:')[1].strip()
                             metrics['rankic'] = float(rankic_part)
@@ -300,52 +298,52 @@ class RealHyperparameterTuner:
                         break
                     except (ValueError, IndexError):
                         continue
-            
+
             logger.info(f"Extracted metrics: {metrics}")
-            
+
         except Exception as e:
             logger.error(f"Failed to parse training output: {e}")
-            
+
         return metrics
 
-    def robust_objective(self, metrics: Dict[str, float]) -> float:
+    def robust_objective(self, metrics: dict[str, float]) -> float:
         """ロバストな目的関数"""
         sharpe = metrics.get('sharpe', -1.0)
         ic = metrics.get('ic', 0.0)
         rankic = metrics.get('rankic', 0.0)
         hit_rate = metrics.get('hit_rate', 0.0)
-        
+
         # 基本: Sharpe Ratio重視
         score = sharpe
-        
+
         # IC Information Ratioで補正
         ic_bonus = abs(ic) * 0.1  # ICの絶対値を小さく加点
         rankic_bonus = abs(rankic) * 0.1  # RankICの絶対値を小さく加点
-        
+
         # 複合スコア
         # Hit Rate as a small stabilizer (directional consistency)
         hr_bonus = max(0.0, hit_rate - 0.5) * 0.2  # above-random portion scaled
         total_score = score + ic_bonus + rankic_bonus + hr_bonus
-        
+
         # 異常値チェック
         if sharpe < -0.5 or sharpe > 2.0:  # 異常なSharpe値
             total_score = -1.0
-            
+
         logger.info(f"Objective: sharpe={sharpe:.4f}, ic={ic:.4f}, rankic={rankic:.4f} → score={total_score:.4f}")
-        
+
         return total_score
 
     def optimize_phase(self, phase: int, n_trials: int = 10) -> optuna.Study:
         """特定Phase用の最適化実行"""
         logger.info(f"Starting Phase {phase} optimization with {n_trials} trials...")
-        
+
         search_space = self.get_phase_search_space(phase)
-        
+
         def objective(trial):
             params = self.suggest_params(trial, search_space)
             metrics = self.execute_training(params, trial)
             return self.robust_objective(metrics)
-        
+
         # Study作成
         study_name = f"atft_gat_fan_phase_{phase}"
         study = optuna.create_study(
@@ -359,18 +357,18 @@ class RealHyperparameterTuner:
             storage=f"sqlite:///{self.tuning_results_dir}/optuna_phase_{phase}.db",
             load_if_exists=True
         )
-        
+
         # 最適化実行
         study.optimize(
             objective,
             n_trials=n_trials,
             callbacks=[self.mlflow_callback]
         )
-        
+
         # 結果保存
         best_params = study.best_trial.params
         best_score = study.best_trial.value
-        
+
         result = {
             'phase': phase,
             'method': 'optuna',
@@ -380,40 +378,40 @@ class RealHyperparameterTuner:
             'study_name': study_name,
             'timestamp': datetime.now().isoformat()
         }
-        
+
         # JSON保存
         result_file = self.tuning_results_dir / f"optuna_phase_{phase}_result.json"
         with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
-        
+
         logger.info(f"Phase {phase} completed. Best score: {best_score:.4f}")
         logger.info(f"Best params: {best_params}")
-        
+
         return study
 
-    def create_optimized_config(self, phase_results: List[Dict]) -> str:
+    def create_optimized_config(self, phase_results: list[dict]) -> str:
         """最適化結果を統合して新しい設定ファイルを作成"""
         # ベース設定を読み込み
-        with open(self.base_config, 'r') as f:
+        with open(self.base_config) as f:
             config = yaml.safe_load(f)
-        
+
         # 各Phaseの最適パラメータを統合
         all_best_params = {}
         for result in phase_results:
             all_best_params.update(result['best_params'])
-        
+
         # 設定に反映
         self.apply_params_to_config(config, all_best_params)
-        
+
         # 新しい設定ファイルを保存
         output_file = self.tuning_results_dir / "optimized_config.yaml"
         with open(output_file, 'w') as f:
             yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-        
+
         logger.info(f"Optimized config saved: {output_file}")
         return str(output_file)
 
-    def apply_params_to_config(self, config: Dict, params: Dict[str, Any]):
+    def apply_params_to_config(self, config: dict, params: dict[str, Any]):
         """パラメータを設定辞書に適用"""
         # Nested dictionary helper
         def set_nested(d, path, value):
@@ -421,7 +419,7 @@ class RealHyperparameterTuner:
             for key in keys[:-1]:
                 d = d.setdefault(key, {})
             d[keys[-1]] = value
-        
+
         # パラメータマッピング
         param_mapping = {
             'lr': 'train.optimizer.lr',
@@ -438,7 +436,7 @@ class RealHyperparameterTuner:
             'freq_dropout_max_width': 'improvements.freq_dropout_max_width',
             'ema_decay': 'improvements.ema_decay',
         }
-        
+
         for param, value in params.items():
             if param in param_mapping:
                 set_nested(config, param_mapping[param], value)
@@ -512,25 +510,25 @@ def main():
         for phase in [1, 2, 3]:
             logger.info(f"Starting Phase {phase}")
             study = tuner.optimize_phase(phase, args.trials)
-            
+
             result = {
                 'phase': phase,
                 'best_params': study.best_trial.params,
                 'best_score': study.best_trial.value
             }
             phase_results.append(result)
-    
+
     elif args.phase:
         # 特定Phase実行
         study = tuner.optimize_phase(args.phase, args.trials)
-        
+
         result = {
             'phase': args.phase,
             'best_params': study.best_trial.params,
             'best_score': study.best_trial.value
         }
         phase_results.append(result)
-    
+
     else:
         logger.error("Please specify --phase or --all-phases")
         return 1
@@ -539,10 +537,10 @@ def main():
     if phase_results:
         if len(phase_results) > 1:
             optimized_config = tuner.create_optimized_config(phase_results)
-            print(f"\n✅ ALL PHASES COMPLETED!")
+            print("\n✅ ALL PHASES COMPLETED!")
             print(f"Optimized config saved: {optimized_config}")
-        
-        print(f"\n🏆 OPTIMIZATION RESULTS:")
+
+        print("\n🏆 OPTIMIZATION RESULTS:")
         for result in phase_results:
             print(f"Phase {result['phase']}: Score {result['best_score']:.4f}")
             print(f"  Best params: {result['best_params']}")

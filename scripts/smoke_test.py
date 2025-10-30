@@ -4,24 +4,20 @@ Smoke Test for ATFT-GAT-FAN Improvements
 最小データで1エポック学習が通ることを確認
 """
 
-import os
-import sys
 import logging
-import tempfile
-import torch
-import numpy as np
+import sys
 from pathlib import Path
-from typing import Dict, Any
+
+import torch
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.settings import get_settings, set_reproducibility
-from src.utils.monitoring import ComprehensiveLogger
 from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
 from src.losses.multi_horizon_loss import ComprehensiveLoss
-from src.training.robust_trainer import OptimizedOptimizer, AdvancedScheduler
+from src.training.robust_trainer import OptimizedOptimizer
+from src.utils.settings import set_reproducibility
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -161,7 +157,7 @@ def create_minimal_config():
     }
 
 
-def create_synthetic_data(batch_size: int = 32, seq_len: int = 60, n_features: int = 35) -> Dict[str, torch.Tensor]:
+def create_synthetic_data(batch_size: int = 32, seq_len: int = 60, n_features: int = 35) -> dict[str, torch.Tensor]:
     """合成テストデータ作成"""
     # 特徴量データ
     features = torch.randn(batch_size, seq_len, n_features)
@@ -200,7 +196,7 @@ def test_model_initialization():
         if abs(actual_features - expected_features) < 20:  # 許容誤差
             logger.info("✓ ML_DATASET_COLUMNS.md compatibility confirmed")
         else:
-            logger.warning(f"⚠ Feature count may not match ML_DATASET_COLUMNS.md exactly")
+            logger.warning("⚠ Feature count may not match ML_DATASET_COLUMNS.md exactly")
 
         return model, config
 
@@ -363,7 +359,7 @@ def test_improvements():
     config['improvements']['output_head_small_init'] = True
 
     try:
-        model = ATFT_GAT_FAN(config)
+        ATFT_GAT_FAN(config)
         logger.info("✓ Small-init + LayerScale: OK")
     except Exception as e:
         logger.warning(f"⚠ Small-init + LayerScale failed: {e}")
@@ -372,7 +368,7 @@ def test_improvements():
     config['improvements']['freq_dropout_p'] = 0.1
 
     try:
-        model = ATFT_GAT_FAN(config)
+        ATFT_GAT_FAN(config)
         logger.info("✓ FreqDropout: OK")
     except Exception as e:
         logger.warning(f"⚠ FreqDropout failed: {e}")
@@ -393,13 +389,13 @@ def run_smoke_test():
         model, config = test_model_initialization()
 
         # 2. フォワードパステスト
-        outputs = test_forward_pass(model, config)
+        test_forward_pass(model, config)
 
         # 3. 損失計算テスト
-        loss = test_loss_computation(model, config)
+        test_loss_computation(model, config)
 
         # 4. オプティマイザー設定テスト
-        optimizer = test_optimizer_setup(model, config)
+        test_optimizer_setup(model, config)
 
         # 5. トレーニングステップテスト
         # train_loss = test_training_step(model, optimizer, config)  # TODO: 損失関数修正後に有効化

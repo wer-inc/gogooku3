@@ -3,24 +3,23 @@ from __future__ import annotations
 
 import argparse
 import copy
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import polars as pl
 import torch
-from torch.utils.data import DataLoader
-
 from apex_ranker.data import (
+    DayPanelDataset,
     FeatureSelector,
     add_cross_sectional_zscores,
     build_panel_cache,
     collate_day_batch,
-    DayPanelDataset,
 )
 from apex_ranker.losses import CompositeLoss
 from apex_ranker.models import APEXRankerV0
 from apex_ranker.utils import load_config, precision_at_k, spearman_ic
+from torch.utils.data import DataLoader
 
 
 class EarlyStopping:
@@ -31,6 +30,7 @@ class EarlyStopping:
         mode: 'max' to maximize metric, 'min' to minimize
         min_delta: Minimum change to qualify as improvement
     """
+
     def __init__(self, patience: int = 3, mode: str = "max", min_delta: float = 0.0):
         self.patience = patience
         self.mode = mode
@@ -66,11 +66,15 @@ class EarlyStopping:
             print(f"[EarlyStopping] New best: {score:.4f} at epoch {epoch}")
         else:
             self.counter += 1
-            print(f"[EarlyStopping] No improvement for {self.counter}/{self.patience} epochs (best: {self.best_score:.4f} at epoch {self.best_epoch})")
+            print(
+                f"[EarlyStopping] No improvement for {self.counter}/{self.patience} epochs (best: {self.best_score:.4f} at epoch {self.best_epoch})"
+            )
 
             if self.counter >= self.patience:
                 self.early_stop = True
-                print(f"[EarlyStopping] Stopping training! Best epoch: {self.best_epoch}, Best score: {self.best_score:.4f}")
+                print(
+                    f"[EarlyStopping] Stopping training! Best epoch: {self.best_epoch}, Best score: {self.best_score:.4f}"
+                )
                 return True
 
         return False
@@ -90,13 +94,42 @@ def clone_state_dict(state_dict: dict) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train APEX-Ranker v0 baseline.")
     parser.add_argument("--config", required=True, help="Path to YAML configuration.")
-    parser.add_argument("--output", default=None, help="Optional path to save model state dict.")
-    parser.add_argument("--max-epochs", type=int, default=None, help="Optional cap on training epochs.")
-    parser.add_argument("--max-train-days", type=int, default=None, help="Limit number of training days (recent).")
-    parser.add_argument("--max-val-days", type=int, default=None, help="Limit number of validation days (recent).")
-    parser.add_argument("--max-train-steps", type=int, default=None, help="Stop each epoch after N optimisation steps.")
-    parser.add_argument("--log-interval", type=int, default=None, help="Override log interval for training loss prints.")
-    parser.add_argument("--early-stopping-patience", type=int, default=None, help="Enable early stopping with patience N (epochs).")
+    parser.add_argument(
+        "--output", default=None, help="Optional path to save model state dict."
+    )
+    parser.add_argument(
+        "--max-epochs", type=int, default=None, help="Optional cap on training epochs."
+    )
+    parser.add_argument(
+        "--max-train-days",
+        type=int,
+        default=None,
+        help="Limit number of training days (recent).",
+    )
+    parser.add_argument(
+        "--max-val-days",
+        type=int,
+        default=None,
+        help="Limit number of validation days (recent).",
+    )
+    parser.add_argument(
+        "--max-train-steps",
+        type=int,
+        default=None,
+        help="Stop each epoch after N optimisation steps.",
+    )
+    parser.add_argument(
+        "--log-interval",
+        type=int,
+        default=None,
+        help="Override log interval for training loss prints.",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=None,
+        help="Enable early stopping with patience N (epochs).",
+    )
     parser.add_argument(
         "--early-stopping-metric",
         default=None,
@@ -154,10 +187,7 @@ def load_dataset(
     target_cols = [resolve_target(int(h)) for h in horizons]
 
     required_columns = (
-        [date_col, code_col]
-        + selection.features
-        + selection.masks
-        + target_cols
+        [date_col, code_col] + selection.features + selection.masks + target_cols
     )
     required_columns = list(dict.fromkeys(required_columns))
 
@@ -210,7 +240,7 @@ def main() -> None:
     cfg = load_config(args.config)
 
     data_cfg = cfg["data"]
-    norm_cfg = cfg.get("normalization", {})
+    cfg.get("normalization", {})
     train_cfg = cfg["train"]
     loss_cfg = cfg["loss"]
     model_cfg = cfg["model"]
@@ -319,7 +349,9 @@ def main() -> None:
             schedulers=[warmup_scheduler, cosine_scheduler],
             milestones=[warmup_epochs],
         )
-        print(f"[INFO] LR warmup enabled: epochs={warmup_epochs}, start_factor={warmup_start_factor}")
+        print(
+            f"[INFO] LR warmup enabled: epochs={warmup_epochs}, start_factor={warmup_start_factor}"
+        )
     else:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
@@ -337,7 +369,8 @@ def main() -> None:
             autocast_kwargs = {"device_type": device_type, "enabled": amp_enabled}
             autocast_ctx = torch.autocast
     else:
-        from torch.cuda.amp import GradScaler as CudaGradScaler, autocast as cuda_autocast
+        from torch.cuda.amp import GradScaler as CudaGradScaler
+        from torch.cuda.amp import autocast as cuda_autocast
 
         scaler = CudaGradScaler(enabled=amp_enabled)
         autocast_kwargs = {"enabled": amp_enabled}
@@ -348,7 +381,9 @@ def main() -> None:
 
     print(f"[INFO] Training device: {device}")
     print(f"[INFO] Train days: {len(train_dataset)}, Val days: {len(val_dataset)}")
-    print(f"[INFO] Active features: {len(feature_cols)}, Active masks: {len(mask_cols)}")
+    print(
+        f"[INFO] Active features: {len(feature_cols)}, Active masks: {len(mask_cols)}"
+    )
     print(f"[INFO] Cached trading days available: {len(cache.date_ints)}")
     if not train_dataset:
         print("[ERROR] No training days available after masking; aborting.")
@@ -357,14 +392,19 @@ def main() -> None:
     # Initialize early stopping if requested (config or CLI)
     early_stopping = None
     early_cfg = train_cfg.get("early_stopping", {}) or {}
-    patience = args.early_stopping_patience if args.early_stopping_patience is not None else early_cfg.get("patience")
+    patience = (
+        args.early_stopping_patience
+        if args.early_stopping_patience is not None
+        else early_cfg.get("patience")
+    )
     monitor_metric = args.early_stopping_metric or early_cfg.get("metric", "20d_pak")
     min_delta = float(early_cfg.get("min_delta", 0.0))
     if patience is not None:
-        early_stopping = EarlyStopping(patience=int(patience), mode="max", min_delta=min_delta)
+        early_stopping = EarlyStopping(
+            patience=int(patience), mode="max", min_delta=min_delta
+        )
         print(
-            "[INFO] Early stopping enabled: patience=%s, metric=%s, min_delta=%.4f"
-            % (patience, monitor_metric, min_delta)
+            f"[INFO] Early stopping enabled: patience={patience}, metric={monitor_metric}, min_delta={min_delta:.4f}"
         )
 
     for epoch in range(1, train_cfg["epochs"] + 1):
@@ -403,14 +443,18 @@ def main() -> None:
                 print(f"[Epoch {epoch} | Step {step}] loss={avg_loss:.4f}")
 
             if args.max_train_steps is not None and batch_count >= args.max_train_steps:
-                print(f"[INFO] Reached max_train_steps={args.max_train_steps}; stopping epoch early.")
+                print(
+                    f"[INFO] Reached max_train_steps={args.max_train_steps}; stopping epoch early."
+                )
                 break
 
         if batch_count:
             scheduler.step()
             print(f"Epoch {epoch} training loss: {running_loss / batch_count:.4f}")
         else:
-            print(f"[WARN] Epoch {epoch} produced no training batches; check data coverage.")
+            print(
+                f"[WARN] Epoch {epoch} produced no training batches; check data coverage."
+            )
             continue
 
         # Validation
@@ -453,7 +497,9 @@ def main() -> None:
                 % (horizon, ic_mean, pk_mean, len(icvals))
             )
         if val_panel_count == 0:
-            print("[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day.")
+            print(
+                "[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day."
+            )
         else:
             print(f"[INFO] Processed {val_panel_count} validation panels.")
 
@@ -465,11 +511,15 @@ def main() -> None:
                 should_stop = early_stopping(score, epoch, model_state)
 
                 if should_stop:
-                    print(f"[INFO] Restoring best model from epoch {early_stopping.best_epoch}")
+                    print(
+                        f"[INFO] Restoring best model from epoch {early_stopping.best_epoch}"
+                    )
                     model.load_state_dict(early_stopping.best_state)
                     break
             else:
-                print(f"[WARN] Early stopping metric '{monitor_metric}' not found in results. Available: {list(metric_results.keys())}")
+                print(
+                    f"[WARN] Early stopping metric '{monitor_metric}' not found in results. Available: {list(metric_results.keys())}"
+                )
 
     if args.output:
         out_path = Path(args.output)

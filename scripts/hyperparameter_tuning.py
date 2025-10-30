@@ -4,15 +4,14 @@ ATFT-GAT-FAN Hyperparameter Tuning
 ハイパーパラメータ最適化スクリプト
 """
 
-import os
-import sys
+import itertools
 import json
 import logging
-import itertools
-from pathlib import Path
+import sys
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
-import torch
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 
 # プロジェクトルートをパスに追加
@@ -34,7 +33,7 @@ except ImportError:
 class HyperparameterTuner:
     """ハイパーパラメータチューナークラス"""
 
-    def __init__(self, data_path: str, config_path: Optional[str] = None):
+    def __init__(self, data_path: str, config_path: str | None = None):
         self.data_path = Path(data_path)
         self.config_path = config_path or (project_root / "configs" / "atft" / "config.yaml")
         self.tuning_results_dir = project_root / "tuning_results"
@@ -57,17 +56,17 @@ class HyperparameterTuner:
         self.best_params = {}
         self.best_score = -float('inf')
 
-    def load_config(self) -> Dict[str, Any]:
+    def load_config(self) -> dict[str, Any]:
         """設定ファイルを読み込み"""
         try:
             import yaml
-            with open(self.config_path, 'r', encoding='utf-8') as f:
+            with open(self.config_path, encoding='utf-8') as f:
                 return yaml.safe_load(f)
         except Exception as e:
             logger.error(f"Failed to load config: {e}")
             return {}
 
-    def create_config_for_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def create_config_for_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """パラメータに基づいて設定を作成"""
         config = self.load_config()
 
@@ -98,13 +97,13 @@ class HyperparameterTuner:
 
         return config
 
-    def evaluate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def evaluate_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """パラメータを評価"""
         logger.info(f"Evaluating parameters: {params}")
 
         try:
             # 設定作成
-            config = self.create_config_for_params(params)
+            self.create_config_for_params(params)
 
             # 簡易評価（実際のトレーニングの代わりに）
             # 本番ではここで実際のモデルトレーニングを実行
@@ -134,7 +133,7 @@ class HyperparameterTuner:
                 'timestamp': datetime.now().isoformat()
             }
 
-    def _mock_evaluation(self, params: Dict[str, Any]) -> float:
+    def _mock_evaluation(self, params: dict[str, Any]) -> float:
         """モック評価関数（実際のトレーニングの代用）"""
         # パラメータに基づいてスコアを計算
         score = 0.0
@@ -172,7 +171,7 @@ class HyperparameterTuner:
 
         return score
 
-    def grid_search(self) -> Dict[str, Any]:
+    def grid_search(self) -> dict[str, Any]:
         """グリッドサーチ実行"""
         logger.info("Starting grid search...")
 
@@ -186,7 +185,7 @@ class HyperparameterTuner:
         results = []
 
         for i, combination in enumerate(all_combinations):
-            params = dict(zip(param_keys, combination))
+            params = dict(zip(param_keys, combination, strict=False))
             logger.info(f"Evaluating combination {i+1}/{len(all_combinations)}")
 
             result = self.evaluate_params(params)
@@ -211,7 +210,7 @@ class HyperparameterTuner:
         self._save_results(tuning_result)
         return tuning_result
 
-    def random_search(self, n_trials: int = 50) -> Dict[str, Any]:
+    def random_search(self, n_trials: int = 50) -> dict[str, Any]:
         """ランダムサーチ実行"""
         logger.info(f"Starting random search with {n_trials} trials...")
 
@@ -248,7 +247,7 @@ class HyperparameterTuner:
         self._save_results(tuning_result)
         return tuning_result
 
-    def optuna_optimization(self, n_trials: int = 50) -> Dict[str, Any]:
+    def optuna_optimization(self, n_trials: int = 50) -> dict[str, Any]:
         """Optuna最適化実行"""
         if not OPTUNA_AVAILABLE:
             logger.error("Optuna not available")
@@ -298,7 +297,7 @@ class HyperparameterTuner:
         self._save_results(tuning_result)
         return tuning_result
 
-    def _save_results(self, result: Dict[str, Any]):
+    def _save_results(self, result: dict[str, Any]):
         """結果を保存"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"tuning_result_{result['method']}_{timestamp}.json"
@@ -326,7 +325,7 @@ class HyperparameterTuner:
 
         logger.info(f"Tuning results saved: {result_file}")
 
-    def get_best_config(self) -> Dict[str, Any]:
+    def get_best_config(self) -> dict[str, Any]:
         """最適パラメータを適用した設定を取得"""
         if not self.best_params:
             logger.warning("No best parameters found. Using default.")
@@ -347,7 +346,7 @@ class HyperparameterTuner:
         logger.info(f"Best configuration saved: {best_config_file}")
         return best_config_file
 
-    def display_results(self, result: Dict[str, Any]):
+    def display_results(self, result: dict[str, Any]):
         """結果を表示"""
         print("\n" + "="*80)
         print(f"ATFT-GAT-FAN HYPERPARAMETER TUNING RESULTS ({result['method'].upper()})")
@@ -359,7 +358,7 @@ class HyperparameterTuner:
                 print(f"  {param}: {value}")
 
         if 'total_combinations' in result:
-            print(f"\n📊 SEARCH STATISTICS")
+            print("\n📊 SEARCH STATISTICS")
             print(f"  Total Combinations: {result['total_combinations']}")
 
         if 'n_trials' in result:
@@ -374,9 +373,9 @@ class HyperparameterTuner:
 
         print("\n" + "="*80)
 
-    def _analyze_parameter_importance(self, results: List[Dict[str, Any]]):
+    def _analyze_parameter_importance(self, results: list[dict[str, Any]]):
         """パラメータ重要度の簡易分析"""
-        print(f"\n🔍 PARAMETER IMPORTANCE ANALYSIS")
+        print("\n🔍 PARAMETER IMPORTANCE ANALYSIS")
 
         # 各パラメータの相関係数を計算
         param_scores = {}
@@ -401,7 +400,7 @@ class HyperparameterTuner:
                         if len(unique_values) > 1:
                             avg_scores = {}
                             for val in unique_values:
-                                val_scores = [s for p, s in zip(param_values, scores) if p == val]
+                                val_scores = [s for p, s in zip(param_values, scores, strict=False) if p == val]
                                 avg_scores[val] = np.mean(val_scores) if val_scores else 0
 
                             max_avg = max(avg_scores.values())
@@ -414,7 +413,7 @@ class HyperparameterTuner:
         if param_scores:
             sorted_params = sorted(param_scores.items(), key=lambda x: x[1], reverse=True)
             print("  Parameter Importance (higher = more important):")
-            for param, importance in sorted_params[:5]:  # Top 5
+            for _param, _importance in sorted_params[:5]:  # Top 5
                 print("3.1f")
 
 

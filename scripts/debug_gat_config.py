@@ -3,6 +3,7 @@
 
 import sys
 from pathlib import Path
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
@@ -38,12 +39,12 @@ def main(cfg: DictConfig):
         edge_penalty = float(getattr(reg_cfg, "edge_weight_penalty", 0.0))
         entropy_penalty = float(getattr(reg_cfg, "attention_entropy_penalty", 0.0))
 
-        print(f"\n[5] Extracted values:")
+        print("\n[5] Extracted values:")
         print(f"  edge_weight_penalty: {edge_penalty}")
         print(f"  attention_entropy_penalty: {entropy_penalty}")
 
         # モデル初期化と同じロジックでテスト
-        print(f"\n[6] Test with model initialization logic:")
+        print("\n[6] Test with model initialization logic:")
         print(f"  self.gat_edge_weight would be: {edge_penalty}")
         print(f"  self.gat_entropy_weight would be: {entropy_penalty}")
         print(f"  return_attention condition (gat_entropy_weight > 0): {entropy_penalty > 0}")

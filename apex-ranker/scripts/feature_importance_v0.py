@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import numpy as np
 import polars as pl
@@ -19,14 +19,13 @@ import torch
 import yaml
 from tqdm import tqdm
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from apex_ranker.data import (  # noqa: E402
+    DayPanelDataset,
     FeatureSelector,
     add_cross_sectional_zscores,
     build_panel_cache,
-    DayPanelDataset,
 )
 from apex_ranker.models import APEXRankerV0  # noqa: E402
 from apex_ranker.utils import precision_at_k, spearman_ic  # noqa: E402
@@ -48,8 +47,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_model_and_config(model_path: str, config_path: str) -> Tuple[APEXRankerV0, dict]:
-    with open(config_path, "r", encoding="utf-8") as fp:
+def load_model_and_config(model_path: str, config_path: str) -> tuple[APEXRankerV0, dict]:
+    with open(config_path, encoding="utf-8") as fp:
         config = yaml.safe_load(fp)
 
     checkpoint = torch.load(model_path, map_location="cpu")
@@ -185,8 +184,8 @@ def prepare_dataset(config: dict, val_days: int | None, max_days: int | None):
     return dataset, selection.features
 
 
-def collect_day_batches(dataset: DayPanelDataset) -> List[Dict[str, object]]:
-    day_batches: List[Dict[str, object]] = []
+def collect_day_batches(dataset: DayPanelDataset) -> list[dict[str, object]]:
+    day_batches: list[dict[str, object]] = []
     for idx in range(len(dataset)):
         item = dataset[idx]
         if item is None:
@@ -202,13 +201,13 @@ def collect_day_batches(dataset: DayPanelDataset) -> List[Dict[str, object]]:
 
 def run_model_on_batches(
     model: APEXRankerV0,
-    day_batches: List[Dict[str, object]],
+    day_batches: list[dict[str, object]],
     horizon_value: int,
     horizon_idx: int,
     device: str,
-) -> Tuple[List[np.ndarray], List[np.ndarray]]:
-    predictions: List[np.ndarray] = []
-    actuals: List[np.ndarray] = []
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    predictions: list[np.ndarray] = []
+    actuals: list[np.ndarray] = []
     with torch.no_grad():
         for batch in tqdm(day_batches, desc="Baseline predictions"):
             X = batch["X"].to(device)
@@ -222,13 +221,13 @@ def run_model_on_batches(
 
 
 def evaluate_metric(
-    predictions: List[np.ndarray],
-    actuals: List[np.ndarray],
+    predictions: list[np.ndarray],
+    actuals: list[np.ndarray],
     metric: str,
     top_k: int,
 ) -> float:
-    values: List[float] = []
-    for preds, acts in zip(predictions, actuals):
+    values: list[float] = []
+    for preds, acts in zip(predictions, actuals, strict=False):
         scores = torch.from_numpy(preds)
         targets = torch.from_numpy(acts)
         if metric == "pak":
@@ -239,8 +238,8 @@ def evaluate_metric(
     return float(np.mean(values)) if values else float("nan")
 
 
-def permute_feature(day_batches: List[Dict[str, object]], feature_idx: int) -> List[torch.Tensor]:
-    shuffled_inputs: List[torch.Tensor] = []
+def permute_feature(day_batches: list[dict[str, object]], feature_idx: int) -> list[torch.Tensor]:
+    shuffled_inputs: list[torch.Tensor] = []
     for batch in day_batches:
         X = batch["X"].clone()
         stocks = X.shape[0]
@@ -253,14 +252,14 @@ def permute_feature(day_batches: List[Dict[str, object]], feature_idx: int) -> L
 
 def evaluate_permuted(
     model: APEXRankerV0,
-    day_batches: List[Dict[str, object]],
-    shuffled_inputs: List[torch.Tensor],
+    day_batches: list[dict[str, object]],
+    shuffled_inputs: list[torch.Tensor],
     horizon_value: int,
     device: str,
-) -> List[np.ndarray]:
-    preds: List[np.ndarray] = []
+) -> list[np.ndarray]:
+    preds: list[np.ndarray] = []
     with torch.no_grad():
-        for batch, X_perm in zip(day_batches, shuffled_inputs):
+        for _batch, X_perm in zip(day_batches, shuffled_inputs, strict=False):
             X = X_perm.to(device)
             outputs = model(X)
             preds.append(outputs[horizon_value].detach().cpu().numpy())
@@ -303,12 +302,12 @@ def main() -> None:
     print(f"[INFO] Baseline {args.metric}: {baseline_metric:.6f}")
 
     max_features = args.max_features or len(feature_names)
-    results: List[Dict[str, object]] = []
+    results: list[dict[str, object]] = []
 
     for feat_idx, feat_name in enumerate(feature_names[:max_features]):
-        metric_values: List[float] = []
+        metric_values: list[float] = []
         print(f"[INFO] Permuting feature {feat_idx+1}/{max_features}: {feat_name}")
-        for repeat in range(args.num_permutations):
+        for _repeat in range(args.num_permutations):
             shuffled_inputs = permute_feature(day_batches, feat_idx)
             permuted_preds = evaluate_permuted(model, day_batches, shuffled_inputs, args.horizon, device)
             metric_val = evaluate_metric(permuted_preds, actuals, args.metric, args.top_k)

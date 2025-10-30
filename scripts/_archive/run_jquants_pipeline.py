@@ -7,8 +7,8 @@ JQuants Pipeline実行用のエントリーポイント
     python run_jquants_pipeline.py --start-date 2024-12-16 --end-date 2024-12-20
 """
 
-import sys
 import os
+import sys
 
 # Add scripts directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

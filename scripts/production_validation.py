@@ -4,17 +4,18 @@ ATFT-GAT-FAN Production Workload Validation
 本番ワークロードでの性能検証スクリプト
 """
 
-import os
-import sys
 import json
 import logging
+import os
+import sys
 import time
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 import psutil
 import torch
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any, Optional
-from contextlib import contextmanager
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -75,7 +76,7 @@ def memory_monitor():
 class ProductionValidator:
     """本番ワークロード検証クラス"""
 
-    def __init__(self, data_path: str, config_path: Optional[str] = None):
+    def __init__(self, data_path: str, config_path: str | None = None):
         self.data_path = Path(data_path)
         self.config_path = config_path or (project_root / "configs" / "atft" / "config.yaml")
         self.validation_results_dir = project_root / "validation_results"
@@ -99,7 +100,7 @@ class ProductionValidator:
             'scalability_score': 0
         }
 
-    def create_synthetic_data(self, batch_size: int, seq_length: int, n_stocks: int) -> Dict[str, torch.Tensor]:
+    def create_synthetic_data(self, batch_size: int, seq_length: int, n_stocks: int) -> dict[str, torch.Tensor]:
         """合成データ作成（本番規模シミュレーション）"""
         logger.info(f"Creating synthetic data: batch_size={batch_size}, seq_length={seq_length}, n_stocks={n_stocks}")
 
@@ -181,7 +182,7 @@ class ProductionValidator:
 
         return MockATFTGATFAN()
 
-    def validate_batch_processing(self, scenario: str) -> Dict[str, Any]:
+    def validate_batch_processing(self, scenario: str) -> dict[str, Any]:
         """バッチ処理検証"""
         logger.info(f"Validating batch processing for scenario: {scenario}")
 
@@ -311,7 +312,7 @@ class ProductionValidator:
 
         return results
 
-    def validate_memory_efficiency(self) -> Dict[str, Any]:
+    def validate_memory_efficiency(self) -> dict[str, Any]:
         """メモリ効率検証"""
         logger.info("Validating memory efficiency...")
 
@@ -359,7 +360,7 @@ class ProductionValidator:
 
         return results
 
-    def validate_scalability(self) -> Dict[str, Any]:
+    def validate_scalability(self) -> dict[str, Any]:
         """スケーラビリティ検証"""
         logger.info("Validating scalability...")
 
@@ -397,7 +398,7 @@ class ProductionValidator:
 
         return results
 
-    def run_full_validation(self) -> Dict[str, Any]:
+    def run_full_validation(self) -> dict[str, Any]:
         """フル検証実行"""
         logger.info("Running full production workload validation...")
 
@@ -450,7 +451,7 @@ class ProductionValidator:
 
         return validation_results
 
-    def _get_system_info(self) -> Dict[str, Any]:
+    def _get_system_info(self) -> dict[str, Any]:
         """システム情報取得"""
         info = {
             'cpu_count': psutil.cpu_count(),
@@ -469,7 +470,7 @@ class ProductionValidator:
 
         return info
 
-    def _save_validation_results(self, results: Dict[str, Any]):
+    def _save_validation_results(self, results: dict[str, Any]):
         """検証結果保存"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"production_validation_{timestamp}.json"
@@ -480,19 +481,19 @@ class ProductionValidator:
 
         logger.info(f"Validation results saved: {result_file}")
 
-    def display_results(self, results: Dict[str, Any]):
+    def display_results(self, results: dict[str, Any]):
         """結果表示"""
         print("\n" + "="*80)
         print("ATFT-GAT-FAN PRODUCTION WORKLOAD VALIDATION RESULTS")
         print("="*80)
 
-        print(f"\n📊 OVERVIEW")
+        print("\n📊 OVERVIEW")
         print(f"  Overall Score: {results.get('overall_score', 0):.3f}")
         print(f"  Timestamp: {results['timestamp']}")
 
         # システム情報
         sys_info = results.get('system_info', {})
-        print(f"\n🖥️ SYSTEM INFO")
+        print("\n🖥️ SYSTEM INFO")
         print(f"  CPU Cores: {sys_info.get('cpu_count', 'N/A')}")
         print(f"  Memory: {sys_info.get('memory_total_gb', 0):.1f} GB")
         print(f"  CUDA Available: {sys_info.get('cuda_available', False)}")
@@ -503,7 +504,7 @@ class ProductionValidator:
         # バッチ処理結果
         if 'batch_processing' in results and 'summary' in results['batch_processing']:
             batch = results['batch_processing']['summary']
-            print(f"\n⚡ BATCH PROCESSING")
+            print("\n⚡ BATCH PROCESSING")
             print(f"  Throughput: {batch.get('throughput_mean', 0):.0f} samples/sec")
             print(f"  Stability Score: {batch.get('stability_score', 0):.3f}")
             print(f"  Loss: {batch.get('loss_mean', 0):.4f} ± {batch.get('loss_std', 0):.4f}")
@@ -512,13 +513,13 @@ class ProductionValidator:
         if 'memory_efficiency' in results and results['memory_efficiency'].get('efficiency_scores'):
             memory = results['memory_efficiency']
             avg_efficiency = sum(memory['efficiency_scores']) / len(memory['efficiency_scores'])
-            print(f"\n💾 MEMORY EFFICIENCY")
+            print("\n💾 MEMORY EFFICIENCY")
             print(f"  Average Efficiency: {avg_efficiency:.3f}")
             print(f"  Tested Batch Sizes: {memory.get('batch_sizes', [])}")
 
         # スケーラビリティ結果
         if 'scalability' in results:
-            print(f"\n📈 SCALABILITY")
+            print("\n📈 SCALABILITY")
             for scenario, data in results['scalability'].items():
                 if scenario != 'scalability_analysis' and isinstance(data, dict):
                     success = data.get('success', False)
@@ -536,7 +537,7 @@ class ProductionValidator:
 
         # 評価基準
         overall_score = results.get('overall_score', 0)
-        print(f"\n🎯 EVALUATION")
+        print("\n🎯 EVALUATION")
         if overall_score >= 0.8:
             print("  Status: ✅ EXCELLENT - Ready for production")
         elif overall_score >= 0.6:

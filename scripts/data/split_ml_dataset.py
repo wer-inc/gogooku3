@@ -2,9 +2,10 @@
 """Split ML dataset into train/val/test splits for ATFT training."""
 
 import argparse
-from pathlib import Path
-import polars as pl
 import logging
+from pathlib import Path
+
+import polars as pl
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def split_dataset(input_file: str, output_dir: str, train_ratio: float = 0.7, va
     logger.info("Writing test split...")
     test_df.write_parquet(test_dir / "data.parquet")
 
-    logger.info(f"✅ Dataset split complete:")
+    logger.info("✅ Dataset split complete:")
     logger.info(f"   Train: {train_dir}/data.parquet")
     logger.info(f"   Val: {val_dir}/data.parquet")
     logger.info(f"   Test: {test_dir}/data.parquet")

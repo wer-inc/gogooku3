@@ -222,7 +222,7 @@ def test_all_data_sources():
 
         cache_files = sorted(Path(directory).glob(pattern.replace("*", "*")))
         if not cache_files:
-            print(f"⚠️  No cache files found")
+            print("⚠️  No cache files found")
             results[source_name] = None
             continue
 

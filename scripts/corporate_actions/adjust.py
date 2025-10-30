@@ -4,13 +4,13 @@ Corporate Actions Adjustment
 コーポレートアクション（株式分割、併合等）の調整実装
 """
 
-import polars as pl
-import pandas as pd
-from datetime import datetime, date
-from typing import Optional
-from pathlib import Path
 import json
 import logging
+from datetime import date, datetime
+from pathlib import Path
+
+import pandas as pd
+import polars as pl
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class CorporateActionsAdjuster:
     """コーポレートアクション調整クラス"""
 
-    def __init__(self, actions_file: Optional[Path] = None):
+    def __init__(self, actions_file: Path | None = None):
         """
         Initialize with corporate actions data
 
@@ -54,7 +54,7 @@ class CorporateActionsAdjuster:
     def _load_actions(self, file_path: Path) -> pl.DataFrame:
         """外部ファイルからコーポレートアクションを読み込み"""
         if file_path.suffix == ".json":
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 data = json.load(f)
             return pl.DataFrame(data)
         elif file_path.suffix == ".csv":

@@ -8,11 +8,11 @@ gogooku3.training.safe_training_pipeline.SafeTrainingPipeline.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
-from pathlib import Path
 from datetime import datetime
-import argparse
+from pathlib import Path
 
 # Ensure src/ is on sys.path so that 'gogooku3' can be imported without editable install
 REPO_ROOT = Path(__file__).resolve().parents[1]

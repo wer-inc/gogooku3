@@ -3,19 +3,19 @@
 大規模株価データセット（3,977銘柄×5年）を使用したLightGBMベースの学習
 """
 
-import pandas as pd
-import numpy as np
-import lightgbm as lgb
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.preprocessing import RobustScaler
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pathlib import Path
-import warnings
 import logging
+import warnings
 from datetime import datetime
-import gc
+from pathlib import Path
+
+import lightgbm as lgb
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import RobustScaler
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
@@ -238,7 +238,6 @@ class FinancialMLTrainer:
 
         # 金融特化指標
         returns = y_true
-        pred_returns = y_pred
 
         # Sharpe比（単純化）
         if len(returns) > 1 and returns.std() > 0:
@@ -321,7 +320,7 @@ class FinancialMLTrainer:
         logger.info(f"   評価結果保存: {results_path}")
 
         # 集計結果表示
-        print(f"\n🎯 学習結果サマリー:")
+        print("\n🎯 学習結果サマリー:")
         print(f"   平均RMSE: {results_df['rmse'].mean():.6f}")
         print(f"   平均MAE: {results_df['mae'].mean():.6f}")
         print(f"   平均R²: {results_df['r2'].mean():.6f}")

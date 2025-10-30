@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
-import numpy as np
 import polars as pl
 import torch
 from torch.utils.data import DataLoader
 
 from gogooku3.training.cv_purged import purged_kfold_indices
 from gogooku3.training.datamodule import PanelDataModule
+from gogooku3.training.feature_groups import resolve_groups_from_prefixes
 from gogooku3.training.losses import HuberMultiHorizon
 from gogooku3.training.model_multihead import MultiHeadRegressor
-from gogooku3.training.feature_groups import resolve_groups_from_prefixes
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +40,7 @@ def default_feature_cols(df: pl.DataFrame) -> list[str]:
     if cs:
         return cs
     # Fallback: simple numeric columns excluding target
-    return [c for c, dt in zip(df.columns, df.dtypes) if pl.datatypes.is_numeric_dtype(dt)]
+    return [c for c, dt in zip(df.columns, df.dtypes, strict=False) if pl.datatypes.is_numeric_dtype(dt)]
 
 
 def train_one_fold(model: MultiHeadRegressor, loader: DataLoader, crit: HuberMultiHorizon, opt: torch.optim.Optimizer) -> float:

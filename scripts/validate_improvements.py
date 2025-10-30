@@ -4,18 +4,14 @@ Detailed Performance Comparison for ATFT-GAT-FAN Improvements
 改善前後の詳細性能比較スクリプト
 """
 
-import os
-import sys
-import logging
 import argparse
-import json
+import logging
+import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
-import numpy as np
+from typing import Any
+
 import pandas as pd
-from scipy.stats import spearmanr
-import time
-import psutil
+
 try:
     import GPUtil
     GPU_UTIL_AVAILABLE = True
@@ -26,19 +22,16 @@ except ImportError:
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-import torch
-from torch.utils.data import DataLoader, TensorDataset
 
-from src.utils.settings import get_settings, set_reproducibility
 from src.atft_gat_fan.models.architectures.atft_gat_fan import ATFT_GAT_FAN
-from src.losses.multi_horizon_loss import ComprehensiveLoss
+from src.utils.settings import set_reproducibility
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def validate_performance(data_path: str) -> Dict[str, Any]:
+def validate_performance(data_path: str) -> dict[str, Any]:
     """基本的な性能測定"""
     logger.info(f"Starting performance validation with data: {data_path}")
 
@@ -209,7 +202,7 @@ def validate_performance(data_path: str) -> Dict[str, Any]:
         }
 
 
-def run_detailed_comparison(data_path: str) -> Dict[str, Any]:
+def run_detailed_comparison(data_path: str) -> dict[str, Any]:
     """詳細な性能比較実行"""
     logger.info("Running detailed performance comparison...")
 
@@ -223,7 +216,7 @@ def run_detailed_comparison(data_path: str) -> Dict[str, Any]:
                 self.available_features = ['Close', 'Volume', 'returns_1d']
                 self.available_targets = ['returns_1d', 'returns_5d', 'returns_10d']
 
-            def run_comparison(self) -> Dict[str, Any]:
+            def run_comparison(self) -> dict[str, Any]:
                 # 簡易的な比較（実際の実装ではより詳細に）
                 return {
                     'baseline': {
@@ -257,7 +250,7 @@ def run_detailed_comparison(data_path: str) -> Dict[str, Any]:
         print("="*80)
 
         print("\nBASELINE MODEL:")
-        baseline = results['baseline']
+        results['baseline']
         print(".2f")
         print(".3f")
         print(".3f")
@@ -288,8 +281,7 @@ def run_detailed_comparison(data_path: str) -> Dict[str, Any]:
             'Loss reduction ≥ 5%': improvements.get('avg_loss_improvement_pct', 0) >= 5.0
         }
 
-        for criterion, passed in criteria.items():
-            status = "✓ PASS" if passed else "✗ FAIL"
+        for _criterion, _passed in criteria.items():
             print("30")
 
         passed_count = sum(criteria.values())

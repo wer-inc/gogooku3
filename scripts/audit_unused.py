@@ -22,9 +22,8 @@ from __future__ import annotations
 import argparse
 import ast
 import datetime as dt
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Iterable, Iterator, Optional, Set, Tuple
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -78,8 +77,8 @@ NONPY_TARGET_EXTS = {
 
 
 def iter_files(
-    roots: Iterable[Path], excludes: Set[str]
-) -> Iterator[Tuple[Path, Path]]:
+    roots: Iterable[Path], excludes: set[str]
+) -> Iterator[tuple[Path, Path]]:
     """Yield (abs_path, rel_path) for files under roots, skipping excluded dirs."""
     for root in roots:
         abs_root = (REPO_ROOT / root).resolve()
@@ -99,7 +98,7 @@ def iter_files(
             yield p, rel
 
 
-def module_name_for_path(rel_path: Path) -> Optional[str]:
+def module_name_for_path(rel_path: Path) -> str | None:
     """Compute module name for repository-relative path if within src/gogooku3 or scripts/tests.
 
     Returns dotted module path (e.g., gogooku3.training.loop) or None if not a python module file.
@@ -126,7 +125,7 @@ def module_name_for_path(rel_path: Path) -> Optional[str]:
     return None
 
 
-def resolve_from_import(current_module: str, module: Optional[str], level: int) -> Optional[str]:
+def resolve_from_import(current_module: str, module: str | None, level: int) -> str | None:
     """Resolve a from-import to an absolute module path.
 
     current_module is the module path of the file doing the import.
@@ -148,9 +147,9 @@ def resolve_from_import(current_module: str, module: Optional[str], level: int) 
     return ".".join(base_parts) if base_parts else None
 
 
-def collect_imports(py_path: Path, module_name: str) -> Set[str]:
+def collect_imports(py_path: Path, module_name: str) -> set[str]:
     """Parse a Python file and return a set of imported module names (absolute)."""
-    used: Set[str] = set()
+    used: set[str] = set()
     try:
         src = py_path.read_text(encoding="utf-8")
     except Exception:
@@ -173,7 +172,7 @@ def collect_imports(py_path: Path, module_name: str) -> Set[str]:
         elif isinstance(node, ast.Call):
             # importlib.import_module("pkg.sub") or import_module("pkg.sub")
             func = node.func
-            name: Optional[str] = None
+            name: str | None = None
             if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
                 if func.value.id == "importlib" and func.attr == "import_module":
                     name = None
@@ -190,7 +189,7 @@ def collect_imports(py_path: Path, module_name: str) -> Set[str]:
     return used
 
 
-def build_module_map(py_files: Iterable[Tuple[Path, Path]]) -> dict[str, Path]:
+def build_module_map(py_files: Iterable[tuple[Path, Path]]) -> dict[str, Path]:
     mapping: dict[str, Path] = {}
     for abs_p, rel_p in py_files:
         mod = module_name_for_path(rel_p)
@@ -199,7 +198,7 @@ def build_module_map(py_files: Iterable[Tuple[Path, Path]]) -> dict[str, Path]:
     return mapping
 
 
-def longest_existing_prefix(mod: str, mapping: dict[str, Path]) -> Optional[str]:
+def longest_existing_prefix(mod: str, mapping: dict[str, Path]) -> str | None:
     """Return the longest dotted prefix of mod present in mapping."""
     parts = mod.split(".")
     for i in range(len(parts), 0, -1):
@@ -210,10 +209,10 @@ def longest_existing_prefix(mod: str, mapping: dict[str, Path]) -> Optional[str]
 
 
 def find_unimported_modules(
-    py_files: Iterable[Tuple[Path, Path]], include_tests: bool = True
+    py_files: Iterable[tuple[Path, Path]], include_tests: bool = True
 ) -> list[tuple[str, Path]]:
     mapping = build_module_map(py_files)
-    used_modules: Set[str] = set()
+    used_modules: set[str] = set()
 
     for abs_p, rel_p in py_files:
         mod = module_name_for_path(rel_p)
@@ -253,10 +252,10 @@ def load_text(path: Path) -> str:
 
 
 def maybe_unreferenced_nonpy(
-    all_files: Iterable[Tuple[Path, Path]], fast: bool = False, verbose: bool = False
+    all_files: Iterable[tuple[Path, Path]], fast: bool = False, verbose: bool = False
 ) -> list[Path]:
-    targets: list[Tuple[Path, Path]] = []
-    searchable: list[Tuple[Path, Path]] = []
+    targets: list[tuple[Path, Path]] = []
+    searchable: list[tuple[Path, Path]] = []
     for abs_p, rel_p in all_files:
         if rel_p.suffix in NONPY_TARGET_EXTS:
             targets.append((abs_p, rel_p))
@@ -296,7 +295,7 @@ def maybe_unreferenced_nonpy(
 def write_report(
     unused_modules: list[tuple[str, Path]],
     unref_files: list[Path],
-    output: Optional[Path],
+    output: Path | None,
 ) -> None:
     lines: list[str] = []
     lines.append("# Unused Files Audit Report")

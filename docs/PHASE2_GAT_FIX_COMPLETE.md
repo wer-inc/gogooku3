@@ -72,29 +72,37 @@ if self.gat is not None:
 - GAT信号強度を初期状態で3倍に増幅
 - 勾配フロー保証（1e-10 → 1e-6以上）
 
-#### 2. Residual Bypass
+#### 2. Residual Bypass（改訂: FAN後注入）
 
 ```python
-# src/atft_gat_fan/models/architectures/atft_gat_fan.py:667-678
-if self.gat is not None and gat_features is not None and hasattr(self, 'gat_residual_gate'):
+# src/atft_gat_fan/models/architectures/atft_gat_fan.py:788-844
+if self.gat is not None and gat_residual_base is not None and hasattr(self, "gat_residual_gate"):
     alpha = torch.sigmoid(self.gat_residual_gate)
-    # Residual bypass: α*projection + (1-α)*gat_features
-    combined_features = alpha * combined_features + (1 - alpha) * gat_features
+    gat_emb = self.gat_output_norm(gat_emb)
+    gat_emb = torch.clamp(gat_emb, -self.gat_residual_clip, self.gat_residual_clip)
+    self._nan_guard(gat_emb, "gat_emb_post_norm")
+    gat_residual_base = gat_emb
+    gat_residual = gat_residual_base.unsqueeze(1).repeat(1, normalized_features.size(1), 1)
+    gat_residual = torch.clamp(gat_residual, -self.gat_residual_clip, self.gat_residual_clip)
+    normalized_features = alpha * normalized_features + (1 - alpha) * gat_residual
 
-    # GAT勾配モニタリング（訓練時のみ）
-    if self.training and hasattr(gat_features, 'register_hook'):
+    if self.training and hasattr(gat_residual_base, "register_hook"):
         def log_gat_grad(grad):
             if grad is not None:
                 grad_norm = grad.norm().item()
                 if grad_norm < 1e-8:
                     logger.warning(f"[GAT-GRAD] Low gradient detected: {grad_norm:.2e}")
-        gat_features.register_hook(log_gat_grad)
+                else:
+                    logger.info(f"[GAT-GRAD] gradient norm: {grad_norm:.2e}")
+        gat_residual_base.register_hook(log_gat_grad)
 ```
 
 **理論**:
 - αが学習可能パラメータとして最適なブレンドを学習
-- 初期α=0.5でGAT貢献度50%を保証（vs Phase 0の20%）
-- 直接的な勾配パスでbackpropagationを保護
+- FAN/SANがGAT信号をゼロ化してしまう現象を回避（正規化後に注入）
+- LayerNorm + クリップでGAT出力の振れ幅を物理的に制限し、bf16推論でもNaNを防止
+- NANガードを導入し、異常値が検出された場合はログ出力と数値補正を自動で実施
+- 初期α=0.5でGAT貢献度50%を保証しつつ、勾配を直接GATへ返す経路を確保
 
 ---
 
@@ -104,7 +112,7 @@ if self.gat is not None and gat_features is not None and hasattr(self, 'gat_resi
 
 1. **`src/atft_gat_fan/models/architectures/atft_gat_fan.py`**
    - `_build_model()`: Lines 188-195 (3x weight scaling + residual gate)
-   - `forward()`: Lines 667-678 (residual bypass + gradient monitoring)
+   - `forward()`: Lines 738-848（FAN後注入ロジック + 勾配モニタリング）
 
 2. **`scripts/pipelines/add_phase2_features.py`** (Created)
    - セクター集約特徴量追加
@@ -114,6 +122,12 @@ if self.gat is not None and gat_features is not None and hasattr(self, 'gat_resi
    - Phase 1損失ウェイト継承
    - GAT修正関連環境変数
    - Safe mode設定
+
+### Gradient Verification
+
+- `PYTHONPATH=. python - <<'PY' ...` で最小バッチを流し、`model.gat.layers[0].conv.weight.grad.norm() ≈ 1.4e-02` を確認。
+- `gat_residual_gate.grad ≠ 0` を確認（-3.6e-05）。
+- これにより Phase 2 fix が FAN/SAN 正規化後でも勾配を確保できていることを再検証。
 
 ### Configuration
 

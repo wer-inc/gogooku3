@@ -3,11 +3,12 @@
 予測に基づいて投資ポートフォリオを作成
 """
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
-import warnings
 import logging
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
@@ -241,22 +242,22 @@ def display_portfolio(portfolio: dict, portfolio_type: str):
 
     if 'long_positions' in portfolio and portfolio['long_positions']:
         print(f"\n📈 ロングポジション ({len(portfolio['long_positions'])}銘柄):")
-        for pos in portfolio['long_positions'][:10]:  # トップ10のみ表示
+        for _pos in portfolio['long_positions'][:10]:  # トップ10のみ表示
             print(".4f")
 
     if 'short_positions' in portfolio and portfolio['short_positions']:
         print(f"\n📉 ショートポジション ({len(portfolio['short_positions'])}銘柄):")
-        for pos in portfolio['short_positions'][:10]:  # トップ10のみ表示
+        for _pos in portfolio['short_positions'][:10]:  # トップ10のみ表示
             print(".4f")
 
     if 'positions' in portfolio and portfolio['positions']:
         print(f"\n📈 ポジション ({len(portfolio['positions'])}銘柄):")
-        for pos in portfolio['positions'][:10]:  # トップ10のみ表示
+        for _pos in portfolio['positions'][:10]:  # トップ10のみ表示
             print(".4f")
 
     if 'sector_allocation' in portfolio and portfolio['sector_allocation']:
-        print(f"\n⚖️ セクター配分:")
-        for sector, weight in portfolio['sector_allocation'].items():
+        print("\n⚖️ セクター配分:")
+        for _sector, _weight in portfolio['sector_allocation'].items():
             print(".1%")
 
 def main():

@@ -23,7 +23,6 @@ import json
 import sys
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import polars as pl
@@ -35,10 +34,10 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from apex_ranker.data import (
+    DayPanelDataset,
     FeatureSelector,
     add_cross_sectional_zscores,
     build_panel_cache,
-    DayPanelDataset,
 )
 from apex_ranker.models import APEXRankerV0
 
@@ -77,12 +76,12 @@ class SimplePortfolioBacktest:
 
     def run(
         self,
-        predictions: Dict[int, np.ndarray],  # date_int -> [stock_scores]
-        actuals: Dict[int, np.ndarray],      # date_int -> [stock_returns]
-        codes: Dict[int, List[str]],          # date_int -> [stock_codes]
+        predictions: dict[int, np.ndarray],  # date_int -> [stock_scores]
+        actuals: dict[int, np.ndarray],      # date_int -> [stock_returns]
+        codes: dict[int, list[str]],          # date_int -> [stock_codes]
         *,
         collect_details: bool = False,
-    ) -> Tuple[Dict, List[Dict[str, object]]]:
+    ) -> tuple[dict, list[dict[str, object]]]:
         """
         Run backtest simulation.
 
@@ -98,7 +97,7 @@ class SimplePortfolioBacktest:
         dates = sorted(predictions.keys())
         portfolio_value = self.initial_capital
         current_positions = set()  # Set of stock codes
-        detail_rows: List[Dict[str, object]] = []
+        detail_rows: list[dict[str, object]] = []
 
         for step_idx, date in enumerate(tqdm(dates, desc="Backtesting")):
             pred_scores = predictions[date]
@@ -127,7 +126,7 @@ class SimplePortfolioBacktest:
 
             # Rank stocks by predicted score (higher = better)
             ranked_indices = np.argsort(-pred_scores)[: self.top_k]
-            new_positions = set(stock_codes[i] for i in ranked_indices)
+            new_positions = {stock_codes[i] for i in ranked_indices}
 
             # Compute turnover (fraction of portfolio changed)
             if current_positions:
@@ -197,7 +196,7 @@ class SimplePortfolioBacktest:
         return np.mean(returns) / np.std(returns) * np.sqrt(periods_per_year)
 
     @staticmethod
-    def _max_drawdown(portfolio_values: List[float]) -> float:
+    def _max_drawdown(portfolio_values: list[float]) -> float:
         """Compute maximum drawdown in percentage."""
         values = np.array(portfolio_values)
         peaks = np.maximum.accumulate(values)
@@ -205,10 +204,10 @@ class SimplePortfolioBacktest:
         return np.min(drawdowns)
 
 
-def load_model_and_config(model_path: str, config_path: str) -> Tuple[APEXRankerV0, dict]:
+def load_model_and_config(model_path: str, config_path: str) -> tuple[APEXRankerV0, dict]:
     """Load APEX-Ranker model and configuration."""
     # Load config
-    with open(config_path, 'r') as f:
+    with open(config_path) as f:
         config = yaml.safe_load(f)
 
     # Load checkpoint
@@ -263,9 +262,9 @@ def load_model_and_config(model_path: str, config_path: str) -> Tuple[APEXRanker
     if proj_key in model_state:
         # proj: [d_model, in_features_per_patch]
         # in_features_per_patch might equal d_model if there's a transformation
-        in_features_per_patch = model_state[proj_key].shape[1]
+        model_state[proj_key].shape[1]
     else:
-        in_features_per_patch = d_model_from_ckpt
+        pass
 
     # For PatchTST, in_features is the number of variates (features)
     # We need to derive this from the actual dataset, not the checkpoint
@@ -322,7 +321,7 @@ def load_model_and_config(model_path: str, config_path: str) -> Tuple[APEXRanker
     return model, config
 
 
-def prepare_validation_data(config: dict) -> Tuple[pl.DataFrame, List[str], List[str], List[str]]:
+def prepare_validation_data(config: dict) -> tuple[pl.DataFrame, list[str], list[str], list[str]]:
     """Load and prepare validation dataset."""
     data_cfg = config['data']
 
@@ -375,9 +374,9 @@ def generate_predictions(
     model: APEXRankerV0,
     dataset: DayPanelDataset,
     horizon: int,
-    date_filter: Optional[List[int]] = None,
+    date_filter: list[int] | None = None,
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
-) -> Tuple[Dict[int, np.ndarray], Dict[int, np.ndarray], Dict[int, List[str]]]:
+) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray], dict[int, list[str]]]:
     """
     Generate predictions for validation dataset.
 

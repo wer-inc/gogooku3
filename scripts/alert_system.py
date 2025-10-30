@@ -12,7 +12,6 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Optional
 
 try:
     from slack_sdk import WebClient
@@ -35,7 +34,7 @@ logger = logging.getLogger(__name__)
 class AlertSystem:
     """アラートシステムクラス"""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         self.config_path = config_path or (
             project_root / "configs" / "monitoring" / "monitoring.yaml"
         )
@@ -54,7 +53,7 @@ class AlertSystem:
             return {}
 
     def send_alert(
-        self, alert_type: str, title: str, message: str, details: Optional[dict] = None
+        self, alert_type: str, title: str, message: str, details: dict | None = None
     ):
         """アラートを送信"""
         alert = {

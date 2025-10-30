@@ -1,10 +1,9 @@
 """Tests for walk-forward splitter."""
-import pytest
 from datetime import date, timedelta
 
 import polars as pl
-
-from apex_ranker.backtest.splitter import WalkForwardSplitter, Split
+import pytest
+from apex_ranker.backtest.splitter import WalkForwardSplitter
 
 
 def generate_trading_dates(start: date, end: date, skip_weekends: bool = True):
@@ -44,8 +43,10 @@ def test_splitter_basic():
 
     # Check splits don't overlap
     for i in range(len(splits) - 1):
-        assert splits[i].val_end < splits[i + 1].train_start or \
-               splits[i].train_end < splits[i + 1].train_start
+        assert (
+            splits[i].val_end < splits[i + 1].train_start
+            or splits[i].train_end < splits[i + 1].train_start
+        )
 
 
 def test_splitter_insufficient_data():
@@ -119,10 +120,12 @@ def test_splitter_from_dataset():
     """Test splitter with polars DataFrame."""
     # Create mock dataset
     dates = generate_trading_dates(date(2023, 1, 1), date(2024, 12, 31))
-    df = pl.DataFrame({
-        "Date": dates,
-        "value": range(len(dates)),
-    })
+    df = pl.DataFrame(
+        {
+            "Date": dates,
+            "value": range(len(dates)),
+        }
+    )
 
     splitter = WalkForwardSplitter(
         train_days=100,
@@ -139,10 +142,12 @@ def test_splitter_from_dataset():
 def test_get_date_masks():
     """Test getting train/val data masks."""
     dates = generate_trading_dates(date(2023, 1, 1), date(2023, 12, 31))
-    df = pl.DataFrame({
-        "Date": dates,
-        "value": range(len(dates)),
-    })
+    df = pl.DataFrame(
+        {
+            "Date": dates,
+            "value": range(len(dates)),
+        }
+    )
 
     splitter = WalkForwardSplitter(train_days=100, val_days=20, step_days=50)
     splits = splitter.split_from_dataset(df)
@@ -177,7 +182,9 @@ def test_splitter_summary():
 def test_edge_case_exact_fit():
     """Test when data exactly fits one split."""
     # Exactly 252 train + 63 val = 315 days
-    dates = generate_trading_dates(date(2023, 1, 1), date(2023, 1, 1) + timedelta(days=400))
+    dates = generate_trading_dates(
+        date(2023, 1, 1), date(2023, 1, 1) + timedelta(days=400)
+    )
     dates = dates[:315]  # Exactly 315 trading days
 
     splitter = WalkForwardSplitter(

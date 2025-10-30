@@ -70,7 +70,10 @@ def log_predictions(
     }
 
     # Save log entry
-    log_file = log_dir / f"predictions_{date_str.replace('-', '')}_{timestamp[:19].replace(':', '')}.json"
+    log_file = (
+        log_dir
+        / f"predictions_{date_str.replace('-', '')}_{timestamp[:19].replace(':', '')}.json"
+    )
     with open(log_file, "w") as f:
         json.dump(log_entry, f, indent=2)
 
@@ -82,7 +85,9 @@ def log_predictions(
     print(f"  - Log: {log_file.name}")
     print(f"  - Data: {pred_file.name}")
     print(f"  - Stocks: {len(predictions)}")
-    print(f"  - Score range: [{log_entry['statistics']['score_min']:.4f}, {log_entry['statistics']['score_max']:.4f}]")
+    print(
+        f"  - Score range: [{log_entry['statistics']['score_min']:.4f}, {log_entry['statistics']['score_max']:.4f}]"
+    )
 
 
 def generate_summary(
@@ -131,9 +136,11 @@ def generate_summary(
         },
         "statistics": {
             "total_predictions": sum(log["num_predictions"] for log in logs),
-            "avg_predictions_per_day": sum(log["num_predictions"] for log in logs) / len(logs),
+            "avg_predictions_per_day": sum(log["num_predictions"] for log in logs)
+            / len(logs),
             "score_stats": {
-                "mean_of_means": sum(log["statistics"]["score_mean"] for log in logs) / len(logs),
+                "mean_of_means": sum(log["statistics"]["score_mean"] for log in logs)
+                / len(logs),
                 "overall_min": min(log["statistics"]["score_min"] for log in logs),
                 "overall_max": max(log["statistics"]["score_max"] for log in logs),
             },
@@ -161,16 +168,24 @@ def generate_summary(
         print("\n" + "=" * 80)
         print("APEX-Ranker v0 - Prediction Summary")
         print("=" * 80)
-        print(f"Period: {summary['date_range']['start']} to {summary['date_range']['end']}")
+        print(
+            f"Period: {summary['date_range']['start']} to {summary['date_range']['end']}"
+        )
         print(f"Total logs: {summary['num_logs']}")
         print(f"Total predictions: {summary['statistics']['total_predictions']}")
-        print(f"Avg predictions/day: {summary['statistics']['avg_predictions_per_day']:.1f}")
-        print(f"\nScore statistics:")
+        print(
+            f"Avg predictions/day: {summary['statistics']['avg_predictions_per_day']:.1f}"
+        )
+        print("\nScore statistics:")
         print(f"  Mean: {summary['statistics']['score_stats']['mean_of_means']:.4f}")
-        print(f"  Range: [{summary['statistics']['score_stats']['overall_min']:.4f}, {summary['statistics']['score_stats']['overall_max']:.4f}]")
-        print(f"\nDaily breakdown:")
+        print(
+            f"  Range: [{summary['statistics']['score_stats']['overall_min']:.4f}, {summary['statistics']['score_stats']['overall_max']:.4f}]"
+        )
+        print("\nDaily breakdown:")
         for daily in summary["daily_logs"]:
-            print(f"  {daily['date']}: {daily['num_predictions']} stocks, score_mean={daily['score_mean']:.4f}, top3={daily['top_3_codes']}")
+            print(
+                f"  {daily['date']}: {daily['num_predictions']} stocks, score_mean={daily['score_mean']:.4f}, top3={daily['top_3_codes']}"
+            )
 
 
 def parse_args():

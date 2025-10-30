@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Analyze training results from log file"""
 
-import pandas as pd
-import json
 from pathlib import Path
+
+import pandas as pd
 
 # Find latest log
 log_file = 'logs/ml_training.log'
 if Path(log_file).exists():
-    with open(log_file, 'r') as f:
+    with open(log_file) as f:
         lines = f.readlines()
 
     # Extract metrics

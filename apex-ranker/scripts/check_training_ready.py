@@ -5,7 +5,6 @@ import argparse
 from pathlib import Path
 
 import polars as pl
-
 from apex_ranker.data import FeatureSelector
 from apex_ranker.utils import load_config
 
@@ -21,7 +20,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def col_summary(coll):
-    preview = ", ".join(sorted(list(coll))[:5])
+    preview = ", ".join(sorted(coll)[:5])
     return f"{len(coll)} columns (first: {preview})"
 
 

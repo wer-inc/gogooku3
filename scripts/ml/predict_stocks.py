@@ -3,15 +3,16 @@
 学習済みモデルを使って実際の株価予測を実行
 """
 
-import pandas as pd
-import numpy as np
-import lightgbm as lgb
-import joblib
-from pathlib import Path
 import json
-from datetime import datetime, timedelta
-import warnings
 import logging
+import warnings
+from datetime import datetime
+from pathlib import Path
+
+import joblib
+import lightgbm as lgb
+import numpy as np
+import pandas as pd
 
 warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.INFO)
@@ -47,7 +48,7 @@ class StockPredictor:
 
             # 特徴量情報読み込み
             info_path = self.model_dir / 'feature_info.json'
-            with open(info_path, 'r', encoding='utf-8') as f:
+            with open(info_path, encoding='utf-8') as f:
                 self.feature_info = json.load(f)
 
             self.feature_cols = self.feature_info['feature_columns']
@@ -175,12 +176,12 @@ class StockPredictor:
 
         # 予測分布
         analysis['prediction_ranges'] = {
-            'strong_up': ((results_df['predicted_return'] > 0.02)).sum(),
+            'strong_up': (results_df['predicted_return'] > 0.02).sum(),
             'moderate_up': ((results_df['predicted_return'] > 0.01) & (results_df['predicted_return'] <= 0.02)).sum(),
             'weak_up': ((results_df['predicted_return'] > 0) & (results_df['predicted_return'] <= 0.01)).sum(),
             'weak_down': ((results_df['predicted_return'] < 0) & (results_df['predicted_return'] >= -0.01)).sum(),
             'moderate_down': ((results_df['predicted_return'] < -0.01) & (results_df['predicted_return'] >= -0.02)).sum(),
-            'strong_down': ((results_df['predicted_return'] < -0.02)).sum()
+            'strong_down': (results_df['predicted_return'] < -0.02).sum()
         }
 
         return analysis
@@ -240,7 +241,7 @@ def main():
         # トップ予測表示
         print("\\n🏆 トップ20予測（強度順）:")
         top_predictions = predictor.get_top_predictions(results_df, top_n=20, direction='both')
-        for i, row in top_predictions.head(10).iterrows():
+        for _i, row in top_predictions.head(10).iterrows():
             direction_icon = "📈" if row['prediction_direction'] == 'UP' else "📉"
             print(f"   {direction_icon} {row['Code']} | 予測: {row['predicted_return_pct']:.4f}% | 強度: {row['prediction_strength']:.4f}")
         # 結果保存

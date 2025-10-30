@@ -4,14 +4,14 @@ import argparse
 from pathlib import Path
 
 import polars as pl
+import yaml
 
+from gogooku3.features_ext.audit import AuditError, run_basic_audits
+from gogooku3.features_ext.cache_utils import cache_parquet
 from gogooku3.features_ext.interactions import add_interactions
 from gogooku3.features_ext.outliers import winsorize
 from gogooku3.features_ext.scale_unify import add_ratio_adv_z
 from gogooku3.features_ext.sector_loo import add_sector_loo
-from gogooku3.features_ext.cache_utils import cache_parquet
-from gogooku3.features_ext.audit import run_basic_audits, AuditError
-import yaml
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,7 +37,7 @@ def main() -> None:
         "winsor": {"cols": ["returns_1d", "returns_5d", "rel_to_sec_5d", "dmi_long_to_adv20", "stmt_rev_fore_op"]},
     }
     if args.config and args.config.exists():
-        with open(args.config, "r", encoding="utf-8") as f:
+        with open(args.config, encoding="utf-8") as f:
             y = yaml.safe_load(f) or {}
         cfg.update(y)
 

@@ -142,7 +142,7 @@ def test_premium_migration_scenario():
     print("Before migration (Standard):")
     print(f"  Plan tier: {plan_before}")
     print(f"  Futures API: {'enabled' if futures_before else 'disabled'}")
-    print(f"  Expected features: ~303-307")
+    print("  Expected features: ~303-307")
 
     # After migration (Premium plan) - simulate changing .env
     os.environ["JQUANTS_PLAN_TIER"] = "premium"
@@ -153,7 +153,7 @@ def test_premium_migration_scenario():
     print("\nAfter migration (Premium):")
     print(f"  Plan tier: {plan_after}")
     print(f"  Futures API: {'enabled' if futures_after else 'disabled'}")
-    print(f"  Expected features: ~395 (+88-92 futures features)")
+    print("  Expected features: ~395 (+88-92 futures features)")
 
     # Verify migration
     assert plan_before == "standard" and not futures_before

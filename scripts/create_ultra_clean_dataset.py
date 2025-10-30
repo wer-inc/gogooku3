@@ -4,9 +4,11 @@ Create ultra-clean dataset with correlation-based leakage detection
 目的: 相関ベースでデータリークを完全に除去
 """
 
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
 
 def create_ultra_clean_dataset():
     """相関ベースでデータリークを完全に除去したデータセットを作成"""
@@ -135,7 +137,7 @@ def create_ultra_clean_dataset():
                 except:
                     pass
 
-    print(f"\n📊 Maximum correlation found:")
+    print("\n📊 Maximum correlation found:")
     print(f"   {max_corr_feature} with {max_corr_target}: {max_corr_found:.4f}")
 
     if abs(max_corr_found) > 0.8:
@@ -148,7 +150,7 @@ def create_ultra_clean_dataset():
     # 9. 保存
     print(f"\n💾 Saving ultra-clean dataset to: {output_path}")
     clean_df.to_parquet(output_path, index=False)
-    print(f"✅ Ultra-clean dataset saved successfully!")
+    print("✅ Ultra-clean dataset saved successfully!")
 
     # 10. 使用可能な特徴量のサンプル表示
     print("\n📋 Sample of remaining features:")

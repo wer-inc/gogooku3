@@ -74,6 +74,9 @@ _graph_edge_cache = {
     "batch_idx": -1,
 }
 
+_NAN_SANITIZER_MAX_LOG = int(os.getenv("NAN_SANITIZER_MAX_LOG", "5"))
+_nan_sanitizer_counts: dict[str, int] = {}
+
 
 # Helper functions for stabilizing training
 def _finite_or_nan_fix_tensor(tensor):
@@ -90,6 +93,39 @@ def _finite_or_nan_fix_tensor(tensor):
     return tensor
 
 
+def _force_finite_in_structure(obj, name="root"):
+    """Recursively ensure tensors are finite, logging when replacements occur."""
+    if torch.is_tensor(obj):
+        if torch.isfinite(obj).all():
+            return obj
+        nan = torch.isnan(obj).sum().item()
+        posinf = torch.isposinf(obj).sum().item()
+        neginf = torch.isneginf(obj).sum().item()
+        total = obj.numel()
+        if _nan_sanitizer_counts.get(name, 0) < _NAN_SANITIZER_MAX_LOG:
+            logger.error(
+                f"[SANITIZE] {name}: replacing non-finite values "
+                f"(nan={nan}, +inf={posinf}, -inf={neginf}, total={total})"
+            )
+            _nan_sanitizer_counts[name] = _nan_sanitizer_counts.get(name, 0) + 1
+        with torch.no_grad():
+            obj.copy_(torch.nan_to_num(obj, nan=0.0, posinf=1e6, neginf=-1e6))
+        return obj
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            obj[k] = _force_finite_in_structure(v, f"{name}.{k}")
+        return obj
+    if isinstance(obj, list):
+        for idx, v in enumerate(obj):
+            obj[idx] = _force_finite_in_structure(v, f"{name}[{idx}]")
+        return obj
+    if isinstance(obj, tuple):
+        return tuple(
+            _force_finite_in_structure(v, f"{name}[{idx}]") for idx, v in enumerate(obj)
+        )
+    return obj
+
+
 # ---- DataLoader seeding helpers -------------------------------------------
 def _seed_worker(worker_id: int, base_seed: int) -> None:
     """Seed PyTorch/Numpy/Python RNGs for DataLoader workers."""
@@ -99,7 +135,7 @@ def _seed_worker(worker_id: int, base_seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
+def _normalize_target_key(raw_key, horizons=None):
     """Normalize various target key formats to 'horizon_{h}'.
 
     Accepts keys like:
@@ -109,6 +145,8 @@ def _normalize_target_key(raw_key, horizons=[1, 5, 10, 20]):
       - feat_ret_1d, feat_ret_5d (actual dataset columns)
       - numeric strings like '1', 5
     """
+    if horizons is None:
+        horizons = [1, 5, 10, 20]
     try:
         skey = str(raw_key).strip().lower()
     except Exception:
@@ -833,7 +871,7 @@ def collate_day(items):
             tgt_keys &= set(it["targets"].keys())
         except Exception:
             pass
-    tgt_keys = sorted(list(tgt_keys))
+    tgt_keys = sorted(tgt_keys)
     if not tgt_keys:
         # Fallback: build empty dict to avoid crash; upstream will handle
         y = {}
@@ -1064,7 +1102,7 @@ class MultiHorizonLoss(nn.Module):
 
     def __init__(
         self,
-        horizons=[1, 5, 10, 20],
+        horizons=None,
         use_rankic: bool = True,
         rankic_weight: float = 0.3,
         # 追加: ペアワイズ順位学習（RankNet 型）
@@ -1117,6 +1155,8 @@ class MultiHorizonLoss(nn.Module):
         pred_var_min: float = 0.0,
         pred_var_weight: float = 0.0,
     ):
+        if horizons is None:
+            horizons = [1, 5, 10, 20]
         super().__init__()
         self.horizons = horizons
         self.mse = nn.MSELoss(reduction="mean")
@@ -1511,7 +1551,7 @@ class MultiHorizonLoss(nn.Module):
         losses = []
         em = self._ema_state[horizon]
 
-        for p, sid in zip(preds, sids):  # predsはdetachしない
+        for p, sid in zip(preds, sids, strict=False):  # predsはdetachしない
             sid_key = sid.item() if hasattr(sid, "item") else sid
 
             if sid_key in em:
@@ -2195,6 +2235,7 @@ def train_epoch(
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
     optimizer.zero_grad()
+    last_gat_grad_norm: float | None = None
 
     # 追加: 時系列Mixup設定（短期汎化）
     use_mixup = os.getenv("USE_TS_MIXUP", "0") == "1"
@@ -2486,10 +2527,10 @@ def train_epoch(
                     "Loss tensor detached: type=%s requires_grad=%s pred_keys=%s target_keys=%s",
                     type(loss),
                     getattr(loss, "requires_grad", None),
-                    sorted(list(predictions_fp32.keys()))
+                    sorted(predictions_fp32.keys())
                     if isinstance(predictions_fp32, dict)
                     else type(predictions_fp32).__name__,
-                    sorted(list(targets_fp32.keys()))
+                    sorted(targets_fp32.keys())
                     if isinstance(targets_fp32, dict)
                     else type(targets_fp32).__name__,
                 )
@@ -2611,6 +2652,19 @@ def train_epoch(
             # Always update scaler to maintain consistent state
             if scaler_is_enabled:
                 scaler.update()
+
+            # Capture GAT parameter gradient norm before zeroing
+            gat_module = getattr(model, "gat", None)
+            if gat_module is not None:
+                gat_norm_step = 0.0
+                for p in gat_module.parameters():
+                    if p.grad is not None:
+                        gat_norm_step += float(p.grad.data.norm().item())
+                last_gat_grad_norm = gat_norm_step
+                logger.info(
+                    f"[GAT-PARAM-GRAD] grad_norm(gat_params)={gat_norm_step:.6f}"
+                )
+
             optimizer.zero_grad(set_to_none=True)  # メモリ効率向上
 
         # 統計更新
@@ -2632,7 +2686,7 @@ def train_epoch(
     avg_loss = total_loss / n_batches
     avg_horizon_losses = {k: v / n_batches for k, v in horizon_losses.items()}
 
-    return avg_loss, avg_horizon_losses
+    return avg_loss, avg_horizon_losses, last_gat_grad_norm
 
 
 def first_batch_probe(model, dataloader, device, n=3):
@@ -3259,9 +3313,10 @@ def evaluate_model_metrics(
 def validate(model, dataloader, criterion, device):
     """検証"""
     model.eval()
-    total_loss = 0
+    total_loss = 0.0
     horizon_losses = {f"horizon_{h}": 0 for h in criterion.horizons}
     n_batches = 0
+    nan_batches = 0
     # 追加指標（tパラメータ/分位も収集）
     metrics = {
         h: {"y": [], "yhat": [], "t_params": [], "quantiles": []}
@@ -3319,6 +3374,9 @@ def validate(model, dataloader, criterion, device):
                     gc.collect()
                     torch.cuda.empty_cache()
                     raise
+                outputs = _force_finite_in_structure(
+                    outputs, "validation.forward.outputs"
+                )
                 if isinstance(outputs, dict):
                     for k, v in outputs.items():
                         if torch.is_tensor(v):
@@ -3374,7 +3432,38 @@ def validate(model, dataloader, criterion, device):
                     loss = loss_result
                     losses = {}
 
-            total_loss += loss.item()
+            # 🔍 NaN DEBUGGING: Instrument validation loss computation
+            loss_value = loss.item()
+            if not torch.isfinite(loss):
+                logger.error(
+                    f"[NaN-DEBUG] Non-finite validation loss detected: {loss_value}"
+                )
+                logger.error(f"[NaN-DEBUG] Batch {n_batches}: Predictions NaN count:")
+                for k, v in outputs.items():
+                    if torch.is_tensor(v):
+                        nan_count = torch.isnan(v).sum().item()
+                        inf_count = torch.isinf(v).sum().item()
+                        if nan_count > 0 or inf_count > 0:
+                            logger.error(f"  {k}: {nan_count} NaNs, {inf_count} Infs")
+                logger.error("[NaN-DEBUG] Targets NaN count:")
+                for k, v in targets.items():
+                    if torch.is_tensor(v):
+                        nan_count = torch.isnan(v).sum().item()
+                        inf_count = torch.isinf(v).sum().item()
+                        if nan_count > 0 or inf_count > 0:
+                            logger.error(f"  {k}: {nan_count} NaNs, {inf_count} Infs")
+                logger.error("[NaN-DEBUG] Loss components:")
+                for k, v in losses.items():
+                    loss_val = v.item() if hasattr(v, "item") else float(v)
+                    logger.error(f"  {k}: {loss_val}")
+                # Continue to allow tracking, but mark as NaN
+                loss_value = float("nan")
+
+            if not math.isfinite(loss_value):
+                nan_batches += 1
+                continue
+
+            total_loss += loss_value
             for k, v in losses.items():
                 # detach済みを想定
                 horizon_losses[k] += v.item() if hasattr(v, "item") else float(v)
@@ -3424,6 +3513,11 @@ def validate(model, dataloader, criterion, device):
             float("inf"),
             {f"horizon_{h}": float("inf") for h in criterion.horizons},
             linear_calibration,
+        )
+
+    if nan_batches > 0:
+        logger.warning(
+            f"[NaN-DEBUG] Skipped {nan_batches} validation batches with non-finite loss."
         )
 
     avg_loss = total_loss / n_batches
@@ -4698,8 +4792,9 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
         except Exception:
             return False
 
+    last_gat_grad_norm: float | None = None
     for epoch in range(1, int(max_epochs) + 1):
-        avg_train_loss, _ = train_epoch(
+        avg_train_loss, _, last_gat_grad_norm = train_epoch(
             model,
             train_loader,
             criterion,
@@ -5749,7 +5844,7 @@ def train(config: DictConfig) -> None:
             margin_days = seq_len + max_h
             embargo = pd.to_timedelta(embargo_days, unit="D")
             selected_idx = None
-            for i, (vs, ve) in enumerate(fold_ranges):
+            for i, (vs, _ve) in enumerate(fold_ranges):
                 train_end_eff_i = pd.Timestamp(vs) - embargo
                 if train_end_eff_i >= (
                     pd.Timestamp(min_date) + pd.Timedelta(days=margin_days)
@@ -6091,8 +6186,8 @@ def train(config: DictConfig) -> None:
         if isinstance(tr_cols, list) and isinstance(va_cols, list):
             s_tr, s_va = set(tr_cols), set(va_cols)
             if tr_cols != va_cols:
-                only_tr = sorted(list(s_tr - s_va))[:10]
-                only_va = sorted(list(s_va - s_tr))[:10]
+                only_tr = sorted(s_tr - s_va)[:10]
+                only_va = sorted(s_va - s_tr)[:10]
                 msg = f"[feature-cols] mismatch: train={len(tr_cols)} val={len(va_cols)}; only_train={only_tr} only_val={only_va}"
                 logger.error(msg)
                 raise RuntimeError(msg)
@@ -6750,7 +6845,7 @@ def train(config: DictConfig) -> None:
     data_h_list = list(
         getattr(final_config.data.time_series, "prediction_horizons", [1, 5, 10, 20])
     )
-    data_h_set = set(int(h) for h in data_h_list)
+    data_h_set = {int(h) for h in data_h_list}
 
     def _normalize_weights_map(
         wmap: dict[int, float] | None
@@ -6778,13 +6873,13 @@ def train(config: DictConfig) -> None:
                     return nw
             # list alignment case (train.loss.horizon_weights or prediction.horizon_weights)
             if isinstance(cfg_map, list) and len(cfg_map) == len(data_h_list):
-                parsed = {int(h): float(w) for h, w in zip(data_h_list, cfg_map)}
+                parsed = {int(h): float(w) for h, w in zip(data_h_list, cfg_map, strict=False)}
                 nw = _normalize_weights_map(parsed)
                 if nw:
                     return nw
             pred_hw = OmegaConf.select(final_config, "prediction.horizon_weights")
             if isinstance(pred_hw, list) and len(pred_hw) == len(data_h_list):
-                parsed = {int(h): float(w) for h, w in zip(data_h_list, pred_hw)}
+                parsed = {int(h): float(w) for h, w in zip(data_h_list, pred_hw, strict=False)}
                 nw = _normalize_weights_map(parsed)
                 if nw:
                     return nw
@@ -6802,7 +6897,7 @@ def train(config: DictConfig) -> None:
         preset_w = _from_cfg_or_default()
     else:
         # If provided but mismatched, auto-fix unless STRICT_HWEIGHTS=1
-        weight_h_set = set(int(k) for k in preset_w.keys())
+        weight_h_set = {int(k) for k in preset_w.keys()}
         if weight_h_set != data_h_set:
             if os.getenv("STRICT_HWEIGHTS", "0") == "1":
                 logger.error(
@@ -8919,9 +9014,25 @@ def train(config: DictConfig) -> None:
                 gat_norm = 0.0
                 gat_mod = getattr(model, "gat", None)
                 if gat_mod is not None:
-                    for p in gat_mod.parameters():
-                        if p.grad is not None:
-                            gat_norm += float(p.grad.data.norm().item())
+                    if last_gat_grad_norm is not None:
+                        gat_norm = float(last_gat_grad_norm)
+                    else:
+                        gat_norm = 0.0
+                        # 🔍 Enhanced GAT parameter gradient monitoring
+                        gat_param_grads = []
+                        for name, p in gat_mod.named_parameters():
+                            if p.grad is not None:
+                                grad_norm = float(p.grad.data.norm().item())
+                                gat_norm += grad_norm
+                                gat_param_grads.append((name, grad_norm))
+                        # Log individual layer gradients if monitoring enabled
+                        if (
+                            os.getenv("MONITOR_GAT_GRADIENTS") == "1"
+                            and gat_param_grads
+                        ):
+                            logger.info(f"[GAT-PARAM-GRAD] Total norm: {gat_norm:.2e}")
+                            for name, grad_norm in gat_param_grads[:5]:  # Top 5 layers
+                                logger.info(f"  {name}: {grad_norm:.2e}")
                     logger.info(f"[sanity] grad_norm(gat)={gat_norm:.6f}")
                     # Also log current alpha (GAT mix ratio) if available
                     try:
@@ -8972,6 +9083,7 @@ def train(config: DictConfig) -> None:
                     eval_model.eval()
                     total_v = 0.0
                     n_v = 0
+                    nan_batches_v = 0
                     horizon_losses_v = {f"horizon_{h}": 0.0 for h in criterion.horizons}
                     linear_cal = {h: {"a": 0.0, "b": 1.0} for h in criterion.horizons}
                     with torch.no_grad():
@@ -9013,6 +9125,9 @@ def train(config: DictConfig) -> None:
                                 {k: v.to(device) for k, v in vb["targets"].items()}
                                 if isinstance(vb.get("targets"), dict)
                                 else vb["targets"]
+                            )
+                            targets = _force_finite_in_structure(
+                                targets, "phase2.forward.targets"
                             )
                             edge_index = None
                             edge_attr = None
@@ -9210,6 +9325,9 @@ def train(config: DictConfig) -> None:
                                 outputs = _forward_with_optional_graph(
                                     eval_model, features, edge_index, edge_attr
                                 )
+                                outputs = _force_finite_in_structure(
+                                    outputs, "phase2.forward.outputs"
+                                )
 
                                 # Normalize output keys: point_horizon_X -> horizon_Xd
                                 # Handle both nested {"predictions": {...}} and flat structures
@@ -9256,7 +9374,18 @@ def train(config: DictConfig) -> None:
                                 loss_val, losses = criterion(
                                     outputs, targets, valid_masks=vmask
                                 )
-                            total_v += float(loss_val.detach().item())
+                            loss_value = float(
+                                loss_val.detach().item()
+                                if hasattr(loss_val, "detach")
+                                else float(loss_val)
+                            )
+                            if not math.isfinite(loss_value):
+                                nan_batches_v += 1
+                                logger.warning(
+                                    "[Phase2-Val] Skipping batch with non-finite loss"
+                                )
+                                continue
+                            total_v += loss_value
                             n_v += 1
                             for k, v in (losses or {}).items():
                                 try:
@@ -9265,6 +9394,14 @@ def train(config: DictConfig) -> None:
                                     )
                                 except Exception:
                                     pass
+                        if n_v == 0:
+                            logger.warning(
+                                "[Phase2-Val] All validation batches skipped; returning inf loss."
+                            )
+                        if nan_batches_v > 0:
+                            logger.warning(
+                                f"[Phase2-Val] Skipped {nan_batches_v} batches with NaN/Inf loss."
+                            )
                         val_loss = total_v / max(1, n_v)
                         val_horizon_losses = {
                             k: v / max(1, n_v) for k, v in horizon_losses_v.items()
@@ -9592,7 +9729,7 @@ def train(config: DictConfig) -> None:
                             codes,
                             dates,
                             yhat.numpy().tolist(),
-                            ([] if y is None else y.numpy().tolist()),
+                            ([] if y is None else y.numpy().tolist()), strict=False,
                         ):
                             rows.append(
                                 {
@@ -9945,23 +10082,23 @@ def train(config: DictConfig) -> None:
                 start_date=val_start,
                 end_date=val_end,
             )
-            _cv_train_kwargs = dict(
-                batch_size=final_config.train.batch.train_batch_size,
-                shuffle=True,
-                num_workers=0,
-                pin_memory=False,
-                drop_last=True,
-                prefetch_factor=None,
-                persistent_workers=False,
-            )
+            _cv_train_kwargs = {
+                "batch_size": final_config.train.batch.train_batch_size,
+                "shuffle": True,
+                "num_workers": 0,
+                "pin_memory": False,
+                "drop_last": True,
+                "prefetch_factor": None,
+                "persistent_workers": False,
+            }
             cv_train_loader = DataLoader(cv_train_ds, **_cv_train_kwargs)
-            _cv_val_kwargs = dict(
-                batch_size=final_config.train.batch.val_batch_size,
-                shuffle=False,
-                num_workers=0,
-                pin_memory=False,
-                persistent_workers=False,
-            )
+            _cv_val_kwargs = {
+                "batch_size": final_config.train.batch.val_batch_size,
+                "shuffle": False,
+                "num_workers": 0,
+                "pin_memory": False,
+                "persistent_workers": False,
+            }
             cv_val_loader = DataLoader(cv_val_ds, **_cv_val_kwargs)
             if eval_only:
                 val_loss_i, _, _ = validate(model, cv_val_loader, criterion, device)

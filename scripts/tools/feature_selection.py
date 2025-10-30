@@ -13,8 +13,14 @@ Usage:
 
 import argparse
 from pathlib import Path
+
 import polars as pl
-from src.gogooku3.features.feature_selector import SelectionConfig, select_features, save_selected
+
+from src.gogooku3.features.feature_selector import (
+    SelectionConfig,
+    save_selected,
+    select_features,
+)
 
 
 def main() -> int:

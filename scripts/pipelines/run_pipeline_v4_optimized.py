@@ -4,19 +4,19 @@ Optimized ML Dataset Pipeline V4 - 最適化版
 軸自動選択、差分検知、イベント追跡を含む完全最適化版
 """
 
+import asyncio
+import json
+import logging
 import os
 import sys
-import asyncio
-import aiohttp
-import polars as pl
+import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-import logging
-import time
-import json
-from typing import List, Optional, Dict, Set, Tuple
+
+import aiohttp
+import polars as pl
 from dotenv import load_dotenv
-from dataclasses import dataclass, asdict
 
 # Load environment variables
 env_path = Path(__file__).parent.parent.parent / ".env"
@@ -31,13 +31,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.gogooku3.pipeline.builder import MLDatasetBuilder
-from components.trading_calendar_fetcher import TradingCalendarFetcher
-from components.market_code_filter import MarketCodeFilter
 from components.axis_decider import AxisDecider
 from components.daily_quotes_by_code import DailyQuotesByCodeFetcher
-from components.listed_info_manager import ListedInfoManager
 from components.event_detector import EventDetector
+from components.listed_info_manager import ListedInfoManager
+from components.market_code_filter import MarketCodeFilter
+from components.trading_calendar_fetcher import TradingCalendarFetcher
+
+from src.gogooku3.pipeline.builder import MLDatasetBuilder
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -56,7 +57,7 @@ SUPPORT_LOOKBACK_DAYS = 420  # approx 20 months to cover YoY/Z-score lookbacks
 
 def _find_latest_with_date_range(
     glob: str, req_start: str, req_end: str
-) -> Dict | None:
+) -> dict | None:
     """Find cached file with complete or partial match for requested date range.
 
     Args:
@@ -125,7 +126,7 @@ def _find_latest_with_date_range(
                 best_coverage = coverage
 
                 # Determine missing ranges
-                missing_ranges: List[Tuple[str, str]] = []
+                missing_ranges: list[tuple[str, str]] = []
 
                 if req_start_dt < file_start:
                     # Need data before cache starts
@@ -221,7 +222,7 @@ def _find_latest_with_date_range(
 
 def _find_best_cache_combination(
     glob: str, req_start: str, req_end: str, max_files: int = 3
-) -> Dict | None:
+) -> dict | None:
     """Find the best combination of multiple cache files to maximize coverage.
 
     This function attempts to find multiple cache files that together provide
@@ -346,7 +347,7 @@ def _find_best_cache_combination(
     coverage = covered_days / total_days
 
     # Calculate missing ranges
-    missing_ranges: List[Tuple[str, str]] = []
+    missing_ranges: list[tuple[str, str]] = []
 
     if merged_ranges[0][0] > req_start_dt:
         # Gap before first covered range
@@ -397,7 +398,7 @@ def _find_best_cache_combination(
     }
 
 
-def _is_cache_valid(cache_info: Dict | Path | None, max_age_days: int) -> bool:
+def _is_cache_valid(cache_info: dict | Path | None, max_age_days: int) -> bool:
     """Check if cached file exists and is not stale.
 
     Args:
@@ -441,7 +442,7 @@ def _is_cache_valid(cache_info: Dict | Path | None, max_age_days: int) -> bool:
         return False
 
 
-def _merge_contiguous_ranges(ranges: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+def _merge_contiguous_ranges(ranges: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Merge contiguous date ranges to minimize API calls.
 
     Args:
@@ -517,7 +518,7 @@ def _align_frames_for_concat(
     schema_dtypes: dict[str, pl.DataType] = {}
 
     for df in (left, right):
-        for name, dtype in zip(df.columns, df.dtypes):
+        for name, dtype in zip(df.columns, df.dtypes, strict=False):
             if name not in schema_dtypes:
                 schema_order.append(name)
                 schema_dtypes[name] = dtype
@@ -543,7 +544,7 @@ def _align_frames_for_concat(
         return left, right
 
 
-def _load_cache_data(cache_info: Dict, start_date: str, end_date: str, date_column: str = "Date") -> pl.DataFrame | None:
+def _load_cache_data(cache_info: dict, start_date: str, end_date: str, date_column: str = "Date") -> pl.DataFrame | None:
     """Load cached data, handling both single-file and multi-file cases.
 
     Args:
@@ -643,11 +644,11 @@ class PerformanceMetrics:
     api_calls: int = 0
     records_processed: int = 0
     memory_usage_mb: float = 0
-    
+
     @property
     def duration(self) -> float:
         return self.end_time - self.start_time
-    
+
     def to_dict(self) -> dict:
         return {
             "component": self.component,
@@ -662,7 +663,7 @@ class PerformanceTracker:
     """パフォーマンストラッキング（キャッシュ統計付き）"""
 
     def __init__(self):
-        self.metrics: List[PerformanceMetrics] = []
+        self.metrics: list[PerformanceMetrics] = []
         self.api_call_count = 0
         self.start_time = time.time()
 
@@ -750,7 +751,7 @@ class PerformanceTracker:
 
         return summary.strip()
 
-    def get_summary(self) -> Dict:
+    def get_summary(self) -> dict:
         """サマリーを取得"""
         total_duration = time.time() - self.start_time
 
@@ -780,11 +781,11 @@ class JQuantsOptimizedFetcherV4:
         self.base_url = "https://api.jquants.com/v1"
         self.id_token = None
         self.tracker = tracker
-        
+
         # 有料プラン向け設定
         self.max_concurrent = int(os.getenv("MAX_CONCURRENT_FETCH", 75))
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
-        
+
         # 最適化コンポーネント
         self.axis_decider = None
         self.code_fetcher = None
@@ -795,7 +796,7 @@ class JQuantsOptimizedFetcherV4:
     async def authenticate(self, session: aiohttp.ClientSession):
         """Authenticate with JQuants API."""
         metric = self.tracker.start_component("authentication")
-        
+
         auth_url = f"{self.base_url}/token/auth_user"
         auth_payload = {"mailaddress": self.email, "password": self.password}
 
@@ -816,23 +817,23 @@ class JQuantsOptimizedFetcherV4:
             self.id_token = data["idToken"]
 
         logger.info("✅ JQuants authentication successful")
-        
+
         # APIクライアントを模擬
         api_client = type('obj', (object,), {'id_token': self.id_token})()
-        
+
         # コンポーネント初期化
         self.axis_decider = AxisDecider(api_client)
         self.code_fetcher = DailyQuotesByCodeFetcher(api_client)
         self.listed_manager = ListedInfoManager(api_client)
         self.calendar_fetcher = TradingCalendarFetcher(api_client)
-        
+
         self.tracker.end_component(metric, api_calls=2)
 
     async def fetch_daily_quotes_optimized(
         self,
         session: aiohttp.ClientSession,
-        business_days: List[str],
-        target_codes: Optional[Set[str]] = None
+        business_days: list[str],
+        target_codes: set[str] | None = None
     ) -> pl.DataFrame:
         """
         最適化された日次株価取得
@@ -1040,30 +1041,30 @@ class JQuantsOptimizedFetcherV4:
     async def fetch_daily_quotes_bulk(
         self,
         session: aiohttp.ClientSession,
-        business_days: List[str],
+        business_days: list[str],
         batch_size: int = 30
     ) -> pl.DataFrame:
         """既存のdate軸実装（run_pipeline_v3から流用）"""
         all_quotes = []
-        
+
         for i in range(0, len(business_days), batch_size):
             batch_days = business_days[i:i+batch_size]
-            
+
             tasks = []
             for date in batch_days:
                 date_api = date.replace("-", "")
                 task = self._fetch_daily_quotes_for_date(session, date, date_api)
                 tasks.append(task)
-            
+
             results = await asyncio.gather(*tasks)
-            
+
             for df in results:
                 if not df.is_empty():
                     all_quotes.append(df)
-        
+
         if all_quotes:
             return pl.concat(all_quotes)
-        
+
         return pl.DataFrame()
 
     async def _fetch_daily_quotes_for_date(
@@ -1072,76 +1073,76 @@ class JQuantsOptimizedFetcherV4:
         """特定日の全銘柄のdaily_quotesを取得（ページネーション対応）"""
         url = f"{self.base_url}/prices/daily_quotes"
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        
+
         all_quotes = []
         pagination_key = None
-        
+
         while True:
             params = {"date": date_api}
             if pagination_key:
                 params["pagination_key"] = pagination_key
-            
+
             try:
                 async with self.semaphore:
                     async with session.get(url, headers=headers, params=params) as response:
                         if response.status != 200:
                             break
-                        
+
                         data = await response.json()
                         quotes = data.get("daily_quotes", [])
-                        
+
                         if quotes:
                             all_quotes.extend(quotes)
-                        
+
                         pagination_key = data.get("pagination_key")
                         if not pagination_key:
                             break
-                            
+
             except Exception as e:
                 logger.error(f"Error fetching quotes for {date}: {e}")
                 break
-        
+
         if all_quotes:
             return pl.DataFrame(all_quotes)
-        
+
         return pl.DataFrame()
 
     async def fetch_listed_info_optimized(
         self,
         session: aiohttp.ClientSession,
-        business_days: List[str],
-        daily_quotes_df: Optional[pl.DataFrame] = None
-    ) -> Tuple[Dict[str, pl.DataFrame], List[Dict]]:
+        business_days: list[str],
+        daily_quotes_df: pl.DataFrame | None = None
+    ) -> tuple[dict[str, pl.DataFrame], list[dict]]:
         """
         最適化されたlisted_info取得
         月初＋差分日のみ取得
         """
         metric = self.tracker.start_component("listed_info_optimized")
-        
+
         # 月初スナップショット取得
         snapshots = await self.listed_manager.get_monthly_snapshots(session, business_days)
-        
+
         events = []
         api_calls = len(snapshots)
-        
+
         # 差分検知（daily_quotesがあれば）
         if daily_quotes_df and not daily_quotes_df.is_empty():
             # 日次のCode集合変化を検知
             dates = sorted(daily_quotes_df["Date"].unique().to_list())
             prev_codes = set()
-            
+
             for date in dates:
                 curr_codes = set(
                     daily_quotes_df.filter(pl.col("Date") == date)["Code"].unique().to_list()
                 )
-                
+
                 if prev_codes and curr_codes != prev_codes:
                     # 変化があった日はlisted_infoを追加取得
                     logger.info(f"Code set changed on {date}, fetching listed_info...")
                     snapshot = await self.listed_manager.get_snapshot_at(session, str(date))
                     snapshots[str(date)] = snapshot
                     api_calls += 1
-                    
+
                     # イベント検知
                     if len(snapshots) >= 2:
                         sorted_dates = sorted(snapshots.keys())
@@ -1151,22 +1152,22 @@ class JQuantsOptimizedFetcherV4:
                             snapshot,
                             str(date)
                         )
-                        
+
                         # イベント作成
                         for event_type, items in changes.items():
                             for item in items:
                                 item["event_type"] = event_type.rstrip("s")
                                 events.append(item)
-                
+
                 prev_codes = curr_codes
-        
+
         logger.info(f"✅ Listed info: {len(snapshots)} snapshots, {len(events)} events detected")
         self.tracker.end_component(metric, api_calls=api_calls, records=len(events))
-        
+
         return snapshots, events
 
     async def fetch_statements_by_date(
-        self, session: aiohttp.ClientSession, business_days: List[str]
+        self, session: aiohttp.ClientSession, business_days: list[str]
     ) -> pl.DataFrame:
         """date軸での財務諸表取得 - キャッシュ優先（20%高速化）+ 部分マッチ対応"""
         metric = self.tracker.start_component("statements_by_date")
@@ -1356,7 +1357,7 @@ class JQuantsOptimizedFetcherV4:
 
         # Step 1: キャッシュをチェック
         cached_data = None
-        missing_ranges: List[Tuple[str, str]] = []
+        missing_ranges: list[tuple[str, str]] = []
 
         if use_cache:
             cache_info = _find_latest_with_date_range(
@@ -1437,7 +1438,7 @@ class JQuantsOptimizedFetcherV4:
             url = f"{self.base_url}/indices/topix"
             headers = {"Authorization": f"Bearer {self.id_token}"}
 
-            fetched_frames: List[pl.DataFrame] = []
+            fetched_frames: list[pl.DataFrame] = []
 
             for fetch_from, fetch_to in ranges_to_fetch:
                 from_api = fetch_from.replace("-", "")
@@ -1552,10 +1553,10 @@ class JQuantsPipelineV4Optimized:
             output_dir = Path(os.getenv("OUTPUT_DIR", "/home/ubuntu/gogooku3/output"))
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # パフォーマンストラッカー
         self.tracker = PerformanceTracker()
-        
+
         # コンポーネント
         self.fetcher = None
         self.builder = MLDatasetBuilder(output_dir=self.output_dir)
@@ -1577,7 +1578,7 @@ class JQuantsPipelineV4Optimized:
     ) -> tuple:
         """最適化されたデータ取得フロー"""
         metric = self.tracker.start_component("total_fetch")
-        
+
         # Get credentials
         email = os.getenv("JQUANTS_AUTH_EMAIL", "")
         password = os.getenv("JQUANTS_AUTH_PASSWORD", "")
@@ -1596,7 +1597,7 @@ class JQuantsPipelineV4Optimized:
             # Default to 1 year ago if not specified (instead of forcing 10 years)
             start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
 
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        datetime.strptime(end_date, "%Y-%m-%d")
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
 
         # Support rolling contracts (e.g., "last 10 years")
@@ -1643,7 +1644,7 @@ class JQuantsPipelineV4Optimized:
         async with aiohttp.ClientSession() as session:
             # Authenticate
             await self.fetcher.authenticate(session)
-            
+
             # Step 1: 営業日カレンダー取得
             logger.info(
                 "Step 1: Fetching trading calendar (%s - %s) [support lookback=%s days]...",
@@ -1652,7 +1653,7 @@ class JQuantsPipelineV4Optimized:
                 SUPPORT_LOOKBACK_DAYS,
             )
             cal_metric = self.tracker.start_component("trading_calendar")
-            
+
             calendar_data = await self.fetcher.calendar_fetcher.get_trading_calendar(
                 support_start_date, end_date, session
             )
@@ -1666,7 +1667,7 @@ class JQuantsPipelineV4Optimized:
                 len(business_days_full),
                 len(business_days),
             )
-            
+
             if not business_days:
                 logger.error("No business days found")
                 return pl.DataFrame(), pl.DataFrame(), [], {}
@@ -1676,7 +1677,7 @@ class JQuantsPipelineV4Optimized:
             snapshots, events = await self.fetcher.fetch_listed_info_optimized(
                 session, business_days_full
             )
-            
+
             # ターゲット銘柄を特定（市場フィルタリング）
             target_codes = set()
             for snapshot_df in snapshots.values():
@@ -1686,7 +1687,7 @@ class JQuantsPipelineV4Optimized:
                         pl.col("MarketCode").is_in(MarketCodeFilter.TARGET_MARKET_CODES)
                     )
                     target_codes.update(filtered["Code"].to_list())
-            
+
             logger.info(f"✅ Target stocks: {len(target_codes)} (filtered by market)")
 
             # Step 3: Daily quotes（最適軸で取得）
@@ -1709,7 +1710,7 @@ class JQuantsPipelineV4Optimized:
             statements_df = await self.fetcher.fetch_statements_by_date(
                 session, business_days_full
             )
-            
+
             logger.info(f"✅ Statements: {len(statements_df)} records")
 
             # Step 5: TOPIX（市場インデックス）
@@ -1751,43 +1752,43 @@ class JQuantsPipelineV4Optimized:
                     columns_to_rename["AdjustmentClose"] = "Close"
                     if "Close" in price_df.columns:
                         price_df = price_df.drop("Close")
-                
+
                 if "AdjustmentOpen" in price_df.columns:
                     columns_to_rename["AdjustmentOpen"] = "Open"
                     if "Open" in price_df.columns:
                         price_df = price_df.drop("Open")
-                
+
                 if "AdjustmentHigh" in price_df.columns:
                     columns_to_rename["AdjustmentHigh"] = "High"
                     if "High" in price_df.columns:
                         price_df = price_df.drop("High")
-                
+
                 if "AdjustmentLow" in price_df.columns:
                     columns_to_rename["AdjustmentLow"] = "Low"
                     if "Low" in price_df.columns:
                         price_df = price_df.drop("Low")
-                
+
                 if "AdjustmentVolume" in price_df.columns:
                     columns_to_rename["AdjustmentVolume"] = "Volume"
                     if "Volume" in price_df.columns:
                         price_df = price_df.drop("Volume")
-                
+
                 if columns_to_rename:
                     price_df = price_df.rename(columns_to_rename)
-                
+
                 # 必要な列を選択
                 required_cols = ["Code", "Date", "Open", "High", "Low", "Close", "Volume"]
                 available_cols = [col for col in required_cols if col in price_df.columns]
                 price_df = price_df.select(available_cols)
-                
+
                 # 数値型に変換
                 for col in ["Open", "High", "Low", "Close", "Volume"]:
                     if col in price_df.columns:
                         price_df = price_df.with_columns(pl.col(col).cast(pl.Float64))
-                
+
                 # ソート
                 price_df = price_df.sort(["Code", "Date"])
-            
+
             # Unify Code dtype to Utf8 for all core frames used in joins
             if not price_df.is_empty():
                 result = self._ensure_code_utf8(price_df)
@@ -1821,22 +1822,22 @@ class JQuantsPipelineV4Optimized:
                 trades_spec_df = result if result is not None and not result.is_empty() else trades_spec_df
 
             self.tracker.end_component(metric, records=len(price_df))
-            
+
             return price_df, statements_df, events, snapshots, topix_df, trades_spec_df
 
     def process_pipeline(
-        self, 
+        self,
         price_df: pl.DataFrame,
-        statements_df: Optional[pl.DataFrame] = None,
-        events: Optional[List[Dict]] = None,
-        topix_df: Optional[pl.DataFrame] = None,
-        snapshots: Optional[Dict[str, pl.DataFrame]] = None,
-        trades_spec_df: Optional[pl.DataFrame] = None,
+        statements_df: pl.DataFrame | None = None,
+        events: list[dict] | None = None,
+        topix_df: pl.DataFrame | None = None,
+        snapshots: dict[str, pl.DataFrame] | None = None,
+        trades_spec_df: pl.DataFrame | None = None,
         beta_lag: int = 1,
     ) -> tuple:
         """Process the pipeline with technical indicators."""
         metric = self.tracker.start_component("process_pipeline")
-        
+
         logger.info("=" * 60)
         logger.info("Processing ML Dataset Pipeline")
         logger.info("=" * 60)
@@ -1981,7 +1982,7 @@ class JQuantsPipelineV4Optimized:
 
         # Create metadata (after finalization)
         metadata = self.builder.create_metadata(df)
-        
+
         # Add events to metadata
         if events:
             metadata["events"] = {
@@ -1999,15 +2000,15 @@ class JQuantsPipelineV4Optimized:
         logger.info(f"  Features: {metadata['features']['count']}")
         logger.info(f"  Stocks: {metadata['stocks']}")
         logger.info(f"  Date range: {metadata['date_range']['start']} to {metadata['date_range']['end']}")
-        
+
         if events:
             logger.info(f"  Events detected: {len(events)}")
 
         # Save dataset (builder returns parquet, csv (optional), metadata)
         parquet_path, csv_path, meta_path = self.builder.save_dataset(df, metadata)
-        
+
         self.tracker.end_component(metric, records=len(df))
-        
+
         return df, metadata, (parquet_path, csv_path, meta_path)
 
     async def run(
@@ -2035,11 +2036,11 @@ class JQuantsPipelineV4Optimized:
             if price_df.is_empty():
                 logger.error("Failed to fetch data")
                 return None, None
-                
+
             # イベント処理
             if events:
                 self.event_detector.events = events
-                
+
                 # market_membership生成
                 membership_df = self.event_detector.generate_market_membership()
                 if not membership_df.is_empty():
@@ -2049,7 +2050,7 @@ class JQuantsPipelineV4Optimized:
                     from src.gogooku3.utils.gcs_storage import save_parquet_with_gcs
                     membership_path = self.output_dir / "market_membership.parquet"
                     save_parquet_with_gcs(membership_df, membership_path)
-                
+
                 # securities_events生成
                 events_df = self.event_detector.generate_securities_events_table()
                 if not events_df.is_empty():
@@ -2065,7 +2066,9 @@ class JQuantsPipelineV4Optimized:
             try:
                 from src.gogooku3.pipeline.builder import create_sample_data
             except Exception:
-                from scripts.data.ml_dataset_builder import create_sample_data  # fallback
+                from scripts.data.ml_dataset_builder import (
+                    create_sample_data,  # fallback
+                )
             price_df = create_sample_data(100, 300)
             statements_df = None
             events = []
@@ -2115,7 +2118,7 @@ class JQuantsPipelineV4Optimized:
         logger.info("\nStep 3: Generating performance report...")
         report_path = self.output_dir / f"performance_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         self.tracker.save_report(report_path)
-        
+
         # Display performance summary
         summary = self.tracker.get_summary()
         logger.info("\n" + "=" * 60)
@@ -2125,7 +2128,7 @@ class JQuantsPipelineV4Optimized:
         logger.info(f"Total API calls: {summary['total_api_calls']}")
         logger.info(f"Total records: {summary['total_records']:,}")
         logger.info(f"Average memory: {summary['average_memory_mb']:.0f} MB")
-        
+
         logger.info("\nComponent breakdown:")
         for comp in summary['components']:
             logger.info(f"  {comp['component']}: {comp['duration_seconds']:.2f}s, "
@@ -2147,7 +2150,7 @@ class JQuantsPipelineV4Optimized:
         logger.info(f"  Dataset: {file_paths[0]}")
         logger.info(f"  Metadata: {file_paths[2]}")
         logger.info(f"  Performance: {report_path}")
-        
+
         if events:
             logger.info(f"  Events: {self.output_dir}/securities_events.parquet")
             logger.info(f"  Membership: {self.output_dir}/market_membership.parquet")

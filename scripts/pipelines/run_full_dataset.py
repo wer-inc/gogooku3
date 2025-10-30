@@ -163,8 +163,8 @@ def _check_gpu_graph_support(*, strict: bool = False) -> bool:
 def _check_rapids_environment(*, strict: bool = False) -> bool:
     """Ensure RAPIDS/cuDF stack (CuPy, cuDF, RMM) is available and GPU is visible."""
     try:
-        import cupy as cp  # type: ignore
         import cudf  # type: ignore
+        import cupy as cp  # type: ignore
         import rmm  # type: ignore
 
         device_count = cp.cuda.runtime.getDeviceCount()  # type: ignore[attr-defined]
@@ -897,8 +897,9 @@ async def main() -> int:
         logger.info("GPU-ETL: enabled (will use RAPIDS/cuDF if available)")
         # Best-effort RMM init with large pool if provided
         try:
-            from src.utils.gpu_etl import init_rmm  # type: ignore
             import cupy as _cp  # type: ignore
+
+            from src.utils.gpu_etl import init_rmm  # type: ignore
 
             pool_requested = os.getenv("RMM_POOL_SIZE", "").strip()
             if pool_requested and pool_requested != "0":
@@ -1568,7 +1569,7 @@ async def main() -> int:
                 *(coro for _, _, coro in fetch_coroutines), return_exceptions=True
             )
 
-            for (key, label, _), result in zip(fetch_coroutines, results):
+            for (key, label, _), result in zip(fetch_coroutines, results, strict=False):
                 if isinstance(result, Exception):
                     logger.warning(f"Failed to fetch {label}: {result}")
                     continue
@@ -1940,7 +1941,7 @@ async def main() -> int:
                         *(coro for _, _, coro in fetch_aux), return_exceptions=True
                     )
 
-                    for (key, label, _), result in zip(fetch_aux, aux_results):
+                    for (key, label, _), result in zip(fetch_aux, aux_results, strict=False):
                         if isinstance(result, Exception):
                             logger.warning(f"Failed to fetch {label}: {result}")
                             continue

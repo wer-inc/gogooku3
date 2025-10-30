@@ -11,13 +11,11 @@ This script implements all recommended improvements:
 6. Plateau learning rate scheduling
 """
 
-import os
-import sys
-import subprocess
-import json
-from pathlib import Path
-from typing import Dict, Any, Optional
 import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -27,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def setup_optimized_environment() -> Dict[str, str]:
+def setup_optimized_environment() -> dict[str, str]:
     """
     Set up environment based on PDF analysis and current implementation status.
     """
@@ -145,7 +143,7 @@ def setup_optimized_environment() -> Dict[str, str]:
     return env
 
 
-def validate_environment(env: Dict[str, str]) -> bool:
+def validate_environment(env: dict[str, str]) -> bool:
     """Validate that critical settings are properly configured."""
 
     critical_vars = [
@@ -166,7 +164,7 @@ def validate_environment(env: Dict[str, str]) -> bool:
     return all_valid
 
 
-def check_data_availability() -> Optional[Path]:
+def check_data_availability() -> Path | None:
     """Check for available dataset."""
 
     possible_paths = [
@@ -241,7 +239,7 @@ def run_training(config_name: str = "config_production_optimized", dry_run: bool
     logger.info("-"*60 + "\n")
 
     try:
-        result = subprocess.run(cmd, env=env, check=True)
+        subprocess.run(cmd, env=env, check=True)
         logger.info("\n✅ Training completed successfully!")
         return 0
     except subprocess.CalledProcessError as e:

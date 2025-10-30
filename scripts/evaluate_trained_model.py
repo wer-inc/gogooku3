@@ -25,13 +25,10 @@ import argparse
 import dataclasses
 import json
 import math
-import os
 import re
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
 
 PHASE_PATTERN = re.compile(r"^.* - Phase (\d+):\s*(.+?)\s*$")
 EPOCH_PATTERN = re.compile(
@@ -55,37 +52,37 @@ class EpochMetrics:
     train_loss: float
     val_loss: float
     lr: float
-    train_sharpe: Optional[float] = None
-    train_ic: Optional[float] = None
-    train_rank_ic: Optional[float] = None
-    val_sharpe: Optional[float] = None
-    val_ic: Optional[float] = None
-    val_rank_ic: Optional[float] = None
-    val_hitrate: Optional[float] = None
+    train_sharpe: float | None = None
+    train_ic: float | None = None
+    train_rank_ic: float | None = None
+    val_sharpe: float | None = None
+    val_ic: float | None = None
+    val_rank_ic: float | None = None
+    val_hitrate: float | None = None
 
 
 @dataclass
 class Phase:
     idx: int
     name: str
-    epochs: List[EpochMetrics] = dataclasses.field(default_factory=list)
+    epochs: list[EpochMetrics] = dataclasses.field(default_factory=list)
 
-    def aggregate(self) -> Dict[str, float | int | None]:
-        def safe_mean(vals: List[float]) -> Optional[float]:
+    def aggregate(self) -> dict[str, float | int | None]:
+        def safe_mean(vals: list[float]) -> float | None:
             vals = [v for v in vals if v is not None and not math.isnan(v)]
             return float(statistics.fmean(vals)) if vals else None
 
-        def safe_std(vals: List[float]) -> Optional[float]:
+        def safe_std(vals: list[float]) -> float | None:
             vals = [v for v in vals if v is not None and not math.isnan(v)]
             if len(vals) <= 1:
                 return None
             return float(statistics.pstdev(vals))
 
-        def safe_min(vals: List[float]) -> Optional[float]:
+        def safe_min(vals: list[float]) -> float | None:
             vals = [v for v in vals if v is not None and not math.isnan(v)]
             return float(min(vals)) if vals else None
 
-        def safe_max(vals: List[float]) -> Optional[float]:
+        def safe_max(vals: list[float]) -> float | None:
             vals = [v for v in vals if v is not None and not math.isnan(v)]
             return float(max(vals)) if vals else None
 
@@ -111,14 +108,14 @@ class Phase:
         }
 
 
-def parse_log(path: Path) -> Tuple[Dict[int, Phase], List[Tuple[float, float]]]:
-    phases: Dict[int, Phase] = {}
-    current_phase: Optional[Phase] = None
-    best_saves: List[Tuple[float, float]] = []  # (val_loss reported 1, reported 2)
+def parse_log(path: Path) -> tuple[dict[int, Phase], list[tuple[float, float]]]:
+    phases: dict[int, Phase] = {}
+    current_phase: Phase | None = None
+    best_saves: list[tuple[float, float]] = []  # (val_loss reported 1, reported 2)
 
     # Temporary storage for epoch metrics lines (epoch line followed by metrics
     # lines). We attach metrics to the last seen epoch record.
-    last_epoch: Optional[EpochMetrics] = None
+    last_epoch: EpochMetrics | None = None
 
     with path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -179,7 +176,7 @@ def parse_log(path: Path) -> Tuple[Dict[int, Phase], List[Tuple[float, float]]]:
     return phases, best_saves
 
 
-def percent_improvement(old: Optional[float], new: Optional[float]) -> Optional[float]:
+def percent_improvement(old: float | None, new: float | None) -> float | None:
     if old is None or new is None:
         return None
     if old == 0:
@@ -190,7 +187,7 @@ def percent_improvement(old: Optional[float], new: Optional[float]) -> Optional[
         return None
 
 
-def format_float(x: Optional[float], digits: int = 4) -> str:
+def format_float(x: float | None, digits: int = 4) -> str:
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "n/a"
     return f"{x:.{digits}f}"
@@ -198,8 +195,8 @@ def format_float(x: Optional[float], digits: int = 4) -> str:
 
 def write_markdown(
     out_path: Path,
-    phases: Dict[int, Phase],
-    best_saves: List[Tuple[float, float]],
+    phases: dict[int, Phase],
+    best_saves: list[tuple[float, float]],
     target_ic: float = 0.04,
     target_rank_ic: float = 0.05,
 ) -> None:
@@ -216,7 +213,7 @@ def write_markdown(
     ic_improve_p13 = percent_improvement(ic_phase1, ic_phase3)
 
     # Overall IC volatility (phase 0..3 combined std over epoch ICs)
-    all_ics: List[float] = []
+    all_ics: list[float] = []
     for p in ordered:
         for e in p.epochs:
             if e.val_ic is not None and not math.isnan(e.val_ic):
@@ -224,7 +221,7 @@ def write_markdown(
     ic_volatility = float(statistics.pstdev(all_ics)) if len(all_ics) > 1 else None
 
     # Overall averages (simple across all epochs)
-    def overall_mean(getter) -> Optional[float]:
+    def overall_mean(getter) -> float | None:
         vals = []
         for p in ordered:
             for e in p.epochs:
@@ -253,7 +250,7 @@ def write_markdown(
     zero_like = sum(1 for v in all_ics if abs(v) <= near_zero_threshold)
     zero_like_ratio = zero_like / len(all_ics) if all_ics else 0.0
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("# Model Evaluation Report")
     lines.append("")
     lines.append("Generated by scripts/evaluate_trained_model.py")
@@ -350,7 +347,7 @@ def write_markdown(
 
     if best_saves:
         lines.append("## Best Checkpoints")
-        for i, (v1, v2) in enumerate(best_saves, start=1):
+        for i, (v1, _v2) in enumerate(best_saves, start=1):
             lines.append(f"- Save {i}: val_loss={format_float(v1)}")
         lines.append("")
 

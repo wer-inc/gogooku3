@@ -25,8 +25,6 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import torch
-from scipy.stats import spearmanr
-
 from apex_ranker.data import (
     FeatureSelector,
     add_cross_sectional_zscores,
@@ -179,11 +177,13 @@ def evaluate_model(
 
         for horizon, preds in output.items():
             scores = preds.cpu().numpy()
-            results["predictions"][horizon].append({
-                "date": date_str,
-                "codes": valid_codes,
-                "scores": scores.tolist(),
-            })
+            results["predictions"][horizon].append(
+                {
+                    "date": date_str,
+                    "codes": valid_codes,
+                    "scores": scores.tolist(),
+                }
+            )
 
     return results
 
@@ -194,7 +194,6 @@ def compute_metrics(predictions: dict) -> dict:
 
     for horizon, pred_list in predictions.items():
         pak_scores = []
-        rankic_scores = []
 
         for pred in pred_list:
             scores = np.array(pred["scores"])
@@ -239,7 +238,7 @@ def main():
     print(f"[Compare] Using device: {device}")
 
     # Load configurations
-    print(f"[Compare] Loading configs...")
+    print("[Compare] Loading configs...")
     config1 = load_config(args.config1)
     config2 = load_config(args.config2)
 
@@ -251,7 +250,7 @@ def main():
     model2 = load_model(Path(args.model2), config2, device)
 
     # Evaluate models
-    print(f"[Compare] Evaluating model 1...")
+    print("[Compare] Evaluating model 1...")
     results1 = evaluate_model(
         model1,
         config1,
@@ -261,7 +260,7 @@ def main():
         end_date=args.end_date,
     )
 
-    print(f"[Compare] Evaluating model 2...")
+    print("[Compare] Evaluating model 2...")
     results2 = evaluate_model(
         model2,
         config2,
@@ -272,7 +271,7 @@ def main():
     )
 
     # Compute metrics
-    print(f"[Compare] Computing metrics...")
+    print("[Compare] Computing metrics...")
     metrics1 = compute_metrics(results1["predictions"])
     metrics2 = compute_metrics(results2["predictions"])
 
@@ -308,13 +307,17 @@ def main():
     print(f"  Evaluation days: {comparison['model1']['num_days']}")
     print(f"  Avg stocks/day: {comparison['model1']['avg_stocks_per_day']:.1f}")
     for horizon, metrics in metrics1.items():
-        print(f"  {horizon}: P@K proxy = {metrics['mean_pak_proxy']:.4f} ± {metrics['std_pak_proxy']:.4f}")
+        print(
+            f"  {horizon}: P@K proxy = {metrics['mean_pak_proxy']:.4f} ± {metrics['std_pak_proxy']:.4f}"
+        )
 
     print(f"\nModel 2: {args.model2}")
     print(f"  Evaluation days: {comparison['model2']['num_days']}")
     print(f"  Avg stocks/day: {comparison['model2']['avg_stocks_per_day']:.1f}")
     for horizon, metrics in metrics2.items():
-        print(f"  {horizon}: P@K proxy = {metrics['mean_pak_proxy']:.4f} ± {metrics['std_pak_proxy']:.4f}")
+        print(
+            f"  {horizon}: P@K proxy = {metrics['mean_pak_proxy']:.4f} ± {metrics['std_pak_proxy']:.4f}"
+        )
 
     # Save results
     if args.output:

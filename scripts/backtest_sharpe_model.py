@@ -18,14 +18,12 @@ Usage:
 
 import argparse
 import sys
-from pathlib import Path
-from typing import Dict, List, Tuple
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import polars as pl
-import torch
 import torch.nn as nn
 from tqdm import tqdm
 
@@ -114,10 +112,10 @@ class PortfolioSimulator:
     def rebalance(
         self,
         date: str,
-        predictions: Dict[str, float],
-        prices: Dict[str, float],
-        market_caps: Dict[str, float] | None = None,
-    ) -> Tuple[float, float]:
+        predictions: dict[str, float],
+        prices: dict[str, float],
+        market_caps: dict[str, float] | None = None,
+    ) -> tuple[float, float]:
         """
         Rebalance portfolio based on predictions.
 
@@ -199,7 +197,7 @@ class PortfolioSimulator:
 
         return turnover, total_costs
 
-    def _compute_target_weights(self, predictions: Dict[str, float]) -> Dict[str, float]:
+    def _compute_target_weights(self, predictions: dict[str, float]) -> dict[str, float]:
         """
         Compute target portfolio weights from predictions.
 
@@ -311,13 +309,13 @@ class BacktestEngine:
             codes = day_data['Code'].to_list()
             returns = day_data['returns_1d'].to_list()
             predictions = {
-                code: ret for code, ret in zip(codes, returns)
+                code: ret for code, ret in zip(codes, returns, strict=False)
                 if ret is not None and not (isinstance(ret, float) and np.isnan(ret))
             }
 
             prices = dict(zip(
                 day_data['Code'].to_list(),
-                [100.0] * len(day_data)  # Placeholder prices
+                [100.0] * len(day_data), strict=False  # Placeholder prices
             ))
 
             # Rebalance
@@ -326,7 +324,7 @@ class BacktestEngine:
         return simulator.get_results()
 
 
-def compute_performance_metrics(results: pd.DataFrame) -> Dict[str, float]:
+def compute_performance_metrics(results: pd.DataFrame) -> dict[str, float]:
     """Compute comprehensive performance metrics"""
 
     returns = results['daily_return'].values

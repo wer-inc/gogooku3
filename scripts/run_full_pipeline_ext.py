@@ -13,16 +13,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
-from pathlib import Path
-from typing import Dict, Any
+import logging
 import subprocess
 import sys
-import logging
+import time
+from pathlib import Path
+from typing import Any
 
 import polars as pl
 import yaml
-
 
 # Setup logging
 logging.basicConfig(
@@ -84,10 +83,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config(config_path: Path) -> Dict[str, Any]:
+def load_config(config_path: Path) -> dict[str, Any]:
     """Load pipeline configuration."""
     if config_path.exists():
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             return yaml.safe_load(f)
     else:
         # Default configuration
@@ -143,7 +142,7 @@ def run_command(cmd: list[str], dry_run: bool = False, verbose: bool = False) ->
         return e.returncode
 
 
-def generate_dataset(args: argparse.Namespace, config: Dict[str, Any]) -> Path:
+def generate_dataset(args: argparse.Namespace, config: dict[str, Any]) -> Path:
     """Generate the base dataset."""
     logger.info(f"📊 Generating dataset from {args.start_date} to {args.end_date}")
 
@@ -167,7 +166,7 @@ def generate_dataset(args: argparse.Namespace, config: Dict[str, Any]) -> Path:
     return output_path
 
 
-def extend_dataset(input_path: Path, args: argparse.Namespace, config: Dict[str, Any]) -> Path:
+def extend_dataset(input_path: Path, args: argparse.Namespace, config: dict[str, Any]) -> Path:
     """Apply feature extensions to the dataset."""
     logger.info("🔧 Applying feature extensions")
 
@@ -197,7 +196,7 @@ def extend_dataset(input_path: Path, args: argparse.Namespace, config: Dict[str,
     return output_path
 
 
-def train_model(data_path: Path, args: argparse.Namespace, config: Dict[str, Any]) -> Path:
+def train_model(data_path: Path, args: argparse.Namespace, config: dict[str, Any]) -> Path:
     """Train the multi-head model."""
     logger.info("🧠 Training multi-head model with feature groups")
 
@@ -222,7 +221,7 @@ def train_model(data_path: Path, args: argparse.Namespace, config: Dict[str, Any
     return predictions_path
 
 
-def evaluate_model(predictions_path: Path, args: argparse.Namespace, config: Dict[str, Any]) -> Path:
+def evaluate_model(predictions_path: Path, args: argparse.Namespace, config: dict[str, Any]) -> Path:
     """Generate evaluation report with ablation analysis."""
     logger.info("📈 Generating evaluation report")
 
@@ -268,7 +267,7 @@ def run_ci_tests(args: argparse.Namespace) -> bool:
     return True
 
 
-def generate_summary(args: argparse.Namespace, config: Dict[str, Any],
+def generate_summary(args: argparse.Namespace, config: dict[str, Any],
                     start_time: float) -> None:
     """Generate pipeline execution summary."""
     elapsed = time.time() - start_time
@@ -321,7 +320,7 @@ def main() -> int:
         predictions_path = train_model(extended_path, args, config)
 
         # Step 4: Evaluate and generate report
-        report_path = evaluate_model(predictions_path, args, config)
+        evaluate_model(predictions_path, args, config)
 
         # Step 5: Run CI tests
         if not args.dry_run:

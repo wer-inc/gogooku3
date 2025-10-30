@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, List, Sequence
 
 import numpy as np
 import polars as pl
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def numeric_cols(df: pl.DataFrame) -> list[str]:
-    return [c for c, dt in zip(df.columns, df.dtypes) if pl.datatypes.is_numeric_dtype(dt)]
+    return [c for c, dt in zip(df.columns, df.dtypes, strict=False) if pl.datatypes.is_numeric_dtype(dt)]
 
 
 def ensure_date_col(df: pl.DataFrame, name: str = "Date") -> pl.DataFrame:

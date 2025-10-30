@@ -14,7 +14,6 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 
@@ -786,7 +785,7 @@ class MLDatasetBuilder:
     def add_topix_features(
         self,
         df: pl.DataFrame,
-        topix_df: Optional[pl.DataFrame] = None,
+        topix_df: pl.DataFrame | None = None,
         *,
         beta_lag: int | None = 1,
     ) -> pl.DataFrame:
@@ -889,9 +888,9 @@ class MLDatasetBuilder:
     def add_vix_features(
         self,
         df: pl.DataFrame,
-        vix_df: Optional[pl.DataFrame],
+        vix_df: pl.DataFrame | None,
         *,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Attach VIX-derived macro sentiment features (T+1 alignment)."""
         if vix_df is None or vix_df.is_empty():
@@ -983,9 +982,9 @@ class MLDatasetBuilder:
     def add_fx_features(
         self,
         df: pl.DataFrame,
-        fx_df: Optional[pl.DataFrame],
+        fx_df: pl.DataFrame | None,
         *,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Attach FX-derived macro features (T+1 alignment)."""
         if fx_df is None or fx_df.is_empty():
@@ -1060,9 +1059,9 @@ class MLDatasetBuilder:
     def add_btc_features(
         self,
         df: pl.DataFrame,
-        btc_df: Optional[pl.DataFrame],
+        btc_df: pl.DataFrame | None,
         *,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Attach BTC/USD macro features (T+1 alignment)."""
         if btc_df is None or btc_df.is_empty():
@@ -1138,7 +1137,7 @@ class MLDatasetBuilder:
         return out
 
     def add_am_session_features(
-        self, df: pl.DataFrame, am_df: Optional[pl.DataFrame]
+        self, df: pl.DataFrame, am_df: pl.DataFrame | None
     ) -> pl.DataFrame:
         """Attach morning session (AM) features calculated from prices_am."""
         if am_df is None or am_df.is_empty():
@@ -1305,9 +1304,9 @@ class MLDatasetBuilder:
     def add_breakdown_features(
         self,
         df: pl.DataFrame,
-        breakdown_df: Optional[pl.DataFrame],
+        breakdown_df: pl.DataFrame | None,
         *,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Attach investor breakdown-derived features (T+1 alignment)."""
         if breakdown_df is None or breakdown_df.is_empty():
@@ -1466,9 +1465,9 @@ class MLDatasetBuilder:
     def add_dividend_features(
         self,
         df: pl.DataFrame,
-        dividend_df: Optional[pl.DataFrame],
+        dividend_df: pl.DataFrame | None,
         *,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Attach dividend event features respecting announcement PIT."""
         if dividend_df is None or dividend_df.is_empty():
@@ -1657,9 +1656,9 @@ class MLDatasetBuilder:
     def add_fs_quality_features(
         self,
         df: pl.DataFrame,
-        fs_df: Optional[pl.DataFrame],
+        fs_df: pl.DataFrame | None,
         *,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Attach financial statement quality features using fs_details and existing stmt_* columns."""
         if fs_df is None or fs_df.is_empty():
@@ -1878,7 +1877,7 @@ class MLDatasetBuilder:
     def add_index_features(
         self,
         df: pl.DataFrame,
-        indices_df: Optional[pl.DataFrame],
+        indices_df: pl.DataFrame | None,
         *,
         mask_halt_day: bool = True,
     ) -> pl.DataFrame:
@@ -1913,8 +1912,8 @@ class MLDatasetBuilder:
     def add_sector_index_features(
         self,
         df: pl.DataFrame,
-        indices_df: Optional[pl.DataFrame],
-        listed_info_df: Optional[pl.DataFrame],
+        indices_df: pl.DataFrame | None,
+        listed_info_df: pl.DataFrame | None,
         *,
         prefix: str = "sect_",
         mask_halt_day: bool = True,
@@ -3496,8 +3495,8 @@ class MLDatasetBuilder:
     def add_flow_features(
         self,
         df: pl.DataFrame,
-        trades_df: Optional[pl.DataFrame],
-        listed_info_df: Optional[pl.DataFrame],
+        trades_df: pl.DataFrame | None,
+        listed_info_df: pl.DataFrame | None,
     ) -> pl.DataFrame:
         if trades_df is None or trades_df.is_empty():
             logger.info("[builder] flow enrichment skipped (no trades_spec)")
@@ -3553,8 +3552,8 @@ class MLDatasetBuilder:
         self,
         df: pl.DataFrame,
         fetcher=None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         lookback_days: int = 90,
         lookahead_days: int = 90,
     ) -> pl.DataFrame:
@@ -3610,9 +3609,9 @@ class MLDatasetBuilder:
         self,
         df: pl.DataFrame,
         fetcher=None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        ma_windows: list[int] = [5, 20],
+        start_date: str | None = None,
+        end_date: str | None = None,
+        ma_windows: list[int] = None,
     ) -> pl.DataFrame:
         """Add short position features from J-Quants API.
 
@@ -3626,6 +3625,8 @@ class MLDatasetBuilder:
         Returns:
             DataFrame with short position features added
         """
+        if ma_windows is None:
+            ma_windows = [5, 20]
         if fetcher is None:
             logger.info(
                 "[builder] Short position features skipped (no fetcher provided)"
@@ -3667,7 +3668,7 @@ class MLDatasetBuilder:
             return df
 
     def add_enhanced_listed_features(
-        self, df: pl.DataFrame, fetcher=None, df_prices: Optional[pl.DataFrame] = None
+        self, df: pl.DataFrame, fetcher=None, df_prices: pl.DataFrame | None = None
     ) -> pl.DataFrame:
         """Add enhanced listed info features from J-Quants API.
 
@@ -3718,8 +3719,8 @@ class MLDatasetBuilder:
         self,
         df: pl.DataFrame,
         fetcher=None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         use_weekly: bool = True,
     ) -> pl.DataFrame:
         """Add enhanced margin trading features from J-Quants API.
@@ -3775,8 +3776,8 @@ class MLDatasetBuilder:
         self,
         df: pl.DataFrame,
         fetcher=None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> pl.DataFrame:
         """Add option sentiment features from J-Quants index options.
 
@@ -3828,8 +3829,8 @@ class MLDatasetBuilder:
         self,
         df: pl.DataFrame,
         fetcher=None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> pl.DataFrame:
         """Add enhanced flow analysis features from J-Quants trades_spec.
 
@@ -3880,11 +3881,11 @@ class MLDatasetBuilder:
     def add_futures_block(
         self,
         df: pl.DataFrame,
-        futures_df: Optional[pl.DataFrame],
+        futures_df: pl.DataFrame | None,
         *,
-        categories: Optional[list[str]] = None,
-        topix_df: Optional[pl.DataFrame] = None,
-        spot_map: Optional[dict[str, pl.DataFrame]] = None,
+        categories: list[str] | None = None,
+        topix_df: pl.DataFrame | None = None,
+        spot_map: dict[str, pl.DataFrame] | None = None,
         on_z_window: int = 60,
         z_window_eod: int = 252,
         make_continuous_series: bool = False,
@@ -3992,7 +3993,7 @@ class MLDatasetBuilder:
             return df
 
     def add_statements_features(
-        self, df: pl.DataFrame, stm_df: Optional[pl.DataFrame]
+        self, df: pl.DataFrame, stm_df: pl.DataFrame | None
     ) -> pl.DataFrame:
         if stm_df is None or stm_df.is_empty():
             logger.info("[builder] statements enrichment skipped (no stm_df)")
@@ -4005,9 +4006,9 @@ class MLDatasetBuilder:
                 df, stm_df, use_time_cutoff=True, calendar_df=None
             )
             if "shares_outstanding" in out.columns:
-                base_shares = pl.col("shares_outstanding")
+                pl.col("shares_outstanding")
             else:
-                base_shares = None
+                pass
             if "stmt_shares_outstanding" in out.columns:
                 if "shares_outstanding" in out.columns:
                     out = out.with_columns(
@@ -4043,7 +4044,7 @@ class MLDatasetBuilder:
     def add_margin_weekly_block(
         self,
         df: pl.DataFrame,
-        weekly_df: Optional[pl.DataFrame],
+        weekly_df: pl.DataFrame | None,
         *,
         lag_bdays_weekly: int = 3,
         adv_window_days: int = 20,
@@ -4068,7 +4069,7 @@ class MLDatasetBuilder:
     def add_daily_margin_block(
         self,
         df: pl.DataFrame,
-        daily_df: Optional[pl.DataFrame],
+        daily_df: pl.DataFrame | None,
         *,
         adv_window_days: int = 20,
         enable_z_scores: bool = True,
@@ -4173,9 +4174,9 @@ class MLDatasetBuilder:
     def add_short_selling_block(
         self,
         df: pl.DataFrame,
-        short_df: Optional[pl.DataFrame],
-        positions_df: Optional[pl.DataFrame] = None,
-        adv20_df: Optional[pl.DataFrame] = None,
+        short_df: pl.DataFrame | None,
+        positions_df: pl.DataFrame | None = None,
+        adv20_df: pl.DataFrame | None = None,
         *,
         enable_z_scores: bool = True,
         z_window: int = 252,
@@ -4241,7 +4242,7 @@ class MLDatasetBuilder:
         n_codes = df["Code"].n_unique() if "Code" in df.columns else 0
         start_date = str(df["Date"].min()) if "Date" in df.columns and n_rows else None
         end_date = str(df["Date"].max()) if "Date" in df.columns and n_rows else None
-        numeric_cols = [c for c, t in zip(df.columns, df.dtypes) if t.is_numeric()]
+        numeric_cols = [c for c, t in zip(df.columns, df.dtypes, strict=False) if t.is_numeric()]
         return {
             "rows": n_rows,
             "cols": n_cols,

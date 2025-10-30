@@ -27,7 +27,7 @@ class TestRunValidator:
             print(f"❌ Log file not found: {self.log_file}")
             sys.exit(1)
 
-        with open(self.log_file, "r") as f:
+        with open(self.log_file) as f:
             self.log_content = f.read()
 
     def check_completion(self) -> bool:
@@ -224,7 +224,7 @@ class TestRunValidator:
             print(f"✅ Sharpe improved by {improvement:+.4f}")
             return True
         else:
-            print(f"⚠️  Sharpe declined or flat")
+            print("⚠️  Sharpe declined or flat")
             return None
 
     def run_all_checks(self):

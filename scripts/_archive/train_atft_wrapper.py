@@ -6,12 +6,11 @@ Complete ATFT-GAT-FAN Training Wrapper for gogooku3
 ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する学習ラッパー
 """
 
+import argparse
+import logging
 import os
 import subprocess
-import logging
-import argparse
 from pathlib import Path
-from typing import Dict, Optional
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -68,7 +67,7 @@ def train_atft_model(
     max_epochs: int = 75,
     precision: str = "bf16-mixed",
     config_profile: str = "profiles/robust",
-) -> Dict:
+) -> dict:
     """
     ATFT-GAT-FANモデルの学習を実行（成果再現）
 
@@ -203,7 +202,7 @@ def train_atft_model(
         return {"success": False, "error": str(e), "data_dir": data_dir}
 
 
-def extract_sharpe_ratio(output: str) -> Optional[float]:
+def extract_sharpe_ratio(output: str) -> float | None:
     """学習出力からSharpe比率を抽出"""
     import re
 
@@ -227,7 +226,7 @@ def extract_sharpe_ratio(output: str) -> Optional[float]:
     return None
 
 
-def validate_training_results() -> Dict:
+def validate_training_results() -> dict:
     """学習結果の検証"""
     try:
         logger.info("🔍 Validating training results...")

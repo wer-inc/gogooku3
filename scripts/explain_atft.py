@@ -12,11 +12,12 @@ Example:
 """
 
 import argparse
-from pathlib import Path
 import json
 import sys
-import torch
+from pathlib import Path
+
 import polars as pl
+import torch
 
 # Ensure repo root and src/ are on sys.path for direct invocation
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +27,11 @@ SRC_PATH = REPO_ROOT / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
-from gogooku3.explain.explain import export_vsn_gates, integrated_gradients, try_shap_kernel
+from gogooku3.explain.explain import (
+    export_vsn_gates,
+    integrated_gradients,
+    try_shap_kernel,
+)
 
 
 def load_sample_batch(data_dir: Path, batch_size: int = 32, seq_len: int = 60) -> torch.Tensor:
@@ -56,7 +61,7 @@ def main() -> int:
 
     # Lazy import model loader to avoid heavy deps
     ckpt = torch.load(args.checkpoint, map_location="cpu")
-    cfg = ckpt.get("config", {})
+    ckpt.get("config", {})
     # Placeholder: users load model via their training script; here we assume state_dict only for gates/gradients
     class IdentityModel(torch.nn.Module):
         def forward(self, x):

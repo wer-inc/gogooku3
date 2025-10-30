@@ -15,9 +15,9 @@ Usage:
 
 import argparse
 import json
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 
 import polars as pl
 
@@ -136,7 +136,7 @@ def main() -> int:
     meta = snapshot(df)
 
     lines = []
-    lines.append(f"# Research Report\n")
+    lines.append("# Research Report\n")
     lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     lines.append("\n## Dataset Snapshot\n")
     lines.append(f"- Rows: {meta['rows']:,}")
@@ -207,7 +207,7 @@ def main() -> int:
     if args.splits_json is not None:
         try:
             if args.splits_json.exists():
-                with open(args.splits_json, "r", encoding="utf-8") as f:
+                with open(args.splits_json, encoding="utf-8") as f:
                     splits = json.load(f)
                 if isinstance(splits, list) and splits:
                     fm = _compute_fold_rankic(df, splits, factors, list(horizons))

@@ -6,8 +6,8 @@ Backwards-compatible entrypoint matching docs that reference
 `scripts/integrated_ml_training_pipeline_final.py`.
 """
 
-from pathlib import Path
 import runpy
+from pathlib import Path
 
 
 def main() -> None:

@@ -12,9 +12,9 @@ Usage:
 """
 
 import argparse
-import polars as pl
 from pathlib import Path
 
+import polars as pl
 
 # Features identified with data leakage (correlation > 0.7 with targets)
 LEAKED_FEATURES = [
@@ -95,7 +95,7 @@ def remove_leaked_features(input_path: str, output_path: str, dry_run: bool = Fa
 
     if not existing_leaked:
         print("\n✅ No leaked features found in dataset")
-        print(f"   Dataset appears clean - no action needed")
+        print("   Dataset appears clean - no action needed")
         return
 
     # Remove leaked features
@@ -138,10 +138,10 @@ def remove_leaked_features(input_path: str, output_path: str, dry_run: bool = Fa
     print("1. Re-run leakage detection:")
     print(f"   python scripts/detect_data_leakage.py --data {output_path}")
     print("\n2. If clean, start Phase 1 short test:")
-    print(f"   python scripts/integrated_ml_training_pipeline.py \\")
+    print("   python scripts/integrated_ml_training_pipeline.py \\")
     print(f"       --data-path {output_path} \\")
-    print(f"       --max-epochs 5 \\")
-    print(f"       --batch-size 1024")
+    print("       --max-epochs 5 \\")
+    print("       --batch-size 1024")
     print("\n3. Expected: Val Sharpe will be MUCH LOWER than before (0.01-0.05)")
     print("   This is NORMAL - previous metrics were inflated by leakage")
 
