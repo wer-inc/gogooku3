@@ -232,6 +232,12 @@ def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
             # Skip metadata entries (e.g., codes/date) that are not tensors
             continue
 
+        # 🔧 FIX (2025-10-30): Skip point predictions - already aggregated to [B]
+        # These are pre-processed by model.get_point_predictions() and should NOT be reshaped
+        if key.startswith("point_"):
+            reshaped[key] = tensor
+            continue
+
         # Fix non-finite values first (use newer guard signature)
         try:
             tensor = _finite_or_nan_fix_tensor(tensor, f"reshape[{key_prefix}{key}]")
@@ -3132,6 +3138,46 @@ def evaluate_model_metrics(
             # Unwrap nested predictions and reshape to [B]
             preds = _unwrap_predictions(outputs)
 
+            # Convert quantile predictions to point predictions
+            if isinstance(preds, dict):
+                point_preds = {}
+                if hasattr(model, "get_point_predictions"):
+                    try:
+                        point_preds = model.get_point_predictions(preds, method="mean")
+                    except Exception as agg_exc:
+                        logger.warning(
+                            "[quantile-agg] evaluate_model_metrics: model.get_point_predictions failed (%s)",
+                            agg_exc,
+                        )
+
+                if not point_preds:
+                    logger.info(
+                        "[quantile-agg] evaluate_model_metrics: falling back to manual mean aggregation"
+                    )
+                    for key, tensor in preds.items():
+                        if (
+                            torch.is_tensor(tensor)
+                            and tensor.dim() >= 2
+                            and tensor.size(-1) > 1
+                        ):
+                            point_tensor = tensor.mean(dim=-1)
+                            point_preds[f"point_{key}"] = point_tensor
+                            match = re.match(r"horizon_(\d+)(d)?$", key, re.IGNORECASE)
+                            if match:
+                                horizon_int = match.group(1)
+                                point_preds[
+                                    f"point_horizon_{horizon_int}"
+                                ] = point_tensor
+
+                if point_preds:
+                    preds.update(point_preds)
+                    if isinstance(outputs, dict):
+                        outputs.update(point_preds)
+                        if "predictions" in outputs and isinstance(
+                            outputs["predictions"], dict
+                        ):
+                            outputs["predictions"].update(point_preds)
+
             # Ensure FP32 and proper shaping for loss computation
             outputs_fp32 = (
                 _reshape_to_batch_only(
@@ -3166,15 +3212,44 @@ def evaluate_model_metrics(
                 pass
             n_batches += 1
 
+            # 🔧 FIX (2025-10-30): Use outputs_fp32 (which has point predictions) for metrics
+            # Previously used 'outputs' which was raw model output without point predictions
+            outputs_for_metrics = (
+                outputs_fp32 if isinstance(outputs_fp32, dict) else outputs
+            )
+
             # 予測とターゲットを保存
             for horizon in criterion.horizons:
-                pred_key = f"horizon_{horizon}"
-                if pred_key in outputs:
+                # Check for point predictions first (aggregated quantiles)
+                # Similar to validate() function logic (line 3485-3491)
+                pred_key = (
+                    f"point_horizon_{horizon}"
+                    if any(
+                        k.startswith("point_horizon_")
+                        for k in outputs_for_metrics.keys()
+                    )
+                    else f"horizon_{horizon}"
+                )
+                targ_key = f"horizon_{horizon}"
+
+                if pred_key in outputs_for_metrics and targ_key in targets:
                     if horizon not in all_predictions:
                         all_predictions[horizon] = []
                         all_targets[horizon] = []
-                    all_predictions[horizon].append(outputs[pred_key].cpu())
-                    all_targets[horizon].append(targets[pred_key].cpu())
+
+                    # Get prediction and flatten to [B] if needed
+                    pred = outputs_for_metrics[pred_key].detach().float()
+                    if pred.dim() > 1:
+                        # If still multi-dimensional (e.g., quantiles [B, Q]), aggregate
+                        logger.warning(
+                            f"Horizon {horizon}: Prediction shape {pred.shape} - aggregating quantiles"
+                        )
+                        pred = pred.mean(dim=-1)  # Average across quantiles
+
+                    all_predictions[horizon].append(pred.cpu())
+                    all_targets[horizon].append(
+                        targets[targ_key].detach().float().cpu()
+                    )
 
     avg_loss = total_loss / n_batches if n_batches > 0 else 0.0
 
@@ -3384,8 +3459,58 @@ def validate(model, dataloader, criterion, device):
                                 v, f"outputs[val][{k}]", clamp=50.0
                             )
 
-                # Reshape to [B] format for consistency with training path
+                # Aggregate quantile predictions BEFORE reshape so loss/metrics operate on point forecasts
                 preds_raw = _unwrap_predictions(outputs)
+                if isinstance(preds_raw, dict):
+                    point_preds = {}
+
+                    if hasattr(model, "get_point_predictions"):
+                        try:
+                            point_preds = model.get_point_predictions(
+                                preds_raw, method="mean"
+                            )
+                        except Exception as agg_exc:
+                            logger.warning(
+                                "[quantile-agg] model.get_point_predictions failed (%s); falling back to mean",
+                                agg_exc,
+                            )
+
+                    if not point_preds:
+                        # Manual mean aggregation fallback if checkpoint lacks helper method
+                        for key, tensor in preds_raw.items():
+                            if (
+                                torch.is_tensor(tensor)
+                                and tensor.dim() >= 2
+                                and tensor.size(-1) > 1
+                            ):
+                                point_tensor = tensor.mean(dim=-1)
+                                point_preds[f"point_{key}"] = point_tensor
+                                match = re.match(
+                                    r"horizon_(\d+)(d)?$", key, re.IGNORECASE
+                                )
+                                if match:
+                                    horizon_int = match.group(1)
+                                    point_preds[
+                                        f"point_horizon_{horizon_int}"
+                                    ] = point_tensor
+
+                    if point_preds:
+                        preds_raw.update(point_preds)
+                        if isinstance(outputs, dict):
+                            outputs.update(point_preds)
+                            if "predictions" in outputs and isinstance(
+                                outputs["predictions"], dict
+                            ):
+                                outputs["predictions"].update(point_preds)
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(
+                                "[validate] point prediction keys added: %s",
+                                sorted(point_preds.keys()),
+                            )
+                else:
+                    preds_raw = {"horizon_1": preds_raw}
+
+                # Reshape to [B] format for consistency with training path
                 outputs = (
                     _reshape_to_batch_only(
                         {
@@ -3480,6 +3605,12 @@ def validate(model, dataloader, criterion, device):
                             metrics[h][key].extend(batch_metrics[h][key])
             else:
                 # Fallback to inline collection
+                # DEBUG: Log available keys in outputs
+                if n_batches == 0:  # Only log first batch to avoid spam
+                    logger.info(
+                        f"[DEBUG-METRICS] Available keys in outputs: {list(outputs.keys())}"
+                    )
+
                 for h in criterion.horizons:
                     pred_key = (
                         f"point_horizon_{h}"
@@ -3487,9 +3618,31 @@ def validate(model, dataloader, criterion, device):
                         else f"horizon_{h}"
                     )
                     targ_key = f"horizon_{h}"
+
+                    # DEBUG: Log which key is being used
+                    if n_batches == 0:  # Only log first batch
+                        logger.info(
+                            f"[DEBUG-METRICS] Horizon {h}: Using pred_key='{pred_key}'"
+                        )
+                        if pred_key in outputs:
+                            pred_tensor = outputs[pred_key]
+                            logger.info(
+                                f"[DEBUG-METRICS]   Tensor shape: {pred_tensor.shape}, mean={pred_tensor.mean():.6f}, std={pred_tensor.std():.6f}"
+                            )
+
                     if pred_key in outputs and targ_key in targets:
                         yhat = outputs[pred_key].detach().float().view(-1).cpu().numpy()
                         y = targets[targ_key].detach().float().view(-1).cpu().numpy()
+
+                        # DEBUG: Log shapes after view(-1)
+                        if n_batches == 0:
+                            logger.info(
+                                f"[DEBUG-METRICS]   After view(-1): yhat.shape={yhat.shape}, y.shape={y.shape}"
+                            )
+                            logger.info(
+                                f"[DEBUG-METRICS]   yhat stats: mean={yhat.mean():.6f}, std={yhat.std():.6f}"
+                            )
+
                         metrics[h]["yhat"].append(yhat)
                         metrics[h]["y"].append(y)
                     # t-params 収集
@@ -6873,13 +7026,17 @@ def train(config: DictConfig) -> None:
                     return nw
             # list alignment case (train.loss.horizon_weights or prediction.horizon_weights)
             if isinstance(cfg_map, list) and len(cfg_map) == len(data_h_list):
-                parsed = {int(h): float(w) for h, w in zip(data_h_list, cfg_map, strict=False)}
+                parsed = {
+                    int(h): float(w) for h, w in zip(data_h_list, cfg_map, strict=False)
+                }
                 nw = _normalize_weights_map(parsed)
                 if nw:
                     return nw
             pred_hw = OmegaConf.select(final_config, "prediction.horizon_weights")
             if isinstance(pred_hw, list) and len(pred_hw) == len(data_h_list):
-                parsed = {int(h): float(w) for h, w in zip(data_h_list, pred_hw, strict=False)}
+                parsed = {
+                    int(h): float(w) for h, w in zip(data_h_list, pred_hw, strict=False)
+                }
                 nw = _normalize_weights_map(parsed)
                 if nw:
                     return nw
@@ -9729,7 +9886,8 @@ def train(config: DictConfig) -> None:
                             codes,
                             dates,
                             yhat.numpy().tolist(),
-                            ([] if y is None else y.numpy().tolist()), strict=False,
+                            ([] if y is None else y.numpy().tolist()),
+                            strict=False,
                         ):
                             rows.append(
                                 {
