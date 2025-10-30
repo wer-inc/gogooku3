@@ -460,7 +460,8 @@ def run_backtest_smoke_test(
             code: float(price)
             for code, price in zip(
                 current_frame["Code"].to_list(),
-                current_frame["Close"].to_list(), strict=False,
+                current_frame["Close"].to_list(),
+                strict=False,
             )
             if price is not None
         }
@@ -474,7 +475,8 @@ def run_backtest_smoke_test(
             codes,
             turnover_values,
             volumes,
-            closes, strict=False,
+            closes,
+            strict=False,
         ):
             if turnover_value is not None and turnover_value > 0:
                 volume_map[code] = float(turnover_value)
@@ -559,7 +561,8 @@ def run_backtest_smoke_test(
             code: float(price)
             for code, price in zip(
                 next_frame["Code"].to_list(),
-                next_frame["Close"].to_list(), strict=False,
+                next_frame["Close"].to_list(),
+                strict=False,
             )
             if price is not None
         }
@@ -576,7 +579,10 @@ def run_backtest_smoke_test(
             last_prediction_source if last_prediction_source else prediction_source
         )
         state["selection_count"] = len(portfolio.positions)
-        state["selected_codes"] = list(portfolio.positions.keys())
+        if portfolio.positions:
+            state["selected_codes"] = ",".join(sorted(portfolio.positions.keys()))
+        else:
+            state["selected_codes"] = ""
         state["avg_prediction_score"] = (
             float(np.mean(list(active_predictions.values())))
             if active_predictions
@@ -664,7 +670,7 @@ def run_backtest_smoke_test(
 
     artifacts: dict[str, str] = {}
 
-    if daily_metrics_path:
+    if daily_metrics_path and str(daily_metrics_path).strip():
         daily_metrics_path.parent.mkdir(parents=True, exist_ok=True)
         flattened_history = [
             {k: v for k, v in record.items() if k != "positions"}

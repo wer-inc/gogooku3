@@ -1,13 +1,28 @@
 # APEX-Ranker Backtest Comparison (2023-2025)
 
-**Period**: 2023-01-01 to 2025-10-24 (2.8 years, 688 trading days)
-**Strategy**: Long-only Top-50 equal-weight, rebalanced weekly (20d horizon)
-**Initial Capital**: ¥10,000,000
-**Date**: 2025-10-29
+**⚠️ DEPRECATED - Historical Reference Only**
+
+This document contains backtest results from **Phase 3.4** (2025-10-29) using **old code** (commit 5dcd8ba, pre-Task 4.1.1). These results have been superseded by Phase 3.5 verification findings.
+
+**Issue Identified**: The original backtest actually used **daily rebalancing** (not weekly as labeled), causing excessive transaction costs.
+
+**For current baseline results**, see:
+- **Reproducibility Verification Report**: `apex-ranker/docs/REPRODUCIBILITY_VERIFICATION_REPORT.md`
+- **Updated Status**: `apex-ranker/EXPERIMENT_STATUS.md` (Phase 3.5)
 
 ---
 
-## Executive Summary
+## Original Document (Phase 3.4)
+
+**Period**: 2023-01-01 to 2025-10-24 (2.8 years, 688 trading days)
+**Strategy**: Long-only Top-50 equal-weight, **rebalanced daily** ⚠️ (labeled as "weekly")
+**Initial Capital**: ¥10,000,000
+**Original Date**: 2025-10-29
+**Verification Date**: 2025-10-30
+
+---
+
+## Executive Summary (Phase 3.4 - Old Code)
 
 Both models demonstrated positive returns over the 2.8-year backtest period, with the **enhanced model significantly outperforming the pruned model** across all key metrics:
 

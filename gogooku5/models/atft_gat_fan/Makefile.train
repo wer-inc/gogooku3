@@ -1,0 +1,21 @@
+.PHONY: help train train-quick lint test
+
+help:
+	@echo "ATFT-GAT-FAN package"
+	@echo "  make train        -> full training pipeline (placeholder)"
+	@echo "  make train-quick  -> smoke test"
+	@echo "  make lint         -> run code quality checks"
+
+train:
+	@echo "[atft] training placeholder. Integrate SafeTrainingPipeline."
+
+train-quick:
+	@echo "[atft] quick training placeholder."
+
+lint:
+	@echo "[atft] run ruff + mypy"
+	@python -m ruff check src || true
+	@python -m mypy src || true
+
+test:
+	@python -m pytest tests
