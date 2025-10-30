@@ -223,6 +223,235 @@ def _env_flag(key: str, default: bool) -> bool:
     return norm in ("1", "true", "yes", "on")
 
 
+class GradientMonitor:
+    """Aggregate gradient norms for selected modules to detect vanishing gradients."""
+
+    DEFAULT_GROUPS: dict[str, tuple[str, ...]] = {
+        "prediction_head_shared": ("prediction_head.shared_encoder",),
+        "prediction_head_heads": (
+            "prediction_head.horizon_heads",
+            "prediction_head.layer_scales",
+        ),
+        "backbone_projection": ("backbone_projection",),
+        "adaptive_norm": ("adaptive_norm",),
+        "temporal_encoder": ("tft",),
+        "input_projection": ("input_projection",),
+        "variable_selection": ("variable_selection",),
+        "gat": ("gat",),
+    }
+
+    def __init__(
+        self,
+        groups: dict[str, tuple[str, ...]],
+        log_every: int = 50,
+        warn_threshold: float = 1e-6,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.groups = {k: tuple(v) for k, v in groups.items()}
+        self.log_every = max(1, int(log_every))
+        self.warn_threshold = max(0.0, float(warn_threshold))
+        self.logger = logger or logging.getLogger(__name__)
+        self._bindings: dict[str, list[tuple[str, nn.Parameter]]] = {
+            label: [] for label in self.groups
+        }
+        self._model_id: int | None = None
+        self._last_logged_step: int | None = None
+        self._warned_missing: set[str] = set()
+        self._bound_logged: bool = False
+
+    @classmethod
+    def from_environment(
+        cls, model: nn.Module | None = None, logger: logging.Logger | None = None
+    ) -> "GradientMonitor | None":
+        """Create a gradient monitor from environment settings if enabled."""
+        enabled = os.getenv("ENABLE_GRAD_MONITOR", "0").strip().lower()
+        if enabled not in ("1", "true", "yes", "on"):
+            return None
+
+        groups = cls._resolve_groups(os.getenv("GRAD_MONITOR_GROUPS"))
+        log_every = int(os.getenv("GRAD_MONITOR_EVERY", "50") or "50")
+        warn_threshold = float(os.getenv("GRAD_MONITOR_WARN_NORM", "1e-6") or "1e-6")
+
+        monitor = cls(
+            groups=groups, log_every=log_every, warn_threshold=warn_threshold, logger=logger
+        )
+        if model is not None:
+            monitor.bind_model(model)
+        return monitor
+
+    @classmethod
+    def _resolve_groups(cls, raw: str | None) -> dict[str, tuple[str, ...]]:
+        """Parse environment string like 'head:a|b,enc:c' into group patterns."""
+        if not raw:
+            return {k: tuple(v) for k, v in cls.DEFAULT_GROUPS.items()}
+
+        groups: dict[str, tuple[str, ...]] = {}
+        for chunk in raw.split(","):
+            if ":" not in chunk:
+                continue
+            label, pattern_str = chunk.split(":", 1)
+            patterns = tuple(
+                pat.strip()
+                for pat in pattern_str.split("|")
+                if pat.strip()
+            )
+            if label.strip() and patterns:
+                groups[label.strip()] = patterns
+
+        if not groups:
+            return {k: tuple(v) for k, v in cls.DEFAULT_GROUPS.items()}
+        return groups
+
+    def _match_group(self, name: str) -> str | None:
+        for label, patterns in self.groups.items():
+            for pattern in patterns:
+                if pattern and pattern in name:
+                    return label
+        return None
+
+    def bind_model(self, model: nn.Module) -> None:
+        """Bind to a model and cache tracked parameters for faster logging."""
+        self._bindings = {label: [] for label in self.groups}
+        for name, param in model.named_parameters():
+            group = self._match_group(name)
+            if group is None:
+                continue
+            self._bindings[group].append((name, param))
+
+        self._model_id = id(model)
+        missing = [label for label, params in self._bindings.items() if not params]
+        if missing and not missing == list(self._warned_missing):
+            self.logger.warning(
+                "[GradMonitor] No parameters matched for groups: %s",
+                ", ".join(missing),
+            )
+            self._warned_missing.update(missing)
+
+        tracked = sum(len(params) for params in self._bindings.values())
+        if not self._bound_logged:
+            self.logger.info(
+                "[GradMonitor] Tracking %d parameter tensors across %d groups "
+                "(log_every=%d, warn_threshold=%.2e)",
+                tracked,
+                len(self._bindings),
+                self.log_every,
+                self.warn_threshold,
+            )
+            self._bound_logged = True
+
+    def record(
+        self,
+        model: nn.Module,
+        *,
+        global_step: int | None = None,
+        epoch: int | None = None,
+        batch_idx: int | None = None,
+    ) -> None:
+        """
+        Log aggregate gradient statistics for tracked parameter groups.
+
+        Args:
+            model: Model instance whose gradients should be inspected.
+            global_step: Global optimization step (preferred for cadence control).
+            epoch: Epoch index (optional context).
+            batch_idx: Batch index within the current epoch (optional context).
+        """
+        if self._model_id != id(model):
+            self.bind_model(model)
+
+        step_index = self._compute_step_index(
+            global_step=global_step, epoch=epoch, batch_idx=batch_idx
+        )
+        if step_index is None:
+            return
+        if self._last_logged_step == step_index:
+            return
+        if step_index % self.log_every != 0:
+            return
+        self._last_logged_step = step_index
+
+        parts: list[str] = []
+        warnings: list[str] = []
+
+        for label, params in self._bindings.items():
+            if not params:
+                continue
+            stats = {
+                "square": 0.0,
+                "max": 0.0,
+                "with_grad": 0,
+                "no_grad": 0,
+                "small": 0,
+                "tracked": len(params),
+            }
+            for name, param in params:
+                if not param.requires_grad:
+                    stats["no_grad"] += 1
+                    continue
+                grad = param.grad
+                if grad is None:
+                    stats["no_grad"] += 1
+                    continue
+                norm_val = float(grad.detach().norm().item())
+                stats["square"] += norm_val * norm_val
+                if norm_val > stats["max"]:
+                    stats["max"] = norm_val
+                stats["with_grad"] += 1
+                if norm_val < self.warn_threshold:
+                    stats["small"] += 1
+
+            total_norm = math.sqrt(stats["square"]) if stats["square"] > 0.0 else 0.0
+            parts.append(
+                f"{label}:l2={total_norm:.2e} max={stats['max']:.2e} "
+                f"grad={stats['with_grad']}/{stats['tracked']} "
+                f"small={stats['small']} none={stats['no_grad']}"
+            )
+
+            if stats["with_grad"] == 0:
+                warnings.append(
+                    f"{label}: no gradients (tracked={stats['tracked']}, "
+                    f"none={stats['no_grad']})"
+                )
+            elif total_norm < self.warn_threshold:
+                warnings.append(
+                    f"{label}: total norm {total_norm:.2e} < {self.warn_threshold:.2e}"
+                )
+
+        if not parts:
+            return
+
+        context_parts: list[str] = []
+        if global_step is not None:
+            context_parts.append(f"step={int(global_step)}")
+        if epoch is not None:
+            context_parts.append(f"epoch={int(epoch)}")
+        if batch_idx is not None:
+            context_parts.append(f"batch={int(batch_idx)}")
+        context = " ".join(context_parts)
+        prefix = "[GRAD-MONITOR]"
+        if context:
+            prefix = f"{prefix} {context}"
+
+        self.logger.info("%s %s", prefix, " | ".join(parts))
+        for warning_msg in warnings:
+            self.logger.warning("%s %s", prefix, warning_msg)
+
+    @staticmethod
+    def _compute_step_index(
+        *,
+        global_step: int | None,
+        epoch: int | None,
+        batch_idx: int | None,
+    ) -> int | None:
+        if global_step is not None:
+            return int(global_step)
+        if epoch is None and batch_idx is None:
+            return None
+        epoch_val = int(epoch) if epoch is not None else 0
+        batch_val = int(batch_idx) if batch_idx is not None else 0
+        return epoch_val * 1_000_000 + batch_val
+
+
 def _reshape_to_batch_only(tensor_dict, key_prefix="", take_last_step=True):
     """Reshape tensors to [B] format, taking last timestep if needed."""
     reshaped = {}
@@ -2231,6 +2460,8 @@ def train_epoch(
     scaler,
     epoch,
     gradient_accumulation_steps=1,
+    grad_monitor: GradientMonitor | None = None,
+    global_step_offset: int = 0,
 ):
     """1エポックの学習（Mixed Precision対応）"""
     _maybe_apply_temporal_encoder_freeze(model, epoch)
@@ -2242,6 +2473,7 @@ def train_epoch(
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
     optimizer.zero_grad()
     last_gat_grad_norm: float | None = None
+    optimizer_steps = 0
 
     # 追加: 時系列Mixup設定（短期汎化）
     use_mixup = os.getenv("USE_TS_MIXUP", "0") == "1"
@@ -2639,9 +2871,17 @@ def train_epoch(
         # Gradient accumulation
         if (batch_idx + 1) % gradient_accumulation_steps == 0:
             # Gradient clipping (configurable via MAX_GRAD_NORM env var)
+            effective_step = global_step_offset + optimizer_steps
             if scaler_is_enabled:
                 scaler.unscale_(optimizer)
             max_grad_norm = float(os.getenv("MAX_GRAD_NORM", "1.0"))
+            if grad_monitor is not None:
+                grad_monitor.record(
+                    model,
+                    global_step=effective_step,
+                    epoch=epoch,
+                    batch_idx=batch_idx,
+                )
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
 
             if any(p.grad is not None for p in model.parameters()):
@@ -2672,6 +2912,7 @@ def train_epoch(
                 )
 
             optimizer.zero_grad(set_to_none=True)  # メモリ効率向上
+            optimizer_steps += 1
 
         # 統計更新
         total_loss += loss.item()
@@ -4841,7 +5082,14 @@ def run_phase_training(model, train_loader, val_loader, config, device):
     return model
 
 
-def run_mini_training(model, data_module, final_config, device, max_epochs: int = 3):
+def run_mini_training(
+    model,
+    data_module,
+    final_config,
+    device,
+    max_epochs: int = 3,
+    grad_monitor: GradientMonitor | None = None,
+):
     """Simplified, robust training loop using existing train_epoch/validate.
 
     This path avoids complex micro-batching/graph/AMP logic and is useful when
@@ -4945,8 +5193,22 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
         except Exception:
             return False
 
+    try:
+        grad_accum_steps = int(
+            getattr(final_config.train.batch, "gradient_accumulation_steps", 1)
+        )
+    except Exception:
+        grad_accum_steps = 1
+    try:
+        steps_per_epoch = math.ceil(len(train_loader) / max(1, grad_accum_steps))
+    except Exception:
+        steps_per_epoch = 0
+
     last_gat_grad_norm: float | None = None
     for epoch in range(1, int(max_epochs) + 1):
+        step_offset = (
+            (epoch - 1) * steps_per_epoch if steps_per_epoch > 0 else (epoch - 1) * 1_000
+        )
         avg_train_loss, _, last_gat_grad_norm = train_epoch(
             model,
             train_loader,
@@ -4955,7 +5217,9 @@ def run_mini_training(model, data_module, final_config, device, max_epochs: int 
             device,
             scaler,
             epoch,
-            gradient_accumulation_steps=1,
+            gradient_accumulation_steps=grad_accum_steps,
+            grad_monitor=grad_monitor,
+            global_step_offset=step_offset,
         )
         logger.info(f"[mini] Train loss @epoch{epoch}: {avg_train_loss:.4f}")
 
@@ -6906,6 +7170,8 @@ def train(config: DictConfig) -> None:
         f"[AMP] GradScaler initialized: enabled={scaler_enabled}, amp_dtype={amp_dtype}"
     )
 
+    grad_monitor = GradientMonitor.from_environment(model=model, logger=logger)
+
     # 最適化
     # 追加損失のON/OFFは簡易に環境変数で制御（必要ならHydraへ昇格）
     use_rankic = _env_flag("USE_RANKIC", True)
@@ -7316,7 +7582,12 @@ def train(config: DictConfig) -> None:
         except Exception:
             pass
 
-    def run_training(train_loader, val_loader, tag: str = "main"):
+    def run_training(
+        train_loader,
+        val_loader,
+        tag: str = "main",
+        grad_monitor: GradientMonitor | None = None,
+    ):
         n_epochs = final_config.train.scheduler.total_epochs
         best_val_loss = float("inf")
         logger.info(f"Starting training loop ({tag})...")
@@ -8958,6 +9229,14 @@ def train(config: DictConfig) -> None:
                             ):
                                 scaler.unscale_(optimizer)
 
+                            if grad_monitor is not None:
+                                grad_monitor.record(
+                                    model,
+                                    global_step=global_step,
+                                    epoch=epoch,
+                                    batch_idx=batch_idx,
+                                )
+
                             # Check gradient norms before clipping
                             def grad_norm(module):
                                 total_norm = 0.0
@@ -10130,6 +10409,7 @@ def train(config: DictConfig) -> None:
                 final_config,
                 device,
                 max_epochs=int(os.getenv("MINI_MAX_EPOCHS", "3")),
+                grad_monitor=grad_monitor,
             )
             # Mini training finished successfully; exit train() gracefully.
             logger.info("Mini training completed; exiting main train() early.")
@@ -10149,6 +10429,7 @@ def train(config: DictConfig) -> None:
             final_config,
             device,
             max_epochs=int(os.getenv("MINI_MAX_EPOCHS", "3")),
+            grad_monitor=grad_monitor,
         )
         logger.info("[Control] Mini training finished; exiting train()")
         return
@@ -10175,7 +10456,12 @@ def train(config: DictConfig) -> None:
                 )
             else:
                 ckpt_tag = os.getenv("CKPT_TAG", "main").strip() or "main"
-                best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
+                best_val_main = run_training(
+                    train_loader,
+                    val_loader,
+                    tag=ckpt_tag,
+                    grad_monitor=grad_monitor,
+                )
         except Exception as _e:
             logger.error(
                 f"[PhaseTraining] failed or disabled: {_e}; falling back to standard training"
@@ -10193,7 +10479,12 @@ def train(config: DictConfig) -> None:
             )
             logger.info("[Fallback] Reset optimizer and scaler for standard training")
             ckpt_tag = os.getenv("CKPT_TAG", "main").strip() or "main"
-            best_val_main = run_training(train_loader, val_loader, tag=ckpt_tag)
+            best_val_main = run_training(
+                train_loader,
+                val_loader,
+                tag=ckpt_tag,
+                grad_monitor=grad_monitor,
+            )
 
     # CV評価（学習後に全foldを現行モデルで評価）
     if cv_folds >= 2 and "fold_ranges" in locals() and fold_ranges:
@@ -10269,7 +10560,12 @@ def train(config: DictConfig) -> None:
                         final_config.train.scheduler.total_epochs = total_override
                 except Exception:
                     pass
-                _ = run_training(cv_train_loader, cv_val_loader, tag=f"cv{i+1}")
+                _ = run_training(
+                    cv_train_loader,
+                    cv_val_loader,
+                    tag=f"cv{i+1}",
+                    grad_monitor=grad_monitor,
+                )
                 # 評価
                 val_loss_i, _, _ = validate(model, cv_val_loader, criterion, device)
                 # 戻す

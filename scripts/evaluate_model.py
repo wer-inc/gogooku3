@@ -102,6 +102,9 @@ def evaluate(model_path, data_path, device="cuda"):
                 # Forward pass
                 outputs = model(features)
 
+                # Convert quantile predictions to point predictions
+                point_predictions = model.get_point_predictions(outputs, method="mean")
+
                 # Extract predictions
                 if isinstance(outputs, dict) and "predictions" in outputs:
                     predictions = outputs["predictions"]
@@ -110,20 +113,38 @@ def evaluate(model_path, data_path, device="cuda"):
 
                 # Collect by horizon
                 for h in [1, 5, 10, 20]:
-                    pred_key = f"horizon_{h}d"
+                    candidate_pred_keys = [
+                        f"point_horizon_{h}",
+                        f"point_horizon_{h}d",
+                        f"point_horizon_{h}D",
+                        f"horizon_{h}d",
+                        f"horizon_{h}",
+                    ]
+                    pred_key = next(
+                        (k for k in candidate_pred_keys if k in point_predictions),
+                        None,
+                    )
                     targ_key = f"horizon_{h}"
                     mask = None
 
-                    if pred_key in predictions and targ_key in targets:
-                        pred_tensor = predictions[pred_key].detach().cpu()
+                    if pred_key and targ_key in targets:
+                        # Use point predictions (already shape: [batch_size])
+                        pred_tensor = point_predictions[pred_key].detach().cpu()
                         targ_tensor = targets[targ_key].detach().cpu()
 
-                        if pred_tensor.ndim == 3 and pred_tensor.size(-1) == 1:
-                            pred_tensor = pred_tensor[:, -1, 0]
-                        elif pred_tensor.ndim == 3:
-                            pred_tensor = pred_tensor[:, -1, :]
-                        elif pred_tensor.ndim == 2:
-                            pred_tensor = pred_tensor[:, -1]
+                        # Point predictions should already be 1D, but handle edge cases
+                        if pred_tensor.ndim == 2 and pred_tensor.size(-1) == 1:
+                            pred_tensor = pred_tensor.squeeze(-1)
+                        elif pred_tensor.ndim > 1:
+                            # This shouldn't happen with proper aggregation
+                            logger.warning(
+                                f"Unexpected point prediction shape for {pred_key}: {pred_tensor.shape}"
+                            )
+                            pred_tensor = (
+                                pred_tensor.mean(dim=-1)
+                                if pred_tensor.ndim == 2
+                                else pred_tensor.flatten()
+                            )
 
                         if targ_tensor.ndim == 3 and targ_tensor.size(-1) == 1:
                             targ_tensor = targ_tensor[:, -1, 0]
@@ -132,6 +153,7 @@ def evaluate(model_path, data_path, device="cuda"):
                         elif targ_tensor.ndim == 2:
                             targ_tensor = targ_tensor[:, -1]
 
+                        mask = None
                         candidate_keys = [
                             f"horizon_{h}",
                             f"horizon_{h}d",
@@ -144,29 +166,17 @@ def evaluate(model_path, data_path, device="cuda"):
                                     mask = valid_masks[key].detach().cpu()
                                     break
 
-                        if mask is None:
-                            mask = torch.isfinite(targ_tensor)
-                        if mask.dim() == targ_tensor.dim():
-                            pass
-                        elif mask.dim() + 1 == targ_tensor.dim():
-                            mask = mask.unsqueeze(-1)
-                        mask = mask.to(dtype=torch.bool)
-                        if (
-                            mask.shape != targ_tensor.shape
-                            and mask.numel() == targ_tensor.numel()
-                        ):
-                            mask = mask.view(targ_tensor.shape)
+                        pred = pred_tensor.numpy().reshape(-1)
+                        targ = targ_tensor.numpy().reshape(-1)
 
-                        pred = pred_tensor.numpy()
-                        targ = targ_tensor.numpy()
+                        valid_mask = np.isfinite(pred) & np.isfinite(targ)
+                        if mask is not None:
+                            mask_np = mask.numpy()
+                            if mask_np.ndim > 1:
+                                mask_np = mask_np.reshape(-1)
+                            if mask_np.size == valid_mask.size:
+                                valid_mask &= mask_np.astype(bool)
 
-                        valid_mask = (
-                            np.isfinite(pred) & np.isfinite(targ) & mask.numpy()
-                        )
-                        if valid_mask.ndim > 1:
-                            valid_mask = valid_mask.reshape(-1)
-                        pred = pred.reshape(-1)
-                        targ = targ.reshape(-1)
                         pred = pred[valid_mask]
                         targ = targ[valid_mask]
 

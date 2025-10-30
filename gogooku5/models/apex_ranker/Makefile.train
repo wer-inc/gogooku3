@@ -1,0 +1,24 @@
+.PHONY: help train train-quick inference lint test
+
+help:
+	@echo "APEX-Ranker package"
+	@echo "  make train         -> full training (placeholder)"
+	@echo "  make train-quick   -> smoke test"
+	@echo "  make inference     -> inference placeholder"
+	@echo "  make lint          -> run quality checks"
+
+train:
+	@echo "[apex] training placeholder."
+
+train-quick:
+	@echo "[apex] quick training placeholder."
+
+inference:
+	@python scripts/inference_v0.py --dataset ../../data/output/ml_dataset_latest.parquet
+
+lint:
+	@python -m ruff check src || true
+	@python -m mypy src || true
+
+test:
+	@python -m pytest tests

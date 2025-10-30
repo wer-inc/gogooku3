@@ -7,7 +7,11 @@ from .costs import (
 )
 from .portfolio import Portfolio, Position, Trade
 from .rebalance import normalise_frequency, should_rebalance
-from .splitter import Split, WalkForwardSplitter, generate_splits_for_backtest
+from .splitter import Split
+from .splitter import WalkForwardSplitter as LegacyWalkForwardSplitter
+from .splitter import generate_splits_for_backtest
+from .walk_forward import WalkForwardFold, WalkForwardSplitter
+from .walk_forward_runner import WalkForwardRunConfig, run_walk_forward_backtest
 
 __all__ = [
     # Portfolio
@@ -24,6 +28,11 @@ __all__ = [
     "calculate_round_trip_cost",
     # Splitter
     "Split",
+    "WalkForwardFold",
     "WalkForwardSplitter",
+    "LegacyWalkForwardSplitter",
     "generate_splits_for_backtest",
+    # Walk-forward runner
+    "WalkForwardRunConfig",
+    "run_walk_forward_backtest",
 ]

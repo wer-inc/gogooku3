@@ -198,6 +198,15 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         self.gat_entropy_weight = 0.0
         self.gat_output_norm: nn.LayerNorm | None = None
         self.gat_residual_clip: float = 0.0
+        self.encoder_diag_enabled = os.getenv("ENABLE_ENCODER_DIAGNOSTICS", "0") == "1"
+        self.encoder_diag_interval = max(1, int(os.getenv("ENCODER_DIAG_EVERY", "50")))
+        self._encoder_diag_counter = 0
+        self.bypass_adaptive_norm = os.getenv("BYPASS_ADAPTIVE_NORM", "0") == "1"
+        self.grad_monitor_enabled = os.getenv("ENABLE_GRADIENT_MONITOR", "0") == "1"
+        self.grad_monitor_interval = max(
+            1, int(os.getenv("GRADIENT_MONITOR_EVERY", "100"))
+        )
+        self._grad_monitor_step = 0
 
         # Variable Selection Network (feature-wise gating)
         self.variable_selection = self._build_variable_selection()
@@ -266,6 +275,8 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         self._gat_attention_entropy: torch.Tensor | None = None
         self._gat_edge_reg_value: torch.Tensor | None = None
         self._last_attention_weights = None
+        if self.grad_monitor_enabled:
+            self._register_gradient_hooks()
 
     def _get_training_config(self):
         if hasattr(self.config, "training") and self.config.training is not None:
@@ -403,6 +414,42 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             max_sequence_length=max_seq_len,
         )
 
+    def _register_gradient_hooks(self) -> None:
+        """Attach gradient hooks for diagnostics when enabled."""
+        modules: dict[str, nn.Module] = {
+            "input_projection": self.input_projection,
+            "backbone_projection": self.backbone_projection,
+        }
+        # Final linear layers in the prediction head
+        if hasattr(self, "prediction_head") and hasattr(
+            self.prediction_head, "horizon_heads"
+        ):
+            for horizon, head in self.prediction_head.horizon_heads.items():
+                for idx, layer in enumerate(head):
+                    if isinstance(layer, nn.Linear):
+                        modules[f"pred_head_{horizon}_linear{idx}"] = layer
+
+        def make_hook(name: str):
+            def _hook(grad: torch.Tensor) -> torch.Tensor:
+                if grad is None:
+                    return grad
+                if self._grad_monitor_step % self.grad_monitor_interval == 0:
+                    norm = grad.norm().item()
+                    logger.info(
+                        "[GRAD-MONITOR] %s grad_norm=%.6e (step=%d)",
+                        name,
+                        norm,
+                        self._grad_monitor_step,
+                    )
+                self._grad_monitor_step += 1
+                return grad
+
+            return _hook
+
+        for name, module in modules.items():
+            for param in module.parameters():
+                param.register_hook(make_hook(name))
+
     def _build_gat(self) -> MultiLayerGAT | None:
         """Graph Attention Networkの構築"""
         gat_cfg = getattr(self.config.model, "gat", None)
@@ -430,9 +477,6 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         self.gat_edge_weight = edge_penalty
 
         # 🔧 DEBUG (2025-10-06): Log initialized GAT weights
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.info(
             f"[GAT-INIT] gat_entropy_weight={self.gat_entropy_weight}, gat_edge_weight={self.gat_edge_weight}, gat_output_dim={self.gat_output_dim}"
         )
@@ -699,16 +743,27 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         # 入力投影
         projected = self.input_projection(selected_features)
+        if self.encoder_diag_enabled:
+            if self._encoder_diag_counter % self.encoder_diag_interval == 0:
+                with torch.no_grad():
+                    enc_mean = projected.mean().item()
+                    enc_std = projected.std().item()
+                    enc_min = projected.min().item()
+                    enc_max = projected.max().item()
+                logger.info(
+                    "[ENCODER-DIAG] projected mean=%.5f std=%.5f min=%.5f max=%.5f",
+                    enc_mean,
+                    enc_std,
+                    enc_min,
+                    enc_max,
+                )
+            self._encoder_diag_counter += 1
 
         # Temporal Fusion Transformer
         # FIX: Always compute attention (train/eval mode consistency)
         # Loss is only added during training, but forward behavior should be identical
         return_attention = self.gat is not None and self.gat_entropy_weight > 0
 
-        # 🔧 DEBUG (2025-10-07): Log return_attention decision
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.debug(
             f"[RETURN-ATT] self.training={self.training}, gat_is_not_none={self.gat is not None}, entropy_weight={self.gat_entropy_weight} → return_attention={return_attention}"
         )
@@ -783,9 +838,6 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # 🔧 FIX (2025-10-06): Always use consistent dimensions to prevent backbone_projection recreation
         # When GAT is skipped, pad with zeros to maintain dimension=hidden_size+gat_output_dim
         # 🔧 DEBUG (2025-10-06): Log which branch is taken
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.debug(
             f"[GAT-DEBUG] Checking concatenation: gat_features is not None = {gat_features is not None}"
         )
@@ -819,17 +871,68 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         projected_features = self.backbone_projection(combined_features)
         self._nan_guard(projected_features, "projected_features")
 
+        # Tier 2.3 diagnostics: log encoder output stats (post projection)
+        if self.encoder_diag_enabled and self.training:
+            with torch.no_grad():
+                proj_mean = projected_features.mean().item()
+                proj_std = projected_features.std().item()
+                proj_min = projected_features.min().item()
+                proj_max = projected_features.max().item()
+            logger.info(
+                "[ENCODER-DIAG] projected_features mean=%+.6f std=%.6f min=%+.6f max=%+.6f",
+                proj_mean,
+                proj_std,
+                proj_min,
+                proj_max,
+            )
+
         # Apply adaptive normalization (operates on temporal backbone features)
-        normalized_features = self.adaptive_norm(projected_features)
+        if self.bypass_adaptive_norm:
+            normalized_features = projected_features
+            if self.training and self.encoder_diag_enabled:
+                logger.warning(
+                    "[ENCODER-DIAG] Adaptive normalization bypassed (BYPASS_ADAPTIVE_NORM=1)"
+                )
+        else:
+            normalized_features = self.adaptive_norm(projected_features)
+
         self._nan_guard(normalized_features, "normalized_features_pre_residual")
 
+        # Log normalized_features statistics (Tier 2.3/2.4 diagnostics)
+        if self.encoder_diag_enabled and self.training:
+            with torch.no_grad():
+                norm_mean = normalized_features.mean().item()
+                norm_std = normalized_features.std().item()
+                norm_min = normalized_features.min().item()
+                norm_max = normalized_features.max().item()
+            logger.info(
+                "[ENCODER-DIAG] normalized_features mean=%+.6f std=%.6f min=%+.6f max=%+.6f",
+                norm_mean,
+                norm_std,
+                norm_min,
+                norm_max,
+            )
+
         # GAT Residual Bypass適用 (Phase 2) - post-normalization so FAN/SAN do not zero-out GAT signal
+        # 🔧 Tier 2.2: Environment variable override for testing GAT bypass hypothesis
+        import os
+
+        bypass_gat_completely = os.environ.get("BYPASS_GAT_COMPLETELY", "0") == "1"
+
         if (
             self.gat is not None
             and gat_residual_base is not None
             and hasattr(self, "gat_residual_gate")
         ):
-            alpha = torch.sigmoid(self.gat_residual_gate)
+            if bypass_gat_completely:
+                # Tier 2.2 Test: Force alpha=0 (100% temporal features, 0% GAT)
+                alpha = torch.tensor(0.0, device=normalized_features.device)
+                if self.training:
+                    logger.warning(
+                        "[TIER2.2] GAT COMPLETELY BYPASSED (alpha=0.0, BYPASS_GAT_COMPLETELY=1)"
+                    )
+            else:
+                alpha = torch.sigmoid(self.gat_residual_gate)
             gat_residual = (
                 gat_residual_base.unsqueeze(1)
                 .repeat(1, normalized_features.size(1), 1)
@@ -1196,9 +1299,6 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # GAT正則化 (edge weight / attention entropy)
         if self.gat is not None:
             # 🔧 DEBUG (2025-10-07): Log condition checks
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.debug(
                 f"[GAT-LOSS-CHECK] edge_reg_value is None: {self._gat_edge_reg_value is None}, is Tensor: {isinstance(self._gat_edge_reg_value, torch.Tensor) if self._gat_edge_reg_value is not None else 'N/A'}, weight > 0: {self.gat_edge_weight > 0}"
             )
@@ -1633,19 +1733,39 @@ class MultiHorizonPredictionHeads(nn.Module):
 
 
 class QuantileLoss(nn.Module):
-    """Quantile Loss"""
+    """Quantile Loss (with optional MSE fallback for debugging)"""
 
     def __init__(self, quantiles: list[float]):
         super().__init__()
         self.quantiles = torch.tensor(quantiles)
+        # Environment variable toggle for Tier 2.1 experiment
+        import os
+
+        self.use_mse = os.environ.get("USE_MSE_LOSS", "0") == "1"
+        if self.use_mse:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "[TIER2.1] QuantileLoss replaced with MSE (USE_MSE_LOSS=1)"
+            )
 
     def forward(self, predictions: torch.Tensor, targets: torch.Tensor):
-        # 簡易的なQuantile Loss実装
-        errors = targets.unsqueeze(-1) - predictions
-        quantile_loss = torch.maximum(
-            self.quantiles * errors, (self.quantiles - 1) * errors
-        )
-        return quantile_loss.mean()
+        if self.use_mse:
+            # Tier 2.1: MSE loss for degeneracy testing
+            # predictions: [B, num_quantiles], targets: [B]
+            # Aggregate quantiles to point prediction (mean)
+            if predictions.dim() == 2 and predictions.size(-1) > 1:
+                point_pred = predictions.mean(dim=-1)
+            else:
+                point_pred = predictions.squeeze(-1)
+            return torch.nn.functional.mse_loss(point_pred, targets)
+        else:
+            # Original quantile loss
+            errors = targets.unsqueeze(-1) - predictions
+            quantile_loss = torch.maximum(
+                self.quantiles * errors, (self.quantiles - 1) * errors
+            )
+            return quantile_loss.mean()
 
 
 class SharpeLoss(nn.Module):

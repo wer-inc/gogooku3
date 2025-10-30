@@ -491,3 +491,146 @@ tail -f logs/ml_training.log | grep -i "worker\|spawn\|fork"
   抜けている部分を埋める第一歩としては、まず 空売り
   と オプション を Standard プランの範囲で確実に出力させる
   ことが最も取り掛かりやすく、全仕様の完成度も一気に上がります。
+
+
+ATFT GAT FAN
+
+• 今日やったこと
+
+  - ENABLE_ENCODER_DIAGNOSTICS=1 で 1 エポック試験を
+    実行し、エンコーダ直後と Adaptive Norm 後の活性統
+    計をログ。projected_features の標準偏差は約 2.48、
+    normalized_features でも 0.36 程度あり、入力パイプ
+    ラインがゼロに潰れていないことを確認しました（logs/
+    ml_training.log の [ENCODER-DIAG] 行参照）。
+  - 続いて BYPASS_ADAPTIVE_NORM=1 で Adaptive Norm を
+    完全に迂回しても、予測分散 (yhat_std) は 0 のまま
+    で変化なし。正規化層が直接の原因ではないと判明しま
+    した。
+
+  次のステップ候補
+
+  1. Tier 1.2（勾配モニタリング）
+      - 予測ヘッドやエンコーダの重み勾配をログし、バッ
+        クプロパゲーションが途切れていないか確認。
+  2. Tier 2.4（クロスセクション正規化の影響調査）
+  3. Tier 3（ベースラインへの簡略化）
+      - GAT や量子損失を外した最小構成モデルで学習し、
+        ゼロ出力を起こす最小要因を割り出す。
+
+  勾配モニタリングは短時間で実施できるので、まず 1. か
+  ら着手するのが良さそうです。
+
+
+› 現状はどの状況ですか？
+
+
+  - Feature encoder outputs healthy variance (std ≈
+    2.5) after the projection layer; the issue is not
+    an immediate collapse there.
+  - Bypassing the adaptive normalization layer leaves
+    yhat_std at 0.0, so the degeneracy persists even
+    without that block.
+  - We have two short trials in succession:
+      - ENABLE_ENCODER_DIAGNOSTICS=1 → confirmed
+        encoder outputs are fine.
+      - ENABLE_ENCODER_DIAGNOSTICS=1
+        BYPASS_ADAPTIVE_NORM=1 → still zero prediction
+        variance.
+  - Next diagnostic priority is Tier 1.2: add gradient‐
+    logging hooks in the prediction heads (and
+    optionally earlier layers) to confirm whether
+    gradients are actually flowing back to them.
+
+
+› 今何をやってますか？実行結果待ち？
+
+
+• いま計算は何も走っておらず、待機中です。直前の 1 エ
+  ポック試験（エンコーダ診断→Adaptive Norm バイパス）は
+  既に完了しています。この後の次の作業は、Tier 1.2 の勾
+  配モニタリングを仕込んで短いトライアルを回し、ヘッド
+  まで勾配が届いているか確認することになります。
+
+
+› 一旦パソ子を再起動するので、何を作業してどこまででき
+  たか何が問題かを次再開するときにわかりやすくまとめて
+  もらえますか
+
+
+• 再開時に迷わないよう、現状をまとめます。
+
+  ———
+
+  作業の進捗状況
+
+  - Phase 2 完了
+      - Feature 設定 _cs_z 問題修正 (78/78 列一致)。
+      - 評価系の分位数集約・reshape バグを 5 件修正。
+      - IC は正の値 (h=1~10: 0.006–0.021) を確認済み。
+  - Phase 3 トライアル
+      - ハイパーパラメータ調整 (LR=1e-4, RankIC=0.5 な
+        ど) でも予測が定数のまま → 退化は構造的問題。
+      - MSE loss に切り替え (Tier 2.1) → 変化なし。
+      - GAT 完全バイパス (Tier 2.2) → 変化なし。
+  - Tier 2.3 診断 (今日実施)
+      - ENABLE_ENCODER_DIAGNOSTICS=1 で 1 エポックテス
+        ト → projection 後の出力は mean≈0, std≈2.48。
+      - BYPASS_ADAPTIVE_NORM=1 で Adaptive Norm を無効
+        化しても yhat_std は 0.0 のまま。
+        ⇒ エンコーダは潰れていない、Adaptive Norm も直
+        接の原因ではない。
+
+  ———
+
+  問題点（継続中）
+
+  - モデルが依然として各ホライズンで定数予測
+    (yhat_std=0.0) を吐いており、RankIC が評価不能。
+  - 重みは正常に更新されており、GAT や損失関数も直接の
+    犯人ではない。
+  - 原因候補：
+      - 予測ヘッドまで勾配が届いていない／勾配が極端に
+        小さい。
+      - データ正規化＋アーキテクチャの組み合わせに起因
+
+  ———
+
+  次にやるべきタスク
+
+  1. Tier 1.2: 勾配モニタリング
+      - 予測ヘッドやエンコーダ層にフックを仕込み、逆伝
+        播後の勾配ノルムをログ。
+      - 勾配が0か極小なら、バイパスや損失が原因。正常な
+        ら別要因を疑う。
+  2. （勾配が正常なら）Tier 2.4: クロスセクション正規化
+     の影響調査
+      - CS ノーマライズを外したデータセットで小トライア
+        ルを行い、挙動を比較。
+  3. 必要に応じて Tier 3: アーキテクチャ簡略化
+      - GATや量子損失を外した最小構成で学習 → どの時点
+        で定数化が始まるか切り分け。
+
+  ログの主要ポイント：logs/ml_training.log の [ENCODER-
+  DIAG] を参照するとエンコーダ出力統計が残っています。
+
+  ———
+
+  以上です。再起動後は 勾配モニタリングの実装 (Tier
+  1.2) から着手すれば大丈夫です。
+
+
+› 次何をやりますか？
+
+
+• 勾配がヘッドまで届いていることが確認できたので、
+  次は Tier 2.4 のクロスセクション正規化テスト に進
+  みましょう。具体的には、CSノーマライズを無効化し
+  たデータセット（もしくは既存データから CS 処理をス
+  キップしたバージョン）で短いトライアルを走らせ、依
+  然として yhat_std=0 になるかを切り分けるのが良さそ
+  うです。
+
+
+
+APEX RANKER
