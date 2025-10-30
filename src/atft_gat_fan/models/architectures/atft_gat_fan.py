@@ -932,6 +932,56 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         return output
 
+    def get_point_predictions(
+        self, model_output: dict[str, any], method: str = "mean"
+    ) -> dict[str, torch.Tensor]:
+        """
+        Convert quantile predictions to point predictions.
+
+        Args:
+            model_output: Output from forward() containing 'predictions' dict
+            method: Aggregation method ("mean", "median", "quantile_0.5")
+
+        Returns:
+            Dictionary of point predictions {horizon_key: [batch_size], ...}
+
+        Example:
+            >>> output = model(features)  # Contains quantile predictions
+            >>> point_preds = model.get_point_predictions(output, method="mean")
+            >>> # point_preds["horizon_1d"].shape == (batch_size,)
+        """
+        if isinstance(model_output, dict) and "predictions" in model_output:
+            quantile_predictions = model_output["predictions"]
+        else:
+            # Assume model_output is directly the predictions dict
+            quantile_predictions = model_output
+
+        # Delegate to prediction_head's method if it has one
+        if hasattr(self.prediction_head, "get_point_predictions"):
+            return self.prediction_head.get_point_predictions(
+                quantile_predictions, method=method
+            )
+
+        # Fallback: simple aggregation
+        point_predictions = {}
+        for horizon_key, quantile_pred in quantile_predictions.items():
+            if quantile_pred.dim() == 1:
+                point_predictions[horizon_key] = quantile_pred
+            elif quantile_pred.dim() == 2:
+                if method == "mean":
+                    point_predictions[horizon_key] = quantile_pred.mean(dim=-1)
+                elif method == "median":
+                    point_predictions[horizon_key] = quantile_pred.median(dim=-1).values
+                elif method == "quantile_0.5":
+                    mid_idx = quantile_pred.size(-1) // 2
+                    point_predictions[horizon_key] = quantile_pred[:, mid_idx]
+                else:
+                    raise ValueError(f"Unknown aggregation method: {method}")
+            else:
+                raise ValueError(f"Unexpected prediction shape: {quantile_pred.shape}")
+
+        return point_predictions
+
     def _nan_guard(self, tensor: torch.Tensor | None, name: str) -> None:
         if not self.enable_nan_guard or tensor is None:
             return
@@ -1498,6 +1548,72 @@ class MultiHorizonPredictionHeads(nn.Module):
             predictions[horizon_key] = scaled_output
 
         return predictions
+
+    def get_point_predictions(
+        self,
+        quantile_predictions: dict[str, torch.Tensor]
+        | dict[str, dict[str, torch.Tensor]],
+        method: str = "mean",
+    ) -> dict[str, torch.Tensor]:
+        """
+        Convert quantile predictions to single point predictions.
+
+        Args:
+            quantile_predictions: Dictionary of quantile predictions or dict with
+                ``{"predictions": {...}}`` structure
+                {horizon_key: [batch_size, n_quantiles], ...}
+            method: Aggregation method ("mean", "median", "quantile_0.5")
+
+        Returns:
+            Dictionary containing ``point_horizon_{h}`` tensors and convenience aliases.
+        """
+        if (
+            isinstance(quantile_predictions, dict)
+            and "predictions" in quantile_predictions
+        ):
+            quantile_dict = quantile_predictions["predictions"]
+        else:
+            quantile_dict = quantile_predictions
+
+        if not isinstance(quantile_dict, dict):
+            raise TypeError(
+                "quantile_predictions must be a dict mapping horizon keys to tensors"
+            )
+
+        point_predictions: dict[str, torch.Tensor] = {}
+
+        for horizon_key, quantile_pred in quantile_dict.items():
+            if quantile_pred.dim() == 1:
+                # Already single prediction
+                point_tensor = quantile_pred
+            elif quantile_pred.dim() == 2:
+                # [batch_size, n_quantiles] -> [batch_size]
+                if method == "mean":
+                    point_tensor = quantile_pred.mean(dim=-1)
+                elif method == "median":
+                    point_tensor = quantile_pred.median(dim=-1).values
+                elif method == "quantile_0.5":
+                    # Assume middle quantile is q=0.5
+                    mid_idx = quantile_pred.size(-1) // 2
+                    point_tensor = quantile_pred[:, mid_idx]
+                else:
+                    raise ValueError(f"Unknown aggregation method: {method}")
+            else:
+                raise ValueError(f"Unexpected prediction shape: {quantile_pred.shape}")
+
+            # Store canonical point prediction keys
+            match = re.match(r"horizon_(\d+)(d)?$", horizon_key, re.IGNORECASE)
+            if match:
+                horizon_int = match.group(1)
+                point_key = f"point_horizon_{horizon_int}"
+                point_predictions[point_key] = point_tensor
+            else:
+                point_predictions[f"point_{horizon_key}"] = point_tensor
+
+            # Provide alias with original key suffixed by point_
+            point_predictions[f"point_{horizon_key}"] = point_tensor
+
+        return point_predictions
 
     def get_single_horizon_prediction(
         self, x: torch.Tensor, horizon: int
