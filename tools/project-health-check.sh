@@ -47,7 +47,7 @@ echo ""
 # ============================================================================
 # 1. ENVIRONMENT CHECKS
 # ============================================================================
-echo -e "${BLUE}[1/8] Environment validation...${NC}"
+echo -e "${BLUE}[1/9] Environment validation...${NC}"
 
 if [ ! -f ".env" ]; then
     CRITICAL_ISSUES+=("Missing .env file - copy from .env.example")
@@ -78,7 +78,7 @@ fi
 # ============================================================================
 # 2. DEPENDENCY CHECKS
 # ============================================================================
-echo -e "${BLUE}[2/8] Dependencies validation...${NC}"
+echo -e "${BLUE}[2/9] Dependencies validation...${NC}"
 
 if [ -z "$PYTHON_BIN" ]; then
     CRITICAL_ISSUES+=("Python 3 not found in PATH")
@@ -117,7 +117,7 @@ fi
 # ============================================================================
 # 3. DATA PIPELINE STATUS
 # ============================================================================
-echo -e "${BLUE}[3/8] Data pipeline status...${NC}"
+echo -e "${BLUE}[3/9] Data pipeline status...${NC}"
 
 #############################################
 # Check for latest dataset (parquet or arrow)
@@ -140,9 +140,13 @@ _report_dataset_file() {
     fi
 }
 
+# Track latest dataset path for optional parity checks
+LATEST_DATASET_PATH=""
+
 # Preferred: top-level symlink maintained by pipeline
 if [ -L "output/ml_dataset_latest_full.parquet" ]; then
     DATASET_PATH=$(readlink -f "output/ml_dataset_latest_full.parquet")
+    LATEST_DATASET_PATH="$DATASET_PATH"
     _report_dataset_file "$DATASET_PATH" "Dataset exists"
 else
     # Accept any produced parquet in output/ (timestamped) as valid
@@ -170,8 +174,10 @@ else
 
     if [ -n "$ALT_DATASET" ]; then
         _report_dataset_file "$ALT_DATASET" "Dataset exists (alt parquet)"
+        LATEST_DATASET_PATH="$ALT_DATASET"
     elif [ -n "$ARROW_DATASET" ]; then
         _report_dataset_file "$ARROW_DATASET" "Dataset exists (Arrow cache)"
+        LATEST_DATASET_PATH="$ARROW_DATASET"
     else
         CRITICAL_ISSUES+=("No ML dataset found - run: make dataset-bg")
     fi
@@ -187,10 +193,83 @@ else
     RECOMMENDATIONS+=("After first dataset build, cache will save ~45-60s per run")
 fi
 
+# =========================================================================
+# 4. DATASET PARITY (optional)
+# =========================================================================
+echo -e "${BLUE}[4/9] Dataset parity check...${NC}"
+
+if [ -n "${PARITY_BASELINE_PATH:-}" ]; then
+    PARITY_CANDIDATE=""
+    if [ -n "${PARITY_CANDIDATE_PATH:-}" ]; then
+        if [ -f "$PARITY_CANDIDATE_PATH" ]; then
+            PARITY_CANDIDATE=$(readlink -f "$PARITY_CANDIDATE_PATH" 2>/dev/null || echo "$PARITY_CANDIDATE_PATH")
+            SUCCESSES+=("✓ Parity candidate override detected: $PARITY_CANDIDATE")
+        else
+            WARNINGS+=("Parity candidate override '$PARITY_CANDIDATE_PATH' not found")
+        fi
+    fi
+    if [ -z "$PARITY_CANDIDATE" ]; then
+        PARITY_CANDIDATE="$LATEST_DATASET_PATH"
+    fi
+
+    if [ -z "$PARITY_CANDIDATE" ]; then
+        WARNINGS+=("Parity skipped: no candidate dataset available")
+    elif [ ! -f "$PARITY_CANDIDATE" ]; then
+        WARNINGS+=("Parity candidate '$PARITY_CANDIDATE' not found")
+    elif [ ! -f "$PARITY_BASELINE_PATH" ]; then
+        WARNINGS+=("Parity baseline '$PARITY_BASELINE_PATH' not found")
+    elif [ -z "$PYTHON_BIN" ]; then
+        WARNINGS+=("Parity skipped: Python interpreter not available")
+    else
+        PARITY_JSON=$(mktemp)
+        echo "Comparing dataset against baseline..."
+        if PYTHONPATH="gogooku5/data/src:${PYTHONPATH:-}" \
+            "$PYTHON_BIN" gogooku5/data/scripts/compare_parity.py \
+            "$PARITY_BASELINE_PATH" "$PARITY_CANDIDATE" \
+            --output-json "$PARITY_JSON" >/tmp/parity_report.log 2>&1; then
+            PARITY_SUMMARY=$(
+                PYTHONPATH="gogooku5/data/src:${PYTHONPATH:-}" "$PYTHON_BIN" - "$PARITY_JSON" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+schema=data["schema_mismatch"]
+rows_ref=data["rows_only_reference"]
+rows_cand=data["rows_only_candidate"]
+warn_cols=[c for c in data["column_diffs"] if c.get("reference_only") or c.get("candidate_only")]
+numeric=[c for c in data["column_diffs"] if c.get("max_abs_diff")]
+large_numeric=[c for c in numeric if c.get("max_abs_diff") and c["max_abs_diff"] > 1e-6]
+if schema or warn_cols or large_numeric or rows_ref or rows_cand:
+    msgs=[]
+    if schema:
+        msgs.append("schema mismatch")
+    if rows_ref or rows_cand:
+        msgs.append(f"row delta ref={rows_ref} cand={rows_cand}")
+    if warn_cols:
+        msgs.append(f"column diffs={len(warn_cols)}")
+    if large_numeric:
+        msgs.append(f"numeric diffs>{1e-6} count={len(large_numeric)}")
+    print("WARN:"+"; ".join(msgs))
+else:
+    print("OK: datasets aligned")
+PY
+            )
+            if [[ "$PARITY_SUMMARY" == OK:* ]]; then
+                SUCCESSES+=("✓ Parity check passed (${PARITY_SUMMARY#OK: })")
+            else
+                WARNINGS+=("Parity differences detected: ${PARITY_SUMMARY#WARN: }")
+            fi
+        else
+            WARNINGS+=("Parity comparison failed - see /tmp/parity_report.log")
+        fi
+        rm -f "$PARITY_JSON"
+    fi
+else
+    SUCCESSES+=("✓ Parity skipped (set PARITY_BASELINE_PATH to enable)")
+fi
+
 # ============================================================================
-# 4. TRAINING STATUS
+# 5. TRAINING STATUS
 # ============================================================================
-echo -e "${BLUE}[4/8] Training status...${NC}"
+echo -e "${BLUE}[5/9] Training status...${NC}"
 
 # Check for running training processes
 if TRAIN_PID=$(pgrep -f "train_atft.py" | head -1 2>/dev/null); then
@@ -272,9 +351,9 @@ elif [ -z "$TRAIN_PID" ]; then
 fi
 
 # ============================================================================
-# 5. CODE QUALITY CHECKS
+# 6. CODE QUALITY CHECKS
 # ============================================================================
-echo -e "${BLUE}[5/8] Code quality checks...${NC}"
+echo -e "${BLUE}[6/9] Code quality checks...${NC}"
 
 # Check for TODO/FIXME comments in critical files
 TODO_COUNT=$(grep -r "TODO\|FIXME" src/ scripts/ --include="*.py" 2>/dev/null | wc -l || echo "0")
@@ -349,9 +428,9 @@ if [ -d ".git" ]; then
 fi
 
 # ============================================================================
-# 6. PERFORMANCE OPTIMIZATION STATUS
+# 7. PERFORMANCE OPTIMIZATION STATUS
 # ============================================================================
-echo -e "${BLUE}[6/8] Performance optimization status...${NC}"
+echo -e "${BLUE}[7/9] Performance optimization status...${NC}"
 
 if [ -f ".env" ]; then
     # Check for multi-worker DataLoader
@@ -377,9 +456,9 @@ if [ -f ".env" ]; then
 fi
 
 # ============================================================================
-# 7. DISK SPACE CHECK
+# 8. DISK SPACE CHECK
 # ============================================================================
-echo -e "${BLUE}[7/8] Disk space check...${NC}"
+echo -e "${BLUE}[8/9] Disk space check...${NC}"
 
 AVAILABLE_GB=$(df -BG "$PROJECT_ROOT" | tail -1 | awk '{print $4}' | sed 's/G//')
 if [ "$AVAILABLE_GB" -lt 50 ]; then
@@ -390,9 +469,9 @@ else
 fi
 
 # ============================================================================
-# 8. CONFIGURATION VALIDATION
+# 9. CONFIGURATION VALIDATION
 # ============================================================================
-echo -e "${BLUE}[8/8] Configuration validation...${NC}"
+echo -e "${BLUE}[9/9] Configuration validation...${NC}"
 
 # Check for required config files
 REQUIRED_CONFIGS=(
