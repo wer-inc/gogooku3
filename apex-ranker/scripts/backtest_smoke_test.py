@@ -11,62 +11,45 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date as Date
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import polars as pl
 import torch
 from apex_ranker.backtest import (
     CostCalculator,
+    OptimizationConfig,
     Portfolio,
     Trade,
+    generate_target_weights,
     normalise_frequency,
     should_rebalance,
+)
+from apex_ranker.backtest.inference import (
+    BacktestInferenceEngine,
+    compute_weight_turnover,
+    date_to_int,
+    ensure_date,
+    int_to_date,
+    resolve_device,
 )
 from apex_ranker.data import (
     FeatureSelector,
     add_cross_sectional_zscores,
     build_panel_cache,
+    load_panel_cache,
+    panel_cache_key,
+    save_panel_cache,
 )
+from apex_ranker.data.loader import load_backtest_frame
 from apex_ranker.models import APEXRankerV0
 from apex_ranker.utils import load_config
 
 DATE_EPOCH = Date(1970, 1, 1)
-
-
-def ensure_date(value: Date | datetime | np.datetime64 | str) -> Date:
-    """Convert various date-like objects to ``datetime.date``."""
-    if isinstance(value, Date):
-        return value
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, np.datetime64):
-        days = int(value.astype("datetime64[D]").astype("int64"))
-        return DATE_EPOCH + timedelta(days=days)
-    if isinstance(value, str):
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    raise TypeError(f"Unsupported date type: {type(value)}")
-
-
-def date_to_int(value: Date | datetime | np.datetime64 | str) -> int:
-    """Convert a date-like value to integer days since epoch."""
-    normalized = ensure_date(value)
-    return (normalized - DATE_EPOCH).days
-
-
-def int_to_date(value: int) -> Date:
-    """Convert integer days since epoch back to ``datetime.date``."""
-    return DATE_EPOCH + timedelta(days=int(value))
-
-
-def resolve_device(device_str: str) -> torch.device:
-    """Resolve device string to ``torch.device``."""
-    if device_str == "auto":
-        device_str = "cuda" if torch.cuda.is_available() else "cpu"
-    return torch.device(device_str)
 
 
 def get_feature_columns(config: dict) -> list[str]:
@@ -84,35 +67,6 @@ def get_feature_columns(config: dict) -> list[str]:
     return list(selection.features)
 
 
-def load_model_checkpoint(
-    model_path: Path,
-    config: dict,
-    device: torch.device,
-    n_features: int,
-) -> APEXRankerV0:
-    """Instantiate ``APEXRankerV0`` and load weights."""
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model checkpoint not found: {model_path}")
-
-    model_cfg = config["model"]
-    horizons = config["train"]["horizons"]
-
-    model = APEXRankerV0(
-        in_features=n_features,
-        horizons=horizons,
-        d_model=model_cfg["d_model"],
-        depth=model_cfg["depth"],
-        patch_len=model_cfg["patch_len"],
-        stride=model_cfg["stride"],
-        n_heads=model_cfg["n_heads"],
-        dropout=model_cfg.get("dropout", 0.1),
-    ).to(device)
-
-    state_dict = torch.load(model_path, map_location=device)
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model
-
 
 def build_daily_lookup(frame: pl.DataFrame) -> dict[Date, pl.DataFrame]:
     """Partition dataset by date for fast lookup."""
@@ -128,6 +82,7 @@ def trade_to_dict(trade: Trade) -> dict[str, float | str]:
     record = asdict(trade)
     record["date"] = str(trade.date)
     return record
+
 
 
 def generate_mock_predictions(
@@ -155,201 +110,6 @@ def generate_mock_predictions(
     }
 
 
-def load_dataset_for_backtest(
-    data_path: Path,
-    start_date: str | None,
-    end_date: str | None,
-    feature_cols: list[str] | None,
-    lookback: int,
-) -> pl.DataFrame:
-    """Load parquet dataset with required columns for backtesting."""
-    print(f"[Backtest] Loading dataset: {data_path}")
-
-    required_cols: set[str] = {
-        "Date",
-        "Code",
-        "Close",
-        "Volume",
-        "TurnoverValue",
-        "returns_1d",
-        "returns_5d",
-        "returns_10d",
-        "returns_20d",
-    }
-    if feature_cols:
-        required_cols.update(feature_cols)
-
-    frame = pl.read_parquet(data_path, columns=list(required_cols))
-    frame = frame.with_columns(
-        pl.col("Date").cast(pl.Date),
-        pl.col("Code").cast(pl.Utf8),
-    )
-
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
-    end_dt = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
-    buffer_start = (
-        start_dt - timedelta(days=lookback * 2)
-        if start_dt is not None and lookback > 0
-        else start_dt
-    )
-
-    if buffer_start is not None:
-        frame = frame.filter(pl.col("Date") >= buffer_start)
-    if end_dt is not None:
-        frame = frame.filter(pl.col("Date") <= end_dt)
-
-    frame = frame.sort(["Date", "Code"])
-
-    print(f"[Backtest] Loaded {len(frame):,} rows")
-    print(
-        "[Backtest] Date span:",
-        frame["Date"].min(),
-        "→",
-        frame["Date"].max(),
-    )
-    print(f"[Backtest] Unique stocks: {frame['Code'].n_unique()}")
-
-    return frame
-
-
-class BacktestInferenceEngine:
-    """Wrap Phase 2 inference utilities for backtest usage."""
-
-    def __init__(
-        self,
-        model_path: Path,
-        config: dict,
-        frame: pl.DataFrame,
-        feature_cols: list[str],
-        *,
-        device: str = "auto",
-    ):
-        self.config = config
-        self.device = resolve_device(device)
-        self.date_col = config["data"]["date_column"]
-        self.code_col = config["data"]["code_column"]
-        self.lookback = config["data"]["lookback"]
-        self.feature_cols = list(feature_cols)
-
-        self.model = load_model_checkpoint(
-            model_path=model_path,
-            config=config,
-            device=self.device,
-            n_features=len(self.feature_cols),
-        )
-
-        clip_sigma = config.get("normalization", {}).get("clip_sigma", 5.0)
-        feature_frame = frame.select([self.date_col, self.code_col] + self.feature_cols)
-        feature_frame = add_cross_sectional_zscores(
-            feature_frame,
-            columns=self.feature_cols,
-            date_col=self.date_col,
-            clip_sigma=clip_sigma,
-        )
-
-        self.z_features = [f"{col}_cs_z" for col in self.feature_cols]
-        self.cache = build_panel_cache(
-            feature_frame,
-            feature_cols=self.z_features,
-            target_cols=[],
-            mask_cols=[],
-            date_col=self.date_col,
-            code_col=self.code_col,
-            lookback=self.lookback,
-            min_stocks_per_day=0,
-        )
-        self.horizons = set(config["train"]["horizons"])
-
-    def available_dates(self) -> set[Date]:
-        """Return set of dates for which inference can be generated."""
-        return {int_to_date(date_int) for date_int in self.cache.date_to_codes.keys()}
-
-    def _tensor_for_date(
-        self,
-        target_date: Date,
-    ) -> tuple[torch.Tensor | None, list[str]]:
-        date_int = date_to_int(target_date)
-        codes = self.cache.date_to_codes.get(date_int)
-        if not codes:
-            return None, []
-
-        feature_windows: list[np.ndarray] = []
-        valid_codes: list[str] = []
-
-        for code in codes:
-            payload = self.cache.codes.get(code)
-            if payload is None:
-                continue
-            dates = payload["dates"]
-            idx = np.searchsorted(dates, date_int)
-            if idx == len(dates) or dates[idx] != date_int:
-                continue
-            start = idx - self.lookback + 1
-            if start < 0:
-                continue
-            window = payload["features"][start : idx + 1]
-            if window.shape[0] != self.lookback:
-                continue
-            feature_windows.append(window)
-            valid_codes.append(code)
-
-        if not feature_windows:
-            return None, []
-
-        features = np.stack(feature_windows, axis=0).astype(np.float32, copy=False)
-        tensor = torch.from_numpy(features)
-        return tensor, valid_codes
-
-    def predict(
-        self,
-        target_date: Date,
-        horizon: int,
-        top_k: int,
-    ) -> pl.DataFrame:
-        """Generate ranked predictions for a specific date."""
-        if horizon not in self.horizons:
-            raise ValueError(
-                f"Horizon {horizon}d not available. "
-                f"Configured horizons: {sorted(self.horizons)}"
-            )
-
-        tensor, codes = self._tensor_for_date(target_date)
-        if tensor is None or not codes:
-            return pl.DataFrame(
-                {"Date": [], "Rank": [], "Code": [], "Score": [], "Horizon": []}
-            )
-
-        tensor = tensor.to(self.device)
-        with torch.no_grad():
-            output = self.model(tensor)
-
-        if horizon not in output:
-            available = list(output.keys())
-            raise ValueError(
-                f"Horizon {horizon}d missing from model output. "
-                f"Available horizons: {available}"
-            )
-
-        scores = output[horizon].detach().cpu().numpy()
-        ranked_idx = np.argsort(scores)[::-1]
-        if top_k is not None:
-            ranked_idx = ranked_idx[:top_k]
-
-        ranked_codes = [codes[i] for i in ranked_idx]
-        ranked_scores = [float(scores[i]) for i in ranked_idx]
-        ranks = list(range(1, len(ranked_codes) + 1))
-
-        return pl.DataFrame(
-            {
-                "Date": [str(target_date)] * len(ranks),
-                "Rank": ranks,
-                "Code": ranked_codes,
-                "Score": ranked_scores,
-                "Horizon": [f"{horizon}d"] * len(ranks),
-            }
-        )
-
-
 def run_backtest_smoke_test(
     data_path: Path,
     start_date: str | None,
@@ -366,6 +126,13 @@ def run_backtest_smoke_test(
     daily_metrics_path: Path | None = None,
     trades_path: Path | None = None,
     rebalance_freq: str = "weekly",
+    optimization_target_top_k: int | None = None,
+    min_position_weight: float = 0.02,
+    turnover_limit: float = 0.35,
+    cost_penalty: float = 1.0,
+    candidate_multiplier: float = 2.0,
+    min_alpha: float = 0.1,
+    panel_cache_dir: Path | None = None,
 ) -> dict:
     """
     Execute backtest using either mock predictions or model inference.
@@ -393,11 +160,11 @@ def run_backtest_smoke_test(
             "Model inference requested but config file was not provided or found."
         )
 
-    frame = load_dataset_for_backtest(
+    frame = load_backtest_frame(
         data_path=data_path,
         start_date=start_date,
         end_date=end_date,
-        feature_cols=feature_cols,
+        feature_cols=feature_cols or [],
         lookback=lookback,
     )
 
@@ -417,6 +184,11 @@ def run_backtest_smoke_test(
 
     inference_engine: BacktestInferenceEngine | None = None
     prediction_dates: set[Date] = set()
+    cache_directory = (
+        Path(panel_cache_dir).expanduser()
+        if panel_cache_dir is not None
+        else Path("cache/panel")
+    )
 
     if model_path is not None and not use_mock:
         inference_engine = BacktestInferenceEngine(
@@ -425,6 +197,8 @@ def run_backtest_smoke_test(
             frame=frame,
             feature_cols=feature_cols or [],
             device=device,
+            dataset_path=data_path,
+            panel_cache_dir=cache_directory,
         )
         prediction_dates = inference_engine.available_dates()
         print(
@@ -437,9 +211,34 @@ def run_backtest_smoke_test(
     portfolio = Portfolio(initial_capital)
     cost_calculator = CostCalculator()
 
+    resolved_top_k = max(1, int(top_k))
+    target_top_k_value = optimization_target_top_k or resolved_top_k
+    target_top_k_value = max(1, min(int(target_top_k_value), resolved_top_k))
+    optimization_config = OptimizationConfig(
+        target_top_k=target_top_k_value,
+        candidate_multiplier=candidate_multiplier,
+        min_weight=max(1e-3, float(min_position_weight)),
+        turnover_limit=max(0.0, float(turnover_limit)),
+        cost_penalty=max(0.0, float(cost_penalty)),
+        min_alpha=max(0.0, min(1.0, float(min_alpha))),
+    )
+
     print(f"[Backtest] Initial capital: ¥{initial_capital:,.0f}")
-    print(f"[Backtest] Top-K allocation: {top_k}")
+    print(f"[Backtest] Candidate Top-K: {resolved_top_k}")
+    print(
+        f"[Backtest] Optimised holdings target: {optimization_config.target_top_k} "
+        f"(min_weight={optimization_config.min_weight:.4f}, "
+        f"turnover_limit={optimization_config.turnover_limit:.2f}, "
+        f"cost_penalty={optimization_config.cost_penalty:.2f})"
+    )
     print(f"[Backtest] Horizon: {horizon}d")
+    print(f"[Backtest] Panel cache directory: {cache_directory}")
+
+    candidate_request = max(
+        resolved_top_k,
+        int(resolved_top_k * max(candidate_multiplier, 1.0)),
+        optimization_config.target_top_k * 2,
+    )
 
     daily_results: list[dict] = []
     rebalance_count = 0
@@ -490,6 +289,8 @@ def run_backtest_smoke_test(
         trades: list[Trade] = []
         daily_cost = 0.0
         did_rebalance = False
+        target_weights: dict[str, float] = {}
+        optimization_summary: dict[str, object] | None = None
 
         if should_rebalance(current_date, last_rebalance_date, rebalance_mode):
             if inference_engine is not None and not use_mock:
@@ -502,7 +303,7 @@ def run_backtest_smoke_test(
                     rankings = inference_engine.predict(
                         target_date=current_date,
                         horizon=horizon,
-                        top_k=top_k * 3,
+                        top_k=candidate_request,
                     )
 
                     if rankings.is_empty():
@@ -520,34 +321,87 @@ def run_backtest_smoke_test(
                                 "no overlap between predictions and price data"
                             )
                         else:
-                            filtered = filtered.head(top_k)
-                            predictions = {
-                                row["Code"]: row["Score"]
-                                for row in filtered.iter_rows(named=True)
-                            }
-                            prediction_source = "model"
+                            pool_limit = optimization_config.candidate_count(
+                                filtered.height
+                            )
+                            if pool_limit <= 0:
+                                print(
+                                    f"[Backtest] {current_date}: candidate pool exhausted"
+                                )
+                            else:
+                                filtered = filtered.head(pool_limit)
+                                predictions = {
+                                    row["Code"]: float(row["Score"])
+                                    for row in filtered.iter_rows(named=True)
+                                }
+                                prediction_source = "model"
             else:
-                predictions = generate_mock_predictions(current_frame, top_k)
+                predictions = generate_mock_predictions(current_frame, candidate_request)
                 prediction_source = "mock"
 
             if predictions:
-                num_positions = len(predictions)
-                target_weights = dict.fromkeys(predictions.keys(), 1.0 / num_positions)
-
-                trades = portfolio.rebalance(
-                    target_weights=target_weights,
-                    prices=price_map,
-                    date=current_date,
+                opt_weights, opt_result = generate_target_weights(
+                    predictions,
+                    portfolio.weights,
+                    portfolio_value=portfolio.total_value,
+                    config=optimization_config,
                     cost_calculator=cost_calculator,
                     volumes=volume_map,
                 )
 
-                daily_cost = sum(trade.total_cost for trade in trades)
-                last_rebalance_date = current_date
-                last_predictions = predictions
-                last_prediction_source = prediction_source
-                rebalance_count += 1
-                did_rebalance = True
+                if not opt_weights and optimization_config.turnover_limit > 0.0:
+                    relaxed_config = replace(
+                        optimization_config,
+                        turnover_limit=1.0,
+                        min_alpha=min(optimization_config.min_alpha, 0.05),
+                    )
+                    opt_weights, opt_result = generate_target_weights(
+                        predictions,
+                        portfolio.weights,
+                        portfolio_value=portfolio.total_value,
+                        config=relaxed_config,
+                        cost_calculator=cost_calculator,
+                        volumes=volume_map,
+                    )
+                    opt_result.notes.append("turnover_constraint_relaxed")
+
+                if not opt_weights:
+                    fallback_codes = list(predictions.keys())[
+                        : optimization_config.target_top_k
+                    ]
+                    if fallback_codes:
+                        weight = 1.0 / len(fallback_codes)
+                        opt_weights = {code: weight for code in fallback_codes}
+                        opt_result.selected_codes = list(opt_weights.keys())
+                        fallback_turnover = compute_weight_turnover(
+                            portfolio.weights, opt_weights
+                        )
+                        opt_result.unconstrained_turnover = fallback_turnover
+                        opt_result.constrained_turnover = fallback_turnover
+                        opt_result.applied_alpha = 1.0
+                        opt_result.notes.append("fallback_equal_weights")
+
+                if opt_result:
+                    optimization_summary = opt_result.to_dict()
+
+                if opt_weights:
+                    target_weights = opt_weights
+                    trades = portfolio.rebalance(
+                        target_weights=target_weights,
+                        prices=price_map,
+                        date=current_date,
+                        cost_calculator=cost_calculator,
+                        volumes=volume_map,
+                    )
+
+                    daily_cost = sum(trade.total_cost for trade in trades)
+                    last_rebalance_date = current_date
+                    last_predictions = predictions
+                    last_prediction_source = prediction_source
+                    rebalance_count += 1
+                    did_rebalance = True
+                else:
+                    predictions = last_predictions
             else:
                 predictions = last_predictions
 
@@ -579,6 +433,15 @@ def run_backtest_smoke_test(
             last_prediction_source if last_prediction_source else prediction_source
         )
         state["selection_count"] = len(portfolio.positions)
+        state["optimized_top_k"] = (
+            len(target_weights) if target_weights else len(portfolio.positions)
+        )
+        if target_weights:
+            state["target_weights"] = {
+                code: float(weight) for code, weight in target_weights.items()
+            }
+        if optimization_summary is not None:
+            state["optimization"] = optimization_summary
         if portfolio.positions:
             state["selected_codes"] = ",".join(sorted(portfolio.positions.keys()))
         else:
@@ -646,7 +509,13 @@ def run_backtest_smoke_test(
             "start_date": start_date,
             "end_date": end_date,
             "initial_capital": initial_capital,
-            "top_k": top_k,
+            "top_k": resolved_top_k,
+            "target_top_k": optimization_config.target_top_k,
+            "min_position_weight": optimization_config.min_weight,
+            "turnover_limit": optimization_config.turnover_limit,
+            "cost_penalty": optimization_config.cost_penalty,
+            "candidate_multiplier": optimization_config.candidate_multiplier,
+            "min_alpha": optimization_config.min_alpha,
             "horizon": horizon,
             "rebalance_frequency": rebalance_mode,
             "model_path": str(model_path) if model_path else None,
@@ -672,10 +541,26 @@ def run_backtest_smoke_test(
 
     if daily_metrics_path and str(daily_metrics_path).strip():
         daily_metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        flattened_history = [
-            {k: v for k, v in record.items() if k != "positions"}
-            for record in history_records
-        ]
+        flattened_history = []
+        for record in history_records:
+            flat = {
+                k: v
+                for k, v in record.items()
+                if k not in {"positions", "target_weights", "optimization"}
+            }
+            if "positions" in record:
+                flat["positions_json"] = json.dumps(
+                    record["positions"], ensure_ascii=False
+                )
+            if "target_weights" in record:
+                flat["target_weights_json"] = json.dumps(
+                    record["target_weights"], ensure_ascii=False
+                )
+            if "optimization" in record:
+                flat["optimization_json"] = json.dumps(
+                    record["optimization"], ensure_ascii=False
+                )
+            flattened_history.append(flat)
         if flattened_history:
             pl.DataFrame(flattened_history).write_csv(daily_metrics_path)
             artifacts["daily_metrics_csv"] = str(daily_metrics_path)
@@ -729,6 +614,42 @@ def parse_args() -> argparse.Namespace:
         help="Number of stocks to hold",
     )
     parser.add_argument(
+        "--target-top-k",
+        type=int,
+        default=35,
+        help="Target holdings count after optimisation (default: 35)",
+    )
+    parser.add_argument(
+        "--min-position-weight",
+        type=float,
+        default=0.02,
+        help="Minimum allocation weight per position (default: 0.02)",
+    )
+    parser.add_argument(
+        "--turnover-limit",
+        type=float,
+        default=0.35,
+        help="Maximum turnover fraction allowed per rebalance (default: 0.35)",
+    )
+    parser.add_argument(
+        "--cost-penalty",
+        type=float,
+        default=1.0,
+        help="Penalty multiplier applied to estimated round-trip transaction costs",
+    )
+    parser.add_argument(
+        "--candidate-multiplier",
+        type=float,
+        default=2.0,
+        help="Multiplier controlling candidate pool size vs. target top-k (default: 2.0)",
+    )
+    parser.add_argument(
+        "--min-alpha",
+        type=float,
+        default=0.1,
+        help="Minimum adjustment factor when enforcing turnover constraints (default: 0.1)",
+    )
+    parser.add_argument(
         "--model",
         default=None,
         help="Path to trained model checkpoint (.pt). If omitted, uses mock predictions.",
@@ -763,6 +684,11 @@ def parse_args() -> argparse.Namespace:
         help="Force mock predictions even if a model path is supplied.",
     )
     parser.add_argument(
+        "--panel-cache-dir",
+        default="cache/panel",
+        help="Directory for persisted panel caches (default: cache/panel)",
+    )
+    parser.add_argument(
         "--daily-csv",
         default=None,
         help="Optional path to write daily metrics CSV",
@@ -789,6 +715,7 @@ def main() -> None:
     output_path = Path(args.output) if args.output else None
     daily_metrics_path = Path(args.daily_csv) if args.daily_csv else None
     trades_path = Path(args.trades_csv) if args.trades_csv else None
+    panel_cache_dir = Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
 
     run_backtest_smoke_test(
         data_path=data_path,
@@ -805,6 +732,13 @@ def main() -> None:
         daily_metrics_path=daily_metrics_path,
         trades_path=trades_path,
         rebalance_freq=args.rebalance_freq,
+        optimization_target_top_k=args.target_top_k,
+        min_position_weight=args.min_position_weight,
+        turnover_limit=args.turnover_limit,
+        cost_penalty=args.cost_penalty,
+        candidate_multiplier=args.candidate_multiplier,
+        min_alpha=args.min_alpha,
+        panel_cache_dir=panel_cache_dir,
     )
 
 

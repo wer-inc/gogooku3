@@ -7,6 +7,9 @@ from .panel_dataset import (
     PanelCache,
     build_panel_cache,
     collate_day_batch,
+    load_panel_cache,
+    panel_cache_key,
+    save_panel_cache,
 )
 
 __all__ = [
@@ -15,6 +18,9 @@ __all__ = [
     "add_cross_sectional_zscores",
     "PanelCache",
     "build_panel_cache",
+    "load_panel_cache",
+    "save_panel_cache",
+    "panel_cache_key",
     "DayPanelDataset",
     "collate_day_batch",
 ]

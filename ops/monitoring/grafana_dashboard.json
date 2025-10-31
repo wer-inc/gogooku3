@@ -1,0 +1,55 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Prediction Latency",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(apex_ranker_prediction_latency_seconds_sum[5m]) / rate(apex_ranker_prediction_latency_seconds_count[5m])",
+          "legendFormat": "prediction latency (s)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Optimisation Latency",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(apex_ranker_optimization_latency_seconds_sum[5m]) / rate(apex_ranker_optimization_latency_seconds_count[5m])",
+          "legendFormat": "optimisation latency (s)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "API Throughput",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(apex_ranker_requests_total[5m])",
+          "legendFormat": "{{endpoint}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "title": "APEX-Ranker API",
+  "uid": "apex-ranker-dashboard",
+  "version": 1
+}

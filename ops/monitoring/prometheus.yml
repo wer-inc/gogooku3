@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  external_labels:
+    env: production
+
+# NOTE: Set retention via Prometheus flag, e.g. --storage.tsdb.retention.time=90d
+
+scrape_configs:
+  - job_name: apex-ranker-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - localhost:8080

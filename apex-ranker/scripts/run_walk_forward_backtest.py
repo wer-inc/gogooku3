@@ -78,6 +78,47 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--top-k", type=int, default=50, help="Number of stocks to hold"
     )
     parser.add_argument(
+        "--target-top-k",
+        type=int,
+        default=35,
+        help="Target holdings count after optimisation (default: 35)",
+    )
+    parser.add_argument(
+        "--min-position-weight",
+        type=float,
+        default=0.02,
+        help="Minimum allocation weight per position (default: 0.02)",
+    )
+    parser.add_argument(
+        "--turnover-limit",
+        type=float,
+        default=0.35,
+        help="Maximum turnover fraction allowed per rebalance (default: 0.35)",
+    )
+    parser.add_argument(
+        "--cost-penalty",
+        type=float,
+        default=1.0,
+        help="Penalty multiplier applied to estimated round-trip transaction costs",
+    )
+    parser.add_argument(
+        "--candidate-multiplier",
+        type=float,
+        default=2.0,
+        help="Multiplier controlling candidate pool size vs. target top-k (default: 2.0)",
+    )
+    parser.add_argument(
+        "--min-alpha",
+        type=float,
+        default=0.1,
+        help="Minimum adjustment factor when enforcing turnover constraints (default: 0.1)",
+    )
+    parser.add_argument(
+        "--panel-cache-dir",
+        default="cache/panel",
+        help="Directory for persisted panel caches (default: cache/panel)",
+    )
+    parser.add_argument(
         "--horizon", type=int, default=20, help="Prediction horizon in days"
     )
     parser.add_argument(
@@ -189,6 +230,18 @@ def main(argv: Optional[list[str]] = None) -> None:
             flush=True,
         )
 
+    extra_kwargs = {
+        "optimization_target_top_k": args.target_top_k,
+        "min_position_weight": args.min_position_weight,
+        "turnover_limit": args.turnover_limit,
+        "cost_penalty": args.cost_penalty,
+        "candidate_multiplier": args.candidate_multiplier,
+        "min_alpha": args.min_alpha,
+        "panel_cache_dir": Path(args.panel_cache_dir).expanduser()
+        if args.panel_cache_dir
+        else None,
+    }
+
     results = run_walk_forward_backtest(
         data_path=data_path,
         splitter=splitter,
@@ -211,6 +264,7 @@ def main(argv: Optional[list[str]] = None) -> None:
         fold_metrics_dir=args.fold_metrics_dir,
         fold_trades_dir=args.fold_trades_dir,
         progress_callback=progress,
+        extra_backtest_kwargs=extra_kwargs,
     )
 
     duration = time.time() - start_time

@@ -52,10 +52,30 @@ class FrequencyAdaptiveNorm(nn.Module):
         Args:
             x: (batch, seq_len, features)
         """
+        import os
+        import logging
+        logger = logging.getLogger(__name__)
+
         if x.dim() != 3:
             raise ValueError(f"FAN expects 3D input (B, L, F); got {x.shape}")
 
+        # Debug gradient flow through FAN
+        if self.training and os.getenv("ENABLE_FAN_GRAD_DEBUG", "0") == "1":
+            x.retain_grad()
+            def _log_fan_input_grad(grad):
+                logger.info(f"[FAN-GRAD] INPUT grad_norm={float(grad.norm()):.3e}")
+                return grad
+            x.register_hook(_log_fan_input_grad)
+
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Check if nan_to_num broke gradient flow
+        if self.training and os.getenv("ENABLE_FAN_GRAD_DEBUG", "0") == "1":
+            def _log_fan_post_nan_grad(grad):
+                logger.info(f"[FAN-GRAD] POST-NAN grad_norm={float(grad.norm()):.3e}")
+                return grad
+            x.register_hook(_log_fan_post_nan_grad)
+
         batch_size, seq_len, _ = x.shape
 
         normalized_outputs = []
@@ -90,6 +110,13 @@ class FrequencyAdaptiveNorm(nn.Module):
             output = torch.stack(normalized_outputs, dim=0).mean(dim=0)
         else:  # "max"
             output = torch.stack(normalized_outputs, dim=0).max(dim=0)[0]
+
+        # Debug gradient flow at FAN output
+        if self.training and os.getenv("ENABLE_FAN_GRAD_DEBUG", "0") == "1":
+            def _log_fan_output_grad(grad):
+                logger.info(f"[FAN-GRAD] OUTPUT grad_norm={float(grad.norm()):.3e}")
+                return grad
+            output.register_hook(_log_fan_output_grad)
 
         return output
 
@@ -142,8 +169,20 @@ class SliceAdaptiveNorm(nn.Module):
         Args:
             x: (batch, seq_len, features)
         """
+        import os
+        import logging
+        logger = logging.getLogger(__name__)
+
         if x.dim() != 3:
             raise ValueError(f"SAN expects 3D input (B, L, F); got {x.shape}")
+
+        # Debug gradient flow through SAN
+        if self.training and os.getenv("ENABLE_SAN_GRAD_DEBUG", "0") == "1":
+            x.retain_grad()
+            def _log_san_input_grad(grad):
+                logger.info(f"[SAN-GRAD] INPUT grad_norm={float(grad.norm()):.3e}")
+                return grad
+            x.register_hook(_log_san_input_grad)
 
         x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         batch_size, seq_len, _ = x.shape
@@ -176,20 +215,38 @@ class SliceAdaptiveNorm(nn.Module):
 
             stacked = []
             for idx, (normalized, start, end) in enumerate(normalized_slices):
-                padded = torch.zeros_like(x)
-                padded[:, start:end, :] = normalized[:, : end - start, :]
+                # FIX: Use F.pad instead of zeros_like to preserve gradient flow
+                length = end - start
+                pad_left = start
+                pad_right = seq_len - end
+                # Pad normalized data (which has gradients) instead of copying into disconnected tensor
+                padded = F.pad(normalized[:, :length, :], (0, 0, pad_left, pad_right), value=0.0)
                 stacked.append(padded)
             stacked = torch.stack(stacked, dim=2)  # (B, L, num_slices, F)
             output = (stacked * weights).sum(dim=2)
         else:
-            output = torch.zeros_like(x)
-            norm_count = torch.zeros(batch_size, seq_len, 1, device=x.device)
+            # FIX: Build output from normalized slices with proper gradient flow
+            # Instead of accumulating into zeros_like(x), use scatter operations
+            output_list = []
             for normalized, start, end in normalized_slices:
                 length = end - start
-                output[:, start:end, :] += normalized[:, :length, :]
-                norm_count[:, start:end, :] += 1
-            output = torch.where(
-                norm_count > 0, output / norm_count.clamp_min(1.0), x
-            )
+                pad_left = start
+                pad_right = seq_len - end
+                padded = F.pad(normalized[:, :length, :], (0, 0, pad_left, pad_right), value=0.0)
+                output_list.append(padded)
+
+            # Average overlapping regions
+            if output_list:
+                stacked = torch.stack(output_list, dim=0)  # (num_slices, B, L, F)
+                output = stacked.mean(dim=0)  # (B, L, F)
+            else:
+                output = F.layer_norm(x, (self.num_features,), eps=self.eps)
+
+        # Debug gradient flow at SAN output
+        if self.training and os.getenv("ENABLE_SAN_GRAD_DEBUG", "0") == "1":
+            def _log_san_output_grad(grad):
+                logger.info(f"[SAN-GRAD] OUTPUT grad_norm={float(grad.norm()):.3e}")
+                return grad
+            output.register_hook(_log_san_output_grad)
 
         return output

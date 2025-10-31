@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import pickle
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -198,3 +202,43 @@ def collate_day_batch(batch: Sequence[dict | None]) -> dict | None:
         return None
     sample = batch[0]
     return sample
+
+
+def panel_cache_key(
+    dataset_path: Path,
+    *,
+    lookback: int,
+    feature_cols: Sequence[str],
+    version: str = "v1",
+) -> str:
+    """Generate a deterministic key for panel cache persistence."""
+    resolved = Path(dataset_path).resolve()
+    payload = {
+        "dataset": str(resolved),
+        "lookback": int(lookback),
+        "feature_count": len(feature_cols),
+        "features": list(feature_cols),
+        "version": version,
+    }
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    digest = hashlib.sha1(encoded).hexdigest()
+    stem = resolved.stem or resolved.name
+    return f"{stem}_lb{lookback}_f{len(feature_cols)}_{digest[:10]}"
+
+
+def save_panel_cache(cache: PanelCache, path: str | Path) -> None:
+    """Persist a ``PanelCache`` to disk using pickle serialization."""
+    cache_path = Path(path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    with cache_path.open("wb") as fh:
+        pickle.dump(cache, fh, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_panel_cache(path: str | Path) -> PanelCache:
+    """Load a ``PanelCache`` previously saved with :func:`save_panel_cache`."""
+    cache_path = Path(path)
+    with cache_path.open("rb") as fh:
+        cache = pickle.load(fh)
+    if not isinstance(cache, PanelCache):
+        raise TypeError(f"Loaded object is not a PanelCache: {type(cache)!r}")
+    return cache

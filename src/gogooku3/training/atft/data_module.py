@@ -1002,20 +1002,18 @@ class StreamingParquetDataset(Dataset):
             sample["date"] = str(sample["date"])
 
         # Phase 2: 拡張フィールドの追加
+        # Always provide group_day / sid for downstream loss functions
+        sample["group_day"] = torch.tensor(
+            self._date_to_group_id_fn(sample["date"]), dtype=torch.long
+        )
+        sample["sid"] = torch.tensor(
+            self._code_to_sid_fn(sample["code"]), dtype=torch.long
+        )
+
+        exposures = []
         if self.use_exposure_features:
-            # 1. group_day: 日付グループID (torch.long)
-            sample["group_day"] = torch.tensor(
-                self._date_to_group_id_fn(sample["date"]), dtype=torch.long
-            )
-
-            # 2. sid: 銘柄ID (torch.long)
-            sample["sid"] = torch.tensor(
-                self._code_to_sid_fn(sample["code"]), dtype=torch.long
-            )
-
-            # 3. exposures: 露出特徴量 (torch.float)
-            exposures = []
-
+            # 露出特徴量 (torch.float)
+            
             # market_cap (対数変換) - only if column exists
             if "market_cap" in self.exposure_columns:
                 if "market_cap" in window.columns:
@@ -1058,7 +1056,9 @@ class StreamingParquetDataset(Dataset):
             else:
                 # Empty exposures if no features found
                 sample["exposures"] = torch.zeros(1, dtype=torch.float32)
-
+        elif exposures:
+            sample["exposures"] = torch.tensor(exposures, dtype=torch.float32)
+        
         if self.static_columns:
             try:
                 static_df = window.select(self.static_columns).tail(1)
