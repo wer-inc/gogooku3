@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Iterator
 
@@ -125,9 +126,10 @@ def test_dataset_builder_end_to_end(builder: DatasetBuilder, settings: DatasetBu
     assert output_path.exists()
     assert output_path.is_symlink()
     df = pl.read_parquet(output_path.resolve(strict=True))
-    assert df.shape[0] == 2
+    assert df.shape[0] == 4
     assert "margin_balance" in df.columns
-    assert df.filter(pl.col("Code") == "1301").select("margin_balance").item(0, 0) == pytest.approx(100000.0)
+    row_1301 = df.filter((pl.col("Code") == "1301") & (pl.col("Date") == date(2024, 1, 1)))
+    assert row_1301.select("margin_balance").item(0, 0) == pytest.approx(100000.0)
     assert "margin_net" in df.columns
     assert "foreign_sentiment" in df.columns
     assert "smart_flow_indicator" in df.columns

@@ -34,6 +34,7 @@ class DatasetBuilderSettings(BaseSettings):
     short_selling_cache_ttl_days: int = Field(2, ge=0, env="CACHE_TTL_DAYS_SHORT")
     sector_short_cache_ttl_days: int = Field(2, ge=0, env="CACHE_TTL_DAYS_SECTOR_SHORT")
     macro_cache_ttl_days: int = Field(14, ge=0, env="CACHE_TTL_DAYS_MACRO")
+    calendar_cache_ttl_days: int = Field(7, ge=0, env="CACHE_TTL_DAYS_CALENDAR")
 
     request_timeout_seconds: float = Field(30.0, ge=1.0, env="REQUEST_TIMEOUT_SECONDS")
 
