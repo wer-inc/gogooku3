@@ -7,6 +7,7 @@ import pytest
 from builder.config import get_settings
 from builder.pipelines.dataset_builder import DatasetBuilder
 from builder.utils.artifacts import DatasetArtifactWriter
+from builder.utils import business_date_range
 
 
 class StubFetcher:
@@ -138,7 +139,12 @@ def test_dataset_builder_writes_parquet(builder: DatasetBuilder) -> None:
     assert output_path.is_symlink()
     resolved = output_path.resolve(strict=True)
     df = pl.read_parquet(resolved)
-    assert df.shape[0] == 2  # two codes * one row each
+    unique_dates = df.select("Date").unique().height
+    unique_codes = df.select("Code").unique().height
+    assert df.shape[0] == unique_dates * unique_codes
+    expected_business = set(business_date_range("2024-01-01", "2024-01-31"))
+    actual_dates = {d.isoformat() for d in df["Date"].to_list()}
+    assert expected_business.issubset(actual_dates)
     base_cols = {"Code", "SectorCode", "Date", "Close", "Open", "High", "Low", "Volume"}
     assert base_cols.issubset(set(df.columns))
     assert df.schema["Date"] == pl.Date

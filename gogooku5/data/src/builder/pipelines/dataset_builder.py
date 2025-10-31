@@ -30,7 +30,13 @@ from ..features.core.sector.aggregation import SectorAggregationFeatures
 from ..features.core.technical import TechnicalFeatureEngineer
 from ..features.core.volatility import AdvancedVolatilityFeatures
 from ..features.macro.engineer import MacroFeatureEngineer
-from ..utils import CacheManager, DatasetArtifact, StorageClient, configure_logger
+from ..utils import (
+    CacheManager,
+    DatasetArtifact,
+    StorageClient,
+    business_date_range,
+    configure_logger,
+)
 
 LOGGER = configure_logger("builder.pipeline")
 
@@ -67,22 +73,33 @@ class DatasetBuilder:
         if not listed:
             listed = listed_manager.refresh()
         decider = AxisDecider.from_listed_symbols(listed)
+        symbols = decider.choose_symbols()
+
+        listed_df = self._prepare_listed_dataframe(listed)
+        if symbols:
+            listed_df = listed_df.filter(pl.col("code").is_in(symbols))
+        else:
+            LOGGER.warning("No listed symbols resolved; dataset will be empty for %s-%s", start, end)
+
+        calendar_df = self._business_calendar(start=start, end=end)
 
         cache_key = f"quotes_{start}_{end}"
-        df = self.cache.load_dataframe(cache_key)
-        if df is None:
+        quotes_df = self.cache.load_dataframe(cache_key)
+        if quotes_df is None:
             LOGGER.debug("Cache miss for key %s; fetching quotes", cache_key)
-            quotes = self._fetch_quotes(decider.choose_symbols(limit=50), start=start, end=end)
-            df = self._format_quotes(quotes)
-            self.cache.save_dataframe(cache_key, df)
+            quotes_payload = self._fetch_quotes(symbols, start=start, end=end)
+            quotes_df = self._format_quotes(quotes_payload)
+            self.cache.save_dataframe(cache_key, quotes_df)
             cache_index = self.cache.load_index()
-            cache_index[cache_key] = {"start": start, "end": end, "rows": df.height}
+            cache_index[cache_key] = {"start": start, "end": end, "rows": quotes_df.height}
             self.cache.save_index(cache_index)
         else:
             LOGGER.info("Cache hit for key %s", cache_key)
 
+        aligned_quotes = self._align_quotes_with_calendar(quotes_df, calendar_df, listed_df)
+
         margin_df = self._fetch_margin_data(start=start, end=end)
-        combined_df = self._join_margin_data(df, margin_df)
+        combined_df = self._join_margin_data(aligned_quotes, margin_df)
         combined_df = self.sector_features.add_features(combined_df)
         combined_df = self.peer_features.add_features(combined_df)
 
@@ -104,8 +121,12 @@ class DatasetBuilder:
         return artifact.latest_symlink
 
     def _fetch_quotes(self, codes: Iterable[str], *, start: str, end: str) -> List[dict[str, str]]:
+        codes_list = list(codes)
+        if not codes_list:
+            LOGGER.warning("No symbols provided for quote fetch between %s and %s", start, end)
+            return []
         fetcher = QuotesFetcher(client=self.fetcher)
-        return fetcher.fetch_batch(codes=codes, start=start, end=end)
+        return fetcher.fetch_batch(codes=codes_list, start=start, end=end)
 
     def _format_quotes(self, quotes: List[dict[str, str]]) -> pl.DataFrame:
         if not quotes:
@@ -136,6 +157,118 @@ class DatasetBuilder:
         existing_columns = [col for col in columns if col in df.columns]
         return df.select(existing_columns)
 
+    def _prepare_listed_dataframe(self, listed: List[dict[str, str]]) -> pl.DataFrame:
+        if not listed:
+            return pl.DataFrame(
+                {
+                    "code": pl.Series([], dtype=pl.Utf8),
+                    "sector_code": pl.Series([], dtype=pl.Utf8),
+                    "market_code": pl.Series([], dtype=pl.Utf8),
+                }
+            )
+
+        df = pl.DataFrame(listed)
+        rename_map = {col: col.lower() for col in df.columns}
+        df = df.rename(rename_map)
+        if "marketcode" in df.columns and "market_code" not in df.columns:
+            df = df.rename({"marketcode": "market_code"})
+        if "section" in df.columns and "sector_code" not in df.columns:
+            df = df.rename({"section": "sector_code"})
+        if "code" not in df.columns:
+            raise ValueError("Listed metadata missing 'code' field")
+
+        df = df.with_columns(pl.col("code").cast(pl.Utf8, strict=False).alias("code"))
+
+        if "sector_code" in df.columns:
+            df = df.with_columns(
+                pl.col("sector_code").cast(pl.Utf8, strict=False).fill_null("UNKNOWN").alias("sector_code")
+            )
+        else:
+            df = df.with_columns(pl.lit("UNKNOWN").alias("sector_code"))
+
+        if "market_code" in df.columns:
+            df = df.with_columns(pl.col("market_code").cast(pl.Utf8, strict=False).alias("market_code"))
+        else:
+            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias("market_code"))
+
+        return df.select(["code", "sector_code", "market_code"]).unique(subset=["code"], keep="first")
+
+    def _business_calendar(self, *, start: str, end: str) -> pl.DataFrame:
+        cache_key = f"calendar_{start}_{end}"
+
+        def _fetch() -> pl.DataFrame:
+            days = business_date_range(start, end)
+            df = pl.DataFrame({"date": days})
+            return df.with_columns(pl.col("date").str.strptime(pl.Date, strict=False))
+
+        calendar_df, _ = self.cache.get_or_fetch_dataframe(
+            cache_key,
+            _fetch,
+            ttl_days=self.settings.calendar_cache_ttl_days,
+        )
+        return calendar_df.select("date").unique().sort("date")
+
+    def _align_quotes_with_calendar(
+        self,
+        quotes: pl.DataFrame,
+        calendar: pl.DataFrame,
+        listed: pl.DataFrame,
+    ) -> pl.DataFrame:
+        if listed.is_empty():
+            if quotes.is_empty():
+                listed = pl.DataFrame(
+                    {
+                        "code": pl.Series([], dtype=pl.Utf8),
+                        "sector_code": pl.Series([], dtype=pl.Utf8),
+                        "market_code": pl.Series([], dtype=pl.Utf8),
+                    }
+                )
+            else:
+                listed = (
+                    quotes.select("code")
+                    .unique()
+                    .with_columns(
+                        pl.lit("UNKNOWN").alias("sector_code"),
+                        pl.lit(None).cast(pl.Utf8).alias("market_code"),
+                    )
+                )
+
+        base = listed.rename({"sector_code": "sector_code_listed"})
+        base = base.with_columns(
+            pl.col("sector_code_listed").fill_null("UNKNOWN"),
+            pl.col("market_code").cast(pl.Utf8, strict=False),
+        )
+
+        if not quotes.is_empty():
+            quote_dates = quotes.select("date").unique()
+            calendar = (
+                pl.concat([calendar, quote_dates], how="diagonal_relaxed")
+                .unique(subset=["date"])
+                .sort("date")
+            )
+
+        grid = base.join(calendar, how="cross")
+
+        if quotes.is_empty():
+            aligned = grid
+        else:
+            aligned = grid.join(quotes, on=["code", "date"], how="left")
+
+        if "sector_code" in aligned.columns:
+            aligned = aligned.with_columns(
+                pl.when(pl.col("sector_code").is_null() | (pl.col("sector_code") == ""))
+                .then(pl.col("sector_code_listed"))
+                .otherwise(pl.col("sector_code"))
+                .alias("sector_code")
+            )
+        else:
+            aligned = aligned.with_columns(pl.col("sector_code_listed").alias("sector_code"))
+
+        if "sector_code_listed" in aligned.columns:
+            aligned = aligned.drop("sector_code_listed")
+
+        return aligned.sort(["code", "date"])
+
     def _fetch_margin_data(self, *, start: str, end: str) -> pl.DataFrame:
         df = self.data_sources.margin_daily(start=start, end=end)
         return self.margin_features.build_features(df)
@@ -157,6 +290,7 @@ class DatasetBuilder:
             "close": "Close",
             "volume": "Volume",
             "sector_code": "SectorCode",
+            "market_code": "MarketCode",
         }
         present_map = {k: v for k, v in rename_map.items() if k in df.columns}
         out = df.rename(present_map) if present_map else df
