@@ -1,13 +1,15 @@
-"""APEX-Ranker modular package."""
+"""APEX-Ranker package (v0 baseline)."""
 
 from importlib import metadata
 from typing import Final
 
-__all__: Final = ["__version__"]
+from . import api, backtest, data, losses, models, utils  # noqa: F401
+
+__all__: Final = ["__version__", "api", "backtest", "data", "losses", "models", "utils"]
 
 
 def __version__() -> str:
-    """Return the installed package version or "0.0.0".`"""
+    """Return the installed package version or a fallback when running from source."""
 
     try:
         return metadata.version("gogooku5-apex-ranker")

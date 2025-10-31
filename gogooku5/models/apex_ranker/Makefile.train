@@ -1,24 +1,45 @@
-.PHONY: help train train-quick inference lint test
+.PHONY: help train train-quick inference lint test clean
+
+PYTHON ?= python
+APEX_CONFIG ?= configs/v0_base.yaml
+APEX_MODEL ?= output/models/apex_ranker_v0.pt
+APEX_DATA ?= data/output/ml_dataset_latest_full.parquet
 
 help:
-	@echo "APEX-Ranker package"
-	@echo "  make train         -> full training (placeholder)"
-	@echo "  make train-quick   -> smoke test"
-	@echo "  make inference     -> inference placeholder"
-	@echo "  make lint          -> run quality checks"
+	@echo "APEX-Ranker tasks"
+	@echo "  make train         -> full training run"
+	@echo "  make train-quick   -> smoke test (few days/epochs)"
+	@echo "  make inference     -> generate rankings using $$APEX_MODEL"
+	@echo "  make lint          -> run ruff and mypy"
+	@echo "  make test          -> run pytest suite"
 
 train:
-	@echo "[apex] training placeholder."
+	$(PYTHON) scripts/train_v0.py --config $(APEX_CONFIG)
 
 train-quick:
-	@echo "[apex] quick training placeholder."
+	$(PYTHON) scripts/train_v0.py \
+		--config $(APEX_CONFIG) \
+		--max-train-days 5 \
+		--max-val-days 3 \
+		--max-epochs 1 \
+		--max-train-steps 25 \
+		--log-interval 5
 
 inference:
-	@python scripts/inference_v0.py --dataset ../../data/output/ml_dataset_latest.parquet
+	$(PYTHON) scripts/inference_v0.py \
+		--model $(APEX_MODEL) \
+		--config $(APEX_CONFIG) \
+		--data $(APEX_DATA) \
+		--top-k 50 \
+		--horizon 20 \
+		--verbose
 
 lint:
-	@python -m ruff check src || true
-	@python -m mypy src || true
+	$(PYTHON) -m ruff check src scripts
+	$(PYTHON) -m mypy src
 
 test:
-	@python -m pytest tests
+	$(PYTHON) -m pytest tests
+
+clean:
+	rm -rf __pycache__ */__pycache__
