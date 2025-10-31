@@ -8,6 +8,7 @@ from typing import Iterable, List
 import polars as pl
 from polars.datatypes import Date as PlDateType
 from polars.datatypes import Datetime as PlDatetimeType
+from requests import HTTPError
 
 from ..api import AxisDecider, JQuantsFetcher, ListedManager, QuotesFetcher
 from ..config import DatasetBuilderSettings, get_settings
@@ -120,7 +121,15 @@ class DatasetBuilder:
 
     def _fetch_margin_data(self, *, start: str, end: str) -> pl.DataFrame:
         dates = date_range(start, end)
-        records = self.fetcher.fetch_margin_daily_window(dates=dates)
+        try:
+            records = self.fetcher.fetch_margin_daily_window(dates=dates)
+        except HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "unknown"
+            if status == 403:
+                LOGGER.warning("Margin API access forbidden (status=403); continuing without margin data.")
+                records = []
+            else:
+                raise
         if not records:
             LOGGER.info("No margin data returned for %s-%s", start, end)
             return pl.DataFrame(

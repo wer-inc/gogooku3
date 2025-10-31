@@ -513,6 +513,10 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# DEAD CODE BELOW - Never executes because main() calls sys.exit()
+# TODO: Move this code into the main() function if needed
+"""
     # Build extended dataset (non-breaking)
     p_bext = subparsers.add_parser("build-dataset-ext", help="拡張特徴量の付与（列は削除しない）")
     p_bext.add_argument("--input", type=Path, required=True)
@@ -653,3 +657,4 @@ if __name__ == "__main__":
             sys.argv = old
         return 0
     p_ab.set_defaults(func=_cmd_ab)
+"""

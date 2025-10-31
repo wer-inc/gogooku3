@@ -8,6 +8,21 @@ ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する統合学習パ�
 # Otherwise PyTorch will already have spawned 128 threads causing deadlock with Parquet I/O
 import os
 
+# Load environment variables from .env file (must be done before any os.environ access)
+from pathlib import Path as _TempPath
+_env_file = _TempPath(__file__).resolve().parents[1] / ".env"
+if _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _val = _line.split("=", 1)
+                _key = _key.strip()
+                _val = _val.split("#")[0].strip()  # Remove inline comments
+                if _key and _val and _key not in os.environ:
+                    os.environ[_key] = _val
+del _TempPath, _env_file
+
 if os.getenv("FORCE_SINGLE_PROCESS", "0") == "1":
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
@@ -1053,15 +1068,33 @@ class CompleteATFTTrainingPipeline:
                         f"model.input_dims.basic_features={self.atft_settings['input_dim']}"
                     )
 
-                # ワーカークラッシュ防止のため単一プロセスのローダーを強制
-                if "train.batch.num_workers" not in cli_override_keys:
-                    overrides.append("train.batch.num_workers=0")
-                if "train.batch.prefetch_factor" not in cli_override_keys:
-                    overrides.append("train.batch.prefetch_factor=null")
-                if "train.batch.persistent_workers" not in cli_override_keys:
-                    overrides.append("train.batch.persistent_workers=false")
-                if "train.batch.pin_memory" not in cli_override_keys:
-                    overrides.append("train.batch.pin_memory=false")
+                # Respect ALLOW_UNSAFE_DATALOADER environment variable for multi-worker DataLoader
+                # If ALLOW_UNSAFE_DATALOADER=1, use NUM_WORKERS from environment (default behavior)
+                # If ALLOW_UNSAFE_DATALOADER=0 or unset, force single-worker mode for stability
+                # Note: Safe mode (FORCE_SINGLE_PROCESS=1) always forces single-worker above
+                allow_multiworker = os.getenv("ALLOW_UNSAFE_DATALOADER", "0").strip() in ("1", "true", "yes", "auto")
+                if not allow_multiworker and not is_safe_mode:
+                    # Only force single-worker if not already in safe mode (avoid duplicate logic)
+                    if "train.batch.num_workers" not in cli_override_keys:
+                        overrides.append("train.batch.num_workers=0")
+                    if "train.batch.prefetch_factor" not in cli_override_keys:
+                        overrides.append("train.batch.prefetch_factor=null")
+                    if "train.batch.persistent_workers" not in cli_override_keys:
+                        overrides.append("train.batch.persistent_workers=false")
+                    if "train.batch.pin_memory" not in cli_override_keys:
+                        overrides.append("train.batch.pin_memory=false")
+                    logger.info(
+                        "[DataLoader] Single-worker mode enforced (ALLOW_UNSAFE_DATALOADER=0). "
+                        "Set ALLOW_UNSAFE_DATALOADER=1 in .env for multi-worker support."
+                    )
+                elif allow_multiworker and not is_safe_mode:
+                    # Respect environment variables for multi-worker configuration
+                    num_workers = int(os.getenv("NUM_WORKERS", "8"))
+                    if "train.batch.num_workers" not in cli_override_keys:
+                        overrides.append(f"train.batch.num_workers={num_workers}")
+                    logger.info(
+                        f"[DataLoader] Multi-worker mode enabled (ALLOW_UNSAFE_DATALOADER=1): num_workers={num_workers}"
+                    )
 
                 cmd.extend(overrides)
 

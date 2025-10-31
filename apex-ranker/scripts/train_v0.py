@@ -135,12 +135,38 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Metric to monitor for early stopping (e.g., 20d_pak). Defaults to config value when omitted.",
     )
+    parser.add_argument(
+        "--train-start-date",
+        default=None,
+        help="Optional training window start date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--train-end-date",
+        default=None,
+        help="Optional training window end date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--val-start-date",
+        default=None,
+        help="Optional validation window start date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--val-end-date",
+        default=None,
+        help="Optional validation window end date (YYYY-MM-DD)",
+    )
     return parser.parse_args()
 
 
 def to_day_int(dates: Iterable[np.datetime64]) -> list[int]:
     days = np.asarray(dates, dtype="datetime64[D]").astype("int64")
     return [int(x) for x in days.tolist()]
+
+
+def date_str_to_int(date_str: str) -> int:
+    """Convert YYYY-MM-DD string to integer day representation."""
+    day = np.datetime64(date_str, "D")
+    return int(day.astype("int64"))
 
 
 def load_dataset(
@@ -262,6 +288,28 @@ def main() -> None:
         train_dates = train_dates[-int(args.max_train_days) :]
     if args.max_val_days is not None and val_dates:
         val_dates = val_dates[-int(args.max_val_days) :]
+
+    if args.train_start_date:
+        start_int = date_str_to_int(args.train_start_date)
+        train_dates = [d for d in train_dates if d >= start_int]
+    if args.train_end_date:
+        end_int = date_str_to_int(args.train_end_date)
+        train_dates = [d for d in train_dates if d <= end_int]
+    if args.val_start_date:
+        start_int = date_str_to_int(args.val_start_date)
+        val_dates = [d for d in val_dates if d >= start_int]
+    if args.val_end_date:
+        end_int = date_str_to_int(args.val_end_date)
+        val_dates = [d for d in val_dates if d <= end_int]
+
+    if not train_dates:
+        raise ValueError("No training dates available after applying filters.")
+    if not val_dates:
+        fallback = train_dates[-1]
+        print(
+            f"[WARN] No validation dates after filtering; falling back to the last training day {fallback}"
+        )
+        val_dates = [fallback]
 
     train_dataset = DayPanelDataset(
         cache,

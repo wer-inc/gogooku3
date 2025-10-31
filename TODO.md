@@ -634,3 +634,30 @@ ATFT GAT FAN
 
 
 APEX RANKER
+
+  🚀 Phase 4.3 関連
+
+  - 本番デプロイ準備: FastAPI server setup, monitoring, production
+  bundle
+  - リリースチェックリスト作成: Rollback手順, incident response plan
+  - 本番環境設定: 環境変数, 設定ファイル, deployment script
+
+  📊 追加分析
+
+  - パフォーマンス深掘り: 特定月の詳細分析、セクター別パフォーマンス
+  - リスク分析: VaR, CVaR, tail risk metrics
+  - モデル比較: Enhanced vs Pruned の詳細比較
+
+  📝 ドキュメント整備
+
+  - 運用マニュアル作成: Daily operations, troubleshooting guide
+  - API ドキュメント: エンドポイント仕様書
+  - モニタリングダッシュボード設計: Grafana configs
+
+  🔧 システム改善
+
+  - キャッシュ最適化: Panel cache persistence (2分rebuild削減)
+  - コード品質: Linting, type hints, test coverage
+  - パフォーマンス改善: 推論速度、メモリ使用量
+
+  具体的に何をご希望か教えていただけますか？

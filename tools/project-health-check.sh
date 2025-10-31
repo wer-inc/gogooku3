@@ -252,9 +252,19 @@ if ls _logs/training/*.log 1> /dev/null 2>&1; then
     fi
 fi
 
-# Check for trained models
+# Check for trained models (check multiple locations)
+MODEL_COUNT=0
+if ls models/*.pt 1> /dev/null 2>&1; then
+    MODEL_COUNT=$((MODEL_COUNT + $(ls models/*.pt 2>/dev/null | wc -l)))
+fi
+if ls models/checkpoints/*.pt 1> /dev/null 2>&1; then
+    MODEL_COUNT=$((MODEL_COUNT + $(ls models/checkpoints/*.pt 2>/dev/null | wc -l)))
+fi
 if ls output/models/*.pth 1> /dev/null 2>&1; then
-    MODEL_COUNT=$(ls output/models/*.pth 2>/dev/null | wc -l)
+    MODEL_COUNT=$((MODEL_COUNT + $(ls output/models/*.pth 2>/dev/null | wc -l)))
+fi
+
+if [ "$MODEL_COUNT" -gt 0 ]; then
     SUCCESSES+=("✓ $MODEL_COUNT trained models found")
 elif [ -z "$TRAIN_PID" ]; then
     # Only recommend training if no training is currently running

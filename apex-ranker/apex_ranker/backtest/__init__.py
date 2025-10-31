@@ -5,6 +5,7 @@ from .costs import (
     calculate_round_trip_cost,
     calculate_total_cost,
 )
+from .optimizer import OptimizationConfig, OptimizationResult, generate_target_weights
 from .portfolio import Portfolio, Position, Trade
 from .rebalance import normalise_frequency, should_rebalance
 from .splitter import Split
@@ -26,6 +27,10 @@ __all__ = [
     "CostConfig",
     "calculate_total_cost",
     "calculate_round_trip_cost",
+    # Optimiser
+    "OptimizationConfig",
+    "OptimizationResult",
+    "generate_target_weights",
     # Splitter
     "Split",
     "WalkForwardFold",

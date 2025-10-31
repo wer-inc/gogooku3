@@ -804,6 +804,7 @@ except ImportError:
 
 # Setup logging early
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Timezone for logs/metrics (default Asia/Tokyo; override with LOG_TZ or TZ)
 LOG_TZ = os.getenv("LOG_TZ", os.getenv("TZ", "Asia/Tokyo"))
@@ -880,6 +881,7 @@ from src.utils.config_validator import ConfigValidator  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Fallback minimal DataModule for smoke profile (when ProductionDataModuleV2 is missing)
 if ProductionDataModuleV2 is None:  # type: ignore
@@ -1344,6 +1346,10 @@ class MultiHorizonLoss(nn.Module):
         use_pairwise_rank: bool = False,
         pairwise_rank_weight: float = 0.0,
         pairwise_sample_ratio: float = 0.25,
+        use_listnet: bool = False,
+        listnet_weight: float = 0.0,
+        listnet_tau: float = 0.5,
+        listnet_topk: int | None = None,
         # 追加: CS相関(IC)補助ロス
         use_cs_ic: bool = True,
         cs_ic_weight: float = 0.05,
@@ -1423,6 +1429,12 @@ class MultiHorizonLoss(nn.Module):
             self.pairwise_sample_ratio = max(0.0, min(1.0, r))
         except Exception:
             self.pairwise_sample_ratio = 0.25
+        self.use_listnet = bool(use_listnet)
+        self.listnet_weight = float(listnet_weight)
+        self.listnet_tau = float(listnet_tau)
+        self.listnet_topk = (
+            int(listnet_topk) if listnet_topk is not None else None
+        )
         self.use_t_nll = use_t_nll
         self.nll_weight = float(nll_weight)
         self.use_crps = (
@@ -1601,54 +1613,151 @@ class MultiHorizonLoss(nn.Module):
         corr = (yhat_f * y_f).mean() / denom
         return 1.0 - corr
 
+    def _rankic_penalty_grouped(
+        self,
+        yhat: torch.Tensor,
+        y: torch.Tensor,
+        mask: torch.Tensor | None,
+        groups: torch.Tensor | None,
+    ) -> torch.Tensor:
+        idx = self._build_valid_index(yhat, y, mask)
+        if idx.numel() < 2:
+            return yhat.new_zeros(())
+        preds = yhat[idx]
+        targets = y[idx]
+        if groups is not None and torch.is_tensor(groups):
+            g = groups.reshape(-1)
+            if g.numel() >= yhat.numel():
+                g = g[: yhat.numel()]
+            g = g[idx] if g.numel() == yhat.numel() else None
+        else:
+            g = None
+        if g is None:
+            return self._rankic_penalty(preds, targets, None)
+        losses: list[torch.Tensor] = []
+        for gid in torch.unique(g):
+            sel = g == gid
+            if sel.sum() < 2:
+                continue
+            losses.append(self._rankic_penalty(preds[sel], targets[sel], None))
+        if not losses:
+            return yhat.new_zeros(())
+        return torch.stack(losses).mean()
+
     def _sharpe_penalty(
         self,
         yhat: torch.Tensor,
         y: torch.Tensor,
         mask: torch.Tensor | None = None,
+        group_ids: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Sharpe-like penalty encouraging positive risk-adjusted returns."""
+        idx = self._build_valid_index(yhat, y, mask)
+        if idx.numel() < 2:
+            return yhat.new_zeros(())
+
+        preds = yhat[idx].float()
+        targets = y[idx].float()
+
+        if group_ids is not None and torch.is_tensor(group_ids):
+            g = group_ids.reshape(-1)
+            if g.numel() >= yhat.numel():
+                g = g[: yhat.numel()]
+            g = g[idx] if g.numel() == yhat.numel() else None
+        else:
+            g = None
+
+        if g is None:
+            return self._sharpe_penalty_single_group(preds, targets)
+
+        penalties: list[torch.Tensor] = []
+        unique_groups = torch.unique(g)
+        for gid in unique_groups:
+            sel = g == gid
+            if sel.sum() < 2:
+                continue
+            penalties.append(
+                self._sharpe_penalty_single_group(preds[sel], targets[sel])
+            )
+        if not penalties:
+            return yhat.new_zeros(())
+        return torch.stack(penalties).mean()
+
+    def _sharpe_penalty_single_group(
+        self, preds: torch.Tensor, targets: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute Sharpe-style penalty for a single cross-sectional slice."""
         eps = self.sharpe_eps
-        device = yhat.device
-        dtype = yhat.dtype
-
-        preds = yhat.view(-1).float()
-        targets = y.view(-1).float()
-
-        if mask is not None and torch.is_tensor(mask):
-            m = mask.view(-1)
-            if m.dtype != torch.bool:
-                m = m.to(dtype=torch.bool)
-            min_size = min(preds.numel(), targets.numel(), m.numel())
-            preds = preds[:min_size]
-            targets = targets[:min_size]
-            m = m[:min_size]
-            if m.any():
-                preds = preds[m]
-                targets = targets[m]
-
-        finite = torch.isfinite(preds) & torch.isfinite(targets)
-        preds = preds[finite]
-        targets = targets[finite]
-
-        if preds.numel() < 4:
-            return torch.zeros((), device=device, dtype=dtype)
-
+        preds = preds.float()
+        targets = targets.float()
+        if preds.numel() < 2:
+            return preds.new_zeros(())
         if self.sharpe_center == "z":
-            preds = (preds - preds.mean()) / (preds.std(unbiased=False) + eps)
-            targets = (targets - targets.mean()) / (targets.std(unbiased=False) + eps)
-
-        returns = preds * targets
-        mean_ret = returns.mean()
-        std_ret = returns.std(unbiased=False)
-        sharpe = mean_ret / (std_ret + eps)
-        if self.sharpe_clip > 0:
-            sharpe = torch.clamp(sharpe, -self.sharpe_clip, self.sharpe_clip)
-        # Negative Sharpe -> minimize to maximize raw Sharpe
-        return -sharpe.to(device=device, dtype=dtype)
+            preds = self._zscore(preds, dim=0, eps=eps)
+        else:
+            preds = preds - preds.mean()
+        preds = torch.clamp(preds, -self.sharpe_clip, self.sharpe_clip)
+        denom = preds.abs().sum().clamp_min(eps)
+        weights = preds / denom
+        pnl = (weights * targets).sum()
+        variance = (weights.pow(2) * targets.pow(2)).sum().clamp_min(eps)
+        sharpe = pnl / torch.sqrt(variance)
+        return -sharpe
 
     @staticmethod
+    def _build_valid_index(
+        yhat: torch.Tensor, y: torch.Tensor, mask: torch.Tensor | None
+    ) -> torch.Tensor:
+        base = torch.isfinite(yhat) & torch.isfinite(y)
+        if mask is not None and torch.is_tensor(mask):
+            m = mask
+            if m.dtype != torch.bool:
+                m = m.to(dtype=torch.bool)
+            if m.numel() >= base.numel():
+                m = m[: base.numel()]
+            base = base & m
+        return base.nonzero(as_tuple=False).flatten()
+
     def _pairwise_rank_loss(
+        self,
+        yhat: torch.Tensor,
+        y: torch.Tensor,
+        sample_ratio: float = 0.25,
+        groups: torch.Tensor | None = None,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        idx = self._build_valid_index(yhat, y, mask)
+        if idx.numel() < 3:
+            return yhat.new_zeros(())
+
+        preds = yhat[idx]
+        targets = y[idx]
+
+        if groups is not None and torch.is_tensor(groups):
+            g = groups.reshape(-1)
+            if g.numel() >= yhat.numel():
+                g = g[: yhat.numel()]
+            g = g[idx] if g.numel() == yhat.numel() else None
+        else:
+            g = None
+
+        if g is None:
+            return self._pairwise_rank_loss_single(preds, targets, sample_ratio)
+
+        losses: list[torch.Tensor] = []
+        for gid in torch.unique(g):
+            sel = g == gid
+            if sel.sum() < 3:
+                continue
+            losses.append(
+                self._pairwise_rank_loss_single(preds[sel], targets[sel], sample_ratio)
+            )
+        if not losses:
+            return yhat.new_zeros(())
+        return torch.stack(losses).mean()
+
+    @staticmethod
+    def _pairwise_rank_loss_single(
         yhat: torch.Tensor, y: torch.Tensor, sample_ratio: float = 0.25
     ) -> torch.Tensor:
         """RankNet 型のペアワイズロス（日次クロスセクション内）
@@ -1687,11 +1796,96 @@ class MultiHorizonLoss(nn.Module):
         d = yhat[i_idx][mask] - yhat[j_idx][mask]
         return F.softplus(-s * d).mean()
 
+    def _cs_ic_loss_grouped(
+        self,
+        yhat: torch.Tensor,
+        y: torch.Tensor,
+        groups: torch.Tensor | None,
+        mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        idx = self._build_valid_index(yhat, y, mask)
+        if idx.numel() < 2:
+            return yhat.new_zeros(())
+        preds = yhat[idx]
+        targets = y[idx]
+        if groups is not None and torch.is_tensor(groups):
+            g = groups.reshape(-1)
+            if g.numel() >= yhat.numel():
+                g = g[: yhat.numel()]
+            g = g[idx] if g.numel() == yhat.numel() else None
+        else:
+            g = None
+        if g is None:
+            return self._cs_ic_loss_single(preds, targets)
+        losses: list[torch.Tensor] = []
+        for gid in torch.unique(g):
+            sel = g == gid
+            if sel.sum() < 2:
+                continue
+            losses.append(self._cs_ic_loss_single(preds[sel], targets[sel]))
+        if not losses:
+            return yhat.new_zeros(())
+        return torch.stack(losses).mean()
+
+    def _listnet_loss_grouped(
+        self,
+        yhat: torch.Tensor,
+        y: torch.Tensor,
+        groups: torch.Tensor | None,
+        mask: torch.Tensor | None,
+        tau: float,
+        topk: int | None,
+    ) -> torch.Tensor:
+        idx = self._build_valid_index(yhat, y, mask)
+        if idx.numel() < 2:
+            return yhat.new_zeros(())
+        preds = yhat[idx]
+        targets = y[idx]
+        if groups is not None and torch.is_tensor(groups):
+            g = groups.reshape(-1)
+            if g.numel() >= yhat.numel():
+                g = g[: yhat.numel()]
+            g = g[idx] if g.numel() == yhat.numel() else None
+        else:
+            g = None
+        if g is None:
+            return self._listnet_loss_single(preds, targets, tau, topk)
+        losses: list[torch.Tensor] = []
+        for gid in torch.unique(g):
+            sel = g == gid
+            if sel.sum() < 2:
+                continue
+            losses.append(self._listnet_loss_single(preds[sel], targets[sel], tau, topk))
+        if not losses:
+            return yhat.new_zeros(())
+        return torch.stack(losses).mean()
+
     @staticmethod
-    def _cs_ic_loss(yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """同一バッチ（日次クロスセクション）の順位相関に整合するよう相関を損失化。
-        標準化後のPearson相関を用い 1-corr を最小化する。
-        """
+    def _listnet_loss_single(
+        scores: torch.Tensor, labels: torch.Tensor, tau: float, topk: int | None
+    ) -> torch.Tensor:
+        """ListNet式のクロスセクション損失（softmax重み付きクロスエントロピー）"""
+        scores = scores.view(-1).float()
+        labels = labels.view(-1).float()
+        if scores.numel() <= 1:
+            return scores.new_zeros(())
+        label_std = labels.std(unbiased=False)
+        if not torch.isfinite(label_std) or label_std < 1e-8:
+            return scores.new_zeros(())
+        q = torch.softmax(labels / max(tau, 1e-6), dim=0)
+        p = torch.softmax(scores / max(tau, 1e-6), dim=0)
+        if topk is not None and 0 < topk < scores.numel():
+            # Focus on the largest q entries
+            _, idx = torch.topk(q, topk, largest=True, sorted=False)
+            mask = torch.zeros_like(q)
+            mask[idx] = 1.0
+            mask = mask / (mask.sum() + 1e-12)
+            return -(mask * torch.log(p + 1e-12)).sum()
+        return -(q * torch.log(p + 1e-12)).sum()
+
+    @staticmethod
+    def _cs_ic_loss_single(yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """同一バッチ（日次クロスセクション）の順位相関に整合するよう相関を損失化。"""
         yhat_f = yhat.view(-1).float()
         y_f = y.view(-1).float().detach()
         if yhat_f.numel() <= 1:
@@ -1703,6 +1897,67 @@ class MultiHorizonLoss(nn.Module):
         yhat_f = (yhat_f - yhat_f.mean()) / (yhat_f.std(unbiased=False) + 1e-8)
         y_f = (y_f - y_f.mean()) / (y_f.std(unbiased=False) + 1e-8)
         return 1.0 - (yhat_f * y_f).mean()
+
+    def _prepare_group_vectors(
+        self,
+        yhat: torch.Tensor,
+        y: torch.Tensor,
+        mask: torch.Tensor | None,
+        group_tensor: torch.Tensor | None,
+        exposure_tensor: torch.Tensor | None,
+        sid_tensor: torch.Tensor | None,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        torch.Tensor | None,
+    ]:
+        """Flatten tensors and align optional metadata (group ids, exposures, sids)."""
+        yhat_vec = yhat.view(-1)
+        y_vec = y.view(-1)
+        mask_vec = None
+        if mask is not None and torch.is_tensor(mask):
+            mask_vec = mask.view(-1)
+            if mask_vec.dtype != torch.bool:
+                mask_vec = mask_vec.to(dtype=torch.bool)
+            if mask_vec.numel() > yhat_vec.numel():
+                mask_vec = mask_vec[: yhat_vec.numel()]
+        group_vec = None
+        if group_tensor is not None and torch.is_tensor(group_tensor):
+            g = group_tensor.view(-1)
+            if g.numel() == 1 and yhat_vec.numel() > 1:
+                g = g.expand(yhat_vec.numel())
+            elif g.numel() >= yhat_vec.numel():
+                g = g[: yhat_vec.numel()]
+            if g.numel() == yhat_vec.numel():
+                group_vec = g
+            else:
+                logging.getLogger(__name__).info(
+                    "[TRAIN-DIAG] group tensor length mismatch (group=%d, yhat=%d)",
+                    g.numel(),
+                    yhat_vec.numel(),
+                )
+        exposure_vec = None
+        if exposure_tensor is not None and torch.is_tensor(exposure_tensor):
+            ex = exposure_tensor
+            if ex.dim() >= 2 and ex.shape[0] >= yhat_vec.numel():
+                ex = ex[: yhat_vec.numel()]
+            elif ex.dim() == 1 and ex.numel() >= yhat_vec.numel():
+                ex = ex[: yhat_vec.numel()].unsqueeze(-1)
+            else:
+                ex = None
+            if ex is not None and ex.shape[0] == yhat_vec.numel():
+                exposure_vec = ex
+        sid_vec = None
+        if sid_tensor is not None and torch.is_tensor(sid_tensor):
+            s = sid_tensor.view(-1)
+            if s.numel() >= yhat_vec.numel():
+                s = s[: yhat_vec.numel()]
+            if s.numel() == yhat_vec.numel():
+                sid_vec = s
+        return yhat_vec, y_vec, mask_vec, group_vec, exposure_vec, sid_vec
 
     @staticmethod
     def _zscore(x: torch.Tensor, dim: int = 0, eps: float = 1e-6) -> torch.Tensor:
@@ -1850,7 +2105,13 @@ class MultiHorizonLoss(nn.Module):
             logp = log_const + log_kernel
             return -torch.mean(logp)
 
-    def forward(self, predictions, targets, valid_masks=None):
+    def forward(
+        self,
+        predictions,
+        targets,
+        valid_masks=None,
+        batch_metadata: dict | None = None,
+    ):
         """
         predictions: Dict[str, Tensor] - 各ホライゾンの予測
         targets: Dict[str, Tensor] - 各ホライゾンのターゲット
@@ -1885,12 +2146,142 @@ class MultiHorizonLoss(nn.Module):
         _t = _first_tensor(predictions) if predictions else None
         device = _t.device if _t is not None else torch.device("cpu")
         dtype = _t.dtype if _t is not None else torch.float32
+        group_tensor: torch.Tensor | None = None
+        sid_tensor: torch.Tensor | None = None
+        exposure_tensor: torch.Tensor | None = None
+        if isinstance(batch_metadata, dict):
+            try:
+                group_val = batch_metadata.get("group_day")
+                if group_val is not None:
+                    if torch.is_tensor(group_val):
+                        group_tensor = group_val.to(device=device, non_blocking=True)
+                    else:
+                        group_tensor = torch.as_tensor(
+                            group_val, device=device, dtype=torch.long
+                        )
+            except Exception:
+                group_tensor = None
+            if group_tensor is None:
+                date_val = batch_metadata.get("date")
+                try:
+                    if date_val is not None and not isinstance(
+                        date_val, (list, tuple, torch.Tensor)
+                    ):
+                        logger.debug(
+                            "[TRAIN-DIAG] raw date_val type=%s value=%s",
+                            type(date_val),
+                            date_val,
+                        )
+                    if isinstance(date_val, torch.Tensor):
+                        date_list = [str(x) for x in date_val.view(-1).tolist()]
+                    elif isinstance(date_val, (list, tuple)):
+                        flat_dates = []
+                        for item in date_val:
+                            if isinstance(item, (list, tuple)):
+                                flat_dates.append(str(item[-1]))
+                            else:
+                                flat_dates.append(str(item))
+                        date_list = flat_dates
+                    elif date_val is None:
+                        date_list = []
+                    else:
+                        date_list = [str(date_val)]
+                except Exception:
+                    date_list = []
+                logger.info(
+                    "[TRAIN-DIAG] batch_metadata date entries=%d type=%s",
+                    len(date_list),
+                    type(date_val),
+                )
+                if date_list:
+                    if not hasattr(self, "_diag_date_cache"):
+                        self._diag_date_cache = {}
+                        self._diag_next_group = 0
+                    group_ids: list[int] = []
+                    for d in date_list:
+                        key = d[:10]
+                        gid = self._diag_date_cache.get(key)
+                        if gid is None:
+                            gid = getattr(self, "_diag_next_group", 0)
+                            self._diag_date_cache[key] = gid
+                            self._diag_next_group = gid + 1
+                        group_ids.append(gid)
+                    if group_ids:
+                        group_tensor = torch.tensor(
+                            group_ids, device=device, dtype=torch.long
+                        )
+                        logger.info(
+                            "[TRAIN-DIAG] derived group ids from date (len=%d device=%s)",
+                            len(group_ids),
+                            group_tensor.device,
+                        )
+            try:
+                sid_val = batch_metadata.get("sid")
+                if sid_val is not None:
+                    if torch.is_tensor(sid_val):
+                        sid_tensor = sid_val.to(device=device, non_blocking=True)
+                    else:
+                        sid_tensor = torch.as_tensor(
+                            sid_val, device=device, dtype=torch.long
+                        )
+            except Exception:
+                sid_tensor = None
+            try:
+                exp_val = batch_metadata.get("exposures")
+                if exp_val is not None:
+                    if torch.is_tensor(exp_val):
+                        exposure_tensor = exp_val.to(
+                            device=device, dtype=torch.float32, non_blocking=True
+                        )
+                    else:
+                        exposure_tensor = torch.as_tensor(
+                            exp_val, device=device, dtype=torch.float32
+                        )
+            except Exception:
+                exposure_tensor = None
         total_loss = torch.zeros(1, device=device, dtype=dtype).requires_grad_()
         losses = {}
         weights = []
         contribution_count = 0
         # 現在のホライズン重み
         cur_weights = self._get_current_weights()
+        diag_enabled = (
+            os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in ("1", "true", "yes")
+        )
+        logger.info(
+            "[TRAIN-DIAG] forward diag_enabled=%s max_batches=%s epoch_limit=%s",
+            diag_enabled,
+            os.getenv("TRAIN_CX_DIAG_MAX_BATCHES"),
+            os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS"),
+        )
+        if diag_enabled:
+            try:
+                diag_max_batches = max(
+                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2"))
+                )
+            except Exception:
+                diag_max_batches = 2
+            try:
+                diag_max_epochs = max(
+                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1"))
+                )
+            except Exception:
+                diag_max_epochs = 1
+            try:
+                diag_warn_std = float(os.getenv("TRAIN_CX_DIAG_WARN_STD", "0.02"))
+            except Exception:
+                diag_warn_std = 0.02
+        else:
+            diag_max_batches = 0
+            diag_max_epochs = 0
+            diag_warn_std = 0.0
+        diag_mode = "train" if self.training else "eval"
+        diag_counter_attr = (
+            "_diag_count_train" if diag_mode == "train" else "_diag_count_eval"
+        )
+        if not hasattr(self, diag_counter_attr):
+            setattr(self, diag_counter_attr, 0)
+        current_epoch = getattr(self, "_current_epoch", 0)
 
         for horizon in self.horizons:
             pred_candidates = [
@@ -1949,10 +2340,151 @@ class MultiHorizonLoss(nn.Module):
             else:
                 loss = self.mse(yhat, y)
 
+            (
+                yhat_vec,
+                y_vec,
+                mask_vec,
+                group_vec,
+                exposure_vec,
+                sid_vec,
+            ) = self._prepare_group_vectors(
+                yhat, y, mask, group_tensor, exposure_tensor, sid_tensor
+            )
+            if (
+                diag_enabled
+                and diag_max_batches > 0
+                and group_vec is not None
+                and (diag_max_epochs <= 0 or current_epoch <= diag_max_epochs)
+            ):
+                diag_counter = getattr(self, diag_counter_attr, 0)
+                if diag_counter < diag_max_batches:
+                    try:
+                        logger.warning(
+                            "[TRAIN-DIAG] entering diag block mode=%s epoch=%d horizon=%s counter=%d limit=%d",
+                            diag_mode,
+                            current_epoch,
+                            horizon,
+                            diag_counter,
+                            diag_max_batches,
+                        )
+                        yhat_cpu = (
+                            yhat_vec.detach().to("cpu", non_blocking=True).float().view(-1)
+                        )
+                        y_cpu = (
+                            y_vec.detach().to("cpu", non_blocking=True).float().view(-1)
+                        )
+                        group_cpu = (
+                            group_vec.detach()
+                            .to("cpu", non_blocking=True)
+                            .view(-1)
+                            .to(torch.long)
+                        )
+                        if mask_vec is not None and torch.is_tensor(mask_vec):
+                            mask_cpu = mask_vec.detach().to("cpu", non_blocking=True)
+                            if mask_cpu.dtype != torch.bool:
+                                mask_cpu = mask_cpu != 0
+                            mask_cpu = mask_cpu.view(-1)
+                            if mask_cpu.numel() == yhat_cpu.numel():
+                                yhat_cpu = yhat_cpu[mask_cpu]
+                                y_cpu = y_cpu[mask_cpu]
+                                group_cpu = group_cpu[mask_cpu]
+                        yhat_np = yhat_cpu.numpy()
+                        y_np = y_cpu.numpy()
+                        group_np = group_cpu.numpy()
+                        if (
+                            yhat_np.size > 0
+                            and y_np.size == yhat_np.size
+                            and group_np.size == yhat_np.size
+                        ):
+                            logger.info(
+                                "[TRAIN-DIAG] debug sizes mode=%s h=%s yhat=%d groups=%d",
+                                diag_mode,
+                                horizon,
+                                yhat_np.size,
+                                group_np.size,
+                            )
+                            uniq_groups, counts = np.unique(
+                                group_np.astype(np.int64, copy=False), return_counts=True
+                            )
+                            per_pred_std: list[float] = []
+                            per_targ_std: list[float] = []
+                            for g, cnt in zip(uniq_groups, counts, strict=False):
+                                if cnt <= 1:
+                                    continue
+                                mask_sel = group_np == g
+                                per_pred_std.append(
+                                    float(np.std(yhat_np[mask_sel]) + 1e-12)
+                                )
+                                per_targ_std.append(
+                                    float(np.std(y_np[mask_sel]) + 1e-12)
+                                )
+                            if per_pred_std:
+                                pred_mean = float(np.mean(per_pred_std))
+                                pred_min = float(np.min(per_pred_std))
+                                targ_mean = float(np.mean(per_targ_std))
+                                targ_min = float(np.min(per_targ_std))
+                                logger.info(
+                                    "[TRAIN-DIAG] mode=%s epoch=%d h=%s per-day pred std mean=%.6f min=%.6f | target std mean=%.6f min=%.6f (groups=%d)",
+                                    diag_mode,
+                                    current_epoch,
+                                    horizon,
+                                    pred_mean,
+                                    pred_min,
+                                    targ_mean,
+                                    targ_min,
+                                    len(per_pred_std),
+                                )
+                                if diag_warn_std > 0.0 and pred_mean < diag_warn_std:
+                                    logger.warning(
+                                        "[TRAIN-DIAG] mode=%s epoch=%d h=%s low per-day pred std: mean=%.6f (< %.4f)",
+                                        diag_mode,
+                                        current_epoch,
+                                        horizon,
+                                        pred_mean,
+                                        diag_warn_std,
+                                    )
+                            else:
+                                max_group_size = int(counts.max()) if counts.size else 0
+                                logger.info(
+                                    "[TRAIN-DIAG] mode=%s epoch=%d h=%s insufficient cross-sectional coverage (groups=%d, max_group_size=%d)",
+                                    diag_mode,
+                                    current_epoch,
+                                    horizon,
+                                    int(len(counts)),
+                                    max_group_size,
+                                )
+                        else:
+                            logger.info(
+                                "[TRAIN-DIAG] mode=%s epoch=%d h=%s no valid samples for cross-sectional stats (yhat=%d, groups=%d)",
+                                diag_mode,
+                                current_epoch,
+                                horizon,
+                                int(yhat_np.size),
+                                int(group_np.size),
+                            )
+                        setattr(self, diag_counter_attr, diag_counter + 1)
+                    except Exception as _diag_exc:
+                        logger.warning(
+                            "[TRAIN-DIAG] logging skipped due to error: %s", _diag_exc
+                        )
+                else:
+                    logger.info(
+                        "[TRAIN-DIAG] mode=%s horizon=%s reached diag limit (%d)",
+                        diag_mode,
+                        horizon,
+                        diag_max_batches,
+                    )
+            elif diag_enabled and group_vec is None:
+                logger.info(
+                    "[TRAIN-DIAG] mode=%s horizon=%s skipped (group metadata unavailable)",
+                    diag_mode,
+                    horizon,
+                )
+
             # 予測分散の下限を促す正則化（勾配が yhat に確実に返るよう std ベース・二乗ペナルティ）
             if self.pred_var_weight > 0.0 and self.pred_var_min > 0.0:
                 try:
-                    std_yhat = yhat.float().view(-1).std(unbiased=False)
+                    std_yhat = yhat_vec.float().std(unbiased=False)
                     # min_std - std に対する ReLU^2 ペナルティ（std が閾値未満だと強く押し上げる）
                     var_penalty = torch.relu(self.pred_var_min - std_yhat).pow(2)
                     if torch.isfinite(std_yhat):
@@ -1983,25 +2515,82 @@ class MultiHorizonLoss(nn.Module):
                     loss = loss + self.pinball_weight * torch.mean(pinball)
             if self.use_sharpe and self.sharpe_weight > 0.0:
                 try:
-                    sharpe_pen = self._sharpe_penalty(yhat, y, mask)
+                    sharpe_pen = self._sharpe_penalty(
+                        yhat_vec, y_vec, mask_vec, group_vec
+                    )
                     if torch.isfinite(sharpe_pen):
                         loss = loss + self.sharpe_weight * sharpe_pen
                 except Exception:
                     pass
             # RankIC（任意）
             if self.use_rankic and self.rankic_weight > 0:
-                loss = loss + self.rankic_weight * self._rankic_penalty(yhat, y, mask)
+                loss = loss + self.rankic_weight * self._rankic_penalty_grouped(
+                    yhat_vec, y_vec, mask_vec, group_vec
+                )
             # 追加: ペアワイズ順位ロス（任意）
             if self.use_pairwise_rank and self.pairwise_rank_weight > 0.0:
                 try:
-                    pw = self._pairwise_rank_loss(yhat, y, self.pairwise_sample_ratio)
+                    pw = self._pairwise_rank_loss(
+                        yhat_vec,
+                        y_vec,
+                        self.pairwise_sample_ratio,
+                        group_vec,
+                        mask_vec,
+                    )
                     if torch.isfinite(pw):
                         loss = loss + self.pairwise_rank_weight * pw
                 except Exception:
                     pass
+            if self.use_listnet and self.listnet_weight > 0.0:
+                try:
+                    ln_loss = self._listnet_loss_grouped(
+                        yhat_vec,
+                        y_vec,
+                        group_vec,
+                        mask_vec,
+                        tau=max(self.listnet_tau, 1e-6),
+                        topk=self.listnet_topk,
+                    )
+                    if torch.isfinite(ln_loss):
+                        loss = loss + self.listnet_weight * ln_loss
+                except Exception:
+                    pass
             # CS-IC 補助ロス（順位整合/相関強化）
             if self.use_cs_ic and self.cs_ic_weight > 0:
-                loss = loss + self.cs_ic_weight * self._cs_ic_loss(yhat, y)
+                loss = loss + self.cs_ic_weight * self._cs_ic_loss_grouped(
+                    yhat_vec, y_vec, group_vec, mask_vec
+                )
+            if (
+                self.use_exposure_neutral
+                and self.exposure_weight > 0.0
+                and exposure_vec is not None
+            ):
+                try:
+                    exp_yhat = yhat_vec
+                    exp_X = exposure_vec
+                    if mask_vec is not None:
+                        mask_bool = mask_vec.to(dtype=torch.bool)
+                        if mask_bool.numel() == exp_yhat.numel():
+                            valid_idx = mask_bool.nonzero(as_tuple=False).flatten()
+                            if valid_idx.numel() >= 2:
+                                exp_yhat = exp_yhat[valid_idx]
+                                exp_X = exp_X[valid_idx]
+                    exp_pen = self._r2_penalty(exp_yhat, exp_X)
+                    if torch.isfinite(exp_pen):
+                        loss = loss + self.exposure_weight * exp_pen
+                except Exception:
+                    pass
+            if (
+                self.use_turnover_penalty
+                and self.turnover_weight > 0.0
+                and sid_vec is not None
+            ):
+                try:
+                    turn_pen = self._turnover_penalty(yhat_vec, sid_vec, horizon)
+                    if torch.isfinite(turn_pen):
+                        loss = loss + self.turnover_weight * turn_pen
+                except Exception:
+                    pass
             # Student-t NLL（任意, ヘテロスケ）
             t_key = f"t_params_horizon_{horizon}"
             if self.use_t_nll and self.nll_weight > 0 and t_key in predictions:
@@ -2750,7 +3339,10 @@ def train_epoch(
                     logger.info(f"  Sample codes: {batch['codes'][:5]}")
 
             loss_result = criterion(
-                predictions_fp32, targets_fp32, valid_masks=valid_masks
+                predictions_fp32,
+                targets_fp32,
+                valid_masks=valid_masks,
+                batch_metadata=batch,
             )
 
             # Handle both single value and tuple return
@@ -2790,21 +3382,21 @@ def train_epoch(
             # Variance penalty to prevent collapse
             variance_threshold = float(os.getenv("PRED_STD_FLOOR", "0.1"))
             variance_penalty_strength = float(os.getenv("PRED_STD_PENALTY", "0.1"))
-            variance_penalty_acc = 0.0
+            variance_penalties: list[torch.Tensor] = []
             for h in criterion.horizons:
                 canon_key = f"horizon_{h}"
                 pred_tensor = predictions_canon.get(canon_key)
                 if pred_tensor is None:
                     continue
-                pred_std_val = float(pred_tensor.std().item())
-                if pred_std_val < variance_threshold:
-                    variance_penalty_acc += (
-                        variance_threshold - pred_std_val
-                    ) * variance_penalty_strength
+                pred_std = torch.clamp(pred_tensor.std(unbiased=False), min=1e-8)
+                penalty = torch.relu(variance_threshold - pred_std)
+                if penalty.detach().item() > 0:
+                    variance_penalties.append(penalty)
 
             # Add penalty to loss
-            if variance_penalty_acc > 0.0:
-                loss = loss + loss.new_tensor(variance_penalty_acc, dtype=loss.dtype)
+            if variance_penalties:
+                penalty_tensor = torch.stack(variance_penalties).sum()
+                loss = loss + variance_penalty_strength * penalty_tensor
 
             # 予測値の統計チェック（最初のエポック）
             if batch_idx == 0 and epoch <= 2:
@@ -3278,7 +3870,10 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
                         valid_masks_device = None
                     preds_for_loss = _unwrap_predictions(outputs)
                     crit_out = criterion(
-                        preds_for_loss, targets, valid_masks=valid_masks_device
+                        preds_for_loss,
+                        targets,
+                        valid_masks=valid_masks_device,
+                        batch_metadata=batch,
                     )
                     loss = crit_out[0] if isinstance(crit_out, tuple) else crit_out
 
@@ -3437,7 +4032,9 @@ def evaluate_model_metrics(
                 }
             )
 
-            loss_result = criterion(outputs_fp32, targets_fp32)
+            loss_result = criterion(
+                outputs_fp32, targets_fp32, batch_metadata=batch
+            )
 
             # Handle both single value and tuple return
             if isinstance(loss_result, tuple):
@@ -3635,7 +4232,7 @@ def validate(model, dataloader, criterion, device):
     nan_batches = 0
     # 追加指標（tパラメータ/分位も収集）
     metrics = {
-        h: {"y": [], "yhat": [], "t_params": [], "quantiles": []}
+        h: {"y": [], "yhat": [], "t_params": [], "quantiles": [], "groups": []}
         for h in criterion.horizons
     }
     # 保存用: 線形校正係数（z空間）
@@ -3789,7 +4386,9 @@ def validate(model, dataloader, criterion, device):
                     canonical_targets.update(targets)
                     targets = canonical_targets
 
-                loss_result = criterion(outputs, targets, valid_masks=valid_masks)
+                loss_result = criterion(
+                    outputs, targets, valid_masks=valid_masks, batch_metadata=batch
+                )
 
                 # Handle both single value and tuple return
                 if isinstance(loss_result, tuple):
@@ -3838,7 +4437,7 @@ def validate(model, dataloader, criterion, device):
             # 追加指標収集（CPUへ）
             if collect_metrics_from_outputs is not None:
                 batch_metrics = collect_metrics_from_outputs(
-                    outputs, targets, criterion.horizons
+                    outputs, targets, criterion.horizons, batch
                 )
                 for h in criterion.horizons:
                     for key in ["y", "yhat", "t_params", "quantiles"]:
@@ -3886,6 +4485,15 @@ def validate(model, dataloader, criterion, device):
 
                         metrics[h]["yhat"].append(yhat)
                         metrics[h]["y"].append(y)
+                        group_arr = None
+                        if "group_day" in batch:
+                            group_tensor = batch["group_day"]
+                            if torch.is_tensor(group_tensor):
+                                group_arr = (
+                                    group_tensor.detach().view(-1).cpu().numpy()
+                                )
+                        if group_arr is not None and group_arr.shape[0] == yhat.shape[0]:
+                            metrics[h]["groups"].append(group_arr)
                     # t-params 収集
                     t_key = f"t_params_horizon_{h}"
                     if t_key in outputs:
@@ -3951,6 +4559,37 @@ def validate(model, dataloader, criterion, device):
                 y_std = float(np.std(y) + 1e-12)
                 yhat_std = float(np.std(yhat) + 1e-12)
                 scale_ratio = float(yhat_std / y_std) if y_std > 0 else float("nan")
+
+                # Cross-sectional diagnostics (per-day)
+                group_vals = None
+                if metrics[h]["groups"]:
+                    try:
+                        group_vals = np.concatenate(metrics[h]["groups"])
+                        if group_vals.shape != yhat.shape:
+                            group_vals = None
+                    except Exception:
+                        group_vals = None
+
+                if group_vals is not None:
+                    uniq_groups = np.unique(group_vals)
+                    per_group_pred_std = []
+                    per_group_target_std = []
+                    for g in uniq_groups:
+                        mask = group_vals == g
+                        if mask.sum() <= 1:
+                            continue
+                        per_group_pred_std.append(float(np.std(yhat[mask]) + 1e-12))
+                        per_group_target_std.append(float(np.std(y[mask]) + 1e-12))
+                    if per_group_pred_std:
+                        logger.info(
+                            "[EVAL-DIAG] h=%s per-day pred std mean=%.6f min=%.6f | target std mean=%.6f min=%.6f (groups=%d)",
+                            h,
+                            float(np.mean(per_group_pred_std)),
+                            float(np.min(per_group_pred_std)),
+                            float(np.mean(per_group_target_std)),
+                            float(np.min(per_group_target_std)),
+                            len(per_group_pred_std),
+                        )
 
                 # 予測が collapse している場合の警告
                 if scale_ratio < 0.1:
@@ -4411,6 +5050,42 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 optimizer, T_0=T_0, T_mult=T_mult, eta_min=eta_min
             )
 
+        # Enable optional cross-sectional diagnostics during training
+        train_cx_diag_enabled = (
+            os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in ("1", "true", "yes")
+        )
+        if train_cx_diag_enabled:
+            try:
+                train_cx_diag_max_epochs = max(
+                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1"))
+                )
+            except Exception:
+                train_cx_diag_max_epochs = 1
+            try:
+                train_cx_diag_max_batches = max(
+                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2"))
+                )
+            except Exception:
+                train_cx_diag_max_batches = 2
+            try:
+                train_cx_diag_warn = float(os.getenv("TRAIN_CX_DIAG_WARN_STD", "0.02"))
+            except Exception:
+                train_cx_diag_warn = 0.02
+            train_cx_group_cache: dict[str, int] = {}
+            train_cx_next_group_id = 0
+            logger.info(
+                "[TRAIN-DIAG] enabled (max_epochs=%d, max_batches=%d, warn_std=%.4f)",
+                train_cx_diag_max_epochs,
+                train_cx_diag_max_batches,
+                train_cx_diag_warn,
+            )
+        else:
+            train_cx_diag_max_epochs = 0
+            train_cx_diag_max_batches = 0
+            train_cx_diag_warn = 0.0
+            train_cx_group_cache = {}
+            train_cx_next_group_id = 0
+
         # エポック実行
         for epoch in range(phase["epochs"]):
             _maybe_apply_temporal_encoder_freeze(model, epoch)
@@ -4524,6 +5199,164 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 except Exception:
                     pass
 
+                # Optional cross-sectional diagnostics before loss computation
+                if (
+                    train_cx_diag_max_epochs > 0
+                    and train_cx_diag_max_batches > 0
+                    and epoch < train_cx_diag_max_epochs
+                    and batch_idx < train_cx_diag_max_batches
+                    and isinstance(predictions, dict)
+                ):
+                    logger.info(
+                        "[TRAIN-DIAG] ep=%d b=%d collecting cross-sectional diagnostics",
+                        epoch,
+                        batch_idx,
+                    )
+                    try:
+                        group_tensor = batch.get("group_day")
+                        if torch.is_tensor(group_tensor):
+                            group_vec = group_tensor.detach().view(-1)
+                            if group_vec.device.type != "cpu":
+                                group_vec = group_vec.to("cpu")
+                        elif group_tensor is not None:
+                            group_vec = torch.as_tensor(
+                                group_tensor, dtype=torch.long
+                            ).view(-1)
+                        else:
+                            group_vec = None
+                    except Exception:
+                        group_vec = None
+
+                    if group_vec is None:
+                        date_values = batch.get("date")
+                        try:
+                            if isinstance(date_values, torch.Tensor):
+                                date_list = [str(x) for x in date_values.view(-1).tolist()]
+                            elif isinstance(date_values, (list, tuple)):
+                                date_list = [str(x) for x in date_values]
+                            elif date_values is None:
+                                date_list = []
+                            else:
+                                date_list = [str(date_values)]
+                        except Exception:
+                            date_list = []
+                        if date_list:
+                            group_ids = []
+                            for d in date_list:
+                                key = d[:10]
+                                gid = train_cx_group_cache.get(key)
+                                if gid is None:
+                                    gid = train_cx_next_group_id
+                                    train_cx_group_cache[key] = gid
+                                    train_cx_next_group_id += 1
+                                group_ids.append(gid)
+                            if group_ids:
+                                group_vec = torch.tensor(group_ids, dtype=torch.long)
+
+                    if group_vec is not None:
+                        try:
+                            group_np = group_vec.cpu().numpy()
+                        except Exception:
+                            group_np = None
+
+                        if group_np is not None and group_np.size > 0:
+                            for horizon in getattr(criterion, "horizons", []):
+                                pred_candidates = [
+                                    f"point_horizon_{horizon}",
+                                    f"horizon_{horizon}",
+                                    f"horizon_{horizon}d",
+                                    f"h{horizon}",
+                                ]
+                                targ_candidates = [
+                                    f"horizon_{horizon}",
+                                    f"horizon_{horizon}d",
+                                    f"feat_ret_{horizon}d",
+                                    f"point_horizon_{horizon}",
+                                    f"h{horizon}",
+                                ]
+                                pred_key = next(
+                                    (k for k in pred_candidates if k in predictions),
+                                    None,
+                                )
+                                targ_key = next(
+                                    (k for k in targ_candidates if k in targets_dict),
+                                    None,
+                                )
+                                if pred_key is None or targ_key is None:
+                                    continue
+                                pred_tensor = predictions[pred_key]
+                                targ_tensor = targets_dict[targ_key]
+                                if not torch.is_tensor(pred_tensor) or not torch.is_tensor(
+                                    targ_tensor
+                                ):
+                                    continue
+                                pred_vec = pred_tensor.detach().view(-1).to("cpu")
+                                targ_vec = targ_tensor.detach().view(-1).to("cpu")
+                                if pred_vec.numel() != group_vec.numel():
+                                    continue
+                                try:
+                                    pred_np = pred_vec.float().numpy()
+                                    targ_np = targ_vec.float().numpy()
+                                except Exception:
+                                    continue
+                                uniq_groups = np.unique(group_np)
+                                if uniq_groups.size == 0:
+                                    continue
+                                per_group_pred_std: list[float] = []
+                                per_group_targ_std: list[float] = []
+                                group_sizes: list[int] = []
+                                for g in uniq_groups:
+                                    mask = group_np == g
+                                    group_size = int(mask.sum())
+                                    group_sizes.append(group_size)
+                                    if group_size <= 1:
+                                        continue
+                                    per_group_pred_std.append(
+                                        float(np.std(pred_np[mask]) + 1e-12)
+                                    )
+                                    per_group_targ_std.append(
+                                        float(np.std(targ_np[mask]) + 1e-12)
+                                    )
+                                if per_group_pred_std:
+                                    pred_mean = float(np.mean(per_group_pred_std))
+                                    pred_min = float(np.min(per_group_pred_std))
+                                    targ_mean = float(np.mean(per_group_targ_std))
+                                    targ_min = float(np.min(per_group_targ_std))
+                                    logger.info(
+                                        "[TRAIN-DIAG] ep=%d b=%d h=%s per-day pred std mean=%.6f min=%.6f | target std mean=%.6f min=%.6f (groups=%d)",
+                                        epoch,
+                                        batch_idx,
+                                        horizon,
+                                        pred_mean,
+                                        pred_min,
+                                        targ_mean,
+                                        targ_min,
+                                        len(per_group_pred_std),
+                                    )
+                                    if train_cx_diag_warn > 0.0 and pred_mean < train_cx_diag_warn:
+                                        logger.warning(
+                                            "[TRAIN-DIAG] ep=%d b=%d h=%s low per-day pred std: mean=%.6f (< %.4f)",
+                                            epoch,
+                                            batch_idx,
+                                            horizon,
+                                            pred_mean,
+                                            train_cx_diag_warn,
+                                        )
+                                else:
+                                    max_size = max(group_sizes) if group_sizes else 0
+                                    logger.info(
+                                        "[TRAIN-DIAG] ep=%d b=%d h=%s insufficient cross-sectional coverage (groups=%d, max_group_size=%d)",
+                                        epoch,
+                                        batch_idx,
+                                        horizon,
+                                        len(group_sizes),
+                                        max_size,
+                                    )
+                    else:
+                        logger.debug(
+                            "[TRAIN-DIAG] Skipped cross-sectional diagnostics (missing group_day tensor)"
+                        )
+
                 # Alpha warmup within GAT-enabled phases (epoch-scoped)
                 try:
                     if getattr(model, "use_gat", False) and hasattr(
@@ -4537,7 +5370,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     pass
 
                 # Get loss from criterion - handle both single value and tuple return
-                loss_result = criterion(predictions, targets_dict)
+                loss_result = criterion(
+                    predictions, targets_dict, batch_metadata=batch
+                )
                 if isinstance(loss_result, tuple):
                     loss, losses = loss_result
                 else:
@@ -4708,7 +5543,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     except Exception:
                         pass
 
-                    loss_result = criterion(predictions, tdict)
+                    loss_result = criterion(
+                        predictions, tdict, batch_metadata=batch
+                    )
 
                     # Handle both single value and tuple return from criterion
                     if isinstance(loss_result, tuple):
@@ -6741,7 +7578,15 @@ def train(config: DictConfig) -> None:
 
     # ---- 1バッチNaNスキャン（早期検知） ----
     try:
-        if train_loader is not None:
+        skip_nan_scan = os.getenv("SKIP_PRETRAIN_NAN_SCAN", "0").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if train_loader is not None and skip_nan_scan:
+            logger.info("[nan-scan] SKIP_PRETRAIN_NAN_SCAN=1 → skipping first-batch scan")
+        if train_loader is not None and not skip_nan_scan:
             it_scan = iter(train_loader)
             first_batch = next(it_scan)
             try:
@@ -6923,7 +7768,7 @@ def train(config: DictConfig) -> None:
         pass
 
     run_manifest = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z"),
         "timestamp_jst": now_jst_iso(),
         "git_commit": _get_git_commit(),
         "device": str(device),
@@ -6946,7 +7791,7 @@ def train(config: DictConfig) -> None:
         Path("models/manifests").mkdir(parents=True, exist_ok=True)
         mpath = (
             Path("logs/manifests")
-            / f"train_manifest_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+            / f"train_manifest_{datetime.now(ZoneInfo('UTC')).strftime('%Y%m%d_%H%M%S')}.json"
         )
         mpath.write_text(json.dumps(run_manifest, ensure_ascii=False))
         Path("models/manifests/latest_train_manifest.json").write_text(
@@ -7171,6 +8016,21 @@ def train(config: DictConfig) -> None:
     )
 
     grad_monitor = GradientMonitor.from_environment(model=model, logger=logger)
+    if grad_monitor is None:
+        if os.getenv("ENABLE_GRAD_MONITOR", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            logger.warning(
+                "[GradMonitor] ENABLE_GRAD_MONITOR=1 but monitor initialization returned None"
+            )
+    else:
+        logger.info(
+            "[GradMonitor] Monitoring enabled "
+            f"(log_every={grad_monitor.log_every}, warn_threshold={grad_monitor.warn_threshold:.2e})"
+        )
 
     # 最適化
     # 追加損失のON/OFFは簡易に環境変数で制御（必要ならHydraへ昇格）
@@ -7191,6 +8051,18 @@ def train(config: DictConfig) -> None:
         float(os.getenv("PAIRWISE_RANK_WEIGHT", "0.0")) if use_pairwise_rank else 0.0
     )
     pairwise_sample_ratio = float(os.getenv("PAIRWISE_SAMPLE_RATIO", "0.25"))
+    use_listnet = os.getenv("USE_LISTNET_LOSS", "0") == "1"
+    listnet_weight = (
+        float(os.getenv("LISTNET_WEIGHT", "0.0")) if use_listnet else 0.0
+    )
+    listnet_tau = float(os.getenv("LISTNET_TAU", "0.5"))
+    listnet_topk_env = os.getenv("LISTNET_TOPK", "").strip()
+    listnet_topk = None
+    if listnet_topk_env:
+        try:
+            listnet_topk = int(listnet_topk_env)
+        except Exception:
+            listnet_topk = None
 
     # 追加: SoftRank Spearman
     use_soft_spearman = os.getenv("USE_SOFT_SPEARMAN", "0") == "1"
@@ -7348,6 +8220,10 @@ def train(config: DictConfig) -> None:
         use_pairwise_rank=use_pairwise_rank,
         pairwise_rank_weight=pairwise_rank_w,
         pairwise_sample_ratio=pairwise_sample_ratio,
+        use_listnet=use_listnet,
+        listnet_weight=listnet_weight,
+        listnet_tau=listnet_tau,
+        listnet_topk=listnet_topk,
         use_cs_ic=use_cs_ic_env,
         cs_ic_weight=cs_ic_weight_env,
         use_sharpe=use_sharpe_env,
@@ -7622,6 +8498,7 @@ def train(config: DictConfig) -> None:
         from collections import defaultdict
 
         deg_bad = defaultdict(int)  # Consecutive violation counter
+        deg_last_reset_step: dict[str, int] = {}
         deg_ema = defaultdict(float)  # EMA of prediction std
 
         logger.info(f"Time budget: {time_budget_hours:.1f} hours")
@@ -7630,168 +8507,146 @@ def train(config: DictConfig) -> None:
         # 外部GraphBuilder（使用可能なら優先）。失敗時はNoneでフォールバック
         gb = None
         gb_adv = None
-        try:
-            gb_cfg = getattr(final_config.data, "graph_builder", None)
-            if gb_cfg is not None:
-                gbc = GBConfig(
-                    source_glob=str(
-                        getattr(gb_cfg, "source_glob", "data/ml/*.parquet")
-                    ),
-                    lookback=int(getattr(gb_cfg, "lookback", 60)),
-                    k=int(getattr(gb_cfg, "k", 15)),
-                    ewm_halflife=int(getattr(gb_cfg, "ewm_halflife", 20)),
-                    shrinkage_gamma=float(getattr(gb_cfg, "shrinkage_gamma", 0.05)),
-                    min_obs=int(getattr(gb_cfg, "min_obs", 40)),
-                    size_tau=float(getattr(gb_cfg, "size_tau", 1.0)),
-                    cache_dir=str(getattr(gb_cfg, "cache_dir", "graph_cache")),
-                    return_cols=tuple(
-                        getattr(
-                            gb_cfg,
-                            "return_cols",
-                            (
-                                "label_excess_1_bps",
-                                "label_ret_1_bps",
-                                "ret_1d",
-                                "return_1d",
-                            ),
-                        )
-                    ),
-                    sector_col=str(getattr(gb_cfg, "sector_col", "sector")),
-                    log_mktcap_col=str(getattr(gb_cfg, "log_mktcap_col", "log_mktcap")),
-                    method=str(getattr(gb_cfg, "method", "ewm_demean")),
-                    symmetric=bool(getattr(gb_cfg, "symmetric", True)),
-                )
-                # Ensure at least one return-like column exists; add fallbacks if needed
-                try:
-                    import glob
+        disable_graph_builder = os.getenv("DISABLE_GRAPH_BUILDER", "0") in (
+            "1",
+            "true",
+            "yes",
+        )
+        if os.getenv("BYPASS_GAT_COMPLETELY", "0") in ("1", "true", "yes"):
+            disable_graph_builder = True
 
-                    import polars as pl
-
-                    sample = next(iter(glob.iglob(gbc.source_glob)), None)
-                    if sample:
-                        cols = set(pl.read_parquet(sample, n_rows=0).columns)
-                        current = list(gbc.return_cols)
-                        # Add common fallbacks if dataset uses different labels
-                        for alt in ("feat_ret_1d", "target_1d"):
-                            if alt in cols and alt not in current:
-                                current.append(alt)
-                        if current != list(gbc.return_cols):
-                            gbc = GBConfig(
-                                source_glob=gbc.source_glob,
-                                lookback=gbc.lookback,
-                                k=gbc.k,
-                                ewm_halflife=gbc.ewm_halflife,
-                                shrinkage_gamma=gbc.shrinkage_gamma,
-                                min_obs=gbc.min_obs,
-                                size_tau=gbc.size_tau,
-                                cache_dir=gbc.cache_dir,
-                                return_cols=tuple(current),
-                                sector_col=gbc.sector_col,
-                                log_mktcap_col=gbc.log_mktcap_col,
-                                method=gbc.method,
-                                symmetric=gbc.symmetric,
-                            )
-                            logger.info(
-                                "[GraphBuilder] return_cols extended to %s", current
-                            )
-                except Exception as _e:
-                    logger.warning(
-                        "[GraphBuilder] return_cols fallback check skipped: %s", _e
-                    )
-
-                gb = GraphBuilder(gbc)
-                logger.info(
-                    f"[GraphBuilder] initialized from {gbc.source_glob} (lookback={gbc.lookback}, k={gbc.k})"
-                )
-            # Advanced FinancialGraphBuilder for training (optional)
-            use_adv_train = os.getenv("USE_ADV_GRAPH_TRAIN", "0") in (
-                "1",
-                "true",
-                "True",
+        if disable_graph_builder:
+            logger.info(
+                "[GraphBuilder] disabled (DISABLE_GRAPH_BUILDER=1 or BYPASS_GAT_COMPLETELY=1)"
             )
+        else:
+            gb_cfg = None
             try:
-                if not use_adv_train and gb_cfg is not None:
-                    use_adv_train = bool(getattr(gb_cfg, "use_in_training", False))
+                gb_cfg = getattr(final_config.data, "graph_builder", None)
             except Exception:
-                pass
-            if AdvFinancialGraphBuilder is not None and use_adv_train:
+                gb_cfg = None
+
+            if gb_cfg is None:
+                logger.info("[GraphBuilder] configuration not provided; skipping graph construction")
+            else:
                 try:
-                    # Prefer Hydra config if available
-                    try:
-                        gb_cfg = getattr(final_config.data, "graph_builder", None)
-                    except Exception:
-                        gb_cfg = None
-                    corr_method = (
-                        str(getattr(gb_cfg, "method", "ewm_demean"))
-                        if gb_cfg is not None
-                        else "ewm_demean"
-                    )
-                    ewm_hl = int(
-                        getattr(
-                            gb_cfg, "ewm_halflife", int(os.getenv("EWM_HALFLIFE", "20"))
-                        )
-                        if gb_cfg is not None
-                        else int(os.getenv("EWM_HALFLIFE", "20"))
-                    )
-                    shrink_g = float(
-                        getattr(
-                            gb_cfg,
-                            "shrinkage_gamma",
-                            float(os.getenv("SHRINKAGE_GAMMA", "0.05")),
-                        )
-                        if gb_cfg is not None
-                        else float(os.getenv("SHRINKAGE_GAMMA", "0.05"))
-                    )
-                    symm = bool(
-                        getattr(
-                            gb_cfg,
-                            "symmetric",
-                            os.getenv("GRAPH_SYMMETRIC", "1") in ("1", "true", "True"),
-                        )
-                        if gb_cfg is not None
-                        else (
-                            os.getenv("GRAPH_SYMMETRIC", "1") in ("1", "true", "True")
-                        )
-                    )
-                    k_per = int(
-                        getattr(gb_cfg, "k", int(os.getenv("GRAPH_K", "10")))
-                        if gb_cfg is not None
-                        else int(os.getenv("GRAPH_K", "10"))
-                    )
-                    thr = float(
-                        getattr(
-                            gb_cfg,
-                            "edge_threshold",
-                            float(os.getenv("GRAPH_EDGE_THR", "0.3")),
-                        )
-                        if gb_cfg is not None
-                        else float(os.getenv("GRAPH_EDGE_THR", "0.3"))
-                    )
-                    gb_adv = AdvFinancialGraphBuilder(
-                        correlation_window=int(
+                    gbc = GBConfig(
+                        source_glob=str(
+                            getattr(gb_cfg, "source_glob", "data/ml/*.parquet")
+                        ),
+                        lookback=int(getattr(gb_cfg, "lookback", 60)),
+                        k=int(getattr(gb_cfg, "k", 15)),
+                        ewm_halflife=int(getattr(gb_cfg, "ewm_halflife", 20)),
+                        shrinkage_gamma=float(getattr(gb_cfg, "shrinkage_gamma", 0.05)),
+                        min_obs=int(getattr(gb_cfg, "min_obs", 40)),
+                        size_tau=float(getattr(gb_cfg, "size_tau", 1.0)),
+                        cache_dir=str(getattr(gb_cfg, "cache_dir", "graph_cache")),
+                        return_cols=tuple(
                             getattr(
-                                final_config.data.time_series, "sequence_length", 20
+                                gb_cfg,
+                                "return_cols",
+                                (
+                                    "label_excess_1_bps",
+                                    "label_ret_1_bps",
+                                    "ret_1d",
+                                    "return_1d",
+                                ),
                             )
                         ),
-                        correlation_threshold=thr,
-                        max_edges_per_node=k_per,
-                        correlation_method=corr_method,
-                        ewm_halflife=ewm_hl,
-                        shrinkage_gamma=shrink_g,
-                        symmetric=symm,
-                        cache_dir="graph_cache",
-                        verbose=True,
+                        sector_col=str(getattr(gb_cfg, "sector_col", "sector")),
+                        log_mktcap_col=str(getattr(gb_cfg, "log_mktcap_col", "log_mktcap")),
+                        method=str(getattr(gb_cfg, "method", "ewm_demean")),
+                        symmetric=bool(getattr(gb_cfg, "symmetric", True)),
                     )
+
+                    # Ensure at least one return-like column exists; add fallbacks if needed
+                    try:
+                        import glob
+
+                        import polars as pl
+
+                        sample = next(iter(glob.iglob(gbc.source_glob)), None)
+                        if sample:
+                            cols = set(pl.read_parquet(sample, n_rows=0).columns)
+                            current = list(gbc.return_cols)
+                            for alt in ("feat_ret_1d", "target_1d"):
+                                if alt in cols and alt not in current:
+                                    current.append(alt)
+                            if current != list(gbc.return_cols):
+                                gbc = GBConfig(
+                                    source_glob=gbc.source_glob,
+                                    lookback=gbc.lookback,
+                                    k=gbc.k,
+                                    ewm_halflife=gbc.ewm_halflife,
+                                    shrinkage_gamma=gbc.shrinkage_gamma,
+                                    min_obs=gbc.min_obs,
+                                    size_tau=gbc.size_tau,
+                                    cache_dir=gbc.cache_dir,
+                                    return_cols=tuple(current),
+                                    sector_col=gbc.sector_col,
+                                    log_mktcap_col=gbc.log_mktcap_col,
+                                    method=gbc.method,
+                                    symmetric=gbc.symmetric,
+                                )
+                                logger.info(
+                                    "[GraphBuilder] return_cols extended to %s", current
+                                )
+                    except Exception as _e:
+                        logger.warning(
+                            "[GraphBuilder] return_cols fallback check skipped: %s", _e
+                        )
+
+                    gb = GraphBuilder(gbc)
                     logger.info(
-                        f"[AdvGraph] Enabled training-time FinancialGraphBuilder (method={corr_method}, k={k_per}, thr={thr})"
+                        f"[GraphBuilder] initialized from {gbc.source_glob} (lookback={gbc.lookback}, k={gbc.k})"
                     )
+
+                    use_adv_train = os.getenv("USE_ADV_GRAPH_TRAIN", "0") in (
+                        "1",
+                        "true",
+                        "True",
+                    )
+                    if not use_adv_train:
+                        try:
+                            use_adv_train = bool(getattr(gb_cfg, "use_in_training", False))
+                        except Exception:
+                            use_adv_train = False
+
+                    if AdvFinancialGraphBuilder is not None and use_adv_train:
+                        try:
+                            corr_method = str(getattr(gb_cfg, "method", "ewm_demean"))
+                            ewm_hl = int(getattr(gb_cfg, "ewm_halflife", 20))
+                            shrink_g = float(getattr(gb_cfg, "shrinkage_gamma", 0.05))
+                            symm = bool(getattr(gb_cfg, "symmetric", True))
+                            k_per = int(getattr(gb_cfg, "k", 10))
+                            thr = float(getattr(gb_cfg, "edge_threshold", 0.3))
+                            gb_adv = AdvFinancialGraphBuilder(
+                                correlation_window=int(
+                                    getattr(
+                                        final_config.data.time_series, "sequence_length", 20
+                                    )
+                                ),
+                                correlation_threshold=thr,
+                                max_edges_per_node=k_per,
+                                correlation_method=corr_method,
+                                ewm_halflife=ewm_hl,
+                                shrinkage_gamma=shrink_g,
+                                symmetric=symm,
+                                cache_dir="graph_cache",
+                                verbose=True,
+                            )
+                            logger.info(
+                                f"[AdvGraph] Enabled training-time FinancialGraphBuilder (method={corr_method}, k={k_per}, thr={thr})"
+                            )
+                        except Exception as _e:
+                            logger.warning(f"[AdvGraph] init failed: {_e}")
+                            gb_adv = None
                 except Exception as _e:
-                    logger.warning(f"[AdvGraph] init failed: {_e}")
+                    logger.warning(
+                        f"[GraphBuilder] unavailable; fallback to dynamic KNN. reason={_e}"
+                    )
+                    gb = None
                     gb_adv = None
-        except Exception as _e:
-            logger.warning(
-                f"[GraphBuilder] unavailable; fallback to dynamic KNN. reason={_e}"
-            )
         snapshot_ens = os.getenv("SNAPSHOT_ENS", "0") == "1"
         snapshot_num = int(os.getenv("SNAPSHOT_NUM", "4")) if snapshot_ens else 0
         snapshot_points = set()
@@ -7861,6 +8716,49 @@ def train(config: DictConfig) -> None:
                     n_epochs,
                 )
             return
+
+        logger.info(
+            "[TRAIN-DIAG] env ENABLE_TRAIN_CX_DIAG=%s",
+            os.getenv("ENABLE_TRAIN_CX_DIAG"),
+        )
+        logger.debug(
+            "[TRAIN-DIAG] env ENABLE_TRAIN_CX_DIAG=%s (duplicate debug)",
+            os.getenv("ENABLE_TRAIN_CX_DIAG"),
+        )
+        train_diag_enabled = (
+            os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in ("1", "true", "yes")
+        )
+        if train_diag_enabled:
+            try:
+                train_diag_max_epochs = max(
+                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1"))
+                )
+            except Exception:
+                train_diag_max_epochs = 1
+            try:
+                train_diag_max_batches = max(
+                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2"))
+                )
+            except Exception:
+                train_diag_max_batches = 2
+            try:
+                train_diag_warn = float(os.getenv("TRAIN_CX_DIAG_WARN_STD", "0.02"))
+            except Exception:
+                train_diag_warn = 0.02
+            train_diag_group_cache: dict[str, int] = {}
+            train_diag_next_group_id = 0
+            logger.info(
+                "[TRAIN-DIAG] enabled (max_epochs=%d, max_batches=%d, warn_std=%.4f)",
+                train_diag_max_epochs,
+                train_diag_max_batches,
+                train_diag_warn,
+            )
+        else:
+            train_diag_max_epochs = 0
+            train_diag_max_batches = 0
+            train_diag_warn = 0.0
+            train_diag_group_cache = {}
+            train_diag_next_group_id = 0
 
         for epoch in range(start_epoch, n_epochs + 1):
             if time_exceeded:
@@ -8025,6 +8923,75 @@ def train(config: DictConfig) -> None:
                     # Get valid masks from batch if available
                     valid_masks_full = batch.get("valid_mask", None)
                     n_items = int(feats_full.size(0))
+                    diag_store = None
+                    diag_group_np = None
+                    if (
+                        train_diag_max_epochs > 0
+                        and train_diag_max_batches > 0
+                        and epoch <= train_diag_max_epochs
+                        and batch_idx < train_diag_max_batches
+                    ):
+                        try:
+                            group_tensor = batch.get("group_day")
+                            if torch.is_tensor(group_tensor):
+                                group_full = group_tensor.detach().view(-1)
+                            elif group_tensor is not None:
+                                group_full = torch.as_tensor(
+                                    group_tensor, dtype=torch.long
+                                ).view(-1)
+                            else:
+                                group_full = None
+                        except Exception:
+                            group_full = None
+                        if group_full is None:
+                            date_values = batch.get("date")
+                            try:
+                                if isinstance(date_values, torch.Tensor):
+                                    date_list = [
+                                        str(x) for x in date_values.view(-1).tolist()
+                                    ]
+                                elif isinstance(date_values, (list, tuple)):
+                                    date_list = [str(x) for x in date_values]
+                                elif date_values is None:
+                                    date_list = []
+                                else:
+                                    date_list = [str(date_values)]
+                            except Exception:
+                                date_list = []
+                            if len(date_list) == n_items:
+                                group_ids: list[int] = []
+                                for d in date_list:
+                                    key = d[:10]
+                                    gid = train_diag_group_cache.get(key)
+                                    if gid is None:
+                                        gid = train_diag_next_group_id
+                                        train_diag_group_cache[key] = gid
+                                        train_diag_next_group_id += 1
+                                    group_ids.append(gid)
+                                if group_ids:
+                                    group_full = torch.tensor(
+                                        group_ids, dtype=torch.long
+                                    )
+                        if group_full is not None:
+                            try:
+                                diag_group_np = group_full.detach().cpu().numpy()
+                            except Exception:
+                                diag_group_np = None
+                        if diag_group_np is not None and diag_group_np.size == n_items:
+                            diag_store = {
+                                str(h): {"yhat": [], "y": [], "group": []}
+                                for h in getattr(criterion, "horizons", [])
+                            }
+                            logger.info(
+                                "[TRAIN-DIAG] ep=%d batch=%d collecting cross-sectional diagnostics (n_items=%d)",
+                                epoch,
+                                batch_idx,
+                                n_items,
+                            )
+                        else:
+                            diag_store = None
+                            diag_group_np = None
+
                     # Build external edges once per day-batch
                     edge_index = None
                     edge_attr = None
@@ -8517,6 +9484,42 @@ def train(config: DictConfig) -> None:
 
                             valid_masks = _compute_masks(targets)
 
+                            # Fallback: compute masks from targets
+                            def _compute_masks(_t):
+                                """Compute valid masks from targets"""
+                                if isinstance(_t, dict):
+                                    masks = {}
+                                    for _k, _v in _t.items():
+                                        if torch.is_tensor(_v):
+                                            valid_mask = torch.isfinite(_v)
+                                            bad = (~valid_mask).sum().item()
+                                            if bad > 0:
+                                                total = _v.numel()
+                                                valid_ratio = (total - bad) / max(
+                                                    1, total
+                                                )
+                                                logger.warning(
+                                                    f"[nan-guard] targets[{_k}]: non-finite={bad}/{total} (valid={valid_ratio:.2%})"
+                                                )
+                                            masks[_k] = valid_mask
+                                        else:
+                                            masks[_k] = None
+                                    return masks
+                                else:
+                                    if torch.is_tensor(_t):
+                                        valid_mask = torch.isfinite(_t)
+                                        bad = (~valid_mask).sum().item()
+                                        if bad > 0:
+                                            total = _t.numel()
+                                            valid_ratio = (total - bad) / max(1, total)
+                                            logger.warning(
+                                                f"[nan-guard] targets: non-finite={bad}/{total} (valid={valid_ratio:.2%})"
+                                            )
+                                        return valid_mask
+                                    return None
+
+                            valid_masks = _compute_masks(targets)
+
                         features = _finite_or_nan_fix_tensor(
                             features, "features", clamp=50.0
                         )
@@ -8694,6 +9697,80 @@ def train(config: DictConfig) -> None:
                                 loss, losses = criterion(
                                     preds_for_loss, targets, valid_masks
                                 )
+                                if diag_store is not None and diag_group_np is not None:
+                                    group_slice = diag_group_np[mb_start:mb_end]
+                                    if (
+                                        group_slice is not None
+                                        and group_slice.size == (mb_end - mb_start)
+                                    ):
+                                        for horizon in getattr(criterion, "horizons", []):
+                                            diag_key = str(horizon)
+                                            if diag_key not in diag_store:
+                                                diag_store[diag_key] = {
+                                                    "yhat": [],
+                                                    "y": [],
+                                                    "group": [],
+                                                }
+                                            pred_candidates = [
+                                                f"point_horizon_{horizon}",
+                                                f"horizon_{horizon}",
+                                                f"horizon_{horizon}d",
+                                                f"h{horizon}",
+                                            ]
+                                            targ_candidates = [
+                                                f"horizon_{horizon}",
+                                                f"horizon_{horizon}d",
+                                                f"feat_ret_{horizon}d",
+                                                f"point_horizon_{horizon}",
+                                                f"h{horizon}",
+                                            ]
+                                            pred_key = next(
+                                                (
+                                                    k
+                                                    for k in pred_candidates
+                                                    if isinstance(preds_for_loss, dict)
+                                                    and k in preds_for_loss
+                                                ),
+                                                None,
+                                            )
+                                            targ_key = next(
+                                                (
+                                                    k
+                                                    for k in targ_candidates
+                                                    if isinstance(targets, dict)
+                                                    and k in targets
+                                                ),
+                                                None,
+                                            )
+                                            if pred_key is None or targ_key is None:
+                                                continue
+                                            pred_tensor = preds_for_loss[pred_key]
+                                            targ_tensor = targets[targ_key]
+                                            if not torch.is_tensor(pred_tensor) or not torch.is_tensor(
+                                                targ_tensor
+                                            ):
+                                                continue
+                                            pred_np = (
+                                                pred_tensor.detach()
+                                                .view(-1)
+                                                .to("cpu")
+                                                .float()
+                                                .numpy()
+                                            )
+                                            targ_np = (
+                                                targ_tensor.detach()
+                                                .view(-1)
+                                                .to("cpu")
+                                                .float()
+                                                .numpy()
+                                            )
+                                            if pred_np.shape[0] != group_slice.shape[0]:
+                                                continue
+                                            diag_store[diag_key]["yhat"].append(pred_np)
+                                            diag_store[diag_key]["y"].append(targ_np)
+                                            diag_store[diag_key]["group"].append(
+                                                group_slice.copy()
+                                            )
                                 # Debug: Check loss type
                                 if not isinstance(loss, torch.Tensor):
                                     logger.error(
@@ -9214,6 +10291,44 @@ def train(config: DictConfig) -> None:
                                         logger.error("[FAILSAFE] " + msg)
                                         if deg_bad[k] >= need_consec and abort_on_guard:
                                             raise SystemExit(2)
+                                        elif deg_bad[k] >= need_consec:
+                                            last_reset = deg_last_reset_step.get(k, -1)
+                                            if last_reset != global_step:
+                                                reset_scale = float(
+                                                    os.getenv(
+                                                        "DEGENERACY_RESET_SCALE", "0.05"
+                                                    )
+                                                )
+                                                logger.warning(
+                                                    "[FAILSAFE] Applying prediction head reset "
+                                                    f"(h={h}, scale={reset_scale:.3f})"
+                                                )
+                                                with torch.no_grad():
+                                                    if hasattr(model, "prediction_head"):
+                                                        for (
+                                                            name,
+                                                            param,
+                                                        ) in model.prediction_head.named_parameters():
+                                                            if param.requires_grad:
+                                                                param.add_(
+                                                                    torch.randn_like(
+                                                                        param
+                                                                    )
+                                                                    * reset_scale
+                                                                )
+                                                    if hasattr(model, "backbone_projection"):
+                                                        bp = model.backbone_projection
+                                                        if isinstance(bp, torch.nn.Module):
+                                                            for param in bp.parameters():
+                                                                if param.requires_grad:
+                                                                    param.add_(
+                                                                        torch.randn_like(
+                                                                            param
+                                                                        )
+                                                                        * (reset_scale * 0.5)
+                                                                    )
+                                            deg_last_reset_step[k] = global_step
+                                            deg_bad[k] = 0
                                     else:
                                         if deg_bad[k] > 0:
                                             logger.info(
@@ -9374,6 +10489,84 @@ def train(config: DictConfig) -> None:
                                 )
                             except Exception:
                                 pass
+                        if (
+                            diag_store is not None
+                            and diag_group_np is not None
+                            and mb_end >= n_items
+                        ):
+                            for horizon_key, bucket in diag_store.items():
+                                yhat_parts = bucket.get("yhat") or []
+                                y_parts = bucket.get("y") or []
+                                group_parts = bucket.get("group") or []
+                                if not yhat_parts or not y_parts or not group_parts:
+                                    continue
+                                try:
+                                    yhat_np = np.concatenate(yhat_parts)
+                                    y_np = np.concatenate(y_parts)
+                                    group_np = np.concatenate(group_parts).astype(
+                                        np.int64, copy=False
+                                    )
+                                except Exception:
+                                    continue
+                                if (
+                                    yhat_np.size == 0
+                                    or y_np.size != yhat_np.size
+                                    or group_np.size != yhat_np.size
+                                ):
+                                    continue
+                                uniq_groups, counts = np.unique(
+                                    group_np, return_counts=True
+                                )
+                                per_pred_std: list[float] = []
+                                per_targ_std: list[float] = []
+                                for g, cnt in zip(uniq_groups, counts, strict=False):
+                                    if cnt <= 1:
+                                        continue
+                                    mask = group_np == g
+                                    per_pred_std.append(
+                                        float(np.std(yhat_np[mask]) + 1e-12)
+                                    )
+                                    per_targ_std.append(
+                                        float(np.std(y_np[mask]) + 1e-12)
+                                    )
+                                horizon_label = horizon_key
+                                if per_pred_std:
+                                    pred_mean = float(np.mean(per_pred_std))
+                                    pred_min = float(np.min(per_pred_std))
+                                    targ_mean = float(np.mean(per_targ_std))
+                                    targ_min = float(np.min(per_targ_std))
+                                    logger.info(
+                                        "[TRAIN-DIAG] ep=%d batch=%d h=%s per-day pred std mean=%.6f min=%.6f | target std mean=%.6f min=%.6f (groups=%d)",
+                                        epoch,
+                                        batch_idx,
+                                        horizon_label,
+                                        pred_mean,
+                                        pred_min,
+                                        targ_mean,
+                                        targ_min,
+                                        len(per_pred_std),
+                                    )
+                                    if train_diag_warn > 0.0 and pred_mean < train_diag_warn:
+                                        logger.warning(
+                                            "[TRAIN-DIAG] ep=%d batch=%d h=%s low per-day pred std: mean=%.6f (< %.4f)",
+                                            epoch,
+                                            batch_idx,
+                                            horizon_label,
+                                            pred_mean,
+                                            train_diag_warn,
+                                        )
+                                else:
+                                    max_group_size = int(counts.max()) if counts.size else 0
+                                    logger.info(
+                                        "[TRAIN-DIAG] ep=%d batch=%d h=%s insufficient cross-sectional coverage (groups=%d, max_group_size=%d)",
+                                        epoch,
+                                        batch_idx,
+                                        horizon_label,
+                                        int(len(counts)),
+                                        max_group_size,
+                                    )
+                            diag_store = None
+                            diag_group_np = None
                         mb_start = mb_end
                     if batch_idx % 10 == 0:
                         avg = total_loss / max(1, n_micro_steps)
@@ -10091,7 +11284,9 @@ def train(config: DictConfig) -> None:
                     if os.getenv("USE_BEST_CKPT_FOR_EXPORT", "1") == "1":
                         ckpt = Path("models/checkpoints/atft_gat_fan_final.pt")
                         if ckpt.exists():
-                            obj = torch.load(ckpt, map_location=device)
+                            # Load with weights_only=False for backward compatibility
+                            # This is safe for trusted checkpoints from our own training
+                            obj = torch.load(ckpt, map_location=device, weights_only=False)
                             sd = None
                             if isinstance(obj, dict):
                                 for k in ("state_dict", "model_state_dict"):
@@ -10118,13 +11313,19 @@ def train(config: DictConfig) -> None:
                 rows = []
                 with torch.no_grad():
                     for vb in val_loader:
-                        feats = vb["features"].to(device)
-                        preds = model(
-                            feats,
-                            vb.get("static_features", None),
-                            vb.get("edge_index", None),
-                            vb.get("edge_attr", None),
-                        )
+                        # Prepare batch dict for model forward()
+                        batch_dict = {
+                            "features": vb["features"].to(device),
+                        }
+                        # Add optional fields if present
+                        if "static_features" in vb:
+                            batch_dict["static_features"] = vb["static_features"].to(device)
+                        if "edge_index" in vb:
+                            batch_dict["edge_index"] = vb["edge_index"].to(device)
+                        if "edge_attr" in vb:
+                            batch_dict["edge_attr"] = vb["edge_attr"].to(device)
+
+                        preds = model(batch_dict)
                         # 予測キーの解決（1日ホライズン）
                         pred_key = None
                         for pk in ("point_horizon_1", "horizon_1", "h1"):

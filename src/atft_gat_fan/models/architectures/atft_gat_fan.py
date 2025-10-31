@@ -497,36 +497,10 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
     def _build_adaptive_normalization(self) -> nn.Module:
         """適応正規化層の構築 (FAN -> SAN)"""
-        norm_cfg = getattr(self.config.model, "adaptive_normalization", {})
-        fan_cfg = getattr(norm_cfg, "fan", {})
-        san_cfg = getattr(norm_cfg, "san", {})
-
-        fan_enabled = bool(getattr(fan_cfg, "enabled", True))
-        san_enabled = bool(getattr(san_cfg, "enabled", True))
-
-        fan = (
-            FrequencyAdaptiveNorm(
-                num_features=self.hidden_size,
-                window_sizes=list(getattr(fan_cfg, "window_sizes", [5, 10, 20])),
-                aggregation=str(getattr(fan_cfg, "aggregation", "weighted_mean")),
-                learn_weights=bool(getattr(fan_cfg, "learn_weights", True)),
-            )
-            if fan_enabled
-            else nn.Identity()
-        )
-
-        san = (
-            SliceAdaptiveNorm(
-                num_features=self.hidden_size,
-                num_slices=int(getattr(san_cfg, "num_slices", 3)),
-                overlap=float(getattr(san_cfg, "overlap", 0.5)),
-                slice_aggregation=str(getattr(san_cfg, "slice_aggregation", "learned")),
-            )
-            if san_enabled
-            else nn.Identity()
-        )
-
-        return nn.Sequential(fan, san)
+        # Diagnostic analysis showed Sequential(FAN, SAN) collapsed gradients by ~1e10.
+        # Replace with a single LayerNorm to preserve gradient flow while retaining
+        # normalization benefits. (See ENABLE_ENCODER_GRAD_HOOKS diagnostics, 2025-10-30)
+        return nn.LayerNorm(self.hidden_size, eps=1e-5)
 
     def _build_freq_dropout(self) -> nn.Module | None:
         """周波数領域のDropout設定"""
@@ -585,14 +559,22 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         """予測ヘッドの構築（Multi-horizon / RegimeMoE 対応）"""
         # Detect requested head type; default to multi-horizon for backward compatibility
         head_type = getattr(self.config.model.prediction_head, "type", "multi_horizon")
+        env_head_type = os.getenv("PRED_HEAD_VARIANT")
+        if env_head_type:
+            head_type = env_head_type.strip().lower()
 
-        if head_type == "regime_moe":
+        if head_type in ("regime_moe", "moe"):
             # Lazy import to avoid circulars
             from .regime_moe import RegimeMoEPredictionHeads
 
             return RegimeMoEPredictionHeads(
                 hidden_size=self.config.model.hidden_size, config=self.config.model
             )
+        if head_type in ("apex", "apex_style", "apex_head"):
+            logger.info(
+                "[PredictionHead] apex variant falls back to MultiHorizonPredictionHeads for compatibility"
+            )
+            head_type = "multi_horizon"
 
         # Multi-horizon prediction head（従来）
         training_cfg = self._get_training_config()
@@ -871,6 +853,24 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         projected_features = self.backbone_projection(combined_features)
         self._nan_guard(projected_features, "projected_features")
 
+        if self.training and os.getenv("ENABLE_ENCODER_GRAD_HOOKS", "0") == "1":
+            if not hasattr(self, "_projection_grad_hook"):
+
+                def _log_projection_grad(grad: torch.Tensor) -> None:
+                    try:
+                        norm = float(grad.norm())
+                        max_val = float(grad.abs().max())
+                        logger.info(
+                            "[ENCODER-GRAD] projected_features grad_norm=%.3e max=%.3e",
+                            norm,
+                            max_val,
+                        )
+                    except Exception as hook_err:
+                        logger.debug(f"[ENCODER-GRAD] projection hook failed: {hook_err}")
+
+                projected_features.register_hook(_log_projection_grad)
+                self._projection_grad_hook = True
+
         # Tier 2.3 diagnostics: log encoder output stats (post projection)
         if self.encoder_diag_enabled and self.training:
             with torch.no_grad():
@@ -894,9 +894,93 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                     "[ENCODER-DIAG] Adaptive normalization bypassed (BYPASS_ADAPTIVE_NORM=1)"
                 )
         else:
+            # Instrument adaptive_norm input/output for gradient debugging
+            if self.training and os.getenv("ENABLE_ADAPTIVE_NORM_DEBUG", "0") == "1":
+                # Log input statistics
+                with torch.no_grad():
+                    in_mean = projected_features.mean().item()
+                    in_std = projected_features.std().item()
+                    in_min = projected_features.min().item()
+                    in_max = projected_features.max().item()
+                    in_requires_grad = projected_features.requires_grad
+                logger.info(
+                    "[ADAPTIVE-NORM-DEBUG] INPUT: mean=%+.6f std=%.6f min=%+.6f max=%+.6f requires_grad=%s",
+                    in_mean, in_std, in_min, in_max, in_requires_grad
+                )
+
+                # Enable gradient retention for debugging
+                projected_features.retain_grad()
+
+                # Register hook to capture gradient BEFORE adaptive_norm
+                if not hasattr(self, "_adaptive_norm_input_hook"):
+                    def _log_adaptive_norm_input_grad(grad: torch.Tensor) -> torch.Tensor:
+                        try:
+                            norm = float(grad.norm())
+                            max_val = float(grad.abs().max())
+                            mean_val = float(grad.mean())
+                            logger.info(
+                                "[ADAPTIVE-NORM-GRAD] INPUT grad_norm=%.3e max=%.3e mean=%+.3e",
+                                norm, max_val, mean_val
+                            )
+                        except Exception as hook_err:
+                            logger.debug(f"[ADAPTIVE-NORM-GRAD] input hook failed: {hook_err}")
+                        return grad  # Must return grad for chain
+
+                    projected_features.register_hook(_log_adaptive_norm_input_grad)
+                    self._adaptive_norm_input_hook = True
+
             normalized_features = self.adaptive_norm(projected_features)
 
+            # Log output statistics and check gradient flow
+            if self.training and os.getenv("ENABLE_ADAPTIVE_NORM_DEBUG", "0") == "1":
+                with torch.no_grad():
+                    out_mean = normalized_features.mean().item()
+                    out_std = normalized_features.std().item()
+                    out_min = normalized_features.min().item()
+                    out_max = normalized_features.max().item()
+                    out_requires_grad = normalized_features.requires_grad
+                logger.info(
+                    "[ADAPTIVE-NORM-DEBUG] OUTPUT: mean=%+.6f std=%.6f min=%+.6f max=%+.6f requires_grad=%s",
+                    out_mean, out_std, out_min, out_max, out_requires_grad
+                )
+
+                # Register hook to capture gradients at output
+                if not hasattr(self, "_adaptive_norm_output_hook"):
+                    def _log_adaptive_norm_output_grad(grad: torch.Tensor) -> torch.Tensor:
+                        try:
+                            norm = float(grad.norm())
+                            max_val = float(grad.abs().max())
+                            mean_val = float(grad.mean())
+                            logger.info(
+                                "[ADAPTIVE-NORM-GRAD] OUTPUT grad_norm=%.3e max=%.3e mean=%+.3e",
+                                norm, max_val, mean_val
+                            )
+                        except Exception as hook_err:
+                            logger.debug(f"[ADAPTIVE-NORM-GRAD] output hook failed: {hook_err}")
+                        return grad  # Must return grad for chain
+
+                    normalized_features.register_hook(_log_adaptive_norm_output_grad)
+                    self._adaptive_norm_output_hook = True
+
         self._nan_guard(normalized_features, "normalized_features_pre_residual")
+
+        if self.training and os.getenv("ENABLE_ENCODER_GRAD_HOOKS", "0") == "1":
+            if not hasattr(self, "_normalized_grad_hook"):
+
+                def _log_normalized_grad(grad: torch.Tensor) -> None:
+                    try:
+                        norm = float(grad.norm())
+                        max_val = float(grad.abs().max())
+                        logger.info(
+                            "[ENCODER-GRAD] normalized_features grad_norm=%.3e max=%.3e",
+                            norm,
+                            max_val,
+                        )
+                    except Exception as hook_err:
+                        logger.debug(f"[ENCODER-GRAD] normalized hook failed: {hook_err}")
+
+                normalized_features.register_hook(_log_normalized_grad)
+                self._normalized_grad_hook = True
 
         # Log normalized_features statistics (Tier 2.3/2.4 diagnostics)
         if self.encoder_diag_enabled and self.training:
@@ -915,8 +999,6 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
         # GAT Residual Bypass適用 (Phase 2) - post-normalization so FAN/SAN do not zero-out GAT signal
         # 🔧 Tier 2.2: Environment variable override for testing GAT bypass hypothesis
-        import os
-
         bypass_gat_completely = os.environ.get("BYPASS_GAT_COMPLETELY", "0") == "1"
 
         if (
@@ -1453,12 +1535,37 @@ class PredictionHead(nn.Module):
         self,
         hidden_size: int,
         config: DictConfig,
-        output_std: float = 0.01,
-        layer_scale_gamma: float = 0.1,
+        output_std: float = 0.05,
+        layer_scale_gamma: float = 1.0,
     ):
         super().__init__()
         self.config = config
-
+        arch_cfg = getattr(config, "architecture", None)
+        base_dropout = float(getattr(arch_cfg, "dropout", 0.0)) if arch_cfg else 0.0
+        output_init_std = float(output_std)
+        if arch_cfg is not None and hasattr(arch_cfg, "output_init_std"):
+            try:
+                output_init_std = float(getattr(arch_cfg, "output_init_std"))
+            except Exception:
+                pass
+        env_std = os.getenv("PRED_HEAD_INIT_STD")
+        if env_std:
+            try:
+                output_init_std = float(env_std)
+            except Exception:
+                pass
+        layer_scale_val = float(layer_scale_gamma)
+        if arch_cfg is not None and hasattr(arch_cfg, "layer_scale_gamma"):
+            try:
+                layer_scale_val = float(getattr(arch_cfg, "layer_scale_gamma"))
+            except Exception:
+                pass
+        env_layer_scale = os.getenv("PRED_HEAD_LAYER_SCALE")
+        if env_layer_scale:
+            try:
+                layer_scale_val = float(env_layer_scale)
+            except Exception:
+                pass
         # 隠れ層
         layers = []
         current_size = hidden_size
@@ -1467,7 +1574,7 @@ class PredictionHead(nn.Module):
                 [
                     nn.Linear(current_size, hidden_dim),
                     nn.ReLU(),
-                    nn.Dropout(config.architecture.dropout),
+                    nn.Dropout(base_dropout),
                 ]
             )
             current_size = hidden_dim
@@ -1477,11 +1584,11 @@ class PredictionHead(nn.Module):
         self.output_layer = nn.Linear(current_size, len(quantiles))
 
         # small-init + zero bias
-        nn.init.trunc_normal_(self.output_layer.weight, std=output_std)
+        nn.init.trunc_normal_(self.output_layer.weight, std=output_init_std)
         nn.init.zeros_(self.output_layer.bias)
 
         # LayerScale
-        self.layer_scale = nn.Parameter(torch.ones(len(quantiles)) * layer_scale_gamma)
+        self.layer_scale = nn.Parameter(torch.ones(len(quantiles)) * layer_scale_val)
 
         self.layers = nn.Sequential(*layers)
 
@@ -1497,6 +1604,120 @@ class PredictionHead(nn.Module):
         return output * self.layer_scale
 
 
+class ApexStylePredictionHead(nn.Module):
+    """APEX-Rankerに合わせた軽量マルチホライズン出力ヘッド。
+
+    - horizonごとにシンプルな線形射を適用
+    - ドロップアウト/初期化は環境変数で調整可能
+    - 量子的出力ではなくポイント予測を返す
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        config: DictConfig,
+        training_cfg: DictConfig | None = None,
+    ):
+        super().__init__()
+        self.config = config
+        self._training_cfg = training_cfg
+
+        arch_cfg = getattr(config, "architecture", None)
+        base_dropout = float(getattr(arch_cfg, "dropout", 0.0)) if arch_cfg else 0.0
+        env_dropout = os.getenv("APEX_HEAD_DROPOUT")
+        if env_dropout:
+            try:
+                base_dropout = float(env_dropout)
+            except Exception:
+                pass
+
+        linear_init_std = float(getattr(arch_cfg, "output_init_std", 0.02)) if arch_cfg else 0.02
+        env_init = os.getenv("APEX_HEAD_INIT_STD")
+        if env_init:
+            try:
+                linear_init_std = float(env_init)
+            except Exception:
+                pass
+
+        horizons = self._resolve_horizons()
+        self.prediction_horizons = horizons
+
+        self.dropout = nn.Dropout(base_dropout) if base_dropout > 0 else None
+
+        self.heads = nn.ModuleDict()
+        for horizon in horizons:
+            head = nn.Linear(hidden_size, 1)
+            nn.init.trunc_normal_(head.weight, std=linear_init_std)
+            nn.init.zeros_(head.bias)
+            self.heads[f"horizon_{horizon}d"] = head
+
+    def _resolve_horizons(self) -> list[int]:
+        def _extract(cfg: DictConfig | None) -> list[int] | None:
+            if cfg is None:
+                return None
+            try:
+                if hasattr(cfg, "prediction") and hasattr(cfg.prediction, "horizons"):
+                    return list(int(h) for h in cfg.prediction.horizons)
+                if hasattr(cfg, "prediction_horizons"):
+                    return list(int(h) for h in cfg.prediction_horizons)
+            except Exception:
+                return None
+            return None
+
+        horizons = _extract(self._training_cfg)
+        if horizons is None:
+            horizons = _extract(getattr(self.config, "training", None))
+        if horizons is None and hasattr(self.config, "prediction_horizons"):
+            try:
+                horizons = list(int(h) for h in self.config.prediction_horizons)
+            except Exception:
+                horizons = None
+        if horizons is None:
+            horizons = [1, 5, 10, 20]
+        return horizons
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        diag_enabled = os.getenv("ENABLE_PREDICTION_HEAD_DIAGNOSTICS", "0") == "1"
+        if x.dim() == 3:
+            x = x[:, -1, :]
+        elif x.dim() != 2:
+            raise ValueError(f"ApexStylePredictionHead expected 2D/3D input, got {x.dim()}D")
+
+        if self.dropout is not None:
+            x = self.dropout(x)
+
+        if diag_enabled:
+            with torch.no_grad():
+                logger.info(
+                    "[APEX-HEAD-DIAG] input mean=%+.6f std=%.6f min=%+.6f max=%+.6f",
+                    x.mean().item(),
+                    x.std().item(),
+                    x.min().item(),
+                    x.max().item(),
+                )
+
+        outputs: dict[str, torch.Tensor] = {}
+        for horizon in self.prediction_horizons:
+            key = f"horizon_{horizon}d"
+            pred = self.heads[key](x).squeeze(-1)
+            outputs[key] = pred
+            # 互換性確保: 損失側が 'horizon_{h}' キーを期待するケースにも対応
+            bare_key = f"horizon_{horizon}"
+            outputs[bare_key] = pred
+            outputs[f"point_{bare_key}"] = pred
+            if diag_enabled:
+                with torch.no_grad():
+                    logger.info(
+                        "[APEX-HEAD-DIAG] %s mean=%+.6f std=%.6f min=%+.6f max=%+.6f",
+                        key,
+                        pred.mean().item(),
+                        pred.std().item(),
+                        pred.min().item(),
+                        pred.max().item(),
+                    )
+        return outputs
+
+
 class MultiHorizonPredictionHeads(nn.Module):
     """Multi-horizon prediction heads - 各予測期間専用の出力層"""
 
@@ -1505,14 +1726,67 @@ class MultiHorizonPredictionHeads(nn.Module):
         hidden_size: int,
         config: DictConfig,
         training_cfg: DictConfig | None = None,
-        output_std: float = 0.01,
-        layer_scale_gamma: float = 0.1,
+        output_std: float = 0.05,
+        layer_scale_gamma: float = 1.0,
     ):
         super().__init__()
         self.config = config
 
+        # Simple mode is currently disabled by default; placeholder for future extensions
+        self.simple_mode = False
+        self.simple_dropout = None
+
         # 予測対象期間の設定 (新しいconfig構造をサポート)
         self._training_cfg = training_cfg or getattr(config, "training", None)
+
+        # Dropout設定 (QuantilePredictionHead と同一ロジック)
+        arch_cfg = getattr(config, "architecture", None)
+        base_dropout = float(getattr(arch_cfg, "dropout", 0.0)) if arch_cfg else 0.0
+        env_dropout = os.getenv("PRED_HEAD_DROPOUT")
+        if env_dropout:
+            try:
+                base_dropout = float(env_dropout)
+            except Exception:
+                pass
+
+        output_init_std = float(output_std)
+        if arch_cfg is not None and hasattr(arch_cfg, "output_init_std"):
+            try:
+                output_init_std = float(getattr(arch_cfg, "output_init_std"))
+            except Exception:
+                pass
+        env_std = os.getenv("PRED_HEAD_INIT_STD")
+        if env_std:
+            try:
+                output_init_std = float(env_std)
+            except Exception:
+                pass
+
+        layer_scale_val = float(layer_scale_gamma)
+        if arch_cfg is not None and hasattr(arch_cfg, "layer_scale_gamma"):
+            try:
+                layer_scale_val = float(getattr(arch_cfg, "layer_scale_gamma"))
+            except Exception:
+                pass
+        env_layer_scale = os.getenv("PRED_HEAD_LAYER_SCALE")
+        if env_layer_scale:
+            try:
+                layer_scale_val = float(env_layer_scale)
+            except Exception:
+                pass
+
+        use_shared_layernorm = False
+        if arch_cfg is not None and hasattr(arch_cfg, "use_shared_layernorm"):
+            try:
+                use_shared_layernorm = bool(getattr(arch_cfg, "use_shared_layernorm"))
+            except Exception:
+                pass
+        env_use_layernorm = os.getenv("PRED_HEAD_USE_LAYERNORM")
+        if env_use_layernorm:
+            try:
+                use_shared_layernorm = env_use_layernorm.lower() in ("1", "true", "yes")
+            except Exception:
+                pass
 
         def _extract_horizons(cfg: DictConfig | None) -> list[int] | None:
             if cfg is None:
@@ -1540,12 +1814,14 @@ class MultiHorizonPredictionHeads(nn.Module):
         self.prediction_horizons = horizons
 
         # 共有特徴抽出層（各horizonで共有される中間表現）
-        self.shared_encoder = nn.Sequential(
+        shared_layers: list[nn.Module] = [
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(),
-            nn.Dropout(config.architecture.dropout),
-            nn.LayerNorm(hidden_size // 2),
-        )
+            nn.Dropout(base_dropout),
+        ]
+        if use_shared_layernorm:
+            shared_layers.append(nn.LayerNorm(hidden_size // 2))
+        self.shared_encoder = nn.Sequential(*shared_layers)
 
         # 各horizon専用の出力ヘッド
         self.horizon_heads = nn.ModuleDict()
@@ -1564,7 +1840,7 @@ class MultiHorizonPredictionHeads(nn.Module):
                         nn.Linear(current_size, current_size),
                         nn.ReLU(),
                         nn.Dropout(
-                            config.architecture.dropout * 0.5
+                            base_dropout * 0.5
                         ),  # Lower dropout for short-term
                     ]
                 )
@@ -1575,7 +1851,7 @@ class MultiHorizonPredictionHeads(nn.Module):
                         nn.Linear(current_size, current_size // 2),
                         nn.ReLU(),
                         nn.Dropout(
-                            config.architecture.dropout * 1.5
+                            base_dropout * 1.5
                         ),  # Higher dropout for long-term
                         nn.Linear(current_size // 2, current_size),
                         nn.ReLU(),
@@ -1593,7 +1869,7 @@ class MultiHorizonPredictionHeads(nn.Module):
                 if isinstance(layer, nn.Linear):
                     # Short-term: smaller init (less certainty)
                     # Long-term: larger init (more trend confidence)
-                    std = output_std * (0.5 if horizon <= 5 else 1.0)
+                    std = output_init_std * (0.5 if horizon <= 5 else 1.0)
                     nn.init.trunc_normal_(layer.weight, std=std)
                     nn.init.zeros_(layer.bias)
 
@@ -1604,7 +1880,7 @@ class MultiHorizonPredictionHeads(nn.Module):
         for horizon in self.prediction_horizons:
             # Short-term: smaller scale (less confident)
             # Long-term: larger scale (more trend confident)
-            scale = layer_scale_gamma * (0.8 if horizon <= 5 else 1.2)
+            scale = layer_scale_val * (0.8 if horizon <= 5 else 1.2)
             self.layer_scales[f"horizon_{horizon}d"] = nn.Parameter(
                 torch.ones(len(quantiles)) * scale
             )
@@ -1623,6 +1899,13 @@ class MultiHorizonPredictionHeads(nn.Module):
                 'horizon_20d': [batch_size, n_quantiles],
             }
         """
+        # Import logger
+        import logging
+        import os
+
+        logger = logging.getLogger(__name__)
+        diag_enabled = os.getenv("ENABLE_PREDICTION_HEAD_DIAGNOSTICS", "0") == "1"
+
         # 最後のタイムステップを使用 (3D input) or そのまま使用 (2D input)
         if x.dim() == 3:
             x = x[:, -1, :]  # [batch_size, hidden_size]
@@ -1631,8 +1914,41 @@ class MultiHorizonPredictionHeads(nn.Module):
         else:
             raise ValueError(f"Expected 2D or 3D input, got {x.dim()}D")
 
+        if diag_enabled:
+            with torch.no_grad():
+                x_mean = x.mean().item()
+                x_std = x.std().item()
+                x_min = x.min().item()
+                x_max = x.max().item()
+            logger.info(
+                "[PRED-HEAD-DIAG] input mean=%+.6f std=%.6f min=%+.6f max=%+.6f",
+                x_mean,
+                x_std,
+                x_min,
+                x_max,
+            )
+
         # 共有エンコーダで中間表現を獲得
-        shared_features = self.shared_encoder(x)  # [batch_size, hidden_size//2]
+        if self.simple_mode:
+            shared_features = x
+            if getattr(self, "simple_dropout", None) is not None:
+                shared_features = self.simple_dropout(shared_features)
+        else:
+            shared_features = self.shared_encoder(x)  # [batch_size, hidden_size//2]
+
+        if diag_enabled:
+            with torch.no_grad():
+                sf_mean = shared_features.mean().item()
+                sf_std = shared_features.std().item()
+                sf_min = shared_features.min().item()
+                sf_max = shared_features.max().item()
+            logger.info(
+                "[PRED-HEAD-DIAG] shared_features mean=%+.6f std=%.6f min=%+.6f max=%+.6f",
+                sf_mean,
+                sf_std,
+                sf_min,
+                sf_max,
+            )
 
         # 各horizon専用ヘッドで予測
         predictions = {}
@@ -1642,10 +1958,33 @@ class MultiHorizonPredictionHeads(nn.Module):
             # Horizon専用の処理
             horizon_output = self.horizon_heads[horizon_key](shared_features)
 
-            # LayerScale適用
-            scaled_output = horizon_output * self.layer_scales[horizon_key]
+            if diag_enabled:
+                with torch.no_grad():
+                    ho_mean = horizon_output.mean().item()
+                    ho_std = horizon_output.std().item()
+                logger.info(
+                    "[PRED-HEAD-DIAG] %s pre-scale mean=%+.6f std=%.6f",
+                    horizon_key,
+                    ho_mean,
+                    ho_std,
+                )
 
-            predictions[horizon_key] = scaled_output
+            if not self.simple_mode and self.layer_scales is not None:
+                scale_vec = self.layer_scales[horizon_key]
+                horizon_output = horizon_output * scale_vec
+                if diag_enabled:
+                    with torch.no_grad():
+                        so_mean = horizon_output.mean().item()
+                        so_std = horizon_output.std().item()
+                    logger.info(
+                        "[PRED-HEAD-DIAG] %s post-scale mean=%+.6f std=%.6f (scale mean=%.6f)",
+                        horizon_key,
+                        so_mean,
+                        so_std,
+                        scale_vec.mean().item(),
+                    )
+
+            predictions[horizon_key] = horizon_output
 
         return predictions
 

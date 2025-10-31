@@ -86,6 +86,47 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--top-k", type=int, default=50, help="Number of stocks to hold"
     )
     parser.add_argument(
+        "--target-top-k",
+        type=int,
+        default=35,
+        help="Target holdings count after optimisation (default: 35)",
+    )
+    parser.add_argument(
+        "--min-position-weight",
+        type=float,
+        default=0.02,
+        help="Minimum allocation weight per position (default: 0.02)",
+    )
+    parser.add_argument(
+        "--turnover-limit",
+        type=float,
+        default=0.35,
+        help="Maximum turnover fraction allowed per rebalance (default: 0.35)",
+    )
+    parser.add_argument(
+        "--cost-penalty",
+        type=float,
+        default=1.0,
+        help="Penalty multiplier applied to estimated round-trip transaction costs",
+    )
+    parser.add_argument(
+        "--candidate-multiplier",
+        type=float,
+        default=2.0,
+        help="Multiplier controlling candidate pool size vs. target top-k (default: 2.0)",
+    )
+    parser.add_argument(
+        "--min-alpha",
+        type=float,
+        default=0.1,
+        help="Minimum adjustment factor when enforcing turnover constraints (default: 0.1)",
+    )
+    parser.add_argument(
+        "--panel-cache-dir",
+        default="cache/panel",
+        help="Directory for persisted panel caches (default: cache/panel)",
+    )
+    parser.add_argument(
         "--horizon", type=int, default=20, help="Prediction horizon in days"
     )
     parser.add_argument(
@@ -198,6 +239,12 @@ def run_walk_forward_backtest_regime(
     fold_metrics_dir: str | None,
     fold_trades_dir: str | None,
     progress_callback: Callable[[dict], None] | None,
+    optimization_target_top_k: int,
+    min_position_weight: float,
+    turnover_limit: float,
+    cost_penalty: float,
+    candidate_multiplier: float,
+    min_alpha: float,
 ) -> dict:
     """
     Run regime-adaptive walk-forward backtest.
@@ -292,6 +339,13 @@ def run_walk_forward_backtest_regime(
                 enable_regime_detection=enable_regime_detection,
                 regime_lookback=regime_lookback,
                 daily_metrics_path=fold_csv_path,
+                optimization_target_top_k=optimization_target_top_k,
+                min_position_weight=min_position_weight,
+                turnover_limit=turnover_limit,
+                cost_penalty=cost_penalty,
+                candidate_multiplier=candidate_multiplier,
+                min_alpha=min_alpha,
+                panel_cache_dir=panel_cache_dir,
             )
 
             # Extract performance metrics
@@ -416,6 +470,13 @@ def run_walk_forward_backtest_regime(
             "regime_lookback": regime_lookback,
             "rebalance_frequency": rebalance_frequency,
             "top_k": top_k,
+            "target_top_k": optimization_target_top_k,
+            "min_position_weight": min_position_weight,
+            "turnover_limit": turnover_limit,
+            "cost_penalty": cost_penalty,
+            "candidate_multiplier": candidate_multiplier,
+            "min_alpha": min_alpha,
+            "panel_cache_dir": str(panel_cache_dir) if panel_cache_dir else None,
             "horizon": horizon,
         },
     }
@@ -436,6 +497,10 @@ def main(argv: Optional[list[str]] = None) -> None:
         raise ValueError(
             "Config path is required unless --use-mock-predictions is specified"
         )
+
+    panel_cache_dir = (
+        Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
+    )
 
     splitter = WalkForwardSplitter(
         train_days=args.train_days,
@@ -490,6 +555,13 @@ def main(argv: Optional[list[str]] = None) -> None:
         fold_metrics_dir=args.fold_metrics_dir,
         fold_trades_dir=args.fold_trades_dir,
         progress_callback=progress,
+        optimization_target_top_k=args.target_top_k,
+        min_position_weight=args.min_position_weight,
+        turnover_limit=args.turnover_limit,
+        cost_penalty=args.cost_penalty,
+        candidate_multiplier=args.candidate_multiplier,
+        min_alpha=args.min_alpha,
+        panel_cache_dir=panel_cache_dir,
     )
 
     duration = time.time() - start_time
