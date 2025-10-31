@@ -1,8 +1,8 @@
 """Portfolio optimisation helpers for APEX-Ranker backtests."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping, Tuple
 
 from .costs import CostCalculator
 
@@ -164,7 +164,7 @@ def generate_target_weights(
     config: OptimizationConfig,
     cost_calculator: CostCalculator | None = None,
     volumes: Mapping[str, float] | None = None,
-) -> Tuple[dict[str, float], OptimizationResult]:
+) -> tuple[dict[str, float], OptimizationResult]:
     """Construct cost-aware target weights from model predictions."""
     result = OptimizationResult()
 
@@ -221,9 +221,7 @@ def generate_target_weights(
             dropped_for_min_weight.append(removed)
             continue
 
-        target_weights = {
-            code: weight_per_position for code in selected_codes
-        }
+        target_weights = dict.fromkeys(selected_codes, weight_per_position)
         unconstrained_turnover = _compute_turnover(current_weights, target_weights)
 
         if (

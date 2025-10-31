@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 import numpy as np
 import polars as pl
@@ -208,7 +207,7 @@ class DefensiveRiskManager:
     def calculate_exposure(
         self,
         signals: RegimeSignals,
-        current_dd: Optional[float] = None,
+        current_dd: float | None = None,
     ) -> float:
         """
         Calculate recommended portfolio exposure based on regime and drawdown.
@@ -253,7 +252,7 @@ class DefensiveRiskManager:
         self,
         base_capital: float,
         signals: RegimeSignals,
-        current_dd: Optional[float] = None,
+        current_dd: float | None = None,
     ) -> float:
         """
         Calculate adjusted capital allocation based on risk conditions.

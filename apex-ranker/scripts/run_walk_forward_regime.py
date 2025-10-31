@@ -20,7 +20,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -45,7 +45,7 @@ def _load_backtest_function() -> Callable[..., dict]:
     return module.run_regime_adaptive_backtest
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run regime-adaptive walk-forward backtest evaluation"
     )
@@ -482,7 +482,7 @@ def run_walk_forward_backtest_regime(
     }
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
     data_path = Path(args.data)

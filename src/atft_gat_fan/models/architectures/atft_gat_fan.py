@@ -19,9 +19,7 @@ from src.training.curriculum import (
 
 from ..components import (
     FreqDropout1D,
-    FrequencyAdaptiveNorm,
     MultiLayerGAT,
-    SliceAdaptiveNorm,
     TemporalFusionTransformer,
     VariableSelectionNetwork,
 )
@@ -866,7 +864,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                             max_val,
                         )
                     except Exception as hook_err:
-                        logger.debug(f"[ENCODER-GRAD] projection hook failed: {hook_err}")
+                        logger.debug(
+                            f"[ENCODER-GRAD] projection hook failed: {hook_err}"
+                        )
 
                 projected_features.register_hook(_log_projection_grad)
                 self._projection_grad_hook = True
@@ -905,7 +905,11 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                     in_requires_grad = projected_features.requires_grad
                 logger.info(
                     "[ADAPTIVE-NORM-DEBUG] INPUT: mean=%+.6f std=%.6f min=%+.6f max=%+.6f requires_grad=%s",
-                    in_mean, in_std, in_min, in_max, in_requires_grad
+                    in_mean,
+                    in_std,
+                    in_min,
+                    in_max,
+                    in_requires_grad,
                 )
 
                 # Enable gradient retention for debugging
@@ -913,17 +917,24 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
 
                 # Register hook to capture gradient BEFORE adaptive_norm
                 if not hasattr(self, "_adaptive_norm_input_hook"):
-                    def _log_adaptive_norm_input_grad(grad: torch.Tensor) -> torch.Tensor:
+
+                    def _log_adaptive_norm_input_grad(
+                        grad: torch.Tensor
+                    ) -> torch.Tensor:
                         try:
                             norm = float(grad.norm())
                             max_val = float(grad.abs().max())
                             mean_val = float(grad.mean())
                             logger.info(
                                 "[ADAPTIVE-NORM-GRAD] INPUT grad_norm=%.3e max=%.3e mean=%+.3e",
-                                norm, max_val, mean_val
+                                norm,
+                                max_val,
+                                mean_val,
                             )
                         except Exception as hook_err:
-                            logger.debug(f"[ADAPTIVE-NORM-GRAD] input hook failed: {hook_err}")
+                            logger.debug(
+                                f"[ADAPTIVE-NORM-GRAD] input hook failed: {hook_err}"
+                            )
                         return grad  # Must return grad for chain
 
                     projected_features.register_hook(_log_adaptive_norm_input_grad)
@@ -941,22 +952,33 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                     out_requires_grad = normalized_features.requires_grad
                 logger.info(
                     "[ADAPTIVE-NORM-DEBUG] OUTPUT: mean=%+.6f std=%.6f min=%+.6f max=%+.6f requires_grad=%s",
-                    out_mean, out_std, out_min, out_max, out_requires_grad
+                    out_mean,
+                    out_std,
+                    out_min,
+                    out_max,
+                    out_requires_grad,
                 )
 
                 # Register hook to capture gradients at output
                 if not hasattr(self, "_adaptive_norm_output_hook"):
-                    def _log_adaptive_norm_output_grad(grad: torch.Tensor) -> torch.Tensor:
+
+                    def _log_adaptive_norm_output_grad(
+                        grad: torch.Tensor
+                    ) -> torch.Tensor:
                         try:
                             norm = float(grad.norm())
                             max_val = float(grad.abs().max())
                             mean_val = float(grad.mean())
                             logger.info(
                                 "[ADAPTIVE-NORM-GRAD] OUTPUT grad_norm=%.3e max=%.3e mean=%+.3e",
-                                norm, max_val, mean_val
+                                norm,
+                                max_val,
+                                mean_val,
                             )
                         except Exception as hook_err:
-                            logger.debug(f"[ADAPTIVE-NORM-GRAD] output hook failed: {hook_err}")
+                            logger.debug(
+                                f"[ADAPTIVE-NORM-GRAD] output hook failed: {hook_err}"
+                            )
                         return grad  # Must return grad for chain
 
                     normalized_features.register_hook(_log_adaptive_norm_output_grad)
@@ -977,7 +999,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                             max_val,
                         )
                     except Exception as hook_err:
-                        logger.debug(f"[ENCODER-GRAD] normalized hook failed: {hook_err}")
+                        logger.debug(
+                            f"[ENCODER-GRAD] normalized hook failed: {hook_err}"
+                        )
 
                 normalized_features.register_hook(_log_normalized_grad)
                 self._normalized_grad_hook = True
@@ -1545,7 +1569,7 @@ class PredictionHead(nn.Module):
         output_init_std = float(output_std)
         if arch_cfg is not None and hasattr(arch_cfg, "output_init_std"):
             try:
-                output_init_std = float(getattr(arch_cfg, "output_init_std"))
+                output_init_std = float(arch_cfg.output_init_std)
             except Exception:
                 pass
         env_std = os.getenv("PRED_HEAD_INIT_STD")
@@ -1557,7 +1581,7 @@ class PredictionHead(nn.Module):
         layer_scale_val = float(layer_scale_gamma)
         if arch_cfg is not None and hasattr(arch_cfg, "layer_scale_gamma"):
             try:
-                layer_scale_val = float(getattr(arch_cfg, "layer_scale_gamma"))
+                layer_scale_val = float(arch_cfg.layer_scale_gamma)
             except Exception:
                 pass
         env_layer_scale = os.getenv("PRED_HEAD_LAYER_SCALE")
@@ -1631,7 +1655,9 @@ class ApexStylePredictionHead(nn.Module):
             except Exception:
                 pass
 
-        linear_init_std = float(getattr(arch_cfg, "output_init_std", 0.02)) if arch_cfg else 0.02
+        linear_init_std = (
+            float(getattr(arch_cfg, "output_init_std", 0.02)) if arch_cfg else 0.02
+        )
         env_init = os.getenv("APEX_HEAD_INIT_STD")
         if env_init:
             try:
@@ -1681,7 +1707,9 @@ class ApexStylePredictionHead(nn.Module):
         if x.dim() == 3:
             x = x[:, -1, :]
         elif x.dim() != 2:
-            raise ValueError(f"ApexStylePredictionHead expected 2D/3D input, got {x.dim()}D")
+            raise ValueError(
+                f"ApexStylePredictionHead expected 2D/3D input, got {x.dim()}D"
+            )
 
         if self.dropout is not None:
             x = self.dropout(x)
@@ -1752,7 +1780,7 @@ class MultiHorizonPredictionHeads(nn.Module):
         output_init_std = float(output_std)
         if arch_cfg is not None and hasattr(arch_cfg, "output_init_std"):
             try:
-                output_init_std = float(getattr(arch_cfg, "output_init_std"))
+                output_init_std = float(arch_cfg.output_init_std)
             except Exception:
                 pass
         env_std = os.getenv("PRED_HEAD_INIT_STD")
@@ -1765,7 +1793,7 @@ class MultiHorizonPredictionHeads(nn.Module):
         layer_scale_val = float(layer_scale_gamma)
         if arch_cfg is not None and hasattr(arch_cfg, "layer_scale_gamma"):
             try:
-                layer_scale_val = float(getattr(arch_cfg, "layer_scale_gamma"))
+                layer_scale_val = float(arch_cfg.layer_scale_gamma)
             except Exception:
                 pass
         env_layer_scale = os.getenv("PRED_HEAD_LAYER_SCALE")
@@ -1778,7 +1806,7 @@ class MultiHorizonPredictionHeads(nn.Module):
         use_shared_layernorm = False
         if arch_cfg is not None and hasattr(arch_cfg, "use_shared_layernorm"):
             try:
-                use_shared_layernorm = bool(getattr(arch_cfg, "use_shared_layernorm"))
+                use_shared_layernorm = bool(arch_cfg.use_shared_layernorm)
             except Exception:
                 pass
         env_use_layernorm = os.getenv("PRED_HEAD_USE_LAYERNORM")
@@ -1839,9 +1867,7 @@ class MultiHorizonPredictionHeads(nn.Module):
                     [
                         nn.Linear(current_size, current_size),
                         nn.ReLU(),
-                        nn.Dropout(
-                            base_dropout * 0.5
-                        ),  # Lower dropout for short-term
+                        nn.Dropout(base_dropout * 0.5),  # Lower dropout for short-term
                     ]
                 )
             else:  # Long-term horizons (10d, 20d)
@@ -1850,9 +1876,7 @@ class MultiHorizonPredictionHeads(nn.Module):
                     [
                         nn.Linear(current_size, current_size // 2),
                         nn.ReLU(),
-                        nn.Dropout(
-                            base_dropout * 1.5
-                        ),  # Higher dropout for long-term
+                        nn.Dropout(base_dropout * 1.5),  # Higher dropout for long-term
                         nn.Linear(current_size // 2, current_size),
                         nn.ReLU(),
                     ]

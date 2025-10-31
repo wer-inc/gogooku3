@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import polars as pl
 
@@ -19,8 +19,8 @@ class WalkForwardRunConfig:
     """Configuration metadata captured for a walk-forward run."""
 
     data_path: Path
-    model_path: Optional[Path]
-    config_path: Optional[Path]
+    model_path: Path | None
+    config_path: Path | None
     train_days: int
     test_days: int
     step_days: int
@@ -35,12 +35,12 @@ class WalkForwardRunConfig:
     evaluated_folds: int
     skipped_folds: int
     failed_folds: int
-    start_date: Optional[str]
-    end_date: Optional[str]
+    start_date: str | None
+    end_date: str | None
     created_at: str
 
 
-def _ensure_path(value: str | Path | None) -> Optional[Path]:
+def _ensure_path(value: str | Path | None) -> Path | None:
     if value is None:
         return None
     return Path(value)
@@ -54,8 +54,8 @@ def _load_unique_dates(data_path: Path, date_column: str) -> list[date]:
 
 def _filter_folds_by_range(
     folds: Iterable[WalkForwardFold],
-    start: Optional[date],
-    end: Optional[date],
+    start: date | None,
+    end: date | None,
 ) -> list[WalkForwardFold]:
     filtered: list[WalkForwardFold] = []
     for fold in folds:

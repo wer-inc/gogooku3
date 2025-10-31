@@ -13,13 +13,11 @@ import argparse
 import json
 from dataclasses import asdict, replace
 from datetime import date as Date
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Mapping
 
 import numpy as np
 import polars as pl
-import torch
 from apex_ranker.backtest import (
     CostCalculator,
     OptimizationConfig,
@@ -32,21 +30,10 @@ from apex_ranker.backtest import (
 from apex_ranker.backtest.inference import (
     BacktestInferenceEngine,
     compute_weight_turnover,
-    date_to_int,
     ensure_date,
-    int_to_date,
-    resolve_device,
 )
-from apex_ranker.data import (
-    FeatureSelector,
-    add_cross_sectional_zscores,
-    build_panel_cache,
-    load_panel_cache,
-    panel_cache_key,
-    save_panel_cache,
-)
+from apex_ranker.data import FeatureSelector
 from apex_ranker.data.loader import load_backtest_frame
-from apex_ranker.models import APEXRankerV0
 from apex_ranker.utils import load_config
 
 DATE_EPOCH = Date(1970, 1, 1)
@@ -67,7 +54,6 @@ def get_feature_columns(config: dict) -> list[str]:
     return list(selection.features)
 
 
-
 def build_daily_lookup(frame: pl.DataFrame) -> dict[Date, pl.DataFrame]:
     """Partition dataset by date for fast lookup."""
     daily_frames: dict[Date, pl.DataFrame] = {}
@@ -82,7 +68,6 @@ def trade_to_dict(trade: Trade) -> dict[str, float | str]:
     record = asdict(trade)
     record["date"] = str(trade.date)
     return record
-
 
 
 def generate_mock_predictions(
@@ -336,7 +321,9 @@ def run_backtest_smoke_test(
                                 }
                                 prediction_source = "model"
             else:
-                predictions = generate_mock_predictions(current_frame, candidate_request)
+                predictions = generate_mock_predictions(
+                    current_frame, candidate_request
+                )
                 prediction_source = "mock"
 
             if predictions:
@@ -371,7 +358,7 @@ def run_backtest_smoke_test(
                     ]
                     if fallback_codes:
                         weight = 1.0 / len(fallback_codes)
-                        opt_weights = {code: weight for code in fallback_codes}
+                        opt_weights = dict.fromkeys(fallback_codes, weight)
                         opt_result.selected_codes = list(opt_weights.keys())
                         fallback_turnover = compute_weight_turnover(
                             portfolio.weights, opt_weights
@@ -715,7 +702,9 @@ def main() -> None:
     output_path = Path(args.output) if args.output else None
     daily_metrics_path = Path(args.daily_csv) if args.daily_csv else None
     trades_path = Path(args.trades_csv) if args.trades_csv else None
-    panel_cache_dir = Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
+    panel_cache_dir = (
+        Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
+    )
 
     run_backtest_smoke_test(
         data_path=data_path,
