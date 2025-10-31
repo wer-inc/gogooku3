@@ -14,7 +14,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -39,7 +39,7 @@ def _load_backtest_function() -> Callable[..., dict]:
     return module.run_backtest_smoke_test
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run walk-forward backtest evaluation")
     parser.add_argument("--data", required=True, help="Parquet dataset path")
     parser.add_argument("--model", default=None, help="Model checkpoint (.pt)")
@@ -187,7 +187,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
 
     data_path = Path(args.data)

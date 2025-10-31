@@ -1013,7 +1013,7 @@ class StreamingParquetDataset(Dataset):
         exposures = []
         if self.use_exposure_features:
             # 露出特徴量 (torch.float)
-            
+
             # market_cap (対数変換) - only if column exists
             if "market_cap" in self.exposure_columns:
                 if "market_cap" in window.columns:
@@ -1058,7 +1058,7 @@ class StreamingParquetDataset(Dataset):
                 sample["exposures"] = torch.zeros(1, dtype=torch.float32)
         elif exposures:
             sample["exposures"] = torch.tensor(exposures, dtype=torch.float32)
-        
+
         if self.static_columns:
             try:
                 static_df = window.select(self.static_columns).tail(1)

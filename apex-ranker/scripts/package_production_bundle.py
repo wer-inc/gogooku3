@@ -11,7 +11,9 @@ from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Package APEX-Ranker production bundle")
+    parser = argparse.ArgumentParser(
+        description="Package APEX-Ranker production bundle"
+    )
     parser.add_argument("--model", required=True, help="Model checkpoint (.pt)")
     parser.add_argument("--config", required=True, help="Model config YAML")
     parser.add_argument(

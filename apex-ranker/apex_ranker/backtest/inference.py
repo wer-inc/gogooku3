@@ -1,10 +1,10 @@
 """Reusable inference helpers for APEX-Ranker."""
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import date as Date
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Mapping, Sequence
 
 import numpy as np
 import polars as pl
@@ -145,7 +145,9 @@ class BacktestInferenceEngine:
                     cache_loaded = True
                     print(f"[Inference] Loaded panel cache from {cache_path}")
                 except Exception as exc:
-                    print(f"[Inference] Failed to load panel cache ({exc}); rebuilding.")
+                    print(
+                        f"[Inference] Failed to load panel cache ({exc}); rebuilding."
+                    )
                     self.cache = None
 
         if not cache_loaded:

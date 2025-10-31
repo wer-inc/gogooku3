@@ -1,26 +1,27 @@
 """Command-line interface for gogooku3."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from gogooku3.utils.settings import settings
-from gogooku3.forecast import timesfm_predict, TFTAdapter
+import pandas as pd
+
+from gogooku3.decide import build_pseudo_vix
 from gogooku3.detect import (
-    residual_q_score,
     change_point_score,
+    evaluate_vus_pr,
+    residual_q_score,
+    score_to_ranges,
     spectral_residual_score,
     stack_and_score,
-    score_to_ranges,
-    evaluate_vus_pr,
 )
-from gogooku3.decide import build_pseudo_vix
-from gogooku3.detect.label_store import load_labels, save_labels, merge_labels
-from gogooku3.metrics.forecast_metrics import smape, mae, weighted_quantile_loss
-from gogooku3.training.tft_trainer import train_tft_quantile, TFTTrainerConfig
+from gogooku3.detect.label_store import load_labels, merge_labels, save_labels
+from gogooku3.forecast import TFTAdapter, timesfm_predict
+from gogooku3.metrics.forecast_metrics import mae, smape, weighted_quantile_loss
 from gogooku3.training.tft_hpo import run_tft_hpo
-import pandas as pd
-import json
+from gogooku3.training.tft_trainer import TFTTrainerConfig, train_tft_quantile
+from gogooku3.utils.settings import settings
 
 
 def cmd_data(args: argparse.Namespace) -> int:
@@ -29,7 +30,7 @@ def cmd_data(args: argparse.Namespace) -> int:
     required = [
         root / "configs" / "train" / "adaptive.yaml",
         root / "data",
-        root / "src" / "gogooku3"
+        root / "src" / "gogooku3",
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
@@ -41,6 +42,7 @@ def cmd_data(args: argparse.Namespace) -> int:
     print(f"📂 Project root: {settings.project_root}")
     print(f"📁 Config directory: {root / 'configs'}")
     return 0
+
 
 def cmd_train(args: argparse.Namespace) -> int:
     """Training command with dry-run capability."""
@@ -65,6 +67,7 @@ def cmd_train(args: argparse.Namespace) -> int:
     print("💡 For now, use: python scripts/run_safe_training.py")
     return 2
 
+
 def cmd_infer(args: argparse.Namespace) -> int:
     """Inference command with TENT support."""
     print("🔮 Inference configuration:")
@@ -73,7 +76,7 @@ def cmd_infer(args: argparse.Namespace) -> int:
     print(f"  Output: {args.output_path}")
 
     if args.tta == "tent":
-        print(f"  🧠 TENT adaptation enabled:")
+        print("  🧠 TENT adaptation enabled:")
         print(f"    Steps per batch: {args.tta_steps}")
         print(f"    Learning rate: {args.tta_lr}")
         print("    Target: BatchNorm parameters only")
@@ -82,21 +85,26 @@ def cmd_infer(args: argparse.Namespace) -> int:
         # Run TENT inference
         try:
             from ..inference.tent_inference_runner import run_tent_inference
+
             result = run_tent_inference(
                 model_path=args.model_path,
                 input_path=args.input_path,
                 output_path=args.output_path,
                 tent_steps=args.tta_steps,
-                tent_lr=args.tta_lr
+                tent_lr=args.tta_lr,
             )
             if result["success"]:
                 print("✅ TENT inference completed successfully")
                 print(f"   Processed: {result.get('batches_processed', 0)} batches")
-                print(f"   Avg entropy improvement: {result.get('avg_entropy_improvement', 0):.4f}")
+                print(
+                    f"   Avg entropy improvement: {result.get('avg_entropy_improvement', 0):.4f}"
+                )
                 print(f"   Final confidence: {result.get('avg_confidence', 0):.3f}")
                 return 0
             else:
-                print(f"❌ TENT inference failed: {result.get('error', 'Unknown error')}")
+                print(
+                    f"❌ TENT inference failed: {result.get('error', 'Unknown error')}"
+                )
                 return 1
 
         except ImportError:
@@ -116,11 +124,11 @@ def cmd_infer(args: argparse.Namespace) -> int:
         print(f"❌ Unknown TTA method: {args.tta}")
         return 1
 
+
 def main() -> None:
     """Main CLI entry point for gogooku3."""
     parser = argparse.ArgumentParser(
-        prog="gogooku3",
-        description="Gogooku3 – 金融MLシステム（最小CLI）"
+        prog="gogooku3", description="Gogooku3 – 金融MLシステム（最小CLI）"
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -140,8 +148,12 @@ def main() -> None:
     p_infer.add_argument("--model-path", required=True, help="モデルファイルパス")
     p_infer.add_argument("--input-path", required=True, help="入力データパス")
     p_infer.add_argument("--output-path", required=True, help="出力パス")
-    p_infer.add_argument("--tta", choices=["off", "tent"], default="off", help="推論時適応(TTA)方式")
-    p_infer.add_argument("--tta-steps", type=int, default=2, help="TTAステップ数（各バッチ）")
+    p_infer.add_argument(
+        "--tta", choices=["off", "tent"], default="off", help="推論時適応(TTA)方式"
+    )
+    p_infer.add_argument(
+        "--tta-steps", type=int, default=2, help="TTAステップ数（各バッチ）"
+    )
     p_infer.add_argument("--tta-lr", type=float, default=1e-4, help="TTA学習率")
     p_infer.set_defaults(func=cmd_infer)
 
@@ -150,6 +162,7 @@ def main() -> None:
     p_fc.add_argument("--obs", required=True, help="観測データ (json/csv/parquet)")
     p_fc.add_argument("--horizons", default="1,5,10,20,30", help="予測ホライズンCSV")
     p_fc.add_argument("--out", required=True, help="出力先 (json)")
+
     def _cmd_fc(args: argparse.Namespace) -> int:
         def _read(path: str) -> pd.DataFrame:
             if path.endswith(".json") or path.endswith(".jsonl"):
@@ -162,16 +175,26 @@ def main() -> None:
         horizons = [int(x) for x in args.horizons.split(",") if x]
         fc = timesfm_predict(df_obs, horizons=horizons)
         with open(args.out, "w", encoding="utf-8") as f:
-            json.dump(json.loads(fc.to_json(orient="records", date_format="iso")), f, ensure_ascii=False)
+            json.dump(
+                json.loads(fc.to_json(orient="records", date_format="iso")),
+                f,
+                ensure_ascii=False,
+            )
         print(f"✅ Forecasts saved: {args.out} ({len(fc)} rows)")
         return 0
+
     p_fc.set_defaults(func=_cmd_fc)
 
     # Forecast (TFT-like minimal quantile forecaster)
-    p_tft = subparsers.add_parser("forecast-tft", help="最小TFT風 量子回帰 (学習→即時予測)")
-    p_tft.add_argument("--obs", required=True, help="観測データ (json/csv/parquet; id,ts,y,features)")
+    p_tft = subparsers.add_parser(
+        "forecast-tft", help="最小TFT風 量子回帰 (学習→即時予測)"
+    )
+    p_tft.add_argument(
+        "--obs", required=True, help="観測データ (json/csv/parquet; id,ts,y,features)"
+    )
     p_tft.add_argument("--horizons", default="1,5,10,20,30")
     p_tft.add_argument("--out", required=True, help="出力先 (json)")
+
     def _cmd_tft(args: argparse.Namespace) -> int:
         def _read(path: str) -> pd.DataFrame:
             if path.endswith(".json") or path.endswith(".jsonl"):
@@ -179,6 +202,7 @@ def main() -> None:
             if path.endswith(".parquet"):
                 return pd.read_parquet(path)
             return pd.read_csv(path)
+
         df_obs = _read(args.obs)
         horizons = [int(x) for x in args.horizons.split(",") if x]
         model = TFTAdapter(horizons=horizons)
@@ -189,9 +213,14 @@ def main() -> None:
             # Fallback if fit fails
             fc = timesfm_predict(df_obs, horizons=horizons)
         with open(args.out, "w", encoding="utf-8") as f:
-            json.dump(json.loads(fc.to_json(orient="records", date_format="iso")), f, ensure_ascii=False)
+            json.dump(
+                json.loads(fc.to_json(orient="records", date_format="iso")),
+                f,
+                ensure_ascii=False,
+            )
         print(f"✅ TFT-like forecasts saved: {args.out} ({len(fc)} rows)")
         return 0
+
     p_tft.set_defaults(func=_cmd_tft)
 
     # Detect command (ensemble → ranges → VUS-PR)
@@ -204,10 +233,13 @@ def main() -> None:
     p_dt.add_argument("--events", default=None, help="イベント点 (json/csv/parquet)")
     p_dt.add_argument("--event-pre", type=int, default=0)
     p_dt.add_argument("--event-post", type=int, default=0)
-    p_dt.add_argument("--eval-iou", type=float, default=None, help="IoUしきい値 (VUS-PR IoU版)")
+    p_dt.add_argument(
+        "--eval-iou", type=float, default=None, help="IoUしきい値 (VUS-PR IoU版)"
+    )
     p_dt.add_argument("--min-len", type=int, default=2)
     p_dt.add_argument("--perc", type=float, default=0.95)
     p_dt.add_argument("--metrics-out", default=None, help="VUS-PR結果をJSON保存")
+
     def _cmd_dt(args: argparse.Namespace) -> int:
         def _read(path: str) -> pd.DataFrame:
             if path.endswith(".json") or path.endswith(".jsonl"):
@@ -215,6 +247,7 @@ def main() -> None:
             if path.endswith(".parquet"):
                 return pd.read_parquet(path)
             return pd.read_csv(path)
+
         df_obs = _read(args.obs)
         df_fc = _read(args.fcst)
         r = residual_q_score(df_obs, df_fc, horizon=args.h)
@@ -237,6 +270,7 @@ def main() -> None:
         print(f"✅ Ranges saved: {args.out_ranges} ({len(ranges)} ranges)")
         if args.labels or args.events:
             from gogooku3.detect import RangeLabel
+
             gold: list[RangeLabel] = []
             if args.labels:
                 labels_df = _read(args.labels)
@@ -248,14 +282,28 @@ def main() -> None:
                     }
                     for _, row in labels_df.iterrows()
                 ]
-                gold.extend([RangeLabel(id=lr["id"], start=lr["start"], end=lr["end"]) for lr in label_ranges])
+                gold.extend(
+                    [
+                        RangeLabel(id=lr["id"], start=lr["start"], end=lr["end"])
+                        for lr in label_ranges
+                    ]
+                )
             if args.events:
                 events_df = _read(args.events)
                 from gogooku3.detect.label_generators import events_to_ranges
+
                 ids = df_obs["id"].astype(str).unique().tolist()
-                gold.extend(events_to_ranges(events_df, ids, pre_days=args.event_pre, post_days=args.event_post))
+                gold.extend(
+                    events_to_ranges(
+                        events_df,
+                        ids,
+                        pre_days=args.event_pre,
+                        post_days=args.event_post,
+                    )
+                )
             if args.eval_iou is not None:
                 from gogooku3.detect.ranges import evaluate_vus_pr_iou
+
                 vs = evaluate_vus_pr_iou(ranges, gold, min_iou=args.eval_iou)
             else:
                 vs = evaluate_vus_pr(ranges, gold)
@@ -264,6 +312,7 @@ def main() -> None:
                 with open(args.metrics_out, "w", encoding="utf-8") as f:
                     json.dump({"VUS_PR": vs.get("vus_pr", 0.0)}, f, ensure_ascii=False)
         return 0
+
     p_dt.set_defaults(func=_cmd_dt)
 
     # Index command (Pseudo-VIX)
@@ -274,6 +323,7 @@ def main() -> None:
     p_esvi.add_argument("--out", required=True, help="出力先 (json)")
     p_esvi.add_argument("--name", default="ESVI_JP", help="指数名")
     p_esvi.add_argument("--weights", default=None, help="重みファイル (id,weight)")
+
     def _cmd_esvi(args: argparse.Namespace) -> int:
         def _read(path: str) -> pd.DataFrame:
             if path.endswith(".json") or path.endswith(".jsonl"):
@@ -281,15 +331,21 @@ def main() -> None:
             if path.endswith(".parquet"):
                 return pd.read_parquet(path)
             return pd.read_csv(path)
+
         df_fc = _read(args.fcst)
         wdf = None
         if args.weights:
             wdf = _read(args.weights)
         out = build_pseudo_vix(df_fc, index_name=args.name, weights=wdf)
         with open(args.out, "w", encoding="utf-8") as f:
-            json.dump(json.loads(out.to_json(orient="records", date_format="iso")), f, ensure_ascii=False)
+            json.dump(
+                json.loads(out.to_json(orient="records", date_format="iso")),
+                f,
+                ensure_ascii=False,
+            )
         print(f"✅ Index saved: {args.out} ({len(out)} rows)")
         return 0
+
     p_esvi.set_defaults(func=_cmd_esvi)
 
     # Label Store commands
@@ -298,6 +354,7 @@ def main() -> None:
 
     p_ls = sp_l.add_parser("ls", help="ラベルファイル情報")
     p_ls.add_argument("--path", required=True)
+
     def _cmd_labels_ls(args: argparse.Namespace) -> int:
         labels = load_labels(args.path)
         print(f"📦 Labels: {len(labels)} records from {args.path}")
@@ -305,12 +362,14 @@ def main() -> None:
             ids = sorted({l.id for l in labels})
             print(f"  IDs: {len(ids)} unique")
         return 0
+
     p_ls.set_defaults(func=_cmd_labels_ls)
 
     p_merge = sp_l.add_parser("merge", help="2つのラベルをマージ")
     p_merge.add_argument("--a", required=True)
     p_merge.add_argument("--b", required=True)
     p_merge.add_argument("--out", required=True)
+
     def _cmd_labels_merge(args: argparse.Namespace) -> int:
         la = load_labels(args.a)
         lb = load_labels(args.b)
@@ -318,6 +377,7 @@ def main() -> None:
         save_labels(args.out, merged)
         print(f"✅ Merged {len(la)}+{len(lb)} → {len(merged)} into {args.out}")
         return 0
+
     p_merge.set_defaults(func=_cmd_labels_merge)
 
     # Compare forecasts (Champion/Challenger)
@@ -328,6 +388,7 @@ def main() -> None:
     p_cmp.add_argument("--name-a", default="A")
     p_cmp.add_argument("--name-b", default="B")
     p_cmp.add_argument("--h", type=int, default=1, help="評価ホライズン")
+
     def _cmd_compare(args: argparse.Namespace) -> int:
         def _read(path: str) -> pd.DataFrame:
             if path.endswith(".json") or path.endswith(".jsonl"):
@@ -335,6 +396,7 @@ def main() -> None:
             if path.endswith(".parquet"):
                 return pd.read_parquet(path)
             return pd.read_csv(path)
+
         obs = _read(args.obs)
         fa = _read(args.a)
         fb = _read(args.b)
@@ -347,8 +409,10 @@ def main() -> None:
         if len(da) == 0 or len(db) == 0:
             print("❌ Not enough overlapping rows to compare. Check alignment.")
             return 2
-        ya = da["y"].to_numpy(); yha = da["y_hat"].to_numpy()
-        yb = db["y"].to_numpy(); yhb = db["y_hat"].to_numpy()
+        ya = da["y"].to_numpy()
+        yha = da["y_hat"].to_numpy()
+        yb = db["y"].to_numpy()
+        yhb = db["y_hat"].to_numpy()
         metrics = {}
         metrics[args.name_a] = {
             "sMAPE": smape(ya, yha),
@@ -362,6 +426,7 @@ def main() -> None:
         }
         print(json.dumps(metrics, indent=2))
         return 0
+
     p_cmp.set_defaults(func=_cmd_compare)
 
     # Promote winner (Champion/Challenger) by metric
@@ -373,7 +438,10 @@ def main() -> None:
     p_prom.add_argument("--name-b", default="B")
     p_prom.add_argument("--h", type=int, default=5)
     p_prom.add_argument("--metric", choices=["WQL", "MAE", "sMAPE"], default="WQL")
-    p_prom.add_argument("--delta", type=float, default=0.0, help="最小改善幅(>なら昇格)")
+    p_prom.add_argument(
+        "--delta", type=float, default=0.0, help="最小改善幅(>なら昇格)"
+    )
+
     def _cmd_promote(args: argparse.Namespace) -> int:
         def _read(path: str) -> pd.DataFrame:
             if path.endswith(".json") or path.endswith(".jsonl"):
@@ -381,35 +449,59 @@ def main() -> None:
             if path.endswith(".parquet"):
                 return pd.read_parquet(path)
             return pd.read_csv(path)
+
         obs = _read(args.obs)
-        fa = _read(args.a); fb = _read(args.b)
-        fa = fa[fa["h"] == args.h]; fb = fb[fb["h"] == args.h]
+        fa = _read(args.a)
+        fb = _read(args.b)
+        fa = fa[fa["h"] == args.h]
+        fb = fb[fb["h"] == args.h]
         key = ["id", "ts"]
         da = obs.merge(fa, on=key, how="inner")
         db = obs.merge(fb, on=key, how="inner")
         if len(da) == 0 or len(db) == 0:
             print("❌ Not enough overlap to decide")
             return 2
-        ya = da["y"].to_numpy(); yha = da["y_hat"].to_numpy()
-        yb = db["y"].to_numpy(); yhb = db["y_hat"].to_numpy()
-        A = {"WQL": weighted_quantile_loss(ya, da), "MAE": mae(ya, yha), "sMAPE": smape(ya, yha)}
-        B = {"WQL": weighted_quantile_loss(yb, db), "MAE": mae(yb, yhb), "sMAPE": smape(yb, yhb)}
+        ya = da["y"].to_numpy()
+        yha = da["y_hat"].to_numpy()
+        yb = db["y"].to_numpy()
+        yhb = db["y_hat"].to_numpy()
+        A = {
+            "WQL": weighted_quantile_loss(ya, da),
+            "MAE": mae(ya, yha),
+            "sMAPE": smape(ya, yha),
+        }
+        B = {
+            "WQL": weighted_quantile_loss(yb, db),
+            "MAE": mae(yb, yhb),
+            "sMAPE": smape(yb, yhb),
+        }
         # Lower is better for all three defined metrics
-        a_val = A[args.metric]; b_val = B[args.metric]
+        a_val = A[args.metric]
+        b_val = B[args.metric]
         winner = args.name_a if (a_val + args.delta) < b_val else args.name_b
-        print(json.dumps({
-            "metric": args.metric,
-            "horizon": args.h,
-            args.name_a: A,
-            args.name_b: B,
-            "winner": winner,
-            "improvement": float(b_val - a_val) if winner == args.name_a else float(a_val - b_val)
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "metric": args.metric,
+                    "horizon": args.h,
+                    args.name_a: A,
+                    args.name_b: B,
+                    "winner": winner,
+                    "improvement": float(b_val - a_val)
+                    if winner == args.name_a
+                    else float(a_val - b_val),
+                },
+                indent=2,
+            )
+        )
         return 0
+
     p_prom.set_defaults(func=_cmd_promote)
 
     # TFT training (Purged CV + WQL)
-    p_tfttrain = subparsers.add_parser("tft-train", help="TFT最小学習 (Purged CV + WQL)")
+    p_tfttrain = subparsers.add_parser(
+        "tft-train", help="TFT最小学習 (Purged CV + WQL)"
+    )
     p_tfttrain.add_argument("--obs", required=True)
     p_tfttrain.add_argument("--known", default=None)
     p_tfttrain.add_argument("--static", default=None)
@@ -417,9 +509,14 @@ def main() -> None:
     p_tfttrain.add_argument("--n-splits", type=int, default=3)
     p_tfttrain.add_argument("--embargo", type=int, default=20)
     p_tfttrain.add_argument("--feature-config", default=None, help="特徴量設定YAML")
-    p_tfttrain.add_argument("--cat-encode", choices=["codes", "hash", "target"], default="codes")
-    p_tfttrain.add_argument("--cat-cols", default=None, help="カテゴリ列名CSV（未指定なら自動検出）")
+    p_tfttrain.add_argument(
+        "--cat-encode", choices=["codes", "hash", "target"], default="codes"
+    )
+    p_tfttrain.add_argument(
+        "--cat-cols", default=None, help="カテゴリ列名CSV（未指定なら自動検出）"
+    )
     p_tfttrain.add_argument("--hash-buckets", type=int, default=64)
+
     def _cmd_tfttrain(args: argparse.Namespace) -> int:
         def _read(path: str | None) -> pd.DataFrame | None:
             if not path:
@@ -429,15 +526,18 @@ def main() -> None:
             if path.endswith(".parquet"):
                 return pd.read_parquet(path)
             return pd.read_csv(path)
+
         obs = _read(args.obs)
         known = _read(args.known)
         static = _read(args.static)
         horizons = [int(x) for x in args.horizons.split(",") if x]
         from gogooku3.features.feature_params import FeatureParams
+
         feature_params = FeatureParams()
         if args.feature_config:
             import yaml
-            with open(args.feature_config, "r", encoding="utf-8") as f:
+
+            with open(args.feature_config, encoding="utf-8") as f:
                 y = yaml.safe_load(f) or {}
             # load keys if present
             for k, v in y.get("features", {}).items():
@@ -449,12 +549,15 @@ def main() -> None:
             n_splits=args.n_splits,
             features=feature_params,
             cat_encode=args.cat_encode,
-            cat_cols=[c.strip() for c in args.cat_cols.split(",")] if args.cat_cols else None,
+            cat_cols=[c.strip() for c in args.cat_cols.split(",")]
+            if args.cat_cols
+            else None,
             hash_buckets=args.hash_buckets,
         )
         out = train_tft_quantile(obs, known, static, cfg)
         print(json.dumps(out, indent=2))
         return 0
+
     p_tfttrain.set_defaults(func=_cmd_tfttrain)
 
     # TFT HPO
@@ -466,6 +569,7 @@ def main() -> None:
     p_thpo.add_argument("--n-splits", type=int, default=3)
     p_thpo.add_argument("--embargo", type=int, default=20)
     p_thpo.add_argument("--trials", type=int, default=20)
+
     def _cmd_tft_hpo(args: argparse.Namespace) -> int:
         def _read(path: str | None) -> pd.DataFrame | None:
             if not path:
@@ -475,10 +579,12 @@ def main() -> None:
             if path.endswith(".parquet"):
                 return pd.read_parquet(path)
             return pd.read_csv(path)
+
         obs = _read(args.obs)
         known = _read(args.known)
         static = _read(args.static)
         from gogooku3.training.tft_hpo import HPOConfig
+
         cfg = HPOConfig(
             horizons=[int(x) for x in args.horizons.split(",") if x],
             n_splits=args.n_splits,
@@ -488,22 +594,34 @@ def main() -> None:
         out = run_tft_hpo(obs, known, static, cfg)
         print(json.dumps(out, indent=2))
         return 0
+
     p_thpo.set_defaults(func=_cmd_tft_hpo)
 
     # Regression gate for metrics (e.g., VUS_PR or WQL)
     p_gate = subparsers.add_parser("gate", help="回帰ゲート（ベースライン vs 候補）")
     p_gate.add_argument("--baseline", required=True, help="baseline metrics.json")
     p_gate.add_argument("--candidate", required=True, help="candidate metrics.json")
-    p_gate.add_argument("--key", required=True, help="メトリクスキー（例: VUS_PR, WQL_h5）")
+    p_gate.add_argument(
+        "--key", required=True, help="メトリクスキー（例: VUS_PR, WQL_h5）"
+    )
     p_gate.add_argument("--direction", choices=["min", "max"], required=True)
     p_gate.add_argument("--max-regress", type=float, default=0.0)
+
     def _cmd_gate(args: argparse.Namespace) -> int:
-        from gogooku3.quality.gate import load_json, GateRule, check_gate
+        from gogooku3.quality.gate import GateRule, check_gate, load_json
+
         base = load_json(args.baseline)
         cand = load_json(args.candidate)
-        res = check_gate(base, cand, GateRule(key=args.key, direction=args.direction, max_regress=args.max_regress))
+        res = check_gate(
+            base,
+            cand,
+            GateRule(
+                key=args.key, direction=args.direction, max_regress=args.max_regress
+            ),
+        )
         print(json.dumps(res, indent=2))
         return 0 if res["passed"] else 2
+
     p_gate.set_defaults(func=_cmd_gate)
 
     args = parser.parse_args()

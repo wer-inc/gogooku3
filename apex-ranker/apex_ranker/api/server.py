@@ -13,10 +13,14 @@ from typing import Any
 
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from pydantic import BaseModel, Field
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from pydantic import BaseModel, Field
 
-from apex_ranker.backtest import CostCalculator, OptimizationConfig, generate_target_weights
+from apex_ranker.backtest import (
+    CostCalculator,
+    OptimizationConfig,
+    generate_target_weights,
+)
 from apex_ranker.backtest.inference import (
     BacktestInferenceEngine,
     compute_weight_turnover,
@@ -33,7 +37,9 @@ class RateLimitExceeded(Exception):
 class RateLimiter:
     """In-memory token bucket rate limiter keyed by caller identity."""
 
-    def __init__(self, *, limit: int, window_seconds: int, logger: logging.Logger) -> None:
+    def __init__(
+        self, *, limit: int, window_seconds: int, logger: logging.Logger
+    ) -> None:
         self.limit = max(1, limit)
         self.window = max(1, window_seconds)
         self.logger = logger
@@ -47,11 +53,18 @@ class RateLimiter:
             while bucket and now - bucket[0] > self.window:
                 bucket.popleft()
             if len(bucket) >= self.limit:
-                retry_after = max(0.0, self.window - (now - bucket[0])) if bucket else self.window
-                self.logger.warning(
-                    "rate_limit_exceeded identity=%s limit=%s window=%ss", identity, self.limit, self.window
+                retry_after = (
+                    max(0.0, self.window - (now - bucket[0])) if bucket else self.window
                 )
-                raise RateLimitExceeded(f"Rate limit exceeded. Retry after {retry_after:.1f}s")
+                self.logger.warning(
+                    "rate_limit_exceeded identity=%s limit=%s window=%ss",
+                    identity,
+                    self.limit,
+                    self.window,
+                )
+                raise RateLimitExceeded(
+                    f"Rate limit exceeded. Retry after {retry_after:.1f}s"
+                )
             bucket.append(now)
 
 
@@ -137,9 +150,15 @@ class Settings:
 
 
 def _load_settings_from_env() -> Settings:
-    model_path = Path(os.environ.get("APEX_MODEL_PATH", "models/apex_ranker_v0_enhanced.pt"))
-    config_path = Path(os.environ.get("APEX_CONFIG_PATH", "apex-ranker/configs/v0_base.yaml"))
-    data_path = Path(os.environ.get("APEX_DATA_PATH", "data/ml_dataset_latest_full.parquet"))
+    model_path = Path(
+        os.environ.get("APEX_MODEL_PATH", "models/apex_ranker_v0_enhanced.pt")
+    )
+    config_path = Path(
+        os.environ.get("APEX_CONFIG_PATH", "apex-ranker/configs/v0_base.yaml")
+    )
+    data_path = Path(
+        os.environ.get("APEX_DATA_PATH", "data/ml_dataset_latest_full.parquet")
+    )
     panel_cache_dir = Path(os.environ.get("APEX_PANEL_CACHE_DIR", "cache/panel"))
 
     optimisation = OptimizationConfig(
@@ -231,13 +250,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def derive_identity(request: Request, api_key: str | None) -> str:
         if api_key:
             return api_key
-        return request.headers.get("x-client-id") or (request.client.host if request.client else "anonymous")
+        return request.headers.get("x-client-id") or (
+            request.client.host if request.client else "anonymous"
+        )
 
     def authenticate(request: Request) -> str:
         api_key = request.headers.get("x-api-key")
         if settings.api_keys:
             if not api_key or api_key not in settings.api_keys:
-                raise HTTPException(status_code=401, detail="Invalid or missing API key")
+                raise HTTPException(
+                    status_code=401, detail="Invalid or missing API key"
+                )
         return derive_identity(request, api_key)
 
     def check_rate_limit(identity: str) -> None:
@@ -281,7 +304,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"dates": dates}
 
     @app.post("/predict", response_model=PredictionResponse)
-    def predict(req: PredictionRequest, identity: str = Depends(authenticate)) -> PredictionResponse:
+    def predict(
+        req: PredictionRequest, identity: str = Depends(authenticate)
+    ) -> PredictionResponse:
         check_rate_limit(identity)
         REQUEST_COUNTER.labels("predict").inc()
         with PREDICTION_LATENCY.time():
@@ -293,7 +318,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
 
         records = [
-            PredictionRecord(rank=int(row["Rank"]), code=row["Code"], score=float(row["Score"]))
+            PredictionRecord(
+                rank=int(row["Rank"]), code=row["Code"], score=float(row["Score"])
+            )
             for row in prediction_df.iter_rows(named=True)
         ]
         return PredictionResponse(
@@ -337,7 +364,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return target_weights, optimisation_dict, turnover_estimate
 
     @app.post("/optimize", response_model=OptimisationResponse)
-    def optimise(req: OptimisationRequest, identity: str = Depends(authenticate)) -> OptimisationResponse:
+    def optimise(
+        req: OptimisationRequest, identity: str = Depends(authenticate)
+    ) -> OptimisationResponse:
         check_rate_limit(identity)
         REQUEST_COUNTER.labels("optimize").inc()
         predictions = {item.code: item.score for item in req.predictions}
@@ -360,7 +389,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/rebalance", response_model=RebalanceResponse)
-    def rebalance(req: RebalanceRequest, identity: str = Depends(authenticate)) -> RebalanceResponse:
+    def rebalance(
+        req: RebalanceRequest, identity: str = Depends(authenticate)
+    ) -> RebalanceResponse:
         check_rate_limit(identity)
         REQUEST_COUNTER.labels("rebalance").inc()
         with PREDICTION_LATENCY.time():
@@ -376,7 +407,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for row in prediction_df.iter_rows(named=True)
         }
         if not predictions:
-            raise HTTPException(status_code=404, detail="No predictions available for date")
+            raise HTTPException(
+                status_code=404, detail="No predictions available for date"
+            )
 
         config_override = build_config_override(top_k=req.top_k)
         target_weights, optimisation_dict, turnover_estimate = optimise_predictions(
@@ -388,7 +421,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
         records = [
-            PredictionRecord(rank=int(row["Rank"]), code=row["Code"], score=float(row["Score"]))
+            PredictionRecord(
+                rank=int(row["Rank"]), code=row["Code"], score=float(row["Score"])
+            )
             for row in prediction_df.iter_rows(named=True)
         ]
 

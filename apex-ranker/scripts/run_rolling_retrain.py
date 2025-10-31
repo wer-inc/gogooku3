@@ -219,7 +219,9 @@ def run_subprocess(cmd: list[str], cwd: Path | None = None) -> None:
     print(f"[CMD] {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd, check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"Command failed with exit code {result.returncode}: {' '.join(cmd)}")
+        raise RuntimeError(
+            f"Command failed with exit code {result.returncode}: {' '.join(cmd)}"
+        )
 
 
 def date_to_str(value: date) -> str:
@@ -253,9 +255,13 @@ def main(argv: list[str] | None = None) -> None:
             windows.append(window)
 
     if not windows:
-        raise ValueError("No evaluation windows constructed. Check date range and dataset coverage.")
+        raise ValueError(
+            "No evaluation windows constructed. Check date range and dataset coverage."
+        )
 
-    print(f"[Scheduler] Prepared {len(windows)} monthly windows between {args.start_date} and {args.end_date}")
+    print(
+        f"[Scheduler] Prepared {len(windows)} monthly windows between {args.start_date} and {args.end_date}"
+    )
 
     summary_records: list[dict[str, Any]] = []
     sharpe_history: list[float] = []
@@ -346,7 +352,9 @@ def main(argv: list[str] | None = None) -> None:
         baseline_sharpe = sharpe_history[0]
         sharpe_delta = sharpe - baseline_sharpe
 
-        previous_sharpe = sharpe_history[-2] if len(sharpe_history) > 1 else baseline_sharpe
+        previous_sharpe = (
+            sharpe_history[-2] if len(sharpe_history) > 1 else baseline_sharpe
+        )
 
         record = {
             "month": window.month_label,
@@ -398,7 +406,9 @@ def main(argv: list[str] | None = None) -> None:
             "sharpe_mean": float(sum(sharpe_values) / len(sharpe_values)),
             "sharpe_min": float(min(sharpe_values)),
             "sharpe_max": float(max(sharpe_values)),
-            "cost_pct_mean": float(sum(cost_values) / len(cost_values)) if cost_values else 0.0,
+            "cost_pct_mean": float(sum(cost_values) / len(cost_values))
+            if cost_values
+            else 0.0,
         }
 
     summary_path = output_root / "rolling_retrain_summary.json"

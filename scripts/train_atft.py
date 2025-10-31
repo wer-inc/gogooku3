@@ -273,7 +273,10 @@ class GradientMonitor:
         warn_threshold = float(os.getenv("GRAD_MONITOR_WARN_NORM", "1e-6") or "1e-6")
 
         monitor = cls(
-            groups=groups, log_every=log_every, warn_threshold=warn_threshold, logger=logger
+            groups=groups,
+            log_every=log_every,
+            warn_threshold=warn_threshold,
+            logger=logger,
         )
         if model is not None:
             monitor.bind_model(model)
@@ -291,9 +294,7 @@ class GradientMonitor:
                 continue
             label, pattern_str = chunk.split(":", 1)
             patterns = tuple(
-                pat.strip()
-                for pat in pattern_str.split("|")
-                if pat.strip()
+                pat.strip() for pat in pattern_str.split("|") if pat.strip()
             )
             if label.strip() and patterns:
                 groups[label.strip()] = patterns
@@ -1432,9 +1433,7 @@ class MultiHorizonLoss(nn.Module):
         self.use_listnet = bool(use_listnet)
         self.listnet_weight = float(listnet_weight)
         self.listnet_tau = float(listnet_tau)
-        self.listnet_topk = (
-            int(listnet_topk) if listnet_topk is not None else None
-        )
+        self.listnet_topk = int(listnet_topk) if listnet_topk is not None else None
         self.use_t_nll = use_t_nll
         self.nll_weight = float(nll_weight)
         self.use_crps = (
@@ -1855,7 +1854,9 @@ class MultiHorizonLoss(nn.Module):
             sel = g == gid
             if sel.sum() < 2:
                 continue
-            losses.append(self._listnet_loss_single(preds[sel], targets[sel], tau, topk))
+            losses.append(
+                self._listnet_loss_single(preds[sel], targets[sel], tau, topk)
+            )
         if not losses:
             return yhat.new_zeros(())
         return torch.stack(losses).mean()
@@ -2245,8 +2246,10 @@ class MultiHorizonLoss(nn.Module):
         contribution_count = 0
         # 現在のホライズン重み
         cur_weights = self._get_current_weights()
-        diag_enabled = (
-            os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in ("1", "true", "yes")
+        diag_enabled = os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in (
+            "1",
+            "true",
+            "yes",
         )
         logger.info(
             "[TRAIN-DIAG] forward diag_enabled=%s max_batches=%s epoch_limit=%s",
@@ -2368,7 +2371,10 @@ class MultiHorizonLoss(nn.Module):
                             diag_max_batches,
                         )
                         yhat_cpu = (
-                            yhat_vec.detach().to("cpu", non_blocking=True).float().view(-1)
+                            yhat_vec.detach()
+                            .to("cpu", non_blocking=True)
+                            .float()
+                            .view(-1)
                         )
                         y_cpu = (
                             y_vec.detach().to("cpu", non_blocking=True).float().view(-1)
@@ -2404,7 +2410,8 @@ class MultiHorizonLoss(nn.Module):
                                 group_np.size,
                             )
                             uniq_groups, counts = np.unique(
-                                group_np.astype(np.int64, copy=False), return_counts=True
+                                group_np.astype(np.int64, copy=False),
+                                return_counts=True,
                             )
                             per_pred_std: list[float] = []
                             per_targ_std: list[float] = []
@@ -4032,9 +4039,7 @@ def evaluate_model_metrics(
                 }
             )
 
-            loss_result = criterion(
-                outputs_fp32, targets_fp32, batch_metadata=batch
-            )
+            loss_result = criterion(outputs_fp32, targets_fp32, batch_metadata=batch)
 
             # Handle both single value and tuple return
             if isinstance(loss_result, tuple):
@@ -4489,10 +4494,11 @@ def validate(model, dataloader, criterion, device):
                         if "group_day" in batch:
                             group_tensor = batch["group_day"]
                             if torch.is_tensor(group_tensor):
-                                group_arr = (
-                                    group_tensor.detach().view(-1).cpu().numpy()
-                                )
-                        if group_arr is not None and group_arr.shape[0] == yhat.shape[0]:
+                                group_arr = group_tensor.detach().view(-1).cpu().numpy()
+                        if (
+                            group_arr is not None
+                            and group_arr.shape[0] == yhat.shape[0]
+                        ):
                             metrics[h]["groups"].append(group_arr)
                     # t-params 収集
                     t_key = f"t_params_horizon_{h}"
@@ -5051,8 +5057,10 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             )
 
         # Enable optional cross-sectional diagnostics during training
-        train_cx_diag_enabled = (
-            os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in ("1", "true", "yes")
+        train_cx_diag_enabled = os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in (
+            "1",
+            "true",
+            "yes",
         )
         if train_cx_diag_enabled:
             try:
@@ -5231,7 +5239,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         date_values = batch.get("date")
                         try:
                             if isinstance(date_values, torch.Tensor):
-                                date_list = [str(x) for x in date_values.view(-1).tolist()]
+                                date_list = [
+                                    str(x) for x in date_values.view(-1).tolist()
+                                ]
                             elif isinstance(date_values, (list, tuple)):
                                 date_list = [str(x) for x in date_values]
                             elif date_values is None:
@@ -5286,9 +5296,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                     continue
                                 pred_tensor = predictions[pred_key]
                                 targ_tensor = targets_dict[targ_key]
-                                if not torch.is_tensor(pred_tensor) or not torch.is_tensor(
-                                    targ_tensor
-                                ):
+                                if not torch.is_tensor(
+                                    pred_tensor
+                                ) or not torch.is_tensor(targ_tensor):
                                     continue
                                 pred_vec = pred_tensor.detach().view(-1).to("cpu")
                                 targ_vec = targ_tensor.detach().view(-1).to("cpu")
@@ -5333,7 +5343,10 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                         targ_min,
                                         len(per_group_pred_std),
                                     )
-                                    if train_cx_diag_warn > 0.0 and pred_mean < train_cx_diag_warn:
+                                    if (
+                                        train_cx_diag_warn > 0.0
+                                        and pred_mean < train_cx_diag_warn
+                                    ):
                                         logger.warning(
                                             "[TRAIN-DIAG] ep=%d b=%d h=%s low per-day pred std: mean=%.6f (< %.4f)",
                                             epoch,
@@ -5370,9 +5383,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     pass
 
                 # Get loss from criterion - handle both single value and tuple return
-                loss_result = criterion(
-                    predictions, targets_dict, batch_metadata=batch
-                )
+                loss_result = criterion(predictions, targets_dict, batch_metadata=batch)
                 if isinstance(loss_result, tuple):
                     loss, losses = loss_result
                 else:
@@ -5543,9 +5554,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     except Exception:
                         pass
 
-                    loss_result = criterion(
-                        predictions, tdict, batch_metadata=batch
-                    )
+                    loss_result = criterion(predictions, tdict, batch_metadata=batch)
 
                     # Handle both single value and tuple return from criterion
                     if isinstance(loss_result, tuple):
@@ -6044,7 +6053,9 @@ def run_mini_training(
     last_gat_grad_norm: float | None = None
     for epoch in range(1, int(max_epochs) + 1):
         step_offset = (
-            (epoch - 1) * steps_per_epoch if steps_per_epoch > 0 else (epoch - 1) * 1_000
+            (epoch - 1) * steps_per_epoch
+            if steps_per_epoch > 0
+            else (epoch - 1) * 1_000
         )
         avg_train_loss, _, last_gat_grad_norm = train_epoch(
             model,
@@ -7585,7 +7596,9 @@ def train(config: DictConfig) -> None:
             "on",
         )
         if train_loader is not None and skip_nan_scan:
-            logger.info("[nan-scan] SKIP_PRETRAIN_NAN_SCAN=1 → skipping first-batch scan")
+            logger.info(
+                "[nan-scan] SKIP_PRETRAIN_NAN_SCAN=1 → skipping first-batch scan"
+            )
         if train_loader is not None and not skip_nan_scan:
             it_scan = iter(train_loader)
             first_batch = next(it_scan)
@@ -8052,9 +8065,7 @@ def train(config: DictConfig) -> None:
     )
     pairwise_sample_ratio = float(os.getenv("PAIRWISE_SAMPLE_RATIO", "0.25"))
     use_listnet = os.getenv("USE_LISTNET_LOSS", "0") == "1"
-    listnet_weight = (
-        float(os.getenv("LISTNET_WEIGHT", "0.0")) if use_listnet else 0.0
-    )
+    listnet_weight = float(os.getenv("LISTNET_WEIGHT", "0.0")) if use_listnet else 0.0
     listnet_tau = float(os.getenv("LISTNET_TAU", "0.5"))
     listnet_topk_env = os.getenv("LISTNET_TOPK", "").strip()
     listnet_topk = None
@@ -8527,7 +8538,9 @@ def train(config: DictConfig) -> None:
                 gb_cfg = None
 
             if gb_cfg is None:
-                logger.info("[GraphBuilder] configuration not provided; skipping graph construction")
+                logger.info(
+                    "[GraphBuilder] configuration not provided; skipping graph construction"
+                )
             else:
                 try:
                     gbc = GBConfig(
@@ -8554,7 +8567,9 @@ def train(config: DictConfig) -> None:
                             )
                         ),
                         sector_col=str(getattr(gb_cfg, "sector_col", "sector")),
-                        log_mktcap_col=str(getattr(gb_cfg, "log_mktcap_col", "log_mktcap")),
+                        log_mktcap_col=str(
+                            getattr(gb_cfg, "log_mktcap_col", "log_mktcap")
+                        ),
                         method=str(getattr(gb_cfg, "method", "ewm_demean")),
                         symmetric=bool(getattr(gb_cfg, "symmetric", True)),
                     )
@@ -8608,7 +8623,9 @@ def train(config: DictConfig) -> None:
                     )
                     if not use_adv_train:
                         try:
-                            use_adv_train = bool(getattr(gb_cfg, "use_in_training", False))
+                            use_adv_train = bool(
+                                getattr(gb_cfg, "use_in_training", False)
+                            )
                         except Exception:
                             use_adv_train = False
 
@@ -8623,7 +8640,9 @@ def train(config: DictConfig) -> None:
                             gb_adv = AdvFinancialGraphBuilder(
                                 correlation_window=int(
                                     getattr(
-                                        final_config.data.time_series, "sequence_length", 20
+                                        final_config.data.time_series,
+                                        "sequence_length",
+                                        20,
                                     )
                                 ),
                                 correlation_threshold=thr,
@@ -8725,8 +8744,10 @@ def train(config: DictConfig) -> None:
             "[TRAIN-DIAG] env ENABLE_TRAIN_CX_DIAG=%s (duplicate debug)",
             os.getenv("ENABLE_TRAIN_CX_DIAG"),
         )
-        train_diag_enabled = (
-            os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in ("1", "true", "yes")
+        train_diag_enabled = os.getenv("ENABLE_TRAIN_CX_DIAG", "0").lower() in (
+            "1",
+            "true",
+            "yes",
         )
         if train_diag_enabled:
             try:
@@ -9699,11 +9720,12 @@ def train(config: DictConfig) -> None:
                                 )
                                 if diag_store is not None and diag_group_np is not None:
                                     group_slice = diag_group_np[mb_start:mb_end]
-                                    if (
-                                        group_slice is not None
-                                        and group_slice.size == (mb_end - mb_start)
+                                    if group_slice is not None and group_slice.size == (
+                                        mb_end - mb_start
                                     ):
-                                        for horizon in getattr(criterion, "horizons", []):
+                                        for horizon in getattr(
+                                            criterion, "horizons", []
+                                        ):
                                             diag_key = str(horizon)
                                             if diag_key not in diag_store:
                                                 diag_store[diag_key] = {
@@ -9746,9 +9768,9 @@ def train(config: DictConfig) -> None:
                                                 continue
                                             pred_tensor = preds_for_loss[pred_key]
                                             targ_tensor = targets[targ_key]
-                                            if not torch.is_tensor(pred_tensor) or not torch.is_tensor(
-                                                targ_tensor
-                                            ):
+                                            if not torch.is_tensor(
+                                                pred_tensor
+                                            ) or not torch.is_tensor(targ_tensor):
                                                 continue
                                             pred_np = (
                                                 pred_tensor.detach()
@@ -10304,7 +10326,9 @@ def train(config: DictConfig) -> None:
                                                     f"(h={h}, scale={reset_scale:.3f})"
                                                 )
                                                 with torch.no_grad():
-                                                    if hasattr(model, "prediction_head"):
+                                                    if hasattr(
+                                                        model, "prediction_head"
+                                                    ):
                                                         for (
                                                             name,
                                                             param,
@@ -10316,16 +10340,25 @@ def train(config: DictConfig) -> None:
                                                                     )
                                                                     * reset_scale
                                                                 )
-                                                    if hasattr(model, "backbone_projection"):
+                                                    if hasattr(
+                                                        model, "backbone_projection"
+                                                    ):
                                                         bp = model.backbone_projection
-                                                        if isinstance(bp, torch.nn.Module):
-                                                            for param in bp.parameters():
+                                                        if isinstance(
+                                                            bp, torch.nn.Module
+                                                        ):
+                                                            for (
+                                                                param
+                                                            ) in bp.parameters():
                                                                 if param.requires_grad:
                                                                     param.add_(
                                                                         torch.randn_like(
                                                                             param
                                                                         )
-                                                                        * (reset_scale * 0.5)
+                                                                        * (
+                                                                            reset_scale
+                                                                            * 0.5
+                                                                        )
                                                                     )
                                             deg_last_reset_step[k] = global_step
                                             deg_bad[k] = 0
@@ -10546,7 +10579,10 @@ def train(config: DictConfig) -> None:
                                         targ_min,
                                         len(per_pred_std),
                                     )
-                                    if train_diag_warn > 0.0 and pred_mean < train_diag_warn:
+                                    if (
+                                        train_diag_warn > 0.0
+                                        and pred_mean < train_diag_warn
+                                    ):
                                         logger.warning(
                                             "[TRAIN-DIAG] ep=%d batch=%d h=%s low per-day pred std: mean=%.6f (< %.4f)",
                                             epoch,
@@ -10556,7 +10592,9 @@ def train(config: DictConfig) -> None:
                                             train_diag_warn,
                                         )
                                 else:
-                                    max_group_size = int(counts.max()) if counts.size else 0
+                                    max_group_size = (
+                                        int(counts.max()) if counts.size else 0
+                                    )
                                     logger.info(
                                         "[TRAIN-DIAG] ep=%d batch=%d h=%s insufficient cross-sectional coverage (groups=%d, max_group_size=%d)",
                                         epoch,
@@ -11286,7 +11324,9 @@ def train(config: DictConfig) -> None:
                         if ckpt.exists():
                             # Load with weights_only=False for backward compatibility
                             # This is safe for trusted checkpoints from our own training
-                            obj = torch.load(ckpt, map_location=device, weights_only=False)
+                            obj = torch.load(
+                                ckpt, map_location=device, weights_only=False
+                            )
                             sd = None
                             if isinstance(obj, dict):
                                 for k in ("state_dict", "model_state_dict"):
@@ -11319,7 +11359,9 @@ def train(config: DictConfig) -> None:
                         }
                         # Add optional fields if present
                         if "static_features" in vb:
-                            batch_dict["static_features"] = vb["static_features"].to(device)
+                            batch_dict["static_features"] = vb["static_features"].to(
+                                device
+                            )
                         if "edge_index" in vb:
                             batch_dict["edge_index"] = vb["edge_index"].to(device)
                         if "edge_attr" in vb:

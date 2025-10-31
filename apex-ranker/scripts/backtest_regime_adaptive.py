@@ -46,12 +46,12 @@ from apex_ranker.backtest import (
     normalise_frequency,
     should_rebalance,
 )
-from apex_ranker.utils import load_config
 from apex_ranker.backtest.inference import (
     BacktestInferenceEngine,
     compute_weight_turnover,
 )
 from apex_ranker.data.loader import load_backtest_frame
+from apex_ranker.utils import load_config
 from backtest_smoke_test import (
     build_daily_lookup,
     generate_mock_predictions,
@@ -387,7 +387,9 @@ def run_regime_adaptive_backtest(
                                 }
                                 prediction_source = "model"
             else:
-                predictions = generate_mock_predictions(current_frame, candidate_request)
+                predictions = generate_mock_predictions(
+                    current_frame, candidate_request
+                )
                 prediction_source = "mock"
 
             # Apply regime-adaptive position sizing
@@ -423,7 +425,7 @@ def run_regime_adaptive_backtest(
                     ]
                     if fallback_codes:
                         weight = 1.0 / len(fallback_codes)
-                        opt_weights = {code: weight for code in fallback_codes}
+                        opt_weights = dict.fromkeys(fallback_codes, weight)
                         opt_result.selected_codes = list(opt_weights.keys())
                         fallback_turnover = compute_weight_turnover(
                             portfolio.weights, opt_weights
@@ -435,7 +437,8 @@ def run_regime_adaptive_backtest(
 
                 if opt_weights:
                     scaled_weights = {
-                        code: weight * regime_exposure for code, weight in opt_weights.items()
+                        code: weight * regime_exposure
+                        for code, weight in opt_weights.items()
                     }
                     target_weights = scaled_weights
                     actual_turnover = compute_weight_turnover(
@@ -823,7 +826,9 @@ def main() -> None:
     config_path = Path(args.config) if args.config else None
     output_path = Path(args.output) if args.output else None
     daily_metrics_path = Path(args.daily_csv) if args.daily_csv else None
-    panel_cache_dir = Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
+    panel_cache_dir = (
+        Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
+    )
 
     run_regime_adaptive_backtest(
         data_path=data_path,
