@@ -263,6 +263,23 @@ dev = [
 ]
 ```
 
+### 1.3 進捗ノート（2024-10-31）
+
+- `builder.api.advanced_fetcher.AdvancedJQuantsFetcher` を追加し、gogooku3 の非同期 J-Quants クライアントをシームレスに呼び出せるようにした（TOPIX / indices / trades_spec / margin / futures / options / short / dividends / earnings など主要エンドポイントを網羅）。
+- 同期コードから非同期 API を安全に呼べる `builder.utils.asyncio.run_sync` を導入し、イベントループ管理の煩雑さを解消。
+- 新規ユニットテスト `tests/unit/test_advanced_fetcher.py` で各高機能フェッチャの引数伝播と戻り値を検証。
+- `pyproject.toml` に `aiohttp`, `nest_asyncio` を追加し、Phase1 の API レイヤーリファクタに必要な依存関係を整備。
+- キャッシュ層を TTL 管理付きに拡張し、`CacheManager.get_or_fetch_dataframe()` を追加。`DatasetBuilder` の日次信用残高取得は TTL を尊重して再利用されるようになった。
+- `FlowFeatureEngineer`（trades_spec ベースの強化フロー特徴量）を移植し、`DataSourceManager.trades_spec()` と連携。`foreign_sentiment` や `smart_flow_indicator` など主要フロー指標が gogooku5 パイプラインで生成されるようになった。
+- `builder.validation.parity` と `scripts/compare_parity.py` を追加し、gogooku3 と gogooku5 のデータセットを自動比較できるようにした（列差分・数値差分レポート）。Phase4 parity 検証のための基盤が整備済み。
+- `tools/project-health-check.sh` が `PARITY_BASELINE_PATH` を検知して parity 比較を自動実行するように拡張。`docs/parity_check.md` に比較手順とレポート解釈をまとめた。
+
+#### 追加アップデート（Phase5, 2024-11-01）
+
+- パリティ検証の運用フローを明文化するため、`docs/parity_check.md` を新設。CLI 実行例、JSON レポートのサンプル、指標の読み解き方を整理し、運用チームが即座に活用できるようにした。
+- `gogooku5/data/README.md` に `PARITY_BASELINE_PATH` / `PARITY_CANDIDATE_PATH` を通じた health-check 連携手順を追記し、環境変数の指定漏れによるパリティスキップを防止。
+- health-check スクリプトのセクション構成を 9 ステップ体制へ更新し、Dataset Parity ステージを正式導入。基準データセット未指定時はスキップ、指定時は JSON 要約を解析して成果（SUCCESS/ WARN）へ反映。
+
 ### 1.3 Makefile
 
 ```makefile
@@ -1737,13 +1754,13 @@ models/apex_ranker/
 
 #### 優先度S（必須）- 8ファイル
 
-1. `apex-ranker/apex_ranker/models/apex_ranker_v0.py` → `models/apex_ranker/src/apex_ranker/models/apex_ranker_v0.py`
-2. `apex-ranker/apex_ranker/models/patchtst.py` → `models/apex_ranker/src/apex_ranker/models/patchtst.py`
-3. `apex-ranker/apex_ranker/data/panel_dataset.py` → `models/apex_ranker/src/apex_ranker/data/panel_dataset.py`
-4. `apex-ranker/apex_ranker/data/feature_selector.py` → `models/apex_ranker/src/apex_ranker/data/feature_selector.py`
-5. `apex-ranker/scripts/train_v0.py` → `models/apex_ranker/scripts/train_v0.py`
-6. `apex-ranker/scripts/inference_v0.py` → `models/apex_ranker/scripts/inference_v0.py`
-7. `apex-ranker/configs/v0_pruned.yaml` → `models/apex_ranker/configs/v0_pruned.yaml`
+1. `models/apex_ranker/apex_ranker/models/apex_ranker_v0.py` → `models/apex_ranker/src/apex_ranker/models/apex_ranker_v0.py`
+2. `models/apex_ranker/apex_ranker/models/patchtst.py` → `models/apex_ranker/src/apex_ranker/models/patchtst.py`
+3. `models/apex_ranker/apex_ranker/data/panel_dataset.py` → `models/apex_ranker/src/apex_ranker/data/panel_dataset.py`
+4. `models/apex_ranker/apex_ranker/data/feature_selector.py` → `models/apex_ranker/src/apex_ranker/data/feature_selector.py`
+5. `models/apex_ranker/scripts/train_v0.py` → `models/apex_ranker/scripts/train_v0.py`
+6. `models/apex_ranker/scripts/inference_v0.py` → `models/apex_ranker/scripts/inference_v0.py`
+7. `models/apex_ranker/configs/v0_pruned.yaml` → `models/apex_ranker/configs/v0_pruned.yaml`
 8. 新規作成: `models/apex_ranker/src/apex_ranker/data/dataset_loader.py`
 
 ---

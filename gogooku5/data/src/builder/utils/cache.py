@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import polars as pl
 
@@ -89,6 +90,68 @@ class CacheManager:
         if path.exists():
             LOGGER.info("Removing cache file %s", path)
             path.unlink()
+
+    # ------------------------------------------------------------------
+    # Extended helpers
+    # ------------------------------------------------------------------
+    def is_valid(self, key: str, ttl_days: int) -> bool:
+        """Return True if cached entry exists and is within TTL."""
+
+        if ttl_days < 0:
+            ttl_days = 0
+
+        if not self.has_cache(key):
+            return False
+
+        index = self.load_index()
+        entry = index.get(key)
+        if entry is None:
+            return False
+
+        if ttl_days == 0:
+            return True
+
+        updated_at = entry.get("updated_at")
+        if not updated_at:
+            return False
+        try:
+            updated = datetime.fromisoformat(str(updated_at))
+        except ValueError:
+            return False
+
+        age = datetime.utcnow() - updated
+        return age <= timedelta(days=ttl_days)
+
+    def get_or_fetch_dataframe(
+        self,
+        key: str,
+        fetch_fn: Callable[[], pl.DataFrame],
+        *,
+        ttl_days: Optional[int] = None,
+    ) -> Tuple[pl.DataFrame, bool]:
+        """Return cached dataframe or fetch and persist a fresh copy.
+
+        Returns:
+            (dataframe, cache_hit)
+        """
+
+        ttl = self.settings.cache_ttl_days_default if ttl_days is None else ttl_days
+        if self.is_valid(key, ttl):
+            cached = self.load_dataframe(key)
+            if cached is not None:
+                LOGGER.debug("Cache hit for %s (ttl=%d days)", key, ttl)
+                return cached, True
+
+        LOGGER.debug("Cache miss for %s (ttl=%d days); fetching...", key, ttl)
+        df = fetch_fn()
+        self.save_dataframe(key, df)
+        index = self.load_index()
+        index[key] = {
+            "rows": df.height,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        self.save_index(index)
+        return df, False
 
 
 def ensure_cache_dir(path: Path) -> Path:

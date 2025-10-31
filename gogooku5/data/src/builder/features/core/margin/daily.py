@@ -43,7 +43,7 @@ class MarginDailyFeatureEngineer:
         if df.is_empty():
             return df
         cfg = self.config
-        code, date = cfg.code_column, cfg.date_column
+        code = cfg.code_column
         long_col, short_col = cfg.long_column, cfg.short_column
 
         out = self.normalize(df)
