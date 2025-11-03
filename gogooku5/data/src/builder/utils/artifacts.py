@@ -54,6 +54,25 @@ class DatasetArtifactWriter:
         parquet_path = self.output_dir / f"{base_name}.parquet"
         metadata_path = self.output_dir / f"{base_name}_metadata.json"
 
+        # Phase 1-4 Fix: Validate dataset is not empty
+        if df.height == 0:
+            error_msg = (
+                f"Cannot persist empty dataset (0 rows). "
+                f"Dataset should have actual data before writing to {parquet_path}. "
+                f"Columns: {df.width}, Start: {start_date}, End: {end_date}"
+            )
+            LOGGER.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Phase 1-4 Fix: Warn if dataset is suspiciously small
+        if df.height < 100:
+            LOGGER.warning(
+                "Dataset has only %d rows (expected thousands). "
+                "This might indicate a data fetching issue. Columns: %d",
+                df.height,
+                df.width,
+            )
+
         df.write_parquet(parquet_path, compression=self.settings.dataset_parquet_compression)
         metadata = self._build_metadata(df)
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
