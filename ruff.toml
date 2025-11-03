@@ -1,0 +1,9 @@
+line-length = 120
+
+[lint]
+# 通常のルールは維持（E/F/I/UP/B/ARG など）
+select = ["E","F","I","UP","B","ARG"]
+
+# 当該スクリプトだけ未使用引数( ARG002 )を無視
+[lint.per-file-ignores]
+"apex-ranker/scripts/backtest_smoke_test.py" = ["ARG002"]

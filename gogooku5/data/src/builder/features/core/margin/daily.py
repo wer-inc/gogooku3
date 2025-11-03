@@ -14,6 +14,7 @@ class MarginDailyConfig:
     date_column: str = "date"
     long_column: str = "margin_balance"
     short_column: str = "short_balance"
+    application_date_column: str = "application_date"
 
 
 class MarginDailyFeatureEngineer:
@@ -32,12 +33,23 @@ class MarginDailyFeatureEngineer:
                 .str.strptime(pl.Date, strict=False)
                 .alias(cfg.date_column)
             )
+        if cfg.application_date_column in out.columns:
+            out = out.with_columns(
+                pl.col(cfg.application_date_column)
+                .cast(pl.Utf8, strict=False)
+                .str.strptime(pl.Date, strict=False)
+                .alias(cfg.application_date_column)
+            )
         for column in (cfg.long_column, cfg.short_column):
             if column in out.columns:
                 out = out.with_columns(pl.col(column).cast(pl.Float64, strict=False).alias(column))
         if cfg.code_column in out.columns:
             out = out.with_columns(pl.col(cfg.code_column).cast(pl.Utf8).alias(cfg.code_column))
-        return out.sort([cfg.code_column, cfg.date_column])
+        sort_keys = [cfg.code_column]
+        if cfg.application_date_column in out.columns:
+            sort_keys.append(cfg.application_date_column)
+        sort_keys.append(cfg.date_column)
+        return out.sort(sort_keys)
 
     def build_features(self, df: pl.DataFrame) -> pl.DataFrame:
         if df.is_empty():
@@ -47,17 +59,30 @@ class MarginDailyFeatureEngineer:
         long_col, short_col = cfg.long_column, cfg.short_column
 
         out = self.normalize(df)
-        if long_col not in out.columns:
-            out = out.with_columns(pl.lit(0.0).alias(long_col))
-        if short_col not in out.columns:
-            out = out.with_columns(pl.lit(0.0).alias(short_col))
+
+        if cfg.application_date_column not in out.columns:
+            out = out.with_columns(pl.col(cfg.date_column).alias(cfg.application_date_column))
+
+        buy_col = "margin_buy_volume"
+        sell_col = "margin_sell_volume"
+
+        # Phase 2: Keep original balance columns (margin_balance, short_balance)
+        # They are needed downstream and shouldn't be dropped
+        out = out.with_columns(
+            [
+                pl.col(long_col).alias(buy_col),
+                pl.col(short_col).alias(sell_col),
+            ]
+        )
+
+        # NOTE: Intentionally NOT dropping long_col/short_col to preserve raw balances
 
         out = out.with_columns(
             [
-                (pl.col(long_col) - pl.col(short_col)).alias("margin_net"),
-                (pl.col(long_col) + pl.col(short_col)).alias("margin_total"),
-                (pl.col(long_col) / (pl.col(short_col) + EPS)).alias("margin_long_short_ratio"),
-                ((pl.col(long_col) - pl.col(short_col)) / (pl.col(long_col) + pl.col(short_col) + EPS)).alias(
+                (pl.col(buy_col) - pl.col(sell_col)).alias("margin_net"),
+                (pl.col(buy_col) + pl.col(sell_col)).alias("margin_total"),
+                (pl.col(buy_col) / (pl.col(sell_col) + EPS)).alias("margin_long_short_ratio"),
+                ((pl.col(buy_col) - pl.col(sell_col)) / (pl.col(buy_col) + pl.col(sell_col) + EPS)).alias(
                     "margin_imbalance"
                 ),
             ]
@@ -65,24 +90,24 @@ class MarginDailyFeatureEngineer:
 
         out = out.with_columns(
             [
-                pl.col(long_col).diff().over(code).alias("margin_long_diff"),
-                pl.col(short_col).diff().over(code).alias("margin_short_diff"),
+                pl.col(buy_col).diff().over(code).alias("margin_buy_diff"),
+                pl.col(sell_col).diff().over(code).alias("margin_sell_diff"),
                 pl.col("margin_net").diff().over(code).alias("margin_net_diff"),
             ]
         )
 
         out = out.with_columns(
             [
-                pl.col(long_col).rolling_mean(window_size=20, min_periods=5).over(code).alias("margin_long_ma20"),
-                pl.col(long_col).rolling_std(window_size=20, min_periods=5).over(code).alias("margin_long_std20"),
+                pl.col(buy_col).rolling_mean(window_size=20, min_periods=5).over(code).alias("_margin_buy_ma20"),
+                pl.col(buy_col).rolling_std(window_size=20, min_periods=5).over(code).alias("_margin_buy_std20"),
             ]
         )
 
         out = out.with_columns(
-            ((pl.col(long_col) - pl.col("margin_long_ma20")) / (pl.col("margin_long_std20") + EPS)).alias(
-                "margin_long_z20"
+            ((pl.col(buy_col) - pl.col("_margin_buy_ma20")) / (pl.col("_margin_buy_std20") + EPS)).alias(
+                "margin_buy_z20"
             )
         )
 
-        out = out.drop(["margin_long_ma20", "margin_long_std20"], strict=False)
+        out = out.drop(["_margin_buy_ma20", "_margin_buy_std20"], strict=False)
         return out

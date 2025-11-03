@@ -14,7 +14,7 @@ import polars as pl
 class GraphFeatureConfig:
     code_column: str = "code"
     date_column: str = "date"
-    return_column: str = "returns_1d"
+    return_column: str = "ret_prev_1d"  # Phase 2: changed from returns_1d
     window_days: int = 60
     min_observations: int = 20
     correlation_threshold: float = 0.3
@@ -29,13 +29,26 @@ class GraphFeatureEngineer:
 
     def add_features(self, df: pl.DataFrame) -> pl.DataFrame:
         cfg = self.config
-        required = {cfg.code_column, cfg.date_column, cfg.return_column}
+
+        # Phase 2 compatibility: handle column name transitions
+        return_col = cfg.return_column
+        if return_col not in df.columns:
+            # Try fallback names
+            if "returns_1d" in df.columns:
+                return_col = "returns_1d"
+            elif "ret_prev_1d" in df.columns:
+                return_col = "ret_prev_1d"
+            else:
+                # Cannot proceed without return data
+                return df
+
+        required = {cfg.code_column, cfg.date_column}
         if df.is_empty() or not required.issubset(df.columns):
             return df
 
         pdf = (
-            df.select([cfg.code_column, cfg.date_column, cfg.return_column])
-            .rename({cfg.code_column: "code", cfg.date_column: "date", cfg.return_column: "ret"})
+            df.select([cfg.code_column, cfg.date_column, return_col])
+            .rename({cfg.code_column: "code", cfg.date_column: "date", return_col: "ret"})
             .to_pandas()
         )
         if not pd.api.types.is_datetime64_any_dtype(pdf["date"]):
@@ -86,7 +99,12 @@ class GraphFeatureEngineer:
 
         feats_df = pd.DataFrame(features)
         if cfg.shift_to_next_day:
-            feats_df["date"] = feats_df["date"] + timedelta(days=1)
+            base_dates = df.select(cfg.date_column).unique().sort(cfg.date_column)[cfg.date_column].to_list()
+            base_dates = [pd.Timestamp(d).date() for d in base_dates]
+            next_map = {base_dates[i]: base_dates[i + 1] for i in range(len(base_dates) - 1)}
+            feats_df["date"] = feats_df["date"].dt.date
+            feats_df["date"] = feats_df["date"].map(next_map)
+            feats_df = feats_df.dropna(subset=["date"])
 
         pl_feats = pl.from_pandas(feats_df).with_columns(
             [
