@@ -14,8 +14,8 @@ class SectorAggregationConfig:
     date_column: str = "date"
     code_column: str = "code"
     sector_column: str = "sector_code"
-    returns_1d: str = "returns_1d"
-    returns_5d: str = "returns_5d"
+    returns_1d: str = "ret_prev_1d"  # Phase 2: changed from returns_1d
+    returns_5d: str = "ret_prev_5d"  # Phase 2: changed from returns_5d
 
 
 class SectorAggregationFeatures:
@@ -43,10 +43,18 @@ class SectorAggregationFeatures:
         cross_keys = [cfg.date_column, sector_col]
         out = df.sort([sector_col, cfg.date_column])
 
-        if cfg.returns_1d in out.columns:
-            out = out.with_columns(pl.col(cfg.returns_1d).median().over(cross_keys).alias("sec_ret_1d_eq"))
-        if cfg.returns_5d in out.columns:
-            out = out.with_columns(pl.col(cfg.returns_5d).median().over(cross_keys).alias("sec_ret_5d_eq"))
+        # Phase 2 compatibility: handle column name transitions
+        ret_1d_col = (
+            cfg.returns_1d if cfg.returns_1d in out.columns else ("returns_1d" if "returns_1d" in out.columns else None)
+        )
+        ret_5d_col = (
+            cfg.returns_5d if cfg.returns_5d in out.columns else ("returns_5d" if "returns_5d" in out.columns else None)
+        )
+
+        if ret_1d_col:
+            out = out.with_columns(pl.col(ret_1d_col).median().over(cross_keys).alias("sec_ret_1d_eq"))
+        if ret_5d_col:
+            out = out.with_columns(pl.col(ret_5d_col).median().over(cross_keys).alias("sec_ret_5d_eq"))
 
         if "sec_ret_1d_eq" in out.columns:
             out = out.with_columns(

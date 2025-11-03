@@ -121,10 +121,15 @@ class TechnicalFeatureEngineer:
             cfg.high_column,
             cfg.low_column,
             cfg.volume_column,
+            # Phase 2: support both old and new return column names
             "returns_1d",
             "returns_5d",
             "returns_10d",
             "returns_20d",
+            "ret_prev_1d",
+            "ret_prev_5d",
+            "ret_prev_10d",
+            "ret_prev_20d",
         ]
         available = [col for col in optional_cols if col in df.columns]
         pdf = df.select(base_cols + available).to_pandas()
@@ -211,7 +216,8 @@ class TechnicalFeatureEngineer:
                     0.5
                 )
 
-            returns_1d = g.get("returns_1d")
+            # Phase 2: try multiple column names for returns
+            returns_1d = g.get("ret_prev_1d") or g.get("returns_1d") or g.get("log_returns_1d")
             if returns_1d is not None:
                 for window, name in (
                     (5, "volatility_5d"),
