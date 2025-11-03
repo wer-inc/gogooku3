@@ -1,11 +1,13 @@
 """Cache management helpers."""
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 import polars as pl
 
@@ -32,16 +34,18 @@ class CacheManager:
         if not self._index_path.exists():
             LOGGER.debug("Cache index not found at %s", self._index_path)
             return {}
-        try:
-            return json.loads(self._index_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            LOGGER.warning("Failed to decode cache index: %s", exc)
-            return {}
+        with self._index_lock(shared=True):
+            try:
+                return json.loads(self._index_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                LOGGER.warning("Failed to decode cache index: %s", exc)
+                return {}
 
     def save_index(self, index: Dict[str, Any]) -> None:
         """Persist cache metadata to disk."""
 
-        self._index_path.write_text(json.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
+        with self._index_lock(shared=False):
+            self._write_index(index)
         LOGGER.debug("Wrote cache index with %d keys", len(index))
 
     def cache_file(self, key: str) -> Path:
@@ -64,6 +68,14 @@ class CacheManager:
         path = self.cache_file(key)
         df.write_parquet(path)
         LOGGER.debug("Saved dataframe with %d rows to cache key %s", df.height, key)
+
+        def _mutator(idx: Dict[str, Any]) -> None:
+            idx[key] = {
+                "rows": df.height,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+
+        self._update_index(_mutator)
         return path
 
     def has_cache(self, key: str) -> bool:
@@ -145,13 +157,41 @@ class CacheManager:
         LOGGER.debug("Cache miss for %s (ttl=%d days); fetching...", key, ttl)
         df = fetch_fn()
         self.save_dataframe(key, df)
-        index = self.load_index()
-        index[key] = {
-            "rows": df.height,
-            "updated_at": datetime.utcnow().isoformat(),
-        }
-        self.save_index(index)
         return df, False
+
+    @contextmanager
+    def _index_lock(self, *, shared: bool) -> Iterator[None]:
+        """Context manager providing a POSIX advisory lock around index operations."""
+
+        lock_path = self._index_path.with_suffix(".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("w", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _update_index(self, mutator: Callable[[Dict[str, Any]], None]) -> None:
+        """Atomically mutate cache index with exclusive locking."""
+
+        with self._index_lock(shared=False):
+            try:
+                current = json.loads(self._index_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                current = {}
+            except json.JSONDecodeError as exc:
+                LOGGER.warning("Failed to decode cache index during update: %s", exc)
+                current = {}
+            mutator(current)
+            self._write_index(current)
+
+    def _write_index(self, index: Dict[str, Any]) -> None:
+        """Write cache index atomically via temp file replace while lock is held."""
+
+        tmp_path = self._index_path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
+        tmp_path.replace(self._index_path)
 
 
 def ensure_cache_dir(path: Path) -> Path:
