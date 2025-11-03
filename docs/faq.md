@@ -276,7 +276,7 @@ python scripts/run_safe_training.py --verbose
 gogooku3 train --verbose
 ```
 
--詳細: [移行ガイド](../architecture/migration.md)
+-詳細: [移行ガイド](architecture/migration.md)
 
 ### Q: 既存のスクリプトは動作し続けますか？
 
@@ -370,7 +370,7 @@ pip list | grep -E "(gogooku3|polars|torch)"
 - **🧠 [ML学習](ml/model-training.md)**: ATFT-GAT-FAN詳細
 - **🛡️ [安全性](ml/safety-guardrails.md)**: データリーク防止
 - **📚 [用語集](glossary.md)**: 技術用語解説
-- **🔄 [移行ガイド](../architecture/migration.md)**: アップグレード手順
+- **🔄 [移行ガイド](architecture/migration.md)**: アップグレード手順
 
 ### Q: コードサンプル・チュートリアルはありますか？
 
