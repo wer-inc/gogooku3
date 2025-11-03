@@ -1,0 +1,50 @@
+# Phase 2 Compatibility Config for APEX-Ranker
+# This config enables backward compatibility with Phase 2 schema changes:
+# - returns_* → ret_prev_* column name transition
+# - Case-insensitive column matching (TurnoverValue ↔ turnovervalue)
+# - Missing feature handling (zero-fill for fixed-dimension models)
+# - Exclusion of forward-looking and metadata columns
+
+features:
+  # Exclude forward-looking and metadata columns
+  exclude_regex:
+    - "^graph_"        # Graph features (expensive, optional)
+    - "_metadata$"     # Metadata columns
+    - "available_ts"   # As-of timestamps
+    - "published_date" # Publication dates
+    - "application_date" # Application dates
+    - "^ret_fwd_"      # Forward returns (data leak)
+    - "^returns_"      # Old return naming (replaced by ret_prev_*)
+    - "^feat_ret_"     # Forward return features (data leak)
+
+  # Enable missing feature tolerance
+  ignore_missing: true
+
+  # Missing column policy (choose one):
+  # - "skip": Drop missing columns from model input (variable dimension)
+  # - "zero": Fill missing columns with 0.0 (fixed dimension, recommended)
+  missing_policy: zero
+
+  # Optional: Feature index path for fixed-dimension models
+  # Uncomment if your trained model expects a specific feature order
+  # feature_index_path: models/feature_index_v0.json
+
+# Model configuration
+model:
+  # Model checkpoint path (specify at runtime)
+  # checkpoint_path: models/apex_ranker_v0_enhanced.pt
+
+  # Inference parameters
+  lookback: 180  # Days of historical data required
+  horizons: [1, 5, 10, 20]  # Prediction horizons
+
+# Backtest configuration
+backtest:
+  top_k: 50
+  rebalance_freq: "weekly"  # or "monthly" to reduce transaction costs
+  transaction_cost_bps: 30  # 30 basis points per trade
+
+# Logging
+logging:
+  level: INFO
+  format: "[%(levelname)s] %(message)s"

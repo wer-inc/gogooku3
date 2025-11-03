@@ -1092,6 +1092,75 @@ class DatasetBuilder:
             ).drop(["available_ts"], strict=False)
 
             LOGGER.info("[PATCH D] Joined short selling market features with T+1 as-of join")
+
+            # Phase 2 Bug #12 fix: Continue to sector-level processing instead of early return
+            # Try to add sector-level short selling ratios
+            try:
+                sector_short_df = self.data_sources.sector_short_selling(start=start, end=end)
+                if not sector_short_df.is_empty() and "publisheddate" in sector_short_df.columns:
+                    # Prepare sector short selling with T+1 availability
+                    sector_prepared = prepare_snapshot_pl(
+                        sector_short_df,
+                        published_date_col="publisheddate",
+                        trading_calendar=calendar_df,
+                        availability_hour=9,
+                        availability_minute=0,
+                    )
+
+                    required_sector = {
+                        "sector33code",
+                        "sellingexcludingshortsellingturnovervalue",
+                        "shortsellingwithrestrictionsturnovervalue",
+                        "shortsellingwithoutrestrictionsturnovervalue",
+                        "available_ts",
+                    }
+
+                    if required_sector.issubset(sector_prepared.columns):
+                        # Aggregate to sector level
+                        sector = sector_prepared.group_by(["available_ts", "sector33code"]).agg(
+                            [
+                                pl.col("sellingexcludingshortsellingturnovervalue").sum().alias("sector_sell_ex_short"),
+                                pl.col("shortsellingwithrestrictionsturnovervalue").sum().alias("sector_short_with"),
+                                pl.col("shortsellingwithoutrestrictionsturnovervalue")
+                                .sum()
+                                .alias("sector_short_without"),
+                            ]
+                        )
+
+                        sector = sector.with_columns(
+                            [
+                                pl.col("sector33code").cast(pl.Utf8).str.to_uppercase().alias("sector_code"),
+                                (
+                                    pl.when(
+                                        (
+                                            pl.col("sector_sell_ex_short")
+                                            + pl.col("sector_short_with")
+                                            + pl.col("sector_short_without")
+                                        ).abs()
+                                        > 1e-6
+                                    )
+                                    .then(
+                                        (pl.col("sector_short_with") + pl.col("sector_short_without"))
+                                        / (
+                                            pl.col("sector_sell_ex_short")
+                                            + pl.col("sector_short_with")
+                                            + pl.col("sector_short_without")
+                                        )
+                                    )
+                                    .otherwise(0.0)
+                                ).alias("sector_short_selling_ratio"),
+                            ]
+                        ).select(["available_ts", "sector_code", "sector_short_selling_ratio"])
+
+                        # Join sector ratios
+                        if "sector_code" in result.columns:
+                            result = result.join(sector, on=["available_ts", "sector_code"], how="left").drop(
+                                ["available_ts"], strict=False
+                            )
+                            LOGGER.info("[PATCH D] Joined sector short selling features with T+1 as-of join")
+            except Exception as exc:  # pragma: no cover
+                LOGGER.debug("Failed to add sector short selling features: %s", exc)
+
             return result
 
         return df
