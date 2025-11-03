@@ -4,8 +4,9 @@ from __future__ import annotations
 import logging
 from typing import Iterable, List, Optional, Sequence, Union
 
-import numpy as np
 import polars as pl
+
+from ..utils.rolling import roll_mean_safe, roll_std_safe
 
 LOGGER = logging.getLogger(__name__)
 
@@ -81,30 +82,61 @@ class QualityFinancialFeaturesGeneratorPolars:
     # Feature helpers
     # ------------------------------------------------------------------
     def _add_cross_sectional_quantiles(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        for feature in self._limit(self.numeric_features, 10):
-            for q in np.linspace(0.2, 0.8, 3):
-                col_name = f"{feature}_cs_q{int(q * 100)}"
-                df = df.with_columns(pl.col(feature).quantile(q).over(self.date_column).alias(col_name))
-                self.generated_features.append(col_name)
-
+        for feature in self._limit(self.numeric_features, 25):
             rank_col = f"{feature}_cs_rank"
-            df = df.with_columns(pl.col(feature).rank("ordinal").over(self.date_column).alias(rank_col))
-            self.generated_features.append(rank_col)
+            count_col = f"_{feature}_cs_count"
+            pct_col = f"{feature}_cs_pct"
+            top_flag = f"{feature}_cs_top20_flag"
+            bottom_flag = f"{feature}_cs_bottom20_flag"
+
+            df = df.with_columns(
+                [
+                    pl.col(feature).rank(method="ordinal").over(self.date_column).alias(rank_col),
+                    pl.count().over(self.date_column).alias(count_col),
+                ]
+            )
+
+            df = df.with_columns(
+                pl.when(pl.col(count_col) > 1)
+                .then((pl.col(rank_col) - 1.0) / (pl.col(count_col) - 1.0))
+                .otherwise(0.5)
+                .alias(pct_col)
+            )
+
+            df = df.with_columns(
+                [
+                    (pl.col(pct_col) >= 0.8).cast(pl.Int8).alias(top_flag),
+                    (pl.col(pct_col) <= 0.2).cast(pl.Int8).alias(bottom_flag),
+                ]
+            )
+
+            df = df.drop(count_col)
+
+            self.generated_features.extend([rank_col, pct_col, top_flag, bottom_flag])
 
         return df
 
     def _add_rolling_statistics(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        window = self.rolling_window
+        """
+        Phase 2 Patch C: All rolling operations exclude current day (left-closed).
 
-        for feature in self._limit(self.numeric_features, 5):
+        Uses safe rolling utilities to prevent look-ahead bias.
+        """
+        window = self.rolling_window
+        min_p = max(window // 2, 5)  # Require at least half window or 5 observations
+
+        for feature in self.numeric_features:
             mean_col = f"{feature}_roll_mean_{window}d"
             std_col = f"{feature}_roll_std_{window}d"
             z_col = f"{feature}_zscore_{window}d"
 
+            # Phase 2 Patch C: Use safe rolling (shift(1) before rolling)
             df = df.with_columns(
-                pl.col(feature).rolling_mean(window_size=window).over(self.code_column).alias(mean_col)
+                roll_mean_safe(pl.col(feature), window, min_periods=min_p, by=self.code_column).alias(mean_col)
             )
-            df = df.with_columns(pl.col(feature).rolling_std(window_size=window).over(self.code_column).alias(std_col))
+            df = df.with_columns(
+                roll_std_safe(pl.col(feature), window, min_periods=min_p, by=self.code_column).alias(std_col)
+            )
             df = df.with_columns(((pl.col(feature) - pl.col(mean_col)) / (pl.col(std_col) + 1e-8)).alias(z_col))
 
             self.generated_features.extend([mean_col, std_col, z_col])
@@ -113,15 +145,26 @@ class QualityFinancialFeaturesGeneratorPolars:
         return df
 
     def _add_volatility_indicators(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        return_cols = [col for col in self.numeric_features if "return" in col.lower() or "ret" in col.lower()]
+        """
+        Phase 2 Patch C: Volatility indicators exclude current day.
 
-        for col in self._limit(return_cols, 3):
+        Uses safe rolling utilities to prevent look-ahead bias.
+        """
+        # Exclude feat_ret_* columns (forward-looking) from z-score/volatility processing
+        return_cols = [
+            col
+            for col in self.numeric_features
+            if ("return" in col.lower() or "ret" in col.lower()) and not col.startswith("feat_ret_")
+        ]
+
+        for col in return_cols:
             vol_col = f"{col}_hist_vol"
             sharpe_col = f"{col}_rolling_sharpe"
 
-            df = df.with_columns(pl.col(col).rolling_std(window_size=20).over(self.code_column).alias(vol_col))
+            # Phase 2 Patch C: Use safe rolling (shift(1) before rolling)
+            df = df.with_columns(roll_std_safe(pl.col(col), 20, min_periods=10, by=self.code_column).alias(vol_col))
             df = df.with_columns(
-                (pl.col(col).rolling_mean(window_size=20).over(self.code_column) / (pl.col(vol_col) + 1e-8)).alias(
+                (roll_mean_safe(pl.col(col), 20, min_periods=10, by=self.code_column) / (pl.col(vol_col) + 1e-8)).alias(
                     sharpe_col
                 )
             )
@@ -133,7 +176,7 @@ class QualityFinancialFeaturesGeneratorPolars:
     def _add_outlier_flags(self, df: pl.LazyFrame) -> pl.LazyFrame:
         sigma = self.sigma_threshold
 
-        for feature in self._limit(self._zscore_features, 10):
+        for feature in self._zscore_features:
             z_col = f"{feature}_zscore_{self.rolling_window}d"
             flag_col = f"{feature}_outlier_flag"
 
@@ -143,18 +186,24 @@ class QualityFinancialFeaturesGeneratorPolars:
         return df
 
     def _add_market_regime_features(self, df: pl.LazyFrame, target_column: str) -> pl.LazyFrame:
+        """
+        Phase 2 Patch C: Market regime momentum excludes current day.
+
+        Note: This rolls over date_column (market-wide), not code_column.
+        """
         momentum_col = f"{target_column}_momentum_{self.rolling_window}d"
+        window = self.rolling_window
+        min_p = max(window // 2, 5)
+
+        # Phase 2 Patch C: Use safe rolling over date_column
         df = df.with_columns(
-            pl.col(target_column)
-            .rolling_mean(window_size=self.rolling_window)
-            .over(self.date_column)
-            .alias(momentum_col)
+            roll_mean_safe(pl.col(target_column), window, min_periods=min_p, by=self.date_column).alias(momentum_col)
         )
         self.generated_features.append(momentum_col)
         return df
 
     def _add_peer_relative_features(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        for feature in self._limit(self.numeric_features, 5):
+        for feature in self.numeric_features:
             mean_col = f"{feature}_sector_mean"
             rel_col = f"{feature}_sector_rel"
 

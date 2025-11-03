@@ -19,6 +19,15 @@ def _ensure_date(frame: pl.DataFrame, column: str) -> pl.DataFrame:
     return frame.with_columns(pl.col(column).cast(pl.Utf8).str.strptime(pl.Date, strict=False).alias(column))
 
 
+def _safe_float(value: object) -> float:
+    if value is None or value == "":
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _sum_expr(exprs: list[pl.Expr], *, default: float = 0.0) -> pl.Expr:
     if not exprs:
         return pl.lit(default)
@@ -48,6 +57,10 @@ class FlowFeatureEngineer:
 
         cfg = self.config
         df_base = _ensure_date(base, cfg.date_column)
+        available_dates = {
+            d.isoformat() if hasattr(d, "isoformat") else str(d)
+            for d in df_base.select(cfg.date_column).drop_nulls().to_series().to_list()
+        }
 
         if flows.is_empty():
             return self._add_null_columns(df_base)
@@ -56,14 +69,24 @@ class FlowFeatureEngineer:
         if df_flows.is_empty():
             return self._add_null_columns(df_base)
 
-        merged = self._merge(base=df_base, flows=df_flows)
-        merged = self._add_divergence(merged)
-        merged = self._add_persistence(merged)
-        merged = self._add_concentration(merged)
+        market_features = self._build_market_level_features(df_flows)
+        if market_features.is_empty():
+            return self._add_null_columns(df_base)
 
-        drop_cols = [c for c in merged.columns if c.startswith("_flow_tmp_") or c.endswith("_flow_sign")]
-        if drop_cols:
-            merged = merged.drop(drop_cols)
+        if available_dates:
+            market_features = market_features.filter(
+                pl.col(self.config.date_column).cast(pl.Utf8).is_in(list(available_dates))
+            )
+
+        # Join on both Code and date to preserve cross-sectional information
+        # Fall back to date-only join if Code not present in flow features
+        join_keys = (
+            [self.config.code_column, self.config.date_column]
+            if self.config.code_column in market_features.columns
+            else self.config.date_column
+        )
+        merged = df_base.join(market_features, on=join_keys, how="left")
+        merged = self._ensure_expected_columns(merged)
         return merged
 
     # ------------------------------------------------------------------
@@ -72,156 +95,229 @@ class FlowFeatureEngineer:
     def _prepare_flows(self, flows: pl.DataFrame) -> pl.DataFrame:
         rename_map = {
             "Code": "code",
-            "PublishedDate": "date",
+            "PublishedDate": "published_date",
             "StartDate": "week_start",
             "EndDate": "week_end",
             "Section": "section",
         }
         present = {k: v for k, v in rename_map.items() if k in flows.columns}
         df = flows.rename(present) if present else flows
-        df = _ensure_date(df, "date")
 
-        investor_types = self._identify_investors(df)
-        if not investor_types:
-            return df
+        ensure_exprs: list[pl.Expr] = []
+        if "week_start" not in df.columns:
+            ensure_exprs.append(pl.lit(None).cast(pl.Date).alias("week_start"))
+        if "week_end" not in df.columns:
+            ensure_exprs.append(pl.lit(None).cast(pl.Date).alias("week_end"))
+        if "section" not in df.columns:
+            ensure_exprs.append(pl.lit(None).cast(pl.Utf8).alias("section"))
+        if ensure_exprs:
+            df = df.with_columns(ensure_exprs)
 
-        exprs: list[pl.Expr] = []
-        for inv in investor_types:
-            buy = f"{inv}PurchaseValue"
-            sell = f"{inv}SalesValue"
-            if buy in df.columns and sell in df.columns:
-                exprs.append((pl.col(buy) - pl.col(sell)).alias(f"{inv}_net_flow"))
-                exprs.append(
-                    ((pl.col(buy) - pl.col(sell)) / (pl.col(buy) + pl.col(sell) + EPS)).alias(f"{inv}_flow_ratio")
-                )
-        if exprs:
-            df = df.with_columns(exprs)
+        for column in ("week_start", "week_end"):
+            if column in df.columns:
+                df = _ensure_date(df, column)
+
+        if "date" in df.columns:
+            df = _ensure_date(df, "date")
+        else:
+            df = df.with_columns(pl.lit(None).cast(pl.Date).alias("date"))
+        if "published_date" in df.columns:
+            df = df.with_columns(
+                pl.col("published_date")
+                .cast(pl.Utf8, strict=False)
+                .str.strptime(pl.Date, strict=False)
+                .alias("published_date")
+            )
+            dedup_keys = [col for col in ("section", "week_start", "week_end", "date") if col in df.columns]
+            df = df.sort(dedup_keys + ["published_date"]).unique(subset=dedup_keys, keep="last")
+        df = df.with_columns(
+            pl.when(pl.col("published_date").is_not_null())
+            .then(pl.col("published_date"))
+            .when(pl.col("week_end").is_not_null())
+            .then(pl.col("week_end"))
+            .otherwise(pl.col("date"))
+            .alias("release_date")
+        )
+        df = _ensure_date(df, "release_date")
+        df = df.filter(pl.col("release_date").is_not_null())
         return df
 
-    def _identify_investors(self, df: pl.DataFrame) -> list[str]:
-        candidates = [
-            "Proprietary",
-            "Investment",
-            "Business",
-            "Individual",
-            "Foreigners",
-            "Securities",
-            "Other",
-        ]
-        return [inv for inv in candidates if f"{inv}PurchaseValue" in df.columns]
+    # ------------------------------------------------------------------
+    def _build_market_level_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Aggregate trades_spec data to market-level features keyed by date."""
 
-    def _merge(self, base: pl.DataFrame, flows: pl.DataFrame) -> pl.DataFrame:
-        cfg = self.config
-        merged = base.join(flows, on=[cfg.code_column, cfg.date_column], how="left")
-        merged = merged.sort([cfg.code_column, cfg.date_column])
+        if df.is_empty():
+            return pl.DataFrame()
 
-        investor_types = self._identify_investors(flows)
-        fill_cols: list[str] = []
-        for inv in investor_types:
-            fill_cols.extend([f"{inv}_net_flow", f"{inv}_flow_ratio"])
+        # API field names corrected to match J-Quants API response
+        # (all fields end with "Value" suffix, not just purchase/sales)
+        investor_columns = {
+            "foreigners": ("ForeignersPurchaseValue", "ForeignersSalesValue"),
+            "individuals": ("IndividualPurchaseValue", "IndividualSalesValue"),
+            "investment_trusts": ("InvestmentTrustsPurchaseValue", "InvestmentTrustsSalesValue"),
+            "trust_banks": ("TrustBanksPurchaseValue", "TrustBanksSalesValue"),
+            "securities": ("SecuritiesCompaniesPurchaseValue", "SecuritiesCompaniesSalesValue"),
+            "proprietary": ("ProprietaryPurchaseValue", "ProprietarySalesValue"),
+            "business": ("BusinessCorporationsPurchaseValue", "BusinessCorporationsSalesValue"),
+            "other_fin": ("OtherFinancialInstitutionsPurchaseValue", "OtherFinancialInstitutionsSalesValue"),
+        }
 
-        for col in fill_cols:
-            if col in merged.columns:
-                merged = merged.with_columns(pl.col(col).forward_fill().over(cfg.code_column))
+        missing_exprs: list[pl.Expr] = []
+        for purchase, sales in investor_columns.values():
+            if purchase not in df.columns:
+                missing_exprs.append(pl.lit(0.0).alias(purchase))
+            if sales not in df.columns:
+                missing_exprs.append(pl.lit(0.0).alias(sales))
+        if missing_exprs:
+            df = df.with_columns(missing_exprs)
 
-        institutional_cols = [
-            f"{t}_net_flow" for t in investor_types if t != "Individual" and f"{t}_net_flow" in merged.columns
-        ]
-        if institutional_cols:
-            merged = merged.with_columns(
-                _sum_expr([pl.col(c) for c in institutional_cols]).alias("institutional_accumulation")
+        cast_exprs = []
+        for purchase, sales in investor_columns.values():
+            cast_exprs.extend(
+                [
+                    pl.col(purchase).cast(pl.Float64).alias(purchase),
+                    pl.col(sales).cast(pl.Float64).alias(sales),
+                ]
+            )
+        df = df.with_columns(cast_exprs)
+
+        # Preserve Code dimension to maintain cross-sectional information
+        # Group by both Code and release_date instead of just release_date
+        group_cols = ["Code", "release_date"] if "Code" in df.columns else ["release_date"]
+        aggregated = df.group_by(group_cols).agg(
+            [pl.col(purchase).sum().alias(purchase) for purchase, _ in investor_columns.values()]
+            + [pl.col(sales).sum().alias(sales) for _, sales in investor_columns.values()]
+        )
+
+        if aggregated.is_empty():
+            return pl.DataFrame()
+
+        # Rename to match expected column names (lowercase)
+        rename_map = {"release_date": "date"}
+        if "Code" in aggregated.columns:
+            rename_map["Code"] = "code"
+        aggregated = aggregated.rename(rename_map)
+
+        for label, (purchase, sales) in investor_columns.items():
+            aggregated = aggregated.rename(
+                {
+                    purchase: f"{label}_purchases",
+                    sales: f"{label}_sales",
+                }
             )
 
-        if "Foreigners_flow_ratio" in merged.columns:
-            merged = merged.with_columns(pl.col("Foreigners_flow_ratio").alias("foreign_sentiment"))
-
-        return merged
-
-    # ------------------------------------------------------------------
-    # Feature blocks
-    # ------------------------------------------------------------------
-    def _add_divergence(self, df: pl.DataFrame) -> pl.DataFrame:
-        if {"Individual_flow_ratio", "institutional_accumulation"}.issubset(df.columns):
-            df = df.with_columns(
-                (pl.col("Individual_flow_ratio") * -1.0 * pl.col("institutional_accumulation").sign()).alias(
-                    "retail_institutional_divergence"
-                )
+        for label in investor_columns.keys():
+            aggregated = aggregated.with_columns(
+                (pl.col(f"{label}_purchases") - pl.col(f"{label}_sales")).alias(f"{label}_net")
             )
 
-        if "Foreigners_flow_ratio" in df.columns:
-            dom_cols = [
-                col
-                for col in ["Individual_flow_ratio", "Business_flow_ratio", "Investment_flow_ratio"]
-                if col in df.columns
+        institutional_purchases = _sum_expr(
+            [pl.col(f"{label}_purchases") for label in investor_columns.keys() if label != "individuals"],
+            default=0.0,
+        )
+        institutional_sales = _sum_expr(
+            [pl.col(f"{label}_sales") for label in investor_columns.keys() if label != "individuals"],
+            default=0.0,
+        )
+
+        aggregated = aggregated.with_columns(
+            [
+                (institutional_purchases - institutional_sales).alias("institutional_accumulation"),
+                (
+                    (pl.col("foreigners_net")) / (pl.col("foreigners_purchases") + pl.col("foreigners_sales") + EPS)
+                ).alias("foreign_sentiment"),
+                (
+                    (pl.col("individuals_net")) / (pl.col("individuals_purchases") + pl.col("individuals_sales") + EPS)
+                ).alias("_individuals_sentiment"),
             ]
-            if dom_cols:
-                df = df.with_columns(_sum_expr([pl.col(c) for c in dom_cols]).alias("_flow_tmp_domestic"))
-                df = df.with_columns(
-                    (pl.col("Foreigners_flow_ratio") - pl.col("_flow_tmp_domestic")).alias(
-                        "foreign_domestic_divergence"
-                    )
-                )
-        return df
+        )
 
-    def _add_persistence(self, df: pl.DataFrame) -> pl.DataFrame:
-        if "institutional_accumulation" in df.columns:
-            df = df.with_columns(pl.col("institutional_accumulation").sign().alias("_flow_inst_sign"))
-            df = df.with_columns(
-                pl.col("_flow_inst_sign")
-                .rolling_mean(window_size=10)
-                .over(self.config.code_column)
-                .abs()
-                .alias("institutional_persistence")
+        aggregated = aggregated.with_columns(
+            [
+                (pl.col("_individuals_sentiment") * -1.0 * pl.col("institutional_accumulation").sign()).alias(
+                    "retail_institutional_divergence"
+                ),
+                (pl.col("foreign_sentiment") - pl.col("_individuals_sentiment")).alias("foreign_domestic_divergence"),
+            ]
+        )
+
+        flow_cols = [f"{label}_net" for label in investor_columns.keys()]
+        aggregated = aggregated.with_columns(
+            _sum_expr([pl.col(col).abs() for col in flow_cols]).alias("_flow_total_abs")
+        )
+        concentration_terms = [(pl.col(col).abs() / (pl.col("_flow_total_abs") + EPS)) ** 2 for col in flow_cols]
+        aggregated = aggregated.with_columns(_sum_expr(concentration_terms).alias("flow_concentration"))
+        aggregated = aggregated.with_columns(
+            pl.when(pl.col("flow_concentration") > 0.7)
+            .then(pl.col("institutional_accumulation").sign())
+            .otherwise(0.0)
+            .alias("concentrated_flow_signal")
+        ).drop("_flow_total_abs")
+
+        aggregated = aggregated.sort("date").with_columns(
+            [
+                pl.col("institutional_accumulation")
+                .sign()
+                .rolling_mean(window_size=10, min_periods=1)
+                .alias("institutional_persistence"),
+                pl.col("foreign_sentiment")
+                .sign()
+                .rolling_mean(window_size=10, min_periods=1)
+                .alias("foreign_persistence"),
+            ]
+        )
+        aggregated = aggregated.with_columns(
+            (pl.col("institutional_persistence") * pl.col("institutional_accumulation").sign()).alias(
+                "smart_flow_indicator"
             )
+        )
 
-        if "foreign_sentiment" in df.columns:
-            df = df.with_columns(pl.col("foreign_sentiment").sign().alias("_flow_foreign_sign"))
-            df = df.with_columns(
-                pl.col("_flow_foreign_sign")
-                .rolling_mean(window_size=10)
-                .over(self.config.code_column)
-                .abs()
-                .alias("foreign_persistence")
-            )
+        return aggregated.select(
+            [
+                "date",
+                pl.col("institutional_accumulation").cast(pl.Float64),
+                pl.col("foreign_sentiment").cast(pl.Float64),
+                pl.col("retail_institutional_divergence").cast(pl.Float64),
+                pl.col("foreign_domestic_divergence").cast(pl.Float64),
+                pl.col("institutional_persistence").cast(pl.Float64),
+                pl.col("foreign_persistence").cast(pl.Float64),
+                pl.col("smart_flow_indicator").cast(pl.Float64),
+                pl.col("flow_concentration").cast(pl.Float64),
+                pl.col("concentrated_flow_signal").cast(pl.Float64),
+            ]
+        )
 
-        if {"institutional_persistence", "institutional_accumulation"}.issubset(df.columns):
-            df = df.with_columns(
-                (pl.col("institutional_persistence") * pl.col("institutional_accumulation").sign()).alias(
-                    "smart_flow_indicator"
-                )
-            )
-        return df
-
-    def _add_concentration(self, df: pl.DataFrame) -> pl.DataFrame:
-        flow_cols = [c for c in df.columns if c.endswith("_net_flow")]
-        if len(flow_cols) < 2:
-            return df
-
-        df = df.with_columns(_sum_expr([pl.col(c).abs() for c in flow_cols]).alias("_flow_tmp_total_abs"))
-
-        concentration_terms = [(pl.col(c).abs() / (pl.col("_flow_tmp_total_abs") + EPS)) ** 2 for c in flow_cols]
-        df = df.with_columns(_sum_expr(concentration_terms).alias("flow_concentration"))
-
-        if "institutional_accumulation" in df.columns:
-            df = df.with_columns(
-                pl.when(pl.col("flow_concentration") > 0.7)
-                .then(pl.col("institutional_accumulation").sign())
-                .otherwise(0)
-                .alias("concentrated_flow_signal")
-            )
-        return df
-
-    # ------------------------------------------------------------------
     def _add_null_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         null_exprs = [
-            pl.lit(None).cast(pl.Float32).alias("institutional_accumulation"),
-            pl.lit(None).cast(pl.Float32).alias("foreign_sentiment"),
-            pl.lit(None).cast(pl.Float32).alias("retail_institutional_divergence"),
-            pl.lit(None).cast(pl.Float32).alias("foreign_domestic_divergence"),
-            pl.lit(None).cast(pl.Float32).alias("institutional_persistence"),
-            pl.lit(None).cast(pl.Float32).alias("foreign_persistence"),
-            pl.lit(None).cast(pl.Float32).alias("smart_flow_indicator"),
-            pl.lit(None).cast(pl.Float32).alias("flow_concentration"),
-            pl.lit(None).cast(pl.Float32).alias("concentrated_flow_signal"),
+            pl.lit(None).cast(pl.Float64).alias("institutional_accumulation"),
+            pl.lit(None).cast(pl.Float64).alias("foreign_sentiment"),
+            pl.lit(None).cast(pl.Float64).alias("retail_institutional_divergence"),
+            pl.lit(None).cast(pl.Float64).alias("foreign_domestic_divergence"),
+            pl.lit(None).cast(pl.Float64).alias("institutional_persistence"),
+            pl.lit(None).cast(pl.Float64).alias("foreign_persistence"),
+            pl.lit(None).cast(pl.Float64).alias("smart_flow_indicator"),
+            pl.lit(None).cast(pl.Float64).alias("flow_concentration"),
+            pl.lit(None).cast(pl.Float64).alias("concentrated_flow_signal"),
         ]
         return df.with_columns(null_exprs)
+
+    def _ensure_expected_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure all expected flow feature columns exist after join."""
+
+        required = [
+            "institutional_accumulation",
+            "foreign_sentiment",
+            "retail_institutional_divergence",
+            "foreign_domestic_divergence",
+            "institutional_persistence",
+            "foreign_persistence",
+            "smart_flow_indicator",
+            "flow_concentration",
+            "concentrated_flow_signal",
+        ]
+        missing = [col for col in required if col not in df.columns]
+        if not missing:
+            return df
+
+        exprs = [pl.lit(None).cast(pl.Float32).alias(name) for name in missing]
+        return df.with_columns(exprs)

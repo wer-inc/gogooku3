@@ -1221,7 +1221,7 @@ class DatasetBuilder:
         # Phase 2 Patch I: Comprehensive feature deny list (regex-based)
         # Denies: forward returns, metadata columns, published dates, as-of timestamps
         deny_pattern = re.compile(
-            r"^(ret_fwd_|returns_)|"  # Forward-looking returns
+            r"^(ret_fwd_|returns_|feat_ret_)|"  # Forward-looking returns (including feat_ret_*)
             r"(_?available_ts|_?next_available_ts|_?disclosed_ts|_?asof_ts)|"  # As-of metadata
             r"(published.*date|application_date)|"  # Publication/application dates
             r"(_metadata|_leak_)$",  # Metadata/leak columns
