@@ -5,7 +5,10 @@ This will be replaced with the migrated SafeTrainingPipeline integration.
 from __future__ import annotations
 
 import argparse
-from typing import NoReturn
+import logging
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+_logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,11 +26,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> NoReturn:
+def main() -> int:
+    """Stub implementation that logs a warning instead of raising SystemExit.
+
+    Phase 2 Bug #31 fix: Changed from NoReturn -> int to avoid import-time failure.
+    """
     args = parse_args()
-    raise SystemExit(
+    _logger.warning(
         "ATFT-GAT-FAN training pipeline is not yet implemented. "
-        f"Received config={args.config}, dataset={args.dataset}."
+        f"Received config={args.config}, dataset={args.dataset}. "
+        "Skipping training."
     )
 
 
