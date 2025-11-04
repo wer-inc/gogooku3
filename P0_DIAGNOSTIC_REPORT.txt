@@ -1,0 +1,74 @@
+
+================================================================================
+  ATFT P0 DIAGNOSTIC REPORT
+================================================================================
+Generated: /workspace/gogooku3
+
+================================================================================
+  1. Dataset Analysis
+================================================================================
+
+📊 output/ml_dataset_latest_clean.parquet
+   Total columns: 404
+   Metadata: 7
+   Targets: 8
+   Features: 389
+   CS-Z features: 0
+   ⚠️  CS-Z absent (no *_cs_z columns)
+   Sample features: ['sector17_code', 'sector17_name', 'sector17_id', 'sector33_code', 'sector33_name']
+
+📊 output/ml_dataset_latest_full.parquet
+   Total columns: 1314
+   Metadata: 3
+   Targets: 0
+   Features: 1311
+   CS-Z features: 1
+   ✅ CS-Z present: ['volume_cs_z']
+   Sample features: ['Close', 'Open', 'High', 'Low', 'Volume']
+
+================================================================================
+  2. Config Analysis
+================================================================================
+❌ Error: KeyError raised while resolving interpolation: "Environment variable 'OUTPUT_BASE' not found"
+    full_key: data.path
+    object_type=dict
+
+================================================================================
+  3. Recent Training Errors
+================================================================================
+
+Found 10 recent feature-related errors:
+
+1. [2025-11-02 23:23:55,907][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 82, got 296). Rebuilding variable selection network.
+
+2. [2025-11-02 23:25:04,091][__main__][WARNING] - DayBatch/collate setup skipped: DataLoader with IterableDataset: expected unspecified shuffle option, but got shuffle=True
+
+3. [2025-11-02 23:25:48,618][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 82, got 296). Rebuilding variable selection network.
+
+4. [2025-11-03 06:12:43,280][__main__][WARNING] - DayBatch/collate setup skipped: DataLoader with IterableDataset: expected unspecified shuffle option, but got shuffle=True
+
+5. [2025-11-03 06:14:01,497][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 82, got 437). Rebuilding variable selection network.
+
+6. [2025-11-03 06:15:14,821][__main__][WARNING] - DayBatch/collate setup skipped: DataLoader with IterableDataset: expected unspecified shuffle option, but got shuffle=True
+
+7. [2025-11-03 06:16:20,552][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 82, got 437). Rebuilding variable selection network.
+
+8. [2025-11-03 06:23:52,737][__main__][WARNING] - DayBatch/collate setup skipped: DataLoader with IterableDataset: expected unspecified shuffle option, but got shuffle=True
+
+9. [2025-11-03 06:25:19,852][src.atft_gat_fan.models.architectures.atft_gat_fan][WARNING] - Dynamic feature dimension mismatch detected (expected 82, got 437). Rebuilding variable selection network.
+
+10. polars.exceptions.ColumnNotFoundError: unable to find column "code"; valid columns: ["Code", "Date", "Section", "MarketCode", "section_norm", "row_idx", "sector17_code", "sector17_name", "sector17_id", "sector33_code", "sector33_name", "sector33_id", "shares_outstanding", "Open", "High", "Low", "Close", "Volume", "TurnoverValue", "returns_1d", "returns_5d", "returns_10d", "returns_20d", "returns_60d", "returns_120d", "log_returns_1d", "log_returns_5d", "log_returns_10d", "log_returns_20d", "volatility_5d", "volatility_10d", "volatility_20d", "volatility_60d", "realized_volatility", "pk_vol_20", "pk_vol_60", "rs_vol_20", "rs_vol_60", "yz_vol_20", "yz_vol_60", "vov_20", "vov_60", "sma_5", "sma_10", "sma_20", "sma_60", "sma_120", "ema_5", "ema_10", "ema_20", "ema_60", "ema_200", "price_to_sma5", "price_to_sma20", "price_to_sma60", "ma_gap_5_20", "ma_gap_20_60", "high_low_ratio", "close_to_high", "close_to_low", "volume_ma_5", "volume_ma_20", "volume_ratio_5", "volume_ratio_20", "turnover_rate", "dollar_volume", "amihud_20", "rsi_2", "rsi_14", "macd", "macd_signal", "macd_histogram", "atr_14", "adx_14", "stoch_k", "bb_width", "bb_position", "mkt_ret_1d", "mkt_ret_5d", "mkt_ret_10d", "mkt_ret_20d", "mkt_ema_5", "mkt_ema_20", "mkt_ema_60", "mkt_ema_200", "mkt_dev_20", "mkt_gap_5_20", "mkt_ema20_slope_3", "mkt_vol_20d", "mkt_atr_14", "mkt_natr_14", "mkt_bb_pct_b", "mkt_bb_bw", "mkt_dd_from_peak", "mkt_big_move_flag", "mkt_ret_1d_z", "mkt_vol_20d_z", "mkt_bb_bw_z", "mkt_dd_from_peak_z", "mkt_bull_200", "mkt_trend_up", "mkt_high_vol", "mkt_squeeze", "beta_60d", "alpha_1d", "alpha_5d", "rel_strength_5d", "trend_align_mkt", "alpha_vs_regime", "idio_vol_ratio", "beta_stability_60d", "x_trend_intensity", "x_trend_intensity_g", "x_rel_sec_mom", "x_z_sec_gap_mom", "x_mom_sh_5", "x_mom_sh_10", "x_mom_sh_5_mktneu", "x_rvol5_dir", "x_rvol5_bb", "x_squeeze_pressure", "x_credit_rev_bias", "x_pead_effect", "x_pead_times_mkt", "x_rev_gate", "x_bo_gate", "x_alpha_meanrev_stable", "x_flow_smart_rel", "x_foreign_relsec", "x_tri_align", "x_bbpos_rvol5", "x_bbneg_rvol5", "x_liquidityshock_mom", "x_dmi_impulse_dir", "x_breadth_rel", "ret_prev_1d_vs_sec", "ret_prev_1d_in_sec_z", "ret_prev_1d_rank_in_sec", "ret_prev_5d_vs_sec", "ret_prev_5d_in_sec_z", "ret_prev_10d_vs_sec", "ret_prev_10d_in_sec_z", "volume_in_sec_z", "volume_rank_in_sec", "rsi14_in_sec_z", "rv20_in_sec_z", "macd_slope_in_sec_z", "vcm_in_sec_z", "rsi_vol_in_sec_z", "is_sec_cs_valid", "alpha_vs_sec_1d", "z_in_sec_returns_5d", "z_in_sec_ma_gap_5_20", "sec_small_flag", "sec_ema_5", "sec_ema_20", "sec_gap_5_20", "sec_vol_20_z", "sec_ret_1d_eq", "sec_ret_5d_eq", "sec_ret_20d_eq", "sec_ret_1d_mcap", "sec_ret_5d_mcap", "sec_ret_20d_mcap", "sec_mom_20", "sec_vol_20", "flow_foreign_net_ratio", "flow_individual_net_ratio", "flow_activity_ratio", "foreign_share_activity", "breadth_pos", "flow_foreign_net_z", "flow_individual_net_z", "flow_activity_z", "flow_smart_idx", "flow_smart_mom4", "flow_shock_flag", "flow_impulse", "flow_days_since", "stmt_yoy_sales", "stmt_yoy_op", "stmt_yoy_np", "stmt_opm", "stmt_npm", "stmt_progress_op", "stmt_progress_np", "stmt_rev_fore_op", "stmt_rev_fore_np", "stmt_rev_fore_eps", "stmt_rev_div_fore", "stmt_roe", "stmt_roa", "stmt_change_in_est", "stmt_nc_flag", "stmt_imp_statement", "stmt_days_since_statement", "is_rsi2_valid", "is_ema5_valid", "is_ema10_valid", "is_ema20_valid", "is_ema200_valid", "is_valid_ma", "is_flow_valid", "is_stmt_valid", "is_halt_20201001", "margin_long_tot", "margin_short_tot", "margin_total_gross", "margin_credit_ratio", "margin_imbalance", "margin_d_long_wow", "margin_d_short_wow", "margin_d_net_wow", "margin_d_ratio_wow", "long_z52", "short_z52", "margin_gross_z52", "ratio_z52", "margin_long_to_adv20", "margin_short_to_adv20", "margin_d_long_to_adv20", "margin_d_short_to_adv20", "margin_impulse", "margin_days_since", "is_margin_valid", "margin_issue_type", "is_borrowable", "target_1d", "target_5d", "target_10d", "target_20d", "target_1d_binary", "target_5d_binary", "target_10d_binary", "feat_ret_1d", "feat_ret_5d", "feat_ret_10d", "feat_ret_20d", "stmt_revenue_growth", "stmt_profit_margin", "flow_breadth_pos", "flow_foreign_share", "flow_foreign_net_pos", "flow_activity_high", "flow_activity_low", "flow_smart_pos", "sec17_onehot_-1", "sec17_onehot_0", "sec17_onehot_1", "sec17_onehot_2", "sec17_onehot_3", "sec17_onehot_4", "sec17_onehot_5", "sec17_onehot_6", "sec17_onehot_7", "sec17_onehot_8", "sec17_onehot_10", "sec17_onehot_11", "sec17_onehot_12", "sec17_onehot_13", "sec17_onehot_14", "sec17_onehot_15", "sec17_onehot_16", "sec17_onehot_other", "sec33_daily_freq", "sec17_onehot_17", "sec17_onehot_9", "mkt_bull_20d", "mkt_high_vol_regime", "graph_degree", "graph_clustering", "graph_avg_neigh_deg", "graph_core", "graph_degree_centrality", "graph_closeness", "graph_pagerank", "graph_comp_size", "graph_comp_id", "graph_degree_in_comp", "graph_local_density", "graph_isolated", "graph_degree_z", "peer_count", "peer_corr_mean", "graph_pagerank_share_comp", "graph_degree_z_in_comp", "graph_pagerank_z_in_comp", "dmi_published_date", "margin_net", "margin_std_share_long", "margin_std_share_short", "margin_neg_share_long", "margin_neg_share_short", "margin_gross_mom4", "dmi_application_date", "dmi_publish_reason", "dmi_long", "dmi_short", "dmi_net", "dmi_total", "dmi_credit_ratio", "dmi_imbalance", "dmi_short_long_ratio", "dmi_std_share_long", "dmi_std_share_short", "dmi_neg_share_long", "dmi_neg_share_short", "dmi_d_long_1d", "dmi_d_short_1d", "dmi_d_net_1d", "dmi_d_ratio_1d", "dmi_z26_short", "dmi_z26_long", "dmi_z26_total", "dmi_z26_d_short_1d", "dmi_reason_restricted", "dmi_reason_dailypublication", "dmi_reason_monitoring", "dmi_reason_restrictedbyjsf", "dmi_reason_precautionbyjsf", "dmi_reason_unclearorseconalert", "dmi_reason_count", "dmi_tse_reg_level", "dmi_long_to_adv20", "dmi_short_to_adv20", "dmi_total_to_adv20", "dmi_d_long_to_adv1d", "dmi_d_short_to_adv1d", "dmi_d_net_to_adv1d", "dmi_impulse", "dmi_days_since_pub", "dmi_days_since_app", "ss_balance", "ss_balance_ratio", "ss_balance_change", "ss_ratio", "ss_volume_ratio", "ss_volume_abs", "ss_activity", "ss_ratio_ma5", "ss_ratio_ma20", "ss_momentum_5d", "ss_momentum_10d", "ss_vol_5d", "ss_vol_20d", "ss_volume_momentum_5d", "ss_trend_strength", "ss_percentile_total", "ss_p95_252d", "ss_p05_252d", "ss_extreme_high", "ss_extreme_low", "ss_extreme_flag", "ss_ratio_z52", "ss_volume_ratio_z52", "ss_activity_z52", "ss_mean_reversion_signal", "ss_sec33_short_share", "ss_sec33_restrict_share", "ss_sec33_short_turnover", "ss_sec33_short_share_d1", "ss_sec33_restrict_share_d1", "ss_sec33_short_mom5", "ss_sec33_short_accel", "ss_mkt_short_share", "ss_mkt_restrict_share", "ss_mkt_short_breadth_q80", "ss_sec33_short_share_z60", "ss_sec33_short_turnover_z252", "ss_rel_short_share", "ss_rel_restrict_share", "ss_cond_pressure", "ss_squeeze_setup", "rsi_delta", "bb_bw", "z_close_20", "beta_60d_raw", "beta_20d_raw", "beta_rolling", "is_section_fallback", "foreigners_net_ratio", "individuals_net_ratio", "activity_ratio", "activity_z", "smart_money_idx", "smart_money_mom4", "days_since_flow", "target_20d_binary", "LocalCode", "rsi_vol_interact", "vol_confirmed_mom", "macd_hist_slope", "volume_accel", "lag_returns_1d", "rank_ret_prev_1d", "actual_ret_1d", "price_unchanged", "flag_penny", "flag_extreme_ret", "flag_zero_vol", "flag_freeze", "quality_bad", "quality_bad_v3", "adv_60d", "flag_adv_ok", "returns_1d_cs_z", "returns_5d_cs_z", "log_returns_1d_cs_z", "volatility_5d_cs_z", "volatility_20d_cs_z", "ema_5_cs_z", "ema_20_cs_z", "ema_200_cs_z", "ma_gap_5_20_cs_z", "price_to_sma20_cs_z", "bb_position_cs_z", "bb_width_cs_z", "volume_ratio_5_cs_z", "volume_ratio_20_cs_z", "turnover_rate_cs_z", "mkt_ret_1d_cs_z", "mkt_ret_5d_cs_z", "mkt_gap_5_20_cs_z", "mkt_vol_20d_cs_z", "mkt_bull_200_cs_z", "mkt_high_vol_cs_z", "mkt_ret_1d_z_cs_z", "mkt_dd_from_peak_cs_z", "beta_60d_cs_z", "alpha_1d_cs_z", "alpha_5d_cs_z", "rel_strength_5d_cs_z", "idio_vol_ratio_cs_z", "trend_align_mkt_cs_z", "sec_mom_20_cs_z", "sec_ret_5d_eq_cs_z", "sec_vol_20_z_cs_z", "sec_gap_5_20_cs_z", "flow_foreign_net_z_cs_z", "flow_individual_net_z_cs_z", "flow_activity_z_cs_z", "flow_smart_idx_cs_z", "flow_smart_mom4_cs_z", "flow_shock_flag_cs_z", "flow_impulse_cs_z", "flow_days_since_cs_z", "stmt_yoy_sales_cs_z", "stmt_yoy_op_cs_z", "stmt_opm_cs_z", "stmt_progress_op_cs_z", "stmt_rev_fore_op_cs_z", "stmt_imp_statement_cs_z", "stmt_days_since_statement_cs_z", "returns_10d_cs_z", "volatility_60d_cs_z", "price_to_sma5_cs_z", "price_to_sma60_cs_z", "close_to_high_cs_z", "close_to_low_cs_z", "realized_volatility_cs_z", "mkt_bb_bw_cs_z", "mkt_bb_pct_b_cs_z", "mkt_ret_10d_cs_z", "mkt_ret_20d_cs_z", "mkt_ema20_slope_3_cs_z", "beta_stability_60d_cs_z", "rsi_2_cs_z", "rsi_14_cs_z", "macd_histogram_cs_z", "stoch_k_cs_z", "alpha_vs_sec_1d_cs_z", "flow_foreign_net_ratio_cs_z", "flow_individual_net_ratio_cs_z", "flow_activity_ratio_cs_z", "flow_breadth_pos_cs_z", "stmt_yoy_np_cs_z", "stmt_npm_cs_z", "stmt_progress_np_cs_z", "stmt_rev_fore_np_cs_z", "stmt_roe_cs_z", "stmt_roa_cs_z", "returns_20d_cs_z", "volatility_10d_cs_z"]
+
+================================================================================
+  4. Summary & Recommendations
+================================================================================
+
+📌 Primary Dataset (most features):
+   Path: output/ml_dataset_latest_full.parquet
+   Features: 1311
+   CS-Z: ✅ Present
+
+================================================================================
+Diagnostic complete. Save this output to P0_DIAGNOSTIC_REPORT.txt
+================================================================================
+

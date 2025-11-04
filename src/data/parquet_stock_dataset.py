@@ -11,6 +11,7 @@ It relies on `OnlineRobustScaler` to approximate per-feature median/MAD via
 reservoirサンプリング so that正規化コストを一定に保てる。
 """
 
+import logging
 from collections.abc import Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,67 @@ except Exception:  # pragma: no cover
     _HAS_PYARROW = False
 
 NUMPY_EPS = np.finfo(np.float32).eps
+
+# P0-3: Non-numeric column exclusion for safe tensor conversion
+_ALWAYS_EXCLUDE_COLS = {
+    "Code", "LocalCode", "Section", "MarketCode",
+    "Date", "date", "trade_date",
+    "dmi_published_date", "dmi_application_date",
+    "dmi_publish_reason",
+    "sector17_code", "sector17_name", "sector33_code", "sector33_name",
+    "section_norm",  # String type
+}
+
+logger = logging.getLogger(__name__)
+
+
+def _select_numeric_columns_polars(
+    df: pl.DataFrame,
+    candidate_cols: list[str],
+) -> tuple[list[str], dict]:
+    """
+    Filter candidate columns to only numeric types (int, float, bool).
+    Exclude datetime, string, struct types and meta columns.
+
+    Returns:
+        (selected_cols, diagnostics_dict)
+    """
+    schema = df.schema
+    selected = []
+    dropped_non_numeric = []
+    casted_bool = []
+
+    for col in candidate_cols:
+        if col in _ALWAYS_EXCLUDE_COLS:
+            continue
+
+        if col not in schema:
+            dropped_non_numeric.append(col)
+            continue
+
+        dtype = schema[col]
+
+        # Accept numeric types
+        if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+                     pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+                     pl.Float32, pl.Float64):
+            selected.append(col)
+        # Accept boolean (will be cast to 0/1)
+        elif dtype == pl.Boolean:
+            selected.append(col)
+            casted_bool.append(col)
+        # Reject datetime, string, struct, etc.
+        else:
+            dropped_non_numeric.append(col)
+
+    diag = {
+        "selected": selected,
+        "dropped_non_numeric": dropped_non_numeric,
+        "casted_bool_to_float": casted_bool,
+        "excluded_meta": sorted(_ALWAYS_EXCLUDE_COLS),
+    }
+
+    return selected, diag
 
 
 class OnlineRobustScaler:
@@ -171,7 +233,13 @@ class ParquetStockIterableDataset(IterableDataset):
         else:
             candidate_files = self.file_paths
         for window in self._stream_windows(candidate_files, yield_windows=True):
-            features = window.select(self.feature_columns).to_numpy().astype(np.float32)
+            numeric_cols, diag = _select_numeric_columns_polars(window, self.feature_columns)
+            if not hasattr(self, '_filter_logged'):
+                logger.info(f"[P0-3 FeatureFilter] selected={len(numeric_cols)} "
+                           f"dropped={len(diag['dropped_non_numeric'])} "
+                           f"bool->float={len(diag['casted_bool_to_float'])}")
+                self._filter_logged = True
+            features = window.select(numeric_cols).to_numpy().astype(np.float32)
             scaler.partial_fit(features)
             if scaler._count >= max_samples:
                 break
@@ -258,7 +326,8 @@ class ParquetStockIterableDataset(IterableDataset):
 
     # ---------------------------------------------------------------- Conversion
     def _window_to_sample(self, window: pl.DataFrame) -> dict:
-        features = window.select(self.feature_columns).to_numpy().astype(np.float32)
+        numeric_cols, _ = _select_numeric_columns_polars(window, self.feature_columns)
+        features = window.select(numeric_cols).to_numpy().astype(np.float32)
         features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
         features = self._scaler.transform(features)
         features_tensor = torch.tensor(features, dtype=torch.float32)

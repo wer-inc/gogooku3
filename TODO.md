@@ -661,3 +661,24 @@ APEX RANKER
   - パフォーマンス改善: 推論速度、メモリ使用量
 
   具体的に何をご希望か教えていただけますか？
+
+  ----
+
+• フル学習ジョブをバックグラウンドで再起動しました。コマンド:
+
+  nohup python gogooku5/models/apex_ranker/scripts/train_v0.py \
+    --config gogooku5/models/apex_ranker/configs/v0_base.yaml \
+    --output gogooku5/models/apex_ranker/output/apex_ranker_v0_latest.pt \
+    > gogooku5/models/apex_ranker/output/train_v0_full.log 2>&1 &
+
+  ログ: gogooku5/models/apex_ranker/output/train_v0_full.log
+  チェックポイント: gogooku5/models/apex_ranker/output/apex_ranker_v0_latest.pt
+
+  tail -f gogooku5/models/apex_ranker/output/train_v0_full.log で進捗を追えます（ジョブ終了時に早期停止した最良エポック
+  が保存されます）。
+
+
+---
+
+• Running python apex-ranker/scripts/train_v0.py --config apex-ranker/configs/v0_base_baseline.yaml --cv-type
+  │ purged_kfold --cv-n-splits 5 --cv-fold 1 --embargo-days 5 --output models/baseline_fold1.pt

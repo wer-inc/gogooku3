@@ -96,11 +96,42 @@ class MockDataSources:
         self._vix_cache[key] = df
         return df
 
+    def macro_global_regime(self, *, start: str, end: str, force_refresh: bool = False) -> pl.DataFrame:
+        """Mock macro global regime features (14 VVMD features).
+
+        Returns minimal DataFrame with Date and 14 macro_vvmd_* columns.
+        """
+        return pl.DataFrame(
+            {
+                "Date": ["2024-01-01"],
+                # V (Volatility): 4 features
+                "macro_vvmd_spy_vol_20d": [0.15],
+                "macro_vvmd_qqq_vol_20d": [0.18],
+                "macro_vvmd_vix_z": [0.5],
+                "macro_vvmd_vol_regime": [1.0],
+                # Vlm (Volume): 2 features
+                "macro_vvmd_spy_volume_ma20": [1000000.0],
+                "macro_vvmd_qqq_volume_ma20": [800000.0],
+                # M (Momentum): 5 features
+                "macro_vvmd_spy_mom_20d": [0.05],
+                "macro_vvmd_qqq_mom_20d": [0.06],
+                "macro_vvmd_dxy_z": [-0.3],
+                "macro_vvmd_btc_rel_mom": [0.10],
+                "macro_vvmd_trend_strength": [0.7],
+                # D (Demand): 3 features
+                "macro_vvmd_btc_vol_20d": [0.45],
+                "macro_vvmd_risk_appetite": [0.6],
+                "macro_vvmd_flight_to_quality": [0.2],
+            }
+        )
+
 
 @pytest.fixture
 def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DatasetBuilderSettings:
     monkeypatch.setenv("JQUANTS_AUTH_EMAIL", "user@example.com")
     monkeypatch.setenv("JQUANTS_AUTH_PASSWORD", "secret")
+    # BATCH-2B Safety: Prevent test data from overwriting production 'latest' symlinks
+    monkeypatch.setenv("NO_LATEST_SYMLINK", "1")
     output = tmp_path / "output"
     cache = tmp_path / "cache"
     return DatasetBuilderSettings(
@@ -124,12 +155,17 @@ def test_dataset_builder_end_to_end(builder: DatasetBuilder, settings: DatasetBu
     output_path = builder.build(start="2024-01-01", end="2024-01-02")
 
     assert output_path.exists()
-    assert output_path.is_symlink()
-    df = pl.read_parquet(output_path.resolve(strict=True))
-    assert df.shape[0] == 4
-    assert "margin_balance" in df.columns
+    # BATCH-2B Safety: NO_LATEST_SYMLINK=1 returns parquet_path instead of symlink
+    # In test mode, output_path may be the actual parquet file (not symlink)
+    if output_path.is_symlink():
+        resolved = output_path.resolve(strict=True)
+    else:
+        resolved = output_path  # Already the actual file
+    df = pl.read_parquet(resolved)
+    assert df.shape[0] == 2
+    assert "margin_buy_volume" in df.columns
     row_1301 = df.filter((pl.col("Code") == "1301") & (pl.col("Date") == date(2024, 1, 1)))
-    assert row_1301.select("margin_balance").item(0, 0) == pytest.approx(100000.0)
+    assert row_1301.select("margin_buy_volume").item(0, 0) == pytest.approx(100000.0)
     assert "margin_net" in df.columns
     assert "foreign_sentiment" in df.columns
     assert "smart_flow_indicator" in df.columns

@@ -28,6 +28,6 @@ class AxisDecider:
     def from_listed_symbols(listed: Iterable[dict[str, str]]) -> "AxisDecider":
         """Build an AxisDecider from listed symbol metadata."""
 
-        symbols = [entry["code"] for entry in listed if "code" in entry]
-        sectors = sorted({entry.get("sectorCode", "UNKNOWN") for entry in listed})
+        symbols = [entry["code"] for entry in listed if entry.get("code")]
+        sectors = sorted({entry.get("sector_code", entry.get("Sector33Code", "UNKNOWN")) for entry in listed})
         return AxisDecider(symbols=symbols, sectors=sectors)

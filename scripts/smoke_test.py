@@ -43,6 +43,13 @@ def create_minimal_config():
     """最小限のテスト設定を作成（オブジェクト形式）"""
     return {
         'model': {
+            'input_dims': {
+                # Synthetic smoke test dataset uses 35 dynamic features only
+                'total_features': 35,
+                'historical_features': 0,
+                'static_features': 0,
+                'categorical_features': 0,
+            },
             'hidden_size': 64,
             'input_projection': {
                 'use_layer_norm': True,
@@ -265,7 +272,26 @@ def test_loss_computation(model, config):
             sharpe_weight=0.05
         )
 
-        loss = criterion(outputs, batch['targets'])
+        raw_predictions = outputs.get('predictions', outputs)
+        if isinstance(raw_predictions, dict):
+            pred_tensor = raw_predictions.get('single', next(iter(raw_predictions.values())))
+        else:
+            pred_tensor = raw_predictions
+
+        target_tensor = batch['targets']
+
+        pred_dict = {
+            'point_horizon_1': pred_tensor[:, 0],
+            'point_horizon_5': pred_tensor[:, 1],
+            'point_horizon_10': pred_tensor[:, 2],
+        }
+        target_dict = {
+            'horizon_1': target_tensor[:, 0],
+            'horizon_5': target_tensor[:, 1],
+            'horizon_10': target_tensor[:, 2],
+        }
+
+        loss = criterion(pred_dict, target_dict)
         logger.info(f"Loss type: {type(loss)}, Loss value: {loss}")
 
         if hasattr(loss, 'item'):
@@ -324,13 +350,29 @@ def test_training_step(model, optimizer, config):
         )
 
         # Handle both tensor and dict predictions
-        if isinstance(outputs['predictions'], dict):
-            logger.info(f"Predictions keys: {list(outputs['predictions'].keys())}")
+        raw_predictions = outputs['predictions']
+        if isinstance(raw_predictions, dict):
+            logger.info(f"Predictions keys: {list(raw_predictions.keys())}")
+            pred_tensor = raw_predictions.get('single', next(iter(raw_predictions.values())))
         else:
-            logger.info(f"Predictions shape: {outputs['predictions'].shape}")
-        logger.info(f"Targets shape: {batch['targets'].shape}")
+            pred_tensor = raw_predictions
+            logger.info(f"Predictions shape: {pred_tensor.shape}")
 
-        loss = criterion(outputs['predictions'], batch['targets'])
+        targets = batch['targets']
+        logger.info(f"Targets tensor shape: {targets.shape}")
+
+        pred_dict = {
+            'point_horizon_1': pred_tensor[:, 0],
+            'point_horizon_5': pred_tensor[:, 1],
+            'point_horizon_10': pred_tensor[:, 2],
+        }
+        target_dict = {
+            'horizon_1': targets[:, 0],
+            'horizon_5': targets[:, 1],
+            'horizon_10': targets[:, 2],
+        }
+
+        loss = criterion(pred_dict, target_dict)
 
         # バックワード
         loss.backward()
@@ -357,18 +399,20 @@ def test_improvements():
     # small-init + LayerScaleテスト
     config = create_minimal_config()
     config['improvements']['output_head_small_init'] = True
+    config_obj = dict_to_obj(config)
 
     try:
-        ATFT_GAT_FAN(config)
+        ATFT_GAT_FAN(config_obj)
         logger.info("✓ Small-init + LayerScale: OK")
     except Exception as e:
         logger.warning(f"⚠ Small-init + LayerScale failed: {e}")
 
     # FreqDropoutテスト
     config['improvements']['freq_dropout_p'] = 0.1
+    config_obj = dict_to_obj(config)
 
     try:
-        ATFT_GAT_FAN(config)
+        ATFT_GAT_FAN(config_obj)
         logger.info("✓ FreqDropout: OK")
     except Exception as e:
         logger.warning(f"⚠ FreqDropout failed: {e}")

@@ -46,7 +46,6 @@ class FinancialGraphBuilder:
             np.fill_diagonal(adj, 0)
             # Limit edges per node
             if self.max_edges_per_node > 0:
-                limited = 0
                 for i in range(adj.shape[0]):
                     idx = np.argsort(-adj[i])  # descending
                     keep = idx[: self.max_edges_per_node]

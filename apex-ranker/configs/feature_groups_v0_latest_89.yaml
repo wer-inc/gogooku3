@@ -1,0 +1,124 @@
+version: 1
+description: Exact 89-feature set used for training v0_latest (reconstructed)
+
+# Exclusions applied to reach 89 features from 94:
+# 1. sec_gap_5_20 (duplicate - appears in both core50 and plus30)
+# 2-5. Low-importance features from v0_pruned analysis:
+#   - rsi_2 (low predictive power)
+#   - stoch_k (redundant with rsi_14)
+#   - flow_breadth_pos (redundant with flow_activity_z)
+#   - mkt_ema20_slope_3 (redundant with mkt_gap_5_20)
+
+groups:
+  core50:
+    description: Core ranking factors (price/flow/sector/financial)
+    include:
+      - returns_1d
+      - returns_5d
+      - log_returns_1d
+      - volatility_5d
+      - volatility_20d
+      - ema_5
+      - ema_20
+      - ema_200
+      - ma_gap_5_20
+      - price_to_sma20
+      - bb_position
+      - bb_width
+      - volume_ratio_5
+      - volume_ratio_20
+      - turnover_rate
+      - mkt_ret_1d
+      - mkt_ret_5d
+      - mkt_gap_5_20
+      - mkt_vol_20d
+      - mkt_bull_200
+      - mkt_high_vol
+      - mkt_ret_1d_z
+      - mkt_dd_from_peak
+      - beta_60d
+      - alpha_1d
+      - alpha_5d
+      - rel_strength_5d
+      - idio_vol_ratio
+      - trend_align_mkt
+      - sec_mom_20
+      - sec_ret_5d_eq
+      - sec_vol_20_z
+      - sec_gap_5_20  # Position 33 (kept from core50)
+      - flow_foreign_net_z
+      - flow_individual_net_z
+      - flow_activity_z
+      - flow_smart_idx
+      - flow_smart_mom4
+      - flow_shock_flag
+      - flow_impulse
+      - flow_days_since
+      - stmt_yoy_sales
+      - stmt_yoy_op
+      - stmt_opm
+      - stmt_progress_op
+      - stmt_rev_fore_op
+      - stmt_imp_statement
+      - stmt_days_since_statement
+    masks:
+      - is_flow_valid
+      - is_valid_ma
+
+  plus30:
+    description: Secondary enhancements (momentum, breadth, financial detail)
+    include:
+      - returns_10d
+      - log_returns_10d
+      - volatility_60d
+      - price_to_sma5
+      - price_to_sma60
+      - close_to_high
+      - close_to_low
+      - realized_volatility
+      - log_returns_20d
+      - mkt_bb_bw
+      - mkt_bb_pct_b
+      - mkt_ret_10d
+      - mkt_ret_20d
+      # mkt_ema20_slope_3 - EXCLUDED (redundant with mkt_gap_5_20)
+      - beta_stability_60d
+      # rsi_2 - EXCLUDED (low predictive power)
+      - rsi_14
+      - rsi_delta
+      - macd
+      - macd_signal
+      - macd_histogram
+      # stoch_k - EXCLUDED (redundant with rsi_14)
+      - alpha_vs_sec_1d
+      # sec_gap_5_20 - EXCLUDED (duplicate from core50)
+      - flow_foreign_net_ratio
+      - flow_individual_net_ratio
+      - flow_activity_ratio
+      # flow_breadth_pos - EXCLUDED (redundant with flow_activity_z)
+      - stmt_yoy_np
+      - stmt_npm
+      - stmt_progress_np
+      - stmt_rev_fore_np
+      - stmt_roe
+      - stmt_roa
+      - returns_20d
+      - volatility_10d
+      - x_mom_sh_5
+      - x_mom_sh_10
+      - x_mom_sh_5_mktneu
+      - x_rel_sec_mom
+      - x_z_sec_gap_mom
+      - smart_money_mom4
+    masks:
+      - is_flow_valid
+
+  dmi_focus:
+    description: Daily margin signals (focused subset)
+    include:
+      - dmi_z26_net
+      - dmi_net_to_adv20
+      - dmi_impulse
+      - dmi_days_since_pub
+    masks:
+      - is_dmi_valid

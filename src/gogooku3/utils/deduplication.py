@@ -52,11 +52,11 @@ class SafeDeduplicator:
 
     def scan_directory(self, directory: Path, patterns: list[str] = None) -> dict[str, list[Path]]:
         """Scan directory and identify duplicate files by hash.
-        
+
         Args:
             directory: Directory to scan
             patterns: List of glob patterns to match (e.g., ['*.parquet', '*.json'])
-            
+
         Returns:
             Dictionary mapping hash -> list of file paths with that hash
         """
@@ -155,11 +155,11 @@ class SafeDeduplicator:
 
     def execute_removal_plan(self, removal_plan: list[dict], dry_run: bool = True) -> dict:
         """Execute the file removal plan.
-        
+
         Args:
             removal_plan: List of files to remove
             dry_run: If True, only simulate removal
-            
+
         Returns:
             Execution results
         """
@@ -251,12 +251,12 @@ class SafeDeduplicator:
         dry_run: bool = True
     ) -> dict:
         """Complete deduplication workflow for a directory.
-        
+
         Args:
             directory: Directory to deduplicate
-            patterns: File patterns to process  
+            patterns: File patterns to process
             dry_run: If True, only simulate removal
-            
+
         Returns:
             Complete deduplication results
         """

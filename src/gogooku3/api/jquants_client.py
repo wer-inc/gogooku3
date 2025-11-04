@@ -10,8 +10,9 @@ import asyncio
 import logging
 import math
 import time
+from collections.abc import Iterable
 from contextlib import nullcontext
-from typing import Any, Iterable, Tuple
+from typing import Any
 
 import aiohttp
 
@@ -53,7 +54,7 @@ class JQuantsClient:
         self._throttle_sleep_seconds = config.throttle_sleep
         self._recovery_step = config.throttle_step
         self._success_threshold = config.throttle_recovery_success
-        self._retry_statuses: Tuple[int, ...] = (429, 503)
+        self._retry_statuses: tuple[int, ...] = (429, 503)
         self._success_streak = 0
         self._throttle_hits = 0
         self._throttle_recoveries = 0
@@ -213,7 +214,7 @@ class JQuantsClient:
         expected_statuses: Iterable[int] = (200,),
         decode_json: bool = True,
         use_semaphore: bool = True,
-    ) -> Tuple[int, Any]:
+    ) -> tuple[int, Any]:
         """
         Make HTTP request with retry and throttle handling.
 

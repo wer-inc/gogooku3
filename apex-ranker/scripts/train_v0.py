@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import argparse
 import copy
+import math
 from collections.abc import Iterable
+from datetime import date as Date
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 import torch
+from apex_ranker.backtest.splitter import PurgedKFoldSplitter, PurgeParams
 from apex_ranker.data import (
     DayPanelDataset,
     FeatureSelector,
@@ -18,7 +22,17 @@ from apex_ranker.data import (
 )
 from apex_ranker.losses import CompositeLoss
 from apex_ranker.models import APEXRankerV0
-from apex_ranker.utils import load_config, precision_at_k, spearman_ic
+from apex_ranker.utils import (
+    k_from_ratio,
+    load_config,
+    ndcg_at_k,
+    ndcg_random_baseline,
+    precision_at_k_pos,
+    spearman_ic,
+    top_bottom_spread,
+    topk_overlap,
+    wil_at_k,
+)
 from torch.utils.data import DataLoader
 
 
@@ -40,8 +54,15 @@ class EarlyStopping:
         self.best_epoch = 0
         self.early_stop = False
         self.best_state = None
+        self.best_extra = None
 
-    def __call__(self, score: float, epoch: int, model_state: dict) -> bool:
+    def __call__(
+        self,
+        score: float,
+        epoch: int,
+        model_state: dict,
+        extra_state: dict | None = None,
+    ) -> bool:
         """Check if training should stop.
 
         Returns:
@@ -51,6 +72,7 @@ class EarlyStopping:
             self.best_score = score
             self.best_epoch = epoch
             self.best_state = model_state
+            self.best_extra = extra_state
             return False
 
         if self.mode == "max":
@@ -62,6 +84,7 @@ class EarlyStopping:
             self.best_score = score
             self.best_epoch = epoch
             self.best_state = model_state
+            self.best_extra = extra_state
             self.counter = 0
             print(f"[EarlyStopping] New best: {score:.4f} at epoch {epoch}")
         else:
@@ -78,6 +101,51 @@ class EarlyStopping:
                 return True
 
         return False
+
+
+class ExponentialMovingAverage:
+    """Maintain an exponential moving average of model parameters."""
+
+    def __init__(self, model: torch.nn.Module, beta: float = 0.999) -> None:
+        self.beta = float(beta)
+        self.shadow: dict[str, torch.Tensor] = {
+            name: param.detach().clone()
+            for name, param in model.named_parameters()
+            if param.requires_grad
+        }
+        self.backup: dict[str, torch.Tensor] | None = None
+
+    def update(self, model: torch.nn.Module) -> None:
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            shadow_param = self.shadow[name]
+            shadow_param.mul_(self.beta).add_(param.detach(), alpha=1.0 - self.beta)
+
+    def apply(self, model: torch.nn.Module) -> None:
+        self.backup = {}
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            self.backup[name] = param.detach().clone()
+            param.data.copy_(self.shadow[name])
+
+    def restore(self, model: torch.nn.Module) -> None:
+        if self.backup is None:
+            return
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            param.data.copy_(self.backup[name])
+        self.backup = None
+
+    def clone_shadow(self) -> dict[str, torch.Tensor]:
+        return {name: tensor.detach().clone() for name, tensor in self.shadow.items()}
+
+    def load_shadow(self, shadow_state: dict[str, torch.Tensor]) -> None:
+        for name, tensor in shadow_state.items():
+            if name in self.shadow:
+                self.shadow[name].data.copy_(tensor)
 
 
 def clone_state_dict(state_dict: dict) -> dict:
@@ -155,6 +223,54 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional validation window end date (YYYY-MM-DD)",
     )
+    parser.add_argument(
+        "--ema-snapshot-epochs",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Save EMA-weight snapshots at the given 1-indexed epochs (requires --output).",
+    )
+    parser.add_argument(
+        "--cv-type",
+        choices=["walk_forward", "purged_kfold"],
+        default=None,
+        help="Override cross-validation splitter (defaults to config).",
+    )
+    parser.add_argument(
+        "--cv-n-splits",
+        type=int,
+        default=None,
+        help="Number of folds when using Purged K-Fold (defaults to config).",
+    )
+    parser.add_argument(
+        "--cv-fold",
+        type=int,
+        default=None,
+        help="Purged K-Fold index (1-based). Defaults to config/1 when purged_kfold is used.",
+    )
+    parser.add_argument(
+        "--embargo-days",
+        type=int,
+        default=None,
+        help="Embargo days appended to purge gaps (defaults to config).",
+    )
+    parser.add_argument(
+        "--eval-only",
+        action="store_true",
+        help="Skip training; load --checkpoint and run validation only.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to model state_dict for eval-only mode.",
+    )
+    parser.add_argument(
+        "--eval-k-ratios",
+        type=str,
+        default=None,
+        help="Comma-separated override(s) for eval.k_ratio (e.g. '0.05,0.10'). Used in eval-only mode.",
+    )
     return parser.parse_args()
 
 
@@ -167,6 +283,19 @@ def date_str_to_int(date_str: str) -> int:
     """Convert YYYY-MM-DD string to integer day representation."""
     day = np.datetime64(date_str, "D")
     return int(day.astype("int64"))
+
+
+DATE_EPOCH = Date(1970, 1, 1)
+
+
+def day_int_to_date(day_int: int) -> Date:
+    """Convert cached day integer to ``datetime.date``."""
+    return DATE_EPOCH + timedelta(days=int(day_int))
+
+
+def date_to_day_int(date_obj: Date) -> int:
+    """Convert ``datetime.date`` back to integer offset."""
+    return (date_obj - DATE_EPOCH).days
 
 
 def load_dataset(
@@ -264,6 +393,29 @@ def load_dataset(
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
+    snapshot_epochs = {
+        int(epoch)
+        for epoch in args.ema_snapshot_epochs or []
+        if int(epoch) > 0
+    }
+    warned_snapshot_no_output = False
+    eval_cfg = cfg.get("eval", {}) or {}
+    eval_k_value = eval_cfg.get("k")
+    if eval_k_value is not None:
+        eval_k_value = int(eval_k_value)
+    eval_ratio_value = eval_cfg.get("k_ratio", 0.1)
+    if eval_ratio_value is not None:
+        eval_ratio_value = float(eval_ratio_value)
+    ndcg_beta_value = float(eval_cfg.get("ndcg_beta", 1.0))
+    es_weights_cfg = eval_cfg.get("es_weights", "0.5,0.35,0.15")
+    es_weights: dict[int, float] = {}
+    try:
+        w1, w2, w3 = [float(x.strip()) for x in es_weights_cfg.split(",")]
+        es_weights = {5: w1, 10: w2, 20: w3}
+    except Exception as exc:  # pragma: no cover - defensive
+        raise ValueError(
+            "eval.es_weights must be a comma-separated string for horizons 5,10,20"
+        ) from exc
 
     data_cfg = cfg["data"]
     cfg.get("normalization", {})
@@ -279,10 +431,72 @@ def main() -> None:
     feature_selector = FeatureSelector(data_cfg["feature_groups_config"])
     cache, feature_cols, target_cols, mask_cols = load_dataset(cfg, feature_selector)
 
-    dates = cache.date_ints
-    val_days = max(1, min(train_cfg.get("val_days", 60), len(dates) // 5))
-    train_dates = dates[:-val_days] if len(dates) > val_days else dates
-    val_dates = dates[-val_days:] if len(dates) > val_days else dates[-1:]
+    dates = sorted(int(d) for d in cache.date_ints)
+
+    evaluation_cfg = train_cfg.get("evaluation", {}) or {}
+    cfg_cv_type = evaluation_cfg.get("splitter", "walk_forward").lower()
+    cv_type = (args.cv_type.lower() if args.cv_type else cfg_cv_type)
+    purged_cfg = evaluation_cfg.get("purged_kfold", {}) or {}
+
+    default_n_splits = int(purged_cfg.get("n_splits", 5))
+    default_embargo = int(purged_cfg.get("embargo_days", 0))
+
+    n_splits = args.cv_n_splits if args.cv_n_splits is not None else default_n_splits
+    embargo_days = (
+        args.embargo_days if args.embargo_days is not None else default_embargo
+    )
+    cv_fold = int(args.cv_fold if args.cv_fold is not None else purged_cfg.get("fold", 1) or 1)
+
+    horizons = [int(h) for h in train_cfg["horizons"]]
+    short_term_horizons = [h for h in (5, 10, 20) if h in horizons]
+    lookback_days = int(data_cfg.get("lookback", data_cfg.get("lookback_days", 180)))
+    max_horizon = max(horizons) if horizons else 0
+
+    train_dates: list[int]
+    val_dates: list[int]
+
+    if cv_type == "purged_kfold":
+        params = PurgeParams(
+            lookback_days=lookback_days,
+            max_horizon_days=max_horizon,
+            embargo_days=int(embargo_days),
+        )
+        splitter = PurgedKFoldSplitter(n_splits=int(n_splits), params=params)
+        index_array = np.arange(len(dates))
+        try:
+            train_idx, val_idx = next(splitter.split(index_array, fold_index=cv_fold))
+        except StopIteration:  # pragma: no cover - defensive
+            raise RuntimeError("PurgedKFoldSplitter produced no folds.")
+
+        train_dates = [dates[i] for i in train_idx.tolist()]
+        val_dates = [dates[i] for i in val_idx.tolist()]
+
+        if not train_dates:
+            raise ValueError("PurgedKFold produced empty training set.")
+        if not val_dates:
+            raise ValueError("PurgedKFold produced empty validation set.")
+
+        train_start = day_int_to_date(train_dates[0])
+        train_end = day_int_to_date(train_dates[-1])
+        val_start = day_int_to_date(val_dates[0])
+        val_end = day_int_to_date(val_dates[-1])
+
+        print(
+            "[INFO] PurgedKFold split "
+            f"{cv_fold}/{n_splits}: train {train_start} → {train_end} ({len(train_dates)} days) | "
+            f"val {val_start} → {val_end} ({len(val_dates)} days) | "
+            f"purge_days={params.purge_days} (lookback={params.lookback_days}, max_h={params.max_horizon_days}, embargo={params.embargo_days})"
+        )
+    else:
+        if args.cv_type and args.cv_type.lower() == "purged_kfold":
+            raise ValueError("Purged K-Fold requested but evaluation config is missing.")
+        val_days = max(1, min(train_cfg.get("val_days", 60), len(dates) // 5))
+        train_dates = dates[:-val_days] if len(dates) > val_days else dates
+        val_dates = dates[-val_days:] if len(dates) > val_days else dates[-1:]
+        if args.cv_fold is not None:
+            print(
+                "[WARN] --cv-fold specified but purged_kfold is not active; ignoring."
+            )
 
     if args.max_train_days is not None and train_dates:
         train_dates = train_dates[-int(args.max_train_days) :]
@@ -341,6 +555,7 @@ def main() -> None:
         num_workers=num_workers,
         collate_fn=collate_day_batch,
     )
+    train_total_steps = len(train_loader) if len(train_loader) > 0 else 0
 
     horizons = [int(h) for h in train_cfg["horizons"]]
     loss_module = CompositeLoss(
@@ -368,6 +583,203 @@ def main() -> None:
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
+
+    use_ema = bool(train_cfg.get("use_ema", True))
+    ema_beta = float(train_cfg.get("ema_beta", 0.999))
+    ema = ExponentialMovingAverage(model, beta=ema_beta) if use_ema else None
+
+    # ========== EVAL-ONLY MODE ==========
+    if args.eval_only:
+        import sys
+        if not args.checkpoint:
+            raise ValueError("--eval-only requires --checkpoint to be specified")
+
+        print(f"[EVAL-ONLY] Loading checkpoint: {args.checkpoint}")
+        state = torch.load(args.checkpoint, map_location=device)
+        model.load_state_dict(state, strict=True)
+        model.eval()
+
+        # Parse eval.k_ratios (default to config value)
+        if args.eval_k_ratios:
+            eval_ratios = [float(r.strip()) for r in args.eval_k_ratios.split(",")]
+        else:
+            eval_ratios = [eval_ratio_value]
+
+        # Run validation for each ratio
+        for eval_ratio_override in eval_ratios:
+            print(f"\n[EVAL-ONLY] Running validation with eval.k_ratio={eval_ratio_override}")
+
+            # Validation logic (copied from main training loop)
+            if ema is not None:
+                ema.apply(model)
+            model.eval()
+
+            per_horizon: dict[int, dict[str, list[float]]] = {
+                h: {
+                    "date_int": [],
+                    "rank_ic": [],
+                    "topk_overlap": [],
+                    "p_at_k_pos": [],
+                    "p_at_k_pos_rand": [],
+                    "ndcg": [],
+                    "ndcg_rand": [],
+                    "spread": [],
+                    "k_over_n": [],
+                    "wil": [],
+                }
+                for h in horizons
+            }
+            val_panel_count = 0
+            ndcg_beta = ndcg_beta_value
+            eval_k = eval_k_value
+            eval_ratio = eval_ratio_override  # USE OVERRIDE
+
+            # Helper function for device transfer
+            def to_device(tensor: torch.Tensor) -> torch.Tensor:
+                return tensor.to(device, non_blocking=True)
+
+            with torch.no_grad():
+                for batch in val_loader:
+                    if batch is None:
+                        continue
+                    date_int = int(batch.get("date_int", 0))
+                    X = to_device(batch["X"].squeeze(0))
+                    y = to_device(batch["y"].squeeze(0))
+                    scores = model(X)
+                    val_panel_count += 1
+
+                    for idx, horizon in enumerate(horizons):
+                        if idx >= y.shape[1]:
+                            continue
+                        s = scores[horizon]
+                        target = y[:, idx]
+                        if torch.std(target) < 1e-8:
+                            continue
+                        score_vec = s.detach().float().cpu()
+                        label_vec = target.detach().float().cpu()
+                        n = label_vec.numel()
+                        if n == 0:
+                            continue
+                        k = k_from_ratio(n, k=eval_k, ratio=eval_ratio)
+                        ic = spearman_ic(score_vec, label_vec)
+                        overlap = topk_overlap(score_vec, label_vec, k)
+                        p_at_k, p_rand = precision_at_k_pos(score_vec, label_vec, k)
+                        nd_val = ndcg_at_k(score_vec, label_vec, k, beta=ndcg_beta)
+                        nd_rand = ndcg_random_baseline(label_vec, k, beta=ndcg_beta)
+                        spread_val = top_bottom_spread(score_vec, label_vec, k)
+                        wil_val = wil_at_k(score_vec, label_vec, k)
+
+                        stats = per_horizon[horizon]
+                        stats["date_int"].append(date_int)
+                        stats["rank_ic"].append(ic)
+                        stats["topk_overlap"].append(overlap)
+                        stats["p_at_k_pos"].append(p_at_k)
+                        stats["p_at_k_pos_rand"].append(p_rand)
+                        stats["ndcg"].append(nd_val)
+                        stats["ndcg_rand"].append(nd_rand)
+                        stats["spread"].append(spread_val)
+                        stats["k_over_n"].append(k / max(1, n))
+                        stats["wil"].append(wil_val)
+
+            # Compute and print validation metrics
+            summary: dict[int, dict[str, float]] = {}
+            for horizon in horizons:
+                stats = per_horizon[horizon]
+                if not stats["rank_ic"]:
+                    continue
+                arrays = {
+                    key: np.asarray(values, dtype=np.float64)
+                    for key, values in stats.items()
+                    if key != "date_int"
+                }
+                rank_ic_mean = float(arrays["rank_ic"].mean())
+                overlap_mean = float(arrays["topk_overlap"].mean())
+                p_at_k_mean = float(arrays["p_at_k_pos"].mean())
+                p_rand_mean = float(arrays["p_at_k_pos_rand"].mean())
+                delta_p = float(
+                    (arrays["p_at_k_pos"] - arrays["p_at_k_pos_rand"]).mean()
+                )
+                ndcg_mean = float(arrays["ndcg"].mean())
+                ndcg_rand_mean = float(arrays["ndcg_rand"].mean())
+                delta_ndcg = float(
+                    (arrays["ndcg"] - arrays["ndcg_rand"]).mean()
+                )
+                spread_mean = float(arrays["spread"].mean())
+                k_over_n_mean = float(arrays["k_over_n"].mean())
+                wil_mean = float(arrays["wil"].mean())
+
+                summary[horizon] = {
+                    "rank_ic": rank_ic_mean,
+                    "topk_overlap": overlap_mean,
+                    "p_at_k_pos": p_at_k_mean,
+                    "p_at_k_pos_rand": p_rand_mean,
+                    "delta_p_at_k_pos": delta_p,
+                    "ndcg": ndcg_mean,
+                    "ndcg_rand": ndcg_rand_mean,
+                    "delta_ndcg": delta_ndcg,
+                    "spread": spread_mean,
+                    "k_over_n": k_over_n_mean,
+                    "wil": wil_mean,
+                    "n_days": int(arrays["rank_ic"].size),
+                }
+
+                print(
+                    "[Val] h=%2dd RankIC=%.4f ΔP@K=%.4f (P@K=%.4f | rand=%.4f) "
+                    "ΔNDCG=%.4f (NDCG=%.4f | rand=%.4f) "
+                    "Overlap=%.4f Spread=%.4f WIL=%.4f (panels=%d, K/N=%.3f)"
+                    % (
+                        horizon,
+                        rank_ic_mean,
+                        delta_p,
+                        p_at_k_mean,
+                        p_rand_mean,
+                        delta_ndcg,
+                        ndcg_mean,
+                        ndcg_rand_mean,
+                        overlap_mean,
+                        spread_mean,
+                        wil_mean,
+                        arrays["rank_ic"].size,
+                        k_over_n_mean,
+                    )
+                )
+
+            if val_panel_count == 0:
+                print(
+                    "[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day."
+                )
+            else:
+                print(f"[INFO] Processed {val_panel_count} validation panels.")
+
+            # Save per-day metrics with ratio in filename
+            if args.output:
+                output_path = Path(args.output)
+                ratio_int = int(round(eval_ratio_override * 100))
+                npz_path = output_path.with_name(
+                    f"{output_path.stem}_reval_k{ratio_int:02d}_val_perday.npz"
+                )
+                payload: dict[str, np.ndarray] = {}
+                for horizon, stats in per_horizon.items():
+                    prefix = f"h{horizon}_"
+                    payload[prefix + "date_int"] = np.asarray(
+                        stats["date_int"], dtype=np.int64
+                    )
+                    for key, values in stats.items():
+                        if key == "date_int":
+                            continue
+                        payload[prefix + key] = np.asarray(values, dtype=np.float64)
+                if payload:
+                    np.savez_compressed(npz_path, **payload)
+                    print(f"[EVAL-ONLY] Saved validation per-day metrics to {npz_path}")
+
+            if ema is not None:
+                ema.restore(model)
+
+        print("\n[EVAL-ONLY] Completed. Exiting.")
+        sys.exit(0)
+    # ========== END EVAL-ONLY MODE ==========
+
+    time_decay_tau = float(train_cfg.get("time_decay_tau_days", 0.0))
 
     total_epochs = int(train_cfg["epochs"])
     optimizer = torch.optim.AdamW(
@@ -445,7 +857,9 @@ def main() -> None:
         if args.early_stopping_patience is not None
         else early_cfg.get("patience")
     )
-    monitor_metric = args.early_stopping_metric or early_cfg.get("metric", "20d_pak")
+    monitor_metric = args.early_stopping_metric or early_cfg.get("metric")
+    if not monitor_metric:
+        monitor_metric = "short_term_score"
     min_delta = float(early_cfg.get("min_delta", 0.0))
     if patience is not None:
         early_stopping = EarlyStopping(
@@ -473,8 +887,28 @@ def main() -> None:
                 scores = model(X)
                 loss = model.compute_loss(scores, y)
 
-            if not torch.isfinite(loss):
+            # GRADIENT-SAFE: Skip if all horizons were invalid (empty aggregation)
+            if loss is None:
+                if step % train_cfg.get("log_interval", 10) == 0:
+                    print(f"[WARN] Step {step}: No valid horizon loss (skipping)")
+                optimizer.zero_grad(set_to_none=True)
                 continue
+
+            if not torch.isfinite(loss):
+                optimizer.zero_grad(set_to_none=True)
+                continue
+
+            # GRADIENT-SAFE: Verify loss has gradient before backward
+            if not loss.requires_grad:
+                raise RuntimeError(
+                    f"Loss has no grad at step={step}. "
+                    "Check CompositeLoss/compute_loss: avoid .item()/detach/empty aggregation"
+                )
+
+            if time_decay_tau > 0 and train_total_steps > 0:
+                age = train_total_steps - step
+                weight = math.exp(-float(age) / max(time_decay_tau, 1e-6))
+                loss = loss * weight
 
             scaler.scale(loss).backward()
             if grad_clip := train_cfg.get("grad_clip"):
@@ -482,6 +916,8 @@ def main() -> None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             scaler.step(optimizer)
             scaler.update()
+            if ema is not None:
+                ema.update(model)
 
             running_loss += loss.item()
             batch_count += 1
@@ -505,14 +941,34 @@ def main() -> None:
             )
             continue
 
-        # Validation
+        # Validation (use EMA weights when enabled)
+        if ema is not None:
+            ema.apply(model)
         model.eval()
-        metrics = {h: {"ic": [], "p@k": []} for h in horizons}
+        per_horizon: dict[int, dict[str, list[float]]] = {
+            h: {
+                "date_int": [],
+                "rank_ic": [],
+                "topk_overlap": [],
+                "p_at_k_pos": [],
+                "p_at_k_pos_rand": [],
+                "ndcg": [],
+                "ndcg_rand": [],
+                "spread": [],
+                "k_over_n": [],
+                "wil": [],
+            }
+            for h in horizons
+        }
         val_panel_count = 0
+        ndcg_beta = ndcg_beta_value
+        eval_k = eval_k_value
+        eval_ratio = eval_ratio_value
         with torch.no_grad():
             for batch in val_loader:
                 if batch is None:
                     continue
+                date_int = int(batch.get("date_int", 0))
                 X = to_device(batch["X"].squeeze(0))
                 y = to_device(batch["y"].squeeze(0))
                 scores = model(X)
@@ -525,24 +981,93 @@ def main() -> None:
                     target = y[:, idx]
                     if torch.std(target) < 1e-8:
                         continue
-                    metrics[horizon]["ic"].append(spearman_ic(s, target))
-                    k = max(1, min(50, target.numel() // 10))
-                    metrics[horizon]["p@k"].append(precision_at_k(s, target, k))
+                    score_vec = s.detach().float().cpu()
+                    label_vec = target.detach().float().cpu()
+                    n = label_vec.numel()
+                    if n == 0:
+                        continue
+                    k = k_from_ratio(n, k=eval_k, ratio=eval_ratio)
+                    ic = spearman_ic(score_vec, label_vec)
+                    overlap = topk_overlap(score_vec, label_vec, k)
+                    p_at_k, p_rand = precision_at_k_pos(score_vec, label_vec, k)
+                    nd_val = ndcg_at_k(score_vec, label_vec, k, beta=ndcg_beta)
+                    nd_rand = ndcg_random_baseline(label_vec, k, beta=ndcg_beta)
+                    spread_val = top_bottom_spread(score_vec, label_vec, k)
+                    wil_val = wil_at_k(score_vec, label_vec, k)
+
+                    stats = per_horizon[horizon]
+                    stats["date_int"].append(date_int)
+                    stats["rank_ic"].append(ic)
+                    stats["topk_overlap"].append(overlap)
+                    stats["p_at_k_pos"].append(p_at_k)
+                    stats["p_at_k_pos_rand"].append(p_rand)
+                    stats["ndcg"].append(nd_val)
+                    stats["ndcg_rand"].append(nd_rand)
+                    stats["spread"].append(spread_val)
+                    stats["k_over_n"].append(k / max(1, n))
+                    stats["wil"].append(wil_val)
 
         # Compute and print validation metrics
-        metric_results = {}
+        summary: dict[int, dict[str, float]] = {}
         for horizon in horizons:
-            icvals = metrics[horizon]["ic"]
-            pkvals = metrics[horizon]["p@k"]
-            if not icvals:
+            stats = per_horizon[horizon]
+            if not stats["rank_ic"]:
                 continue
-            ic_mean = sum(icvals) / len(icvals)
-            pk_mean = sum(pkvals) / len(pkvals) if pkvals else float("nan")
-            metric_results[f"{horizon}d_ic"] = ic_mean
-            metric_results[f"{horizon}d_pak"] = pk_mean
+            arrays = {
+                key: np.asarray(values, dtype=np.float64)
+                for key, values in stats.items()
+                if key != "date_int"
+            }
+            rank_ic_mean = float(arrays["rank_ic"].mean())
+            overlap_mean = float(arrays["topk_overlap"].mean())
+            p_at_k_mean = float(arrays["p_at_k_pos"].mean())
+            p_rand_mean = float(arrays["p_at_k_pos_rand"].mean())
+            delta_p = float(
+                (arrays["p_at_k_pos"] - arrays["p_at_k_pos_rand"]).mean()
+            )
+            ndcg_mean = float(arrays["ndcg"].mean())
+            ndcg_rand_mean = float(arrays["ndcg_rand"].mean())
+            delta_ndcg = float(
+                (arrays["ndcg"] - arrays["ndcg_rand"]).mean()
+            )
+            spread_mean = float(arrays["spread"].mean())
+            k_over_n_mean = float(arrays["k_over_n"].mean())
+            wil_mean = float(arrays["wil"].mean())
+
+            summary[horizon] = {
+                "rank_ic": rank_ic_mean,
+                "topk_overlap": overlap_mean,
+                "p_at_k_pos": p_at_k_mean,
+                "p_at_k_pos_rand": p_rand_mean,
+                "delta_p_at_k_pos": delta_p,
+                "ndcg": ndcg_mean,
+                "ndcg_rand": ndcg_rand_mean,
+                "delta_ndcg": delta_ndcg,
+                "spread": spread_mean,
+                "k_over_n": k_over_n_mean,
+                "wil": wil_mean,
+                "n_days": int(arrays["rank_ic"].size),
+            }
+
             print(
-                "[Val] h=%2dd RankIC=%.4f  P@K=%.4f  (panels=%d)"
-                % (horizon, ic_mean, pk_mean, len(icvals))
+                "[Val] h=%2dd RankIC=%.4f ΔP@K=%.4f (P@K=%.4f | rand=%.4f) "
+                "ΔNDCG=%.4f (NDCG=%.4f | rand=%.4f) "
+                "Overlap=%.4f Spread=%.4f WIL=%.4f (panels=%d, K/N=%.3f)"
+                % (
+                    horizon,
+                    rank_ic_mean,
+                    delta_p,
+                    p_at_k_mean,
+                    p_rand_mean,
+                    delta_ndcg,
+                    ndcg_mean,
+                    ndcg_rand_mean,
+                    overlap_mean,
+                    spread_mean,
+                    wil_mean,
+                    arrays["rank_ic"].size,
+                    k_over_n_mean,
+                )
             )
         if val_panel_count == 0:
             print(
@@ -551,12 +1076,78 @@ def main() -> None:
         else:
             print(f"[INFO] Processed {val_panel_count} validation panels.")
 
+        metric_results: dict[str, float] = {}
+        for horizon, stats in summary.items():
+            metric_results[f"{horizon}d_ic"] = stats["rank_ic"]
+            metric_results[f"{horizon}d_pak"] = stats["p_at_k_pos"]
+            metric_results[f"{horizon}d_delta_pak"] = stats["delta_p_at_k_pos"]
+            metric_results[f"{horizon}d_ndcg"] = stats["ndcg"]
+            metric_results[f"{horizon}d_delta_ndcg"] = stats["delta_ndcg"]
+            metric_results[f"{horizon}d_overlap"] = stats["topk_overlap"]
+            metric_results[f"{horizon}d_spread"] = stats["spread"]
+            metric_results[f"{horizon}d_wil"] = stats["wil"]
+
+        short_term_score = 0.0
+        total_weight = 0.0
+        for horizon in short_term_horizons:
+            weight = es_weights.get(horizon, 0.0)
+            if weight <= 0 or horizon not in summary:
+                continue
+            short_term_score += weight * summary[horizon]["p_at_k_pos"]
+            total_weight += weight
+        if total_weight > 0:
+            print(
+                f"[Val] Short-term score (5/10/20d weighted) = {short_term_score:.4f}"
+            )
+            metric_results["short_term_score"] = short_term_score
+
+        if args.output:
+            output_path = Path(args.output)
+            npz_path = output_path.with_name(output_path.stem + "_val_perday.npz")
+            payload: dict[str, np.ndarray] = {}
+            for horizon, stats in per_horizon.items():
+                prefix = f"h{horizon}_"
+                payload[prefix + "date_int"] = np.asarray(
+                    stats["date_int"], dtype=np.int64
+                )
+                for key, values in stats.items():
+                    if key == "date_int":
+                        continue
+                    payload[prefix + key] = np.asarray(values, dtype=np.float64)
+            if payload:
+                np.savez_compressed(npz_path, **payload)
+                print(f"[INFO] Saved validation per-day metrics to {npz_path}")
+
+        if (
+            ema is not None
+            and snapshot_epochs
+            and epoch in snapshot_epochs
+        ):
+            if args.output:
+                snapshot_path = Path(args.output).with_name(
+                    f"{Path(args.output).stem}_ema_epoch{epoch}.pt"
+                )
+                snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(model.state_dict(), snapshot_path)
+                print(f"[Snapshot] Saved EMA weights to {snapshot_path}")
+                snapshot_epochs.discard(epoch)
+            elif not warned_snapshot_no_output:
+                print(
+                    "[WARN] --ema-snapshot-epochs provided but --output missing; skipping snapshot exports."
+                )
+                warned_snapshot_no_output = True
+                snapshot_epochs.discard(epoch)
+
+        if ema is not None:
+            ema.restore(model)
+
         # Check early stopping
         if early_stopping is not None and metric_results:
             if monitor_metric in metric_results:
                 score = metric_results[monitor_metric]
                 model_state = clone_state_dict(model.state_dict())
-                should_stop = early_stopping(score, epoch, model_state)
+                ema_state = ema.clone_shadow() if ema is not None else None
+                should_stop = early_stopping(score, epoch, model_state, ema_state)
 
                 if should_stop:
                     print(
@@ -569,11 +1160,23 @@ def main() -> None:
                     f"[WARN] Early stopping metric '{monitor_metric}' not found in results. Available: {list(metric_results.keys())}"
                 )
 
+    if early_stopping is not None and early_stopping.best_state is not None:
+        model.load_state_dict(early_stopping.best_state)
+        if ema is not None and early_stopping.best_extra is not None:
+            ema.load_shadow(early_stopping.best_extra)
+
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), out_path)
+        if ema is not None:
+            ema.apply(model)
+            torch.save(model.state_dict(), out_path)
+            ema.restore(model)
+        else:
+            torch.save(model.state_dict(), out_path)
         print(f"Saved model to {out_path}")
+    else:
+        print("[WARN] --output not set; best model weights were not saved to disk.")
 
 
 if __name__ == "__main__":

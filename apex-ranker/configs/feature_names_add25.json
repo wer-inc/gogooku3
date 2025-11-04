@@ -1,0 +1,33 @@
+{
+  "version": "add25_for_residual",
+  "feature_count": 25,
+  "feature_names": [
+    "stmt_imp_statement",
+    "stmt_npm",
+    "stmt_opm",
+    "stmt_progress_np",
+    "stmt_progress_op",
+    "stmt_rev_fore_np",
+    "stmt_rev_fore_op",
+    "stmt_roa",
+    "stmt_roe",
+    "stmt_yoy_np",
+    "stmt_yoy_op",
+    "stmt_yoy_sales",
+    "trend_align_mkt",
+    "turnover_rate",
+    "volatility_10d",
+    "volatility_20d",
+    "volatility_5d",
+    "volatility_60d",
+    "volume_ratio_20",
+    "volume_ratio_5",
+    "x_mom_sh_10",
+    "x_mom_sh_5",
+    "x_mom_sh_5_mktneu",
+    "x_rel_sec_mom",
+    "x_z_sec_gap_mom"
+  ],
+  "description": "Additional 25 features for residual method analysis",
+  "split_method": "Last 25 alphabetically from 89-feature set"
+}

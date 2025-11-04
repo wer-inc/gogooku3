@@ -14,8 +14,6 @@ Features:
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
-
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -27,7 +25,7 @@ class _ExpertHead(nn.Module):
     Each expert shares a small encoder then has horizon-specific linear heads to n_quantiles.
     """
 
-    def __init__(self, hidden_size: int, horizons: List[int], n_quantiles: int, dropout: float = 0.1):
+    def __init__(self, hidden_size: int, horizons: list[int], n_quantiles: int, dropout: float = 0.1):
         super().__init__()
         bottleneck = max(16, hidden_size // 2)
         self.encoder = nn.Sequential(
@@ -40,9 +38,9 @@ class _ExpertHead(nn.Module):
         for h in horizons:
             self.horizon_heads[f"horizon_{h}d"] = nn.Linear(bottleneck, n_quantiles)
 
-    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         z = self.encoder(x)
-        out: Dict[str, torch.Tensor] = {}
+        out: dict[str, torch.Tensor] = {}
         for key, head in self.horizon_heads.items():
             out[key] = head(z)
         return out
@@ -100,7 +98,7 @@ class EnhancedRegimeGate(nn.Module):
             nn.Linear(max(16, gate_input_dim // 2), num_experts)
         )
 
-    def forward(self, backbone_features: torch.Tensor, regime_features: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, backbone_features: torch.Tensor, regime_features: torch.Tensor | None = None) -> torch.Tensor:
         """
         Args:
             backbone_features: [B, H] - features from ATFT-GAT-FAN backbone
@@ -165,13 +163,13 @@ class RegimeMoEPredictionHeads(nn.Module):
 
         # Horizons
         if hasattr(config.training, "prediction") and hasattr(config.training.prediction, "horizons"):
-            self.horizons: List[int] = list(config.training.prediction.horizons)
+            self.horizons: list[int] = list(config.training.prediction.horizons)
         else:
             self.horizons = [1, 5, 10, 20]
 
         # Quantiles
         q_cfg = config.prediction_head.output.quantile_prediction
-        self.quantiles: List[float] = list(q_cfg.quantiles)
+        self.quantiles: list[float] = list(q_cfg.quantiles)
         n_quantiles = len(self.quantiles)
 
         # MoE params
@@ -226,7 +224,7 @@ class RegimeMoEPredictionHeads(nn.Module):
                     else:  # Balanced expert
                         nn.init.xavier_uniform_(param, gain=1.0)
 
-    def forward(self, x: torch.Tensor, regime_features: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor, regime_features: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         """
         Enhanced forward pass with regime features support
 
@@ -251,7 +249,7 @@ class RegimeMoEPredictionHeads(nn.Module):
         expert_outs = [exp(x) for exp in self.experts]  # list of dicts per expert
 
         # Initialize mixture outputs with zeros
-        mixed: Dict[str, torch.Tensor] = {}
+        mixed: dict[str, torch.Tensor] = {}
         for h in self.horizons:
             key = f"horizon_{h}d"
             mixed[key] = torch.zeros(x.size(0), len(self.quantiles), device=x.device, dtype=x.dtype)
@@ -268,7 +266,7 @@ class RegimeMoEPredictionHeads(nn.Module):
 
         return mixed
 
-    def get_gate_analysis(self) -> Dict[str, torch.Tensor]:
+    def get_gate_analysis(self) -> dict[str, torch.Tensor]:
         """Get gate analysis for interpretability"""
         return {
             "gate_probs": self.last_gate_probs,

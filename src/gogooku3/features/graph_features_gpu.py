@@ -14,7 +14,7 @@ Per Date:
 Leak-safety: uses only past window up to Date (T day), no future info.
 """
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -25,8 +25,8 @@ from src.data.utils.graph_builder_gpu import FinancialGraphBuilder
 
 # GPU graph libraries
 try:
-    import cugraph
     import cudf
+    import cugraph
     import cupy as cp
     CUGRAPH_AVAILABLE = True
 except ImportError:

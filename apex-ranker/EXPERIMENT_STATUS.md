@@ -158,6 +158,73 @@ Epoch 9: 20d P@K = 0.5293 (early stop +3) → STOPPED
   - CLI-based prediction engine
   - Multi-horizon support (1d, 5d, 10d, 20d)
   - CSV output with Date, Rank, Code, Score, Horizon
+
+---
+
+## Planned Experiment: Short-Horizon Focus (Week of 2025-11-01)
+
+**Goal**: Recover 1d/5d precision while preserving 20d stability. All changes incubate on research configs (`apex-ranker/configs/v0_base*.yaml`).
+
+- **Config updates (already committed)**
+  - `eval.es_weights` → `0.6,0.3,0.1` to bias early stopping toward 5/10/20d.
+  - New `selection` block drives default gating: 5d/10d/20d now use percentile gate `k_ratio=0.07` with `k_min` safeguards and sign flip (`sign=-1`) for 10d/20d when RankIC is negative.
+  - `apex-ranker/scripts/backtest_smoke_test.py` consumes these defaults automatically (CLI overrides remain available).
+
+- **Training plan**
+  1. **Control (baseline)** – rerun current pruned config without additional gating overrides for reference.
+     ```bash
+     python apex-ranker/scripts/train_v0.py \
+       --config apex-ranker/configs/v0_pruned.yaml \
+       --output output/models/apex_ranker_short_control.pt \
+       --ema-snapshot-epochs 3 6 10
+     ```
+  2. **Candidate (short-horizon)** – train with updated base config (`v0_base.yaml`) to capture new ES weights and selection hints.
+  3. **Snapshot averaging** – combine EMA checkpoints using the new helper:
+     ```bash
+     python apex-ranker/scripts/average_checkpoints.py \
+       output/models/apex_ranker_short_candidate_ema_epoch3.pt \
+       output/models/apex_ranker_short_candidate_ema_epoch6.pt \
+       output/models/apex_ranker_short_candidate_ema_epoch10.pt \
+       --output output/models/apex_ranker_short_candidate_blend.pt
+     ```
+
+- **Backtest & analysis (weekly rebal, 2025-08-01→2025-10-31 window)**
+  - Control run (legacy gating):
+    ```bash
+    python apex-ranker/scripts/backtest_smoke_test.py \
+      --model output/models/apex_ranker_short_control.pt \
+      --config apex-ranker/configs/v0_pruned.yaml \
+      --start-date 2025-08-01 --end-date 2025-10-31 \
+      --selection-k-ratio 0.10 --selection-k-min 35 --selection-sign 1 \
+      --output results/backtest_control.json --daily-csv results/backtest_control_daily.csv
+    ```
+  - Candidate run (new gating defaults automatically pulled from config):
+    ```bash
+    python apex-ranker/scripts/backtest_smoke_test.py \
+      --model output/models/apex_ranker_short_candidate_blend.pt \
+      --config apex-ranker/configs/v0_base.yaml \
+      --start-date 2025-08-01 --end-date 2025-10-31 \
+      --output results/backtest_candidate.json --daily-csv results/backtest_candidate_daily.csv
+    ```
+  - Statistical comparison (primary metric = `delta_p_at_k_pos` @ 5d):
+    ```bash
+    python apex-ranker/scripts/analyze_run_comparison.py \
+      --baseline results/backtest_control.json \
+      --candidate results/backtest_candidate.json \
+      --metric precision_at_k \
+      --horizon 5 \
+      --output results/short_horizon_ab_test.json
+    ```
+
+- **Acceptance criteria**
+  - Diebold–Mariano statistic > 1.96 on `delta_p_at_k_pos` for 5d horizon.
+  - 95% bootstrap CI on `delta_p_at_k_pos` strictly positive.
+  - No regression on turnover guardrails (average turnover ≤ 0.12) or max drawdown (> baseline +5%).
+
+- **Next actions if successful**
+  1. Promote blended checkpoint to `models/apex_ranker_v0_enhanced.pt` (research).
+  2. Extend gating defaults to walk-forward runner and API via environment (`APEX_SELECTION_K_RATIO`, etc.).
+  3. Re-run Phase 3.4 backtests with updated gating and sign flip to validate production readiness.
 - ✅ Monitoring: `apex-ranker/scripts/monitor_predictions.py`
   - Prediction logging with metadata
   - Daily summary report generation

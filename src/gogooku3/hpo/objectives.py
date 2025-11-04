@@ -4,7 +4,8 @@ Optimizes 1d, 5d, 10d, 20d predictions jointly with weighted RankIC/Sharpe
 """
 
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Any
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -14,10 +15,10 @@ class MultiHorizonObjective:
     """Multi-horizon objective function for ATFT-GAT-FAN optimization"""
 
     def __init__(self,
-                 horizons: List[str] = None,
+                 horizons: list[str] = None,
                  rank_ic_weight: float = 0.7,
                  sharpe_weight: float = 0.3,
-                 horizon_weights: Dict[str, float] = None):
+                 horizon_weights: dict[str, float] = None):
         """
         Initialize multi-horizon objective
 
@@ -45,7 +46,7 @@ class MultiHorizonObjective:
             logger.warning(f"Horizon weights sum to {total_weight:.3f}, normalizing to 1.0")
             self.horizon_weights = {k: v/total_weight for k, v in self.horizon_weights.items()}
 
-    def compute_score(self, metrics: Dict[str, Any]) -> float:
+    def compute_score(self, metrics: dict[str, Any]) -> float:
         """
         Compute weighted multi-horizon score
 
@@ -95,8 +96,8 @@ class MultiHorizonObjective:
             return -1.0  # Large penalty for errors
 
     def _compute_stability_bonus(self,
-                               rank_ic_metrics: Dict[str, float],
-                               sharpe_metrics: Dict[str, float]) -> float:
+                               rank_ic_metrics: dict[str, float],
+                               sharpe_metrics: dict[str, float]) -> float:
         """
         Compute stability bonus for consistent cross-horizon performance
 
@@ -148,7 +149,7 @@ class MultiHorizonObjective:
             logger.warning(f"Error computing stability bonus: {e}")
             return 0.0
 
-    def suggest_horizon_weights(self, trial) -> Dict[str, float]:
+    def suggest_horizon_weights(self, trial) -> dict[str, float]:
         """
         Suggest horizon weights for optimization
 
@@ -173,7 +174,7 @@ class MultiHorizonObjective:
 
         return normalized_weights
 
-    def format_best_params(self, best_params: Dict[str, Any]) -> str:
+    def format_best_params(self, best_params: dict[str, Any]) -> str:
         """Format best parameters for logging"""
         horizon_weights = {}
         other_params = {}

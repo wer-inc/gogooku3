@@ -1,0 +1,26 @@
+# P0-3: GAT Gradient Flow Configuration
+# 勾配希釈を防ぐゲート付き残差融合
+
+gat:
+  use: true
+  heads: [4, 2]           # GATv2Conv heads: (layer1, layer2)
+  edge_dim: 3             # corr, same_market, same_sector (4 if delta_corr added)
+  dropout: 0.2            # GAT layer dropout
+  edge_dropout: 0.05      # Edge dropout during training (防止過拟合)
+  tau: 1.25               # Gate temperature (>1 prevents saturation)
+  gate_per_feature: false # false: [B,1] gate / true: [B,H] gate
+  gate_init_bias: -0.5    # Initial gate bias (negative = prefer base path)
+  attn_entropy_coef: 0.0  # Attention entropy regularization (1e-4 to enable)
+
+# Success Indicators (monitor during training)
+# - gat_gate_mean: 0.2-0.7 (not stuck at 0.0 or 1.0)
+# - gat_gate_std: 0.05-0.30
+# - deg_avg: 10-40
+# - isolates: < 2%
+# - attn_entropy: 1.0-2.5 (if enabled)
+
+# Tuning Knobs:
+# - Gate stuck at extremes → Increase tau (1.5-2.0)
+# - High variance/overfitting → Increase edge_dropout (0.1-0.15)
+# - Attention too sharp/flat → Enable attn_entropy_coef=1e-4
+# - Graph too sparse/dense → Adjust k-NN or correlation threshold

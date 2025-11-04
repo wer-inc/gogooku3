@@ -1,0 +1,33 @@
+# P0-5: DataLoader I/O設定
+# spawn + persistent_workers + thread control
+
+name: io_stable
+description: "DataLoader安定化設定（spawn + persistent_workers）"
+
+# DataLoader設定
+data:
+  # ワーカー設定
+  num_workers: 4              # 環境に応じて調整（推奨: 2-8、CPU数の1/4程度）
+  pin_memory: true            # GPU転送の高速化
+  prefetch_factor: 2          # プリフェッチバッチ数
+  persistent_workers: true    # エポック跨ぎの再生成なし（自動設定）
+
+  # タイムアウト設定
+  timeout: 0                  # デフォルトはタイムアウトなし
+
+  # マルチプロセシング設定（自動設定）
+  multiprocessing_context: spawn  # forkの問題回避
+
+# スレッド制御（bootstrap_threadsで自動設定）
+threads:
+  omp_num_threads: 1
+  mkl_num_threads: 1
+  openblas_num_threads: 1
+  pyarrow_num_threads: 4     # Arrow I/Oは軽く並列化
+  polars_max_threads: 4
+  rayon_num_threads: 4
+
+# Safe mode設定
+safe_mode:
+  # FORCE_SINGLE_PROCESS=1の場合は自動的にnum_workers=0に設定される
+  force_single_process: false

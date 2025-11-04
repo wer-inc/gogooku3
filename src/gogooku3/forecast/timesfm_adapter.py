@@ -21,8 +21,8 @@ Notes:
   - When real TimesFM is available, swap `predict_fn` to call it.
 """
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
 
 import numpy as np
 import pandas as pd

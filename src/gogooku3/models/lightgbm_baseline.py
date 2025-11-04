@@ -8,7 +8,6 @@ Includes proper Walk-Forward validation, IC/RankIC computation, and feature impo
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
 
 import lightgbm as lgb
 import numpy as np
@@ -33,7 +32,7 @@ class LightGBMFinancialBaseline:
 
     def __init__(
         self,
-        prediction_horizons: List[int] | None = None,
+        prediction_horizons: list[int] | None = None,
         embargo_days: int = 20,
         normalize_features: bool = True,
         verbose: bool = True,
@@ -87,18 +86,18 @@ class LightGBMFinancialBaseline:
         self.n_estimators = n_estimators
 
         # Model storage
-        self.models: Dict[int, lgb.Booster] = {}
-        self.scalers: Dict[int, StandardScaler] = {}
-        self.feature_columns: List[str] = []
-        self.feature_importance: Dict[int, pd.DataFrame] = {}
+        self.models: dict[int, lgb.Booster] = {}
+        self.scalers: dict[int, StandardScaler] = {}
+        self.feature_columns: list[str] = []
+        self.feature_importance: dict[int, pd.DataFrame] = {}
 
         # Results storage
         self._trained = False
-        self._predictions: Dict[int, np.ndarray] = {}
-        self._metrics: Dict[int, Dict[str, float]] = {}
-        self._last_df: Optional[pd.DataFrame] = None
+        self._predictions: dict[int, np.ndarray] = {}
+        self._metrics: dict[int, dict[str, float]] = {}
+        self._last_df: pd.DataFrame | None = None
 
-    def _prepare_features(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
+    def _prepare_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         """Prepare features by removing non-feature columns."""
         # Columns to exclude
         exclude_cols = {
@@ -111,7 +110,7 @@ class LightGBMFinancialBaseline:
             exclude_cols.update({
                 f"returns_{h}d", f"ret_{h}d",
                 f"feat_ret_{h}d", f"target_{h}d",
-                f"label_{h}d", f"target"
+                f"label_{h}d", "target"
             })
 
         # Get feature columns
@@ -125,7 +124,7 @@ class LightGBMFinancialBaseline:
 
         return df[feature_cols], feature_cols
 
-    def _get_target_column(self, df: pd.DataFrame, horizon: int) -> Optional[str]:
+    def _get_target_column(self, df: pd.DataFrame, horizon: int) -> str | None:
         """Find target column for given horizon."""
         # Try common target column names
         candidates = [
@@ -267,7 +266,7 @@ class LightGBMFinancialBaseline:
         if self._trained and self.verbose:
             logger.info(f"✅ Training complete. Models trained: {list(self.models.keys())}")
 
-    def predict(self, df: pd.DataFrame) -> Dict[int, np.ndarray]:
+    def predict(self, df: pd.DataFrame) -> dict[int, np.ndarray]:
         """
         Generate predictions for new data.
 
@@ -296,7 +295,7 @@ class LightGBMFinancialBaseline:
 
         return predictions
 
-    def evaluate_performance(self) -> Dict[str, Dict[str, float]]:
+    def evaluate_performance(self) -> dict[str, dict[str, float]]:
         """
         Evaluate model performance.
 
@@ -341,7 +340,7 @@ class LightGBMFinancialBaseline:
 
     def get_feature_importance(
         self,
-        horizon: Optional[int] = None,
+        horizon: int | None = None,
         top_k: int = 20
     ) -> pd.DataFrame:
         """
@@ -366,7 +365,7 @@ class LightGBMFinancialBaseline:
 
         return self.feature_importance[horizon].head(top_k)
 
-    def get_results_summary(self) -> Dict[str, float]:
+    def get_results_summary(self) -> dict[str, float]:
         """
         Get summary of results.
 

@@ -6,15 +6,15 @@ Tunes QuantileRegressor alpha and selected feature parameters to minimize
 average WQL across horizons using Purged CV in train_tft_quantile.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 import optuna
 import pandas as pd
 
-from gogooku3.training.tft_trainer import TFTTrainerConfig, train_tft_quantile
 from gogooku3.features.feature_params import FeatureParams
+from gogooku3.training.tft_trainer import TFTTrainerConfig, train_tft_quantile
 
 
 @dataclass

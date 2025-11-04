@@ -3,9 +3,9 @@
 from importlib import metadata
 from typing import Final
 
-from . import api, backtest, data, losses, models, utils  # noqa: F401
+from . import backtest, data, losses, models, utils  # noqa: F401
 
-__all__: Final = ["__version__", "api", "backtest", "data", "losses", "models", "utils"]
+__all__: Final = ["__version__", "backtest", "data", "losses", "models", "utils"]
 
 
 def __version__() -> str:

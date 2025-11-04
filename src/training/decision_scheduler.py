@@ -13,9 +13,9 @@ Scheduling Strategy:
 """
 
 import logging
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, field
-import torch
+from dataclasses import dataclass
+from typing import Any
+
 import torch.nn as nn
 from omegaconf import DictConfig
 
@@ -68,18 +68,18 @@ class DecisionScheduler:
 
     def __init__(self,
                  config: DecisionScheduleConfig,
-                 decision_layer: Optional[nn.Module] = None):
+                 decision_layer: nn.Module | None = None):
         self.config = config
         self.decision_layer = decision_layer
         self.current_epoch = 0
-        self.parameter_history: List[Dict[str, Any]] = []
+        self.parameter_history: list[dict[str, Any]] = []
 
         # Track parameter changes
         self.last_parameters = {}
 
         logger.info(f"DecisionScheduler initialized with config: {config}")
 
-    def step(self, epoch: int, decision_layer: Optional[nn.Module] = None) -> Dict[str, Any]:
+    def step(self, epoch: int, decision_layer: nn.Module | None = None) -> dict[str, Any]:
         """
         Update Decision Layer parameters based on current epoch
 
@@ -126,7 +126,7 @@ class DecisionScheduler:
         else:
             return "final"
 
-    def _calculate_target_parameters(self, epoch: int, phase: str) -> Dict[str, Any]:
+    def _calculate_target_parameters(self, epoch: int, phase: str) -> dict[str, Any]:
         """Calculate target parameters for current epoch"""
 
         if phase == "warmup":
@@ -207,7 +207,7 @@ class DecisionScheduler:
         """Linear interpolation between start and end values"""
         return start + (end - start) * progress
 
-    def _apply_parameters(self, decision_layer: nn.Module, params: Dict[str, Any]):
+    def _apply_parameters(self, decision_layer: nn.Module, params: dict[str, Any]):
         """Apply parameters to decision layer"""
         if hasattr(decision_layer, 'cfg'):
             # Update decision layer configuration
@@ -215,7 +215,7 @@ class DecisionScheduler:
                 if hasattr(decision_layer.cfg, param_name):
                     setattr(decision_layer.cfg, param_name, param_value)
 
-    def _parameters_changed(self, new_params: Dict[str, Any]) -> bool:
+    def _parameters_changed(self, new_params: dict[str, Any]) -> bool:
         """Check if parameters changed from last update"""
         if not self.last_parameters:
             return True
@@ -225,7 +225,7 @@ class DecisionScheduler:
                 return True
         return False
 
-    def _log_parameter_change(self, epoch: int, phase: str, params: Dict[str, Any]):
+    def _log_parameter_change(self, epoch: int, phase: str, params: dict[str, Any]):
         """Log parameter changes"""
         logger.info(f"📊 Decision Layer Schedule Update - Epoch {epoch} ({phase} phase)")
         for param_name, param_value in params.items():
@@ -233,11 +233,11 @@ class DecisionScheduler:
             if old_value != param_value:
                 logger.info(f"   {param_name}: {old_value} → {param_value}")
 
-    def get_current_parameters(self) -> Dict[str, Any]:
+    def get_current_parameters(self) -> dict[str, Any]:
         """Get current parameters"""
         return self.last_parameters.copy()
 
-    def get_parameter_history(self) -> List[Dict[str, Any]]:
+    def get_parameter_history(self) -> list[dict[str, Any]]:
         """Get full parameter history"""
         return self.parameter_history.copy()
 
@@ -262,7 +262,7 @@ class DecisionScheduler:
 
 
 def create_decision_scheduler_from_config(config: DictConfig,
-                                        decision_layer: Optional[nn.Module] = None) -> DecisionScheduler:
+                                        decision_layer: nn.Module | None = None) -> DecisionScheduler:
     """Create DecisionScheduler from Hydra config"""
 
     # Extract scheduler config from main config

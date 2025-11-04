@@ -1,0 +1,65 @@
+# APEX Ranker v0.1.0 Production Service
+# Installation:
+#   sudo cp apex-ranker/deploy/apex-ranker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable apex-ranker.service
+#   sudo systemctl start apex-ranker.service
+
+[Unit]
+Description=APEX Ranker Production API v0.1.0 (BASELINE: Top-35/Monthly/H20)
+Documentation=file:///workspace/gogooku3/apex-ranker/PRODUCTION_DEPLOYMENT_GUIDE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/workspace/gogooku3
+
+# Environment
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="PANEL_CACHE_DIR=/var/lib/apex-ranker/panel_cache"
+
+# Core command
+ExecStart=/usr/bin/python3 apex-ranker/apex_ranker/api/server.py \
+  --model bundles/apex_ranker_v0.1.0_prod/models/apex_ranker_v0_enhanced.pt \
+  --config bundles/apex_ranker_v0.1.0_prod/configs/v0_base_89_cleanADV.yaml \
+  --data output/ml_dataset_latest_clean_with_adv.parquet \
+  --host 0.0.0.0 \
+  --port 8000
+
+# Pre-flight validation (MANIFEST.lock check)
+ExecStartPre=/usr/bin/python3 scripts/validate_bundle.py \
+  --bundle bundles/apex_ranker_v0.1.0_prod \
+  --dataset output/ml_dataset_latest_clean_with_adv.parquet
+
+# Logging
+StandardOutput=append:/var/log/apex-ranker/server.log
+StandardError=append:/var/log/apex-ranker/server.log
+SyslogIdentifier=apex-ranker
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+StartLimitInterval=5min
+StartLimitBurst=3
+
+# Resource limits (A100 80GB environment)
+LimitNOFILE=65536
+MemoryMax=20G
+CPUQuota=800%
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/apex-ranker /var/log/apex-ranker
+
+# Health check
+TimeoutStartSec=120s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

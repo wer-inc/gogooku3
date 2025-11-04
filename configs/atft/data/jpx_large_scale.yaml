@@ -4,12 +4,12 @@ name: jpx_large_scale
 schema:
   date_column: Date  # Note: parquet files use capital 'D'
   code_column: Code  # Note: parquet files use capital 'C'
-  target_column: target
+  target_column: feat_ret  # Base name for target column generation
   target_columns:  # Explicit target columns for multi-horizon prediction
-    - target_1d
-    - target_5d
-    - target_10d
-    - target_20d
+    - feat_ret_1d
+    - feat_ret_5d
+    - feat_ret_10d
+    - feat_ret_20d
   feature_columns:
     - returns_1d_cs_z
     - returns_5d_cs_z

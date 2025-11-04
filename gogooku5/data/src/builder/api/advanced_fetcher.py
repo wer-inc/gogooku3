@@ -23,9 +23,7 @@ class AdvancedJQuantsFetcher:
     max_concurrent: int | None = None
 
     def _create_async_fetcher(self):
-        from src.gogooku3.components.jquants_async_fetcher import (  # type: ignore
-            JQuantsAsyncFetcher,
-        )
+        from .jquants_async_fetcher import JQuantsAsyncFetcher  # type: ignore
 
         return JQuantsAsyncFetcher(
             email=self.settings.jquants_auth_email,

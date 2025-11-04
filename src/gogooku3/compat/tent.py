@@ -8,7 +8,7 @@ This module is optional and does not affect training unless explicitly used.
 """
 from __future__ import annotations
 
-from typing import Callable, Dict
+from collections.abc import Callable
 
 import torch
 import torch.nn as nn
@@ -37,7 +37,7 @@ def configure_tent_optimizer(model: nn.Module, lr: float = 1e-4) -> torch.optim.
     return torch.optim.Adam(norm_params, lr=lr)
 
 
-def quantile_width_loss(predictions: Dict[str, torch.Tensor]) -> torch.Tensor:
+def quantile_width_loss(predictions: dict[str, torch.Tensor]) -> torch.Tensor:
     """A TENT-style unsupervised objective for quantile regressors.
 
     Minimizes the average predictive interval width across horizons.
@@ -59,8 +59,8 @@ def quantile_width_loss(predictions: Dict[str, torch.Tensor]) -> torch.Tensor:
 @torch.no_grad()
 def tent_adapt_step(
     model: nn.Module,
-    batch: Dict[str, torch.Tensor],
-    forward_fn: Callable[[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]],
+    batch: dict[str, torch.Tensor],
+    forward_fn: Callable[[dict[str, torch.Tensor]], dict[str, torch.Tensor]],
     steps: int = 1,
     lr: float = 1e-4,
 ) -> None:

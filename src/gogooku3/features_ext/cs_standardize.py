@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Dict, Iterable, Mapping
 
 import polars as pl
 
@@ -21,7 +21,7 @@ def fit_cs_stats(
     *,
     date_col: str = "Date",
     by_cols: Iterable[str] | None = None,
-) -> Dict[str, CSStats]:
+) -> dict[str, CSStats]:
     """Fit cross-sectional mean/std on the training split only.
 
     Parameters
@@ -36,7 +36,7 @@ def fit_cs_stats(
         Additional keys (e.g., ["sector33_id"]) for in-sector standardization.
     """
     keys = [date_col, *(by_cols or [])]
-    out: Dict[str, CSStats] = {}
+    out: dict[str, CSStats] = {}
     for c in cols:
         s = (
             df_train.group_by(keys)

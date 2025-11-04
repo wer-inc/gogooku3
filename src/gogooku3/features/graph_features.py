@@ -13,14 +13,14 @@ Per Date:
 Leak-safety: uses only past window up to Date (T day), no future info.
 """
 
-from typing import Iterable
+from collections.abc import Iterable
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import polars as pl
 
 from src.data.utils.graph_builder import FinancialGraphBuilder
-import networkx as nx
 
 
 def add_graph_features(

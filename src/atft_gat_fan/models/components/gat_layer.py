@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -14,9 +12,9 @@ from .graph_norm import GraphNorm
 def _add_self_loops(
     edge_index: torch.Tensor,
     num_nodes: int,
-    edge_attr: Optional[torch.Tensor] = None,
+    edge_attr: torch.Tensor | None = None,
     fill_value: float = 0.0,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Add self-loops to the edge index (and attributes)."""
     device = edge_index.device
     loop_indices = torch.arange(num_nodes, device=device)
@@ -41,7 +39,7 @@ def _dropout_edge(
     edge_index: torch.Tensor,
     p: float,
     training: bool,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Apply dropout to edges."""
     if p <= 0.0 or not training:
         return edge_index, None
@@ -69,7 +67,7 @@ class SimpleGATConv(nn.Module):
         dropout: float = 0.0,
         add_self_loops: bool = True,
         bias: bool = True,
-        edge_dim: Optional[int] = None,
+        edge_dim: int | None = None,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -142,9 +140,9 @@ class SimpleGATConv(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_attr: Optional[torch.Tensor] = None,
+        edge_attr: torch.Tensor | None = None,
         return_attention_weights: bool = False,
-    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None]:
         num_nodes = x.size(0)
 
         if self.add_self_loops:
@@ -231,7 +229,7 @@ class GATLayer(nn.Module):
         negative_slope: float = 0.2,
         add_self_loops_: bool = True,
         bias: bool = True,
-        edge_dim: Optional[int] = None,
+        edge_dim: int | None = None,
         edge_projection: str = "linear",
     ):
         super().__init__()
@@ -268,7 +266,7 @@ class GATLayer(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_attr: Optional[torch.Tensor] = None,
+        edge_attr: torch.Tensor | None = None,
         return_attention_weights: bool = False,
         temperature: float = 1.0,
         alpha_min: float = 0.05,
@@ -320,10 +318,10 @@ class MultiLayerGAT(nn.Module):
         in_channels: int,
         hidden_channels: list[int],
         heads: list[int],
-        concat_list: Optional[list[bool]] = None,
+        concat_list: list[bool] | None = None,
         dropout: float = 0.2,
         edge_dropout: float = 0.1,
-        edge_dim: Optional[int] = None,
+        edge_dim: int | None = None,
         edge_weight_penalty: float = 0.0,
         attention_entropy_penalty: float = 0.0,
         use_graph_norm: bool = True,
@@ -388,11 +386,11 @@ class MultiLayerGAT(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_attr: Optional[torch.Tensor] = None,
-        batch: Optional[torch.Tensor] = None,
+        edge_attr: torch.Tensor | None = None,
+        batch: torch.Tensor | None = None,
         return_attention_weights: bool = False,
-    ) -> Tuple[torch.Tensor, Optional[list[Tuple[torch.Tensor, torch.Tensor]]]] | torch.Tensor:
-        attentions: list[Tuple[torch.Tensor, torch.Tensor]] = []
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]] | None] | torch.Tensor:
+        attentions: list[tuple[torch.Tensor, torch.Tensor]] = []
 
         for idx, (layer, norm, res_proj) in enumerate(
             zip(self.layers, self.norms, self.residual_projs, strict=False)
@@ -431,7 +429,7 @@ class MultiLayerGAT(nn.Module):
         return x
 
     def get_attention_entropy(
-        self, attention_weights: list[Tuple[torch.Tensor, torch.Tensor]] | None
+        self, attention_weights: list[tuple[torch.Tensor, torch.Tensor]] | None
     ) -> torch.Tensor:
         if not attention_weights:
             return torch.tensor(0.0)

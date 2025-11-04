@@ -3,11 +3,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 
 import polars as pl
 
-from .vix import shift_to_next_business_day
 from .yfinance_utils import (
     flatten_yfinance_columns,
     get_yfinance_module,

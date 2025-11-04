@@ -1,10 +1,5 @@
 .PHONY: help train train-quick inference lint test clean
 
-PYTHON ?= python
-APEX_CONFIG ?= configs/v0_base.yaml
-APEX_MODEL ?= output/models/apex_ranker_v0.pt
-APEX_DATA ?= data/output/ml_dataset_latest_full.parquet
-
 help:
 	@echo "APEX-Ranker tasks"
 	@echo "  make train         -> full training run"
@@ -13,11 +8,17 @@ help:
 	@echo "  make lint          -> run ruff and mypy"
 	@echo "  make test          -> run pytest suite"
 
+PYTHON ?= python
+APEX_ROOT := gogooku5/models/apex_ranker
+APEX_CONFIG ?= $(APEX_ROOT)/configs/v0_base.yaml
+APEX_MODEL ?= output/models/apex_ranker_v0.pt
+APEX_DATA ?= output/ml_dataset_latest_full.parquet
+
 train:
-	$(PYTHON) scripts/train_v0.py --config $(APEX_CONFIG)
+	$(PYTHON) $(APEX_ROOT)/scripts/train_v0.py --config $(APEX_CONFIG)
 
 train-quick:
-	$(PYTHON) scripts/train_v0.py \
+	$(PYTHON) $(APEX_ROOT)/scripts/train_v0.py \
 		--config $(APEX_CONFIG) \
 		--max-train-days 5 \
 		--max-val-days 3 \
@@ -26,7 +27,7 @@ train-quick:
 		--log-interval 5
 
 inference:
-	$(PYTHON) scripts/inference_v0.py \
+	$(PYTHON) $(APEX_ROOT)/scripts/inference_v0.py \
 		--model $(APEX_MODEL) \
 		--config $(APEX_CONFIG) \
 		--data $(APEX_DATA) \
@@ -35,11 +36,11 @@ inference:
 		--verbose
 
 lint:
-	$(PYTHON) -m ruff check src scripts
-	$(PYTHON) -m mypy src
+	$(PYTHON) -m ruff check $(APEX_ROOT)/src $(APEX_ROOT)/scripts
+	$(PYTHON) -m mypy $(APEX_ROOT)/src
 
 test:
-	$(PYTHON) -m pytest tests
+	$(PYTHON) -m pytest $(APEX_ROOT)/tests
 
 clean:
-	rm -rf __pycache__ */__pycache__
+	rm -rf $(APEX_ROOT)/__pycache__ $(APEX_ROOT)/*/__pycache__

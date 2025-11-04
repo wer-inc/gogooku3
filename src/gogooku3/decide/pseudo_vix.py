@@ -19,7 +19,6 @@ Output (flat DataFrame):
   ts, index, level[, p10, p90]
 """
 
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -29,7 +28,7 @@ def build_pseudo_vix(
     df_fcst: pd.DataFrame,
     index_name: str = "ESVI_JP",
     horizon: int = 30,
-    weights: Optional[pd.DataFrame] = None,
+    weights: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     required_cols = {"id", "ts", "h", "y_hat"}
     if not required_cols.issubset(df_fcst.columns):
@@ -88,7 +87,7 @@ class ESVICalculator:
         self.index_name = index_name
         self.horizon = horizon
 
-    def calculate(self, df_fcst: pd.DataFrame, weights: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    def calculate(self, df_fcst: pd.DataFrame, weights: pd.DataFrame | None = None) -> pd.DataFrame:
         """Calculate ESVI index from forecasts.
 
         Args:
@@ -105,7 +104,7 @@ class ESVICalculator:
             weights=weights
         )
 
-    def get_latest_value(self, df_fcst: pd.DataFrame, weights: Optional[pd.DataFrame] = None) -> float:
+    def get_latest_value(self, df_fcst: pd.DataFrame, weights: pd.DataFrame | None = None) -> float:
         """Get the latest ESVI value.
 
         Args:
@@ -131,7 +130,7 @@ class ESVICalculator:
         self,
         forecast_predictions: dict,
         symbols: list[str],
-        weights: Optional[pd.DataFrame] = None
+        weights: pd.DataFrame | None = None
     ) -> float:
         """Calculate ESVI from API forecast predictions format.
 

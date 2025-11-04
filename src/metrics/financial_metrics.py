@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 class FinancialMetrics:
     """
     金融時系列予測用の日次評価メトリクス
-    
+
     バッチ vs 日次評価の正しい切り分け:
     - 学習損失: バッチ単位（勾配計算用）
     - 評価指標: 日次クロスセクション単位（実運用と整合）
-    
+
     主要メトリクス:
     - IC (Information Coefficient): ピアソン相関
     - RankIC: スピアマン順位相関（外れ値にロバスト）
@@ -42,7 +42,7 @@ class FinancialMetrics:
         """
         Args:
             date_column: 日付カラム名
-            code_column: 銘柄コードカラム名  
+            code_column: 銘柄コードカラム名
             min_stocks_per_day: 日次計算の最小銘柄数
             decile_count: Decile分析の分位数（通常10）
             return_columns: リターンカラム名リスト
@@ -62,15 +62,15 @@ class FinancialMetrics:
     ) -> float | dict[str, Any]:
         """
         Information Coefficient (IC) を日次で計算
-        
+
         IC = Pearson correlation between prediction and actual return
-        
+
         Args:
             predictions: 予測値
             targets: 実際のリターン
             dates: 日付
             return_daily: True=日次結果も返す
-            
+
         Returns:
             平均IC（return_daily=Trueなら詳細結果も含む）
         """
@@ -161,15 +161,15 @@ class FinancialMetrics:
     ) -> float | dict[str, Any]:
         """
         Rank IC (Spearman correlation) を日次で計算
-        
+
         RankIC = Spearman rank correlation (外れ値にロバスト)
-        
+
         Args:
             predictions: 予測値
             targets: 実際のリターン
             dates: 日付
             return_daily: True=日次結果も返す
-            
+
         Returns:
             平均RankIC（return_daily=Trueなら詳細結果も含む）
         """
@@ -256,16 +256,16 @@ class FinancialMetrics:
     ) -> dict[str, Any]:
         """
         Decile分析を日次で計算
-        
+
         予測値でポートフォリオを10分位に分割し、各分位の平均リターンを計算
         Long-Short spread (top decile - bottom decile) が主要指標
-        
+
         Args:
             predictions: 予測値
             returns: 実際のリターン
             dates: 日付
             return_daily: True=日次結果も返す
-            
+
         Returns:
             Decile分析結果
         """
@@ -397,14 +397,14 @@ class FinancialMetrics:
     ) -> dict[str, Any]:
         """
         すべての金融メトリクスを一括計算
-        
+
         Args:
             predictions: 予測値
             targets: 実際のリターン
             dates: 日付
             return_daily: True=日次結果も返す
             prefix: メトリクス名のプレフィックス
-            
+
         Returns:
             すべてのメトリクス結果
         """
@@ -446,13 +446,13 @@ class FinancialMetrics:
     ) -> dict[str, Any]:
         """
         マルチホライズン予測のメトリクスを計算
-        
+
         Args:
             predictions_dict: {horizon: predictions}
             targets_dict: {horizon: targets}
             dates: 日付
             return_daily: True=日次結果も返す
-            
+
         Returns:
             ホライズン別メトリクス結果
         """
@@ -479,11 +479,11 @@ class FinancialMetrics:
 def compute_sharpe_ratio(returns: np.ndarray | torch.Tensor, risk_free_rate: float = 0.0) -> float:
     """
     Sharpe比を計算（安定化版）
-    
+
     Args:
         returns: リターン配列
         risk_free_rate: リスクフリーレート（年率）
-        
+
     Returns:
         Sharpe比
     """
@@ -509,10 +509,10 @@ def compute_sharpe_ratio(returns: np.ndarray | torch.Tensor, risk_free_rate: flo
 def compute_maximum_drawdown(returns: np.ndarray | torch.Tensor) -> float:
     """
     最大ドローダウンを計算
-    
+
     Args:
         returns: リターン配列
-        
+
     Returns:
         最大ドローダウン（負の値）
     """
@@ -537,11 +537,11 @@ def compute_maximum_drawdown(returns: np.ndarray | torch.Tensor) -> float:
 def compute_hit_rate(predictions: np.ndarray | torch.Tensor, targets: np.ndarray | torch.Tensor) -> float:
     """
     ヒットレート（方向性の一致率）を計算
-    
+
     Args:
         predictions: 予測値
         targets: 実際の値
-        
+
     Returns:
         ヒットレート（0-1）
     """

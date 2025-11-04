@@ -12,9 +12,9 @@ input_projection:
   dropout: 0.1
 
 input_dims:
-  basic_features: 83   # Updated 2025-10-27: curated feature bundles
+  basic_features: 437   # Updated 2025-11-03: actual DataLoader output (390 Parquet + 47 dynamic)
   historical_features: 0
-  total_features: 83   # Updated 2025-10-27: curated feature bundles
+  total_features: 437   # Updated 2025-11-03: matches actual batch dimensions
 
 tft:
   lstm:

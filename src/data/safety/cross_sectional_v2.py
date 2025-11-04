@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class CrossSectionalNormalizerV2:
     """
     Polarsベースのクロスセクション正規化器
-    
+
     主要機能:
     1. 日次クロスセクション統計による正規化
     2. fold内fit→transformの厳密な分離
@@ -50,7 +50,7 @@ class CrossSectionalNormalizerV2:
         """
         Args:
             date_column: 日付列名
-            code_column: 銘柄コード列名  
+            code_column: 銘柄コード列名
             feature_columns: 正規化対象列（None=自動検出）
             min_stocks_per_day: 最小銘柄数（未満の日はスキップ）
             fillna_method: 欠損値処理方法
@@ -144,7 +144,7 @@ class CrossSectionalNormalizerV2:
     ) -> dict[str, dict]:
         """
         日次クロスセクション統計を高速計算
-        
+
         Returns:
             {date_str: {feature: {'mean': float, 'std': float}}}
         """
@@ -248,7 +248,7 @@ class CrossSectionalNormalizerV2:
     ) -> CrossSectionalNormalizerV2:
         """
         訓練データで統計をフィット
-        
+
         Args:
             df: 訓練データ
             verbose: 詳細ログ出力
@@ -305,7 +305,7 @@ class CrossSectionalNormalizerV2:
     ) -> pl.DataFrame:
         """
         データを正規化変換
-        
+
         Args:
             df: 変換対象データ
             verbose: 詳細ログ出力

@@ -147,6 +147,10 @@ def run_walk_forward_backtest(
     fold_results: list[dict[str, Any]] = []
     skipped_folds: list[dict[str, Any]] = []
     failed_folds: list[dict[str, Any]] = []
+    evaluation_summaries: list[dict[str, Any]] = []
+    evaluation_daily: list[dict[str, Any]] = []
+    evaluation_bootstrap: list[dict[str, Any]] = []
+    evaluation_risk: list[dict[str, Any]] = []
 
     for idx, fold in enumerate(folds, start=1):
         available_test_days = _count_unique_dates(
@@ -200,6 +204,12 @@ def run_walk_forward_backtest(
             "rebalance_freq": rebalance_frequency,
             "daily_metrics_path": fold_metrics_path,
             "trades_path": fold_trades_path,
+            "panel_cache_salt": (
+                f"fold{fold.fold_id}_"
+                f"{fold.train_start.isoformat()}_"
+                f"{fold.test_start.isoformat()}_"
+                f"{fold.test_end.isoformat()}"
+            ),
         }
 
         if use_mock_predictions:
@@ -239,6 +249,35 @@ def run_walk_forward_backtest(
 
         performance = result.get("performance", {})
         summary = result.get("summary", {})
+        evaluation = result.get("evaluation_metrics", {})
+        artifacts = result.get("artifacts", {})
+        if evaluation:
+            summary_payload = evaluation.get("summary")
+            if summary_payload:
+                summary_record = dict(summary_payload)
+                summary_record["fold_id"] = fold.fold_id
+                summary_record["test_start"] = fold.test_start.isoformat()
+                summary_record["test_end"] = fold.test_end.isoformat()
+                evaluation_summaries.append(summary_record)
+            per_day_records = evaluation.get("per_day", [])
+            for entry in per_day_records:
+                daily_record = dict(entry)
+                daily_record["fold_id"] = fold.fold_id
+                daily_record["test_start"] = fold.test_start.isoformat()
+                daily_record["test_end"] = fold.test_end.isoformat()
+                evaluation_daily.append(daily_record)
+            bootstrap_payload = evaluation.get("bootstrap")
+            if bootstrap_payload:
+                bootstrap_record = {
+                    "fold_id": fold.fold_id,
+                    "metrics": bootstrap_payload,
+                }
+                evaluation_bootstrap.append(bootstrap_record)
+            risk_payload = evaluation.get("risk")
+            if risk_payload:
+                risk_record = dict(risk_payload)
+                risk_record["fold_id"] = fold.fold_id
+                evaluation_risk.append(risk_record)
 
         fold_record = {
             "fold_id": fold.fold_id,
@@ -258,6 +297,10 @@ def run_walk_forward_backtest(
             "summary": summary,
             "status": "success",
         }
+        if evaluation:
+            fold_record["evaluation"] = evaluation
+        if artifacts:
+            fold_record["artifacts"] = artifacts
 
         fold_results.append(fold_record)
 
@@ -296,6 +339,16 @@ def run_walk_forward_backtest(
         ),
     }
 
+    evaluation_payload: dict[str, Any] = {}
+    if evaluation_summaries:
+        evaluation_payload["summaries"] = evaluation_summaries
+    if evaluation_daily:
+        evaluation_payload["daily_metrics"] = evaluation_daily
+    if evaluation_bootstrap:
+        evaluation_payload["bootstrap"] = evaluation_bootstrap
+    if evaluation_risk:
+        evaluation_payload["risk"] = evaluation_risk
+
     run_config = WalkForwardRunConfig(
         data_path=data_path,
         model_path=model_path,
@@ -329,6 +382,7 @@ def run_walk_forward_backtest(
     return {
         "config": config_payload,
         "metrics": aggregate_metrics,
+        "evaluation": evaluation_payload,
         "folds": fold_results,
         "skipped_folds": skipped_folds,
         "failed_folds": failed_folds,

@@ -5,13 +5,12 @@ from __future__ import annotations
 Adds per-id technical series from y, and cross-sectional ranks per date.
 """
 
-from typing import Iterable, Sequence
+from collections.abc import Sequence
 
-import numpy as np
 import pandas as pd
 
-from .tech_indicators import kama, vidya, fractional_diff, rolling_quantiles
 from .feature_params import FeatureParams
+from .tech_indicators import fractional_diff, kama, rolling_quantiles, vidya
 
 
 def add_default_features(

@@ -2,7 +2,6 @@
 
 import math
 import os
-from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -116,7 +115,7 @@ class VariableSelectionNetwork(nn.Module):
 
     def forward(
         self, features: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass.
 
         Args:
@@ -258,7 +257,7 @@ class TemporalFusionTransformer(nn.Module):
         self,
         x: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Forward pass.
 
         Args:

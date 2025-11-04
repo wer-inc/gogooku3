@@ -7,7 +7,6 @@ Compares baseline vs candidate metrics with allowed degradation thresholds.
 
 import json
 from dataclasses import dataclass
-from typing import Dict
 
 
 @dataclass
@@ -17,12 +16,12 @@ class GateRule:
     max_regress: float  # allowed regression (positive number)
 
 
-def load_json(path: str) -> Dict:
-    with open(path, "r", encoding="utf-8") as f:
+def load_json(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
-def check_gate(baseline: Dict, candidate: Dict, rule: GateRule) -> dict:
+def check_gate(baseline: dict, candidate: dict, rule: GateRule) -> dict:
     # Fetch metric value by key (top-level key expected)
     bval = float(baseline.get(rule.key))
     cval = float(candidate.get(rule.key))

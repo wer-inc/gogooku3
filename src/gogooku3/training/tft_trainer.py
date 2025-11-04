@@ -14,18 +14,18 @@ Inputs expect columns:
   static:id, <static-feature...>
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Dict, Iterable, Sequence
 
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import QuantileRegressor
 
-from gogooku3.training.split import WalkForwardSplitterV2
-from gogooku3.metrics.forecast_metrics import weighted_quantile_loss
 from gogooku3.features.feature_builder import add_default_features
 from gogooku3.features.feature_params import FeatureParams
 from gogooku3.features.known_future import add_jp_holiday_features, normalize_static
+from gogooku3.metrics.forecast_metrics import weighted_quantile_loss
+from gogooku3.training.split import WalkForwardSplitterV2
 
 
 def _left_join_known_future(df: pd.DataFrame, df_known: pd.DataFrame | None) -> pd.DataFrame:
@@ -99,7 +99,7 @@ def train_tft_quantile(
     # Prepare splitter
     splitter = WalkForwardSplitterV2(date_col="ts", embargo_days=cfg.embargo_days)
     splits = list(splitter.split(d, n_splits=cfg.n_splits))
-    results: Dict[str, float] = {}
+    results: dict[str, float] = {}
 
     for h in cfg.horizons:
         # Collect fold losses
@@ -143,7 +143,7 @@ def train_tft_quantile(
             Xtr = Xtr_df.astype(float).to_numpy()
             ytr = tr_h[f"target_{h}"].astype(float).to_numpy()
             # Fit quantile models
-            models: Dict[float, QuantileRegressor] = {}
+            models: dict[float, QuantileRegressor] = {}
             for q in cfg.quantiles:
                 m = QuantileRegressor(quantile=float(q), alpha=1e-4, solver="highs")
                 try:

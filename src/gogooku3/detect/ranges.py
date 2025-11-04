@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """Range conversion and VUS-PR style evaluation utilities."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd

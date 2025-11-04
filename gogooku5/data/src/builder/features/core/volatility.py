@@ -6,6 +6,8 @@ from math import log, sqrt
 
 import polars as pl
 
+from ..utils.rolling import roll_mean_safe, roll_std_safe, roll_var_safe
+
 EPS = 1e-12
 
 
@@ -53,6 +55,7 @@ class AdvancedVolatilityFeatures:
             ]
         )
 
+        # Phase 2 Patch C: All rolling operations exclude current day
         exprs: list[pl.Expr] = []
         valid_windows: list[int] = []
         for win in cfg.windows:
@@ -61,14 +64,16 @@ class AdvancedVolatilityFeatures:
             win = int(win)
             valid_windows.append(win)
             k = 0.34 / (1.34 + (win + 1) / (win - 1))
-            var_u = pl.col("yz_u").rolling_var(win).over(code)
-            var_d = pl.col("yz_d").rolling_var(win).over(code)
-            var_c = pl.col("yz_c").rolling_var(win).over(code)
+            # Phase 2 Patch C: Use safe rolling operations (shift(1) before rolling)
+            min_p = max(win // 2, 5)  # Require at least half the window or 5 obs
+            var_u = roll_var_safe(pl.col("yz_u"), win, min_periods=min_p, by=code)
+            var_d = roll_var_safe(pl.col("yz_d"), win, min_periods=min_p, by=code)
+            var_c = roll_var_safe(pl.col("yz_c"), win, min_periods=min_p, by=code)
             yz_var = var_u + k * var_c + (1 - k) * var_d
-            exprs.append(yz_var.clip(lower_bound=0.0).sqrt().alias(f"yz_vol_{win}"))
+            exprs.append(yz_var.clip(lower_bound=0.0).sqrt().mul(sqrt(252.0)).alias(f"yz_vol_{win}"))
 
             log_hl = ((pl.col(high) + EPS) / (pl.col(low) + EPS)).log()
-            pk_var = log_hl.pow(2.0).rolling_mean(win, min_periods=win).over(code) / (4.0 * log(2.0))
+            pk_var = roll_mean_safe(log_hl.pow(2.0), win, min_periods=min_p, by=code) / (4.0 * log(2.0))
             exprs.append(pk_var.clip(lower_bound=0.0).sqrt().mul(sqrt(252.0)).alias(f"pk_vol_{win}"))
 
             log_h_o = ((pl.col(high) + EPS) / (pl.col(open_col) + EPS)).log()
@@ -76,15 +81,17 @@ class AdvancedVolatilityFeatures:
             log_l_o = ((pl.col(low) + EPS) / (pl.col(open_col) + EPS)).log()
             log_l_c = ((pl.col(low) + EPS) / (pl.col(close) + EPS)).log()
             rs_term = (log_h_o * log_h_c) + (log_l_o * log_l_c)
-            rs_var = rs_term.rolling_mean(win, min_periods=win).over(code)
+            rs_var = roll_mean_safe(rs_term, win, min_periods=min_p, by=code)
             exprs.append(rs_var.clip(lower_bound=0.0).sqrt().mul(sqrt(252.0)).alias(f"rs_vol_{win}"))
 
         if exprs:
             x = x.with_columns(exprs)
 
+        # Phase 2 Patch C: Volatility of volatility (VoV) also excludes current day
         vov_exprs: list[pl.Expr] = []
         for win in valid_windows:
-            vov_exprs.append(pl.col(f"yz_vol_{win}").rolling_std(win, min_periods=win).over(code).alias(f"vov_{win}"))
+            min_p = max(win // 2, 5)
+            vov_exprs.append(roll_std_safe(pl.col(f"yz_vol_{win}"), win, min_periods=min_p, by=code).alias(f"vov_{win}"))
         if vov_exprs:
             x = x.with_columns(vov_exprs)
 

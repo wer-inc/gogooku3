@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class FlowFeaturesGenerator:
     """
     週次投資主体別売買動向からフロー特徴量を生成
-    
+
     8個のコア特徴量 + 2個の付加特徴量を生成:
     - flow_foreign_net_ratio: 外国人ネット買い比率
     - flow_individual_net_ratio: 個人ネット買い比率
@@ -47,10 +47,10 @@ class FlowFeaturesGenerator:
     def build_flow_event_table(self, trades_df: pl.DataFrame) -> pl.DataFrame:
         """
         週次フローイベント表を作成（Section単位）
-        
+
         Args:
             trades_df: trades_specデータ（PublishedDate, Section, 各主体のBalance等）
-        
+
         Returns:
             フロー特徴量を含むイベント表
         """
@@ -206,11 +206,11 @@ class FlowFeaturesGenerator:
     def _rolling_zscore(self, col_name: str, group_col: str) -> pl.Expr:
         """
         Section内でローリングZ-scoreを計算
-        
+
         Args:
             col_name: Z-score計算対象の列名
             group_col: グループ化列名（Section）
-        
+
         Returns:
             Z-score計算式
         """
@@ -226,12 +226,12 @@ class FlowFeaturesGenerator:
     ) -> pl.DataFrame:
         """
         日次パネルにフロー特徴量をas-of結合
-        
+
         Args:
             stock_df: 銘柄日次データ（Code, Date等）
             flow_event_df: フローイベント表
             section_mapping: 銘柄→Sectionのマッピング（省略時は簡易マッピング）
-        
+
         Returns:
             フロー特徴量を含む日次パネル
         """

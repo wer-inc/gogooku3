@@ -4,13 +4,13 @@ Extracts RankIC, Sharpe, and other financial metrics from training logs and resu
 """
 
 import logging
-import json
 import re
-from typing import Dict, Any, Optional, List, Union
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -18,21 +18,21 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TrainingMetrics:
     """Container for extracted training metrics"""
-    rank_ic: Dict[str, float]
-    sharpe: Dict[str, float]
+    rank_ic: dict[str, float]
+    sharpe: dict[str, float]
     train_loss: float
     val_loss: float
     epoch: int
     training_time: float
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class MetricsExtractor:
     """Extract and parse training metrics from various sources"""
 
     def __init__(self,
-                 log_patterns: Optional[Dict[str, str]] = None,
-                 metric_names: Optional[List[str]] = None):
+                 log_patterns: dict[str, str] | None = None,
+                 metric_names: list[str] | None = None):
         """
         Initialize metrics extractor
 
@@ -55,7 +55,7 @@ class MetricsExtractor:
             'lr': r'lr:\s*([-\de\.]+)'
         }
 
-    def extract_from_log_file(self, log_path: Union[str, Path]) -> Optional[TrainingMetrics]:
+    def extract_from_log_file(self, log_path: str | Path) -> TrainingMetrics | None:
         """
         Extract metrics from training log file
 
@@ -71,7 +71,7 @@ class MetricsExtractor:
                 logger.warning(f"Log file not found: {log_path}")
                 return None
 
-            with open(log_path, 'r', encoding='utf-8') as f:
+            with open(log_path, encoding='utf-8') as f:
                 log_content = f.read()
 
             return self._parse_log_content(log_content)
@@ -80,7 +80,7 @@ class MetricsExtractor:
             logger.error(f"Failed to extract from log file {log_path}: {e}")
             return None
 
-    def extract_from_tensorboard(self, tb_log_dir: Union[str, Path]) -> Optional[TrainingMetrics]:
+    def extract_from_tensorboard(self, tb_log_dir: str | Path) -> TrainingMetrics | None:
         """
         Extract metrics from TensorBoard logs
 
@@ -121,7 +121,7 @@ class MetricsExtractor:
             logger.error(f"Failed to extract from TensorBoard {tb_log_dir}: {e}")
             return None
 
-    def extract_from_wandb(self, run_path: str) -> Optional[TrainingMetrics]:
+    def extract_from_wandb(self, run_path: str) -> TrainingMetrics | None:
         """
         Extract metrics from Weights & Biases run
 
@@ -151,7 +151,7 @@ class MetricsExtractor:
             logger.error(f"Failed to extract from W&B {run_path}: {e}")
             return None
 
-    def extract_from_metrics_dict(self, metrics_dict: Dict[str, Any]) -> Optional[TrainingMetrics]:
+    def extract_from_metrics_dict(self, metrics_dict: dict[str, Any]) -> TrainingMetrics | None:
         """
         Extract metrics from dictionary (direct from training)
 
@@ -194,7 +194,7 @@ class MetricsExtractor:
             logger.error(f"Failed to extract from metrics dict: {e}")
             return None
 
-    def _parse_log_content(self, log_content: str) -> Optional[TrainingMetrics]:
+    def _parse_log_content(self, log_content: str) -> TrainingMetrics | None:
         """Parse metrics from log content"""
         try:
             rank_ic = {}
@@ -235,7 +235,7 @@ class MetricsExtractor:
             logger.error(f"Failed to parse log content: {e}")
             return None
 
-    def _parse_tensorboard_metrics(self, metrics: Dict[str, float]) -> Optional[TrainingMetrics]:
+    def _parse_tensorboard_metrics(self, metrics: dict[str, float]) -> TrainingMetrics | None:
         """Parse metrics from TensorBoard data"""
         try:
             rank_ic = {}
@@ -267,7 +267,7 @@ class MetricsExtractor:
             logger.error(f"Failed to parse TensorBoard metrics: {e}")
             return None
 
-    def _parse_wandb_metrics(self, summary: Dict, history: pd.DataFrame) -> Optional[TrainingMetrics]:
+    def _parse_wandb_metrics(self, summary: dict, history: pd.DataFrame) -> TrainingMetrics | None:
         """Parse metrics from W&B data"""
         try:
             rank_ic = {}
@@ -306,7 +306,7 @@ class MetricsExtractor:
             logger.error(f"Failed to parse W&B metrics: {e}")
             return None
 
-    def validate_metrics(self, metrics: TrainingMetrics) -> Dict[str, List[str]]:
+    def validate_metrics(self, metrics: TrainingMetrics) -> dict[str, list[str]]:
         """
         Validate extracted metrics for completeness and sanity
 

@@ -1,0 +1,61 @@
+# P0-4/6/7 Initial Coefficients
+# Safe values for immediate deployment after RFI-5/6 collection
+# Created: 2025-11-02
+# Status: Production Ready
+
+# P0-4: Loss Rebalancing
+# Weights are relative (no need to sum to 1.0)
+weights:
+  quantile: 1.0      # WQL/Pinball loss (baseline)
+  sharpe: 0.30       # Sharpe EMA (P0-7)
+  rankic: 0.20       # Rank correlation
+  cs_ic: 0.15        # Cross-sectional IC
+
+# P0-6: Quantile Crossing Penalty
+quantile_crossing:
+  enable: true
+  lambda_qc: 2e-3    # Increase to 5e-3 if qx_rate > 0.05
+  # lambda_qc: 5e-3  # Uncomment if qx_rate > 0.05 in rfi_56_metrics.txt
+
+# P0-7: Sharpe EMA
+sharpe_ema:
+  enable: true
+  decay: 0.95        # Range: 0.92-0.95 (0.95 is recommended)
+  warmup_steps: 10   # Initial stabilization period
+  eps: 1e-6          # Numerical stability
+  risk_free_rate: 0.0
+  annualization_factor: 252.0
+
+# Phase-based scheduling (optional)
+# Automatically adjust weights based on training phase
+phase_scheduling:
+  enable: false  # Set to true to enable
+  phases:
+    # Phase 0-1 (Epoch 0-30): Foundation
+    - epoch_range: [0, 30]
+      weights:
+        quantile: 1.0
+        sharpe: 0.15
+        rankic: 0.10
+        cs_ic: 0.05
+
+    # Phase 2-3 (Epoch 31-75): Financial metrics focus
+    - epoch_range: [31, 75]
+      weights:
+        quantile: 1.0
+        sharpe: 0.30
+        rankic: 0.20
+        cs_ic: 0.15
+
+    # Phase 4 (Epoch 76-120): Fine-tuning
+    - epoch_range: [76, 120]
+      weights:
+        quantile: 0.8
+        sharpe: 0.35
+        rankic: 0.25
+        cs_ic: 0.20
+
+# Logging
+logging:
+  log_loss_components: true  # Log individual loss values
+  log_interval: 1            # Log every epoch

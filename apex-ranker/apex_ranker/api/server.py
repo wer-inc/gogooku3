@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+import torch
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -20,6 +21,7 @@ from apex_ranker.backtest import (
     CostCalculator,
     OptimizationConfig,
     generate_target_weights,
+    select_by_percentile,
 )
 from apex_ranker.backtest.inference import (
     BacktestInferenceEngine,
@@ -147,6 +149,9 @@ class Settings:
     api_keys: set[str] = field(default_factory=set)
     rate_limit: int = 120
     rate_window_seconds: int = 60
+    selection_k_ratio: float | None = None
+    selection_k_min: int | None = None
+    selection_sign: int = 1
 
 
 def _load_settings_from_env() -> Settings:
@@ -173,6 +178,20 @@ def _load_settings_from_env() -> Settings:
     api_keys_env = os.environ.get("APEX_API_KEYS", "")
     api_keys = {key.strip() for key in api_keys_env.split(",") if key.strip()}
 
+    selection_k_ratio_env = os.environ.get("APEX_SELECTION_K_RATIO")
+    selection_k_ratio = (
+        float(selection_k_ratio_env)
+        if selection_k_ratio_env is not None
+        else None
+    )
+    selection_k_min_env = os.environ.get("APEX_SELECTION_K_MIN")
+    selection_k_min = (
+        int(selection_k_min_env) if selection_k_min_env is not None else None
+    )
+    selection_sign = int(os.environ.get("APEX_SELECTION_SIGN", "1"))
+    if selection_sign not in (-1, 1):
+        selection_sign = 1
+
     return Settings(
         model_path=model_path,
         config_path=config_path,
@@ -184,6 +203,9 @@ def _load_settings_from_env() -> Settings:
         api_keys=api_keys,
         rate_limit=int(os.environ.get("APEX_RATE_LIMIT", 120)),
         rate_window_seconds=int(os.environ.get("APEX_RATE_WINDOW", 60)),
+        selection_k_ratio=selection_k_ratio,
+        selection_k_min=selection_k_min,
+        selection_sign=selection_sign,
     )
 
 
@@ -349,9 +371,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         portfolio_value: float,
         config_override: OptimizationConfig,
     ) -> tuple[dict[str, float], dict[str, Any], float]:
+        codes = list(predictions.keys())
+        scores_tensor = torch.tensor(
+            [predictions[code] for code in codes], dtype=torch.float32
+        )
+        if scores_tensor.numel() > 0:
+            ratio = (
+                settings.selection_k_ratio
+                if settings.selection_k_ratio is not None
+                else config_override.target_top_k / max(1, scores_tensor.numel())
+            )
+            ratio = float(max(0.0, min(1.0, ratio)))
+            min_required = settings.selection_k_min or config_override.target_top_k
+            min_required = max(1, int(min_required))
+            idx_tensor, threshold_signed, gate_fallback = select_by_percentile(
+                scores_tensor,
+                k_ratio=ratio,
+                k_min=min_required,
+                sign=settings.selection_sign,
+            )
+            if idx_tensor.numel() == 0:
+                gate_fallback = True
+                fallback_count = min(scores_tensor.numel(), min_required)
+                if fallback_count > 0:
+                    idx_tensor = torch.arange(fallback_count, dtype=torch.long)
+                    signed_scores = scores_tensor * float(settings.selection_sign)
+                    threshold_signed = float(signed_scores[idx_tensor[-1]].item())
+            if idx_tensor.numel() > 0:
+                idx_tensor = torch.unique(idx_tensor, sorted=True)
+                selected_codes = [codes[i] for i in idx_tensor.tolist()]
+                selection_threshold = float(
+                    threshold_signed * float(settings.selection_sign)
+                )
+            else:
+                selected_codes = []
+                selection_threshold = None
+            gated_predictions = {
+                code: predictions[code] for code in selected_codes
+            }
+        else:
+            ratio = settings.selection_k_ratio
+            min_required = settings.selection_k_min or config_override.target_top_k
+            gate_fallback = False
+            selection_threshold = None
+            gated_predictions = {}
+
         with OPTIMIZATION_LATENCY.time():
             target_weights, optimisation = generate_target_weights(
-                predictions,
+                gated_predictions,
                 current_weights,
                 portfolio_value=portfolio_value,
                 config=config_override,
@@ -360,6 +427,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
 
         optimisation_dict = optimisation.to_dict()
+        optimisation_dict["selection"] = {
+            "k_ratio": ratio,
+            "threshold": selection_threshold,
+            "fallback_used": bool(gate_fallback),
+            "candidate_total": len(codes),
+            "candidate_kept": len(gated_predictions),
+            "selection_sign": settings.selection_sign,
+        }
         turnover_estimate = compute_weight_turnover(current_weights, target_weights)
         return target_weights, optimisation_dict, turnover_estimate
 

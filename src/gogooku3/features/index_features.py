@@ -15,9 +15,8 @@ between different indices. Inputs are expected to have Date, Code, Open, High,
 Low, Close with Date parsed as pl.Date.
 """
 
-from typing import Iterable, Optional
-from pathlib import Path
 import json
+from pathlib import Path
 
 import polars as pl
 
@@ -157,7 +156,7 @@ def build_per_index_features(indices: pl.DataFrame, *, mask_halt_day: bool = Tru
     ])
 
     # Daily Parkinson, Garman–Klass, Rogers–Satchell estimators and 20d annualized vols
-    ln = pl.element().log  # placeholder; we'll use pl.log in expressions directly
+    pl.element().log  # placeholder; we'll use pl.log in expressions directly
     eps = 1e-12
     if all(c in df.columns for c in ("High", "Low", "Open", "Close")):
         # Daily variances
@@ -273,7 +272,7 @@ def build_spread_series(df: pl.DataFrame) -> pl.DataFrame:
         pairs: list[tuple[str, str, str]] = []
         try:
             if path.exists():
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     data = json.load(f)
                 if isinstance(data, dict) and isinstance(data.get("pairs"), list):
                     for item in data["pairs"]:
@@ -404,7 +403,7 @@ SECTOR33_HINTS: dict[str, str] = {
 def _load_json(path: Path) -> dict[str, str]:
     try:
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return {str(k): str(v) for k, v in data.items()}
@@ -539,7 +538,7 @@ def attach_sector_index_features(
 def attach_index_features_to_equity(
     quotes: pl.DataFrame,
     per_index: pl.DataFrame,
-    daily_feats: Optional[pl.DataFrame] = None,
+    daily_feats: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Attach day-level aggregates to equity panel (Date-join).
 

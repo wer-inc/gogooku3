@@ -6,7 +6,7 @@ Turns event dates (point labels) into range labels with optional pre/post window
 Supports id='*' broadcasting to all ids in the provided universe.
 """
 
-from typing import Iterable, List
+from collections.abc import Iterable
 
 import pandas as pd
 

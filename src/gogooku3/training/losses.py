@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Sequence
+from collections.abc import Sequence
 
 import torch
 import torch.nn as nn
@@ -22,8 +22,8 @@ class HuberMultiHorizon(nn.Module):
 
     def forward(
         self,
-        preds_list: List[torch.Tensor],
-        targets_list: List[torch.Tensor],
+        preds_list: list[torch.Tensor],
+        targets_list: list[torch.Tensor],
         *,
         vol20: torch.Tensor | None = None,
     ) -> torch.Tensor:  # type: ignore[override]

@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import polars as pl
 
 from ..config import DatasetBuilderSettings, get_settings
+from ..features.macro.global_regime import load_global_regime_data, prepare_vvmd_features
 from ..features.macro.vix import load_vix_history, prepare_vix_features
 from ..utils import CacheManager
 from .advanced_fetcher import AdvancedJQuantsFetcher
@@ -52,6 +53,30 @@ class DataSourceManager:
         features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return features
 
+    def macro_global_regime(self, *, start: str, end: str, force_refresh: bool = False) -> pl.DataFrame:
+        """Return VVMD global regime features.
+
+        Phase 1: 14 features from US and global markets:
+        - SPY/QQQ volatility and momentum
+        - VIX z-score
+        - DXY (US Dollar) z-score
+        - BTC relative momentum and volatility
+        """
+        cache_key = f"macro_global_regime_{start}_{end}"
+        ttl = self.settings.macro_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            history = load_global_regime_data(
+                start,
+                end,
+                parquet_path=self._macro_cache_file("global_regime", start, end),
+                force_refresh=force_refresh,
+            )
+            return prepare_vvmd_features(history)
+
+        features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return features
+
     def margin_weekly(self, *, start: str, end: str) -> pl.DataFrame:
         """Return cached weekly margin interest."""
 
@@ -72,6 +97,19 @@ class DataSourceManager:
 
         def _fetch() -> pl.DataFrame:
             return self.fetcher.fetch_topix(start=start, end=end)
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
+    def indices(self, *, start: str, end: str, codes: Sequence[str]) -> pl.DataFrame:
+        """Return OHLC history for a set of index codes."""
+
+        normalized_codes = ",".join(sorted(codes))
+        cache_key = f"indices_{normalized_codes}_{start}_{end}"
+        ttl = self.settings.topix_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            return self.fetcher.fetch_indices(start=start, end=end, codes=codes)
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
@@ -149,9 +187,11 @@ class DataSourceManager:
         if "Code" in df.columns:
             rename_map["Code"] = "code"
         if "ApplicationDate" in df.columns:
-            rename_map["ApplicationDate"] = "date"
+            rename_map["ApplicationDate"] = "application_date"
         elif "Date" in df.columns:
-            rename_map["Date"] = "date"
+            rename_map["Date"] = "application_date"
+        if "PublishedDate" in df.columns:
+            rename_map["PublishedDate"] = "published_date"
         if "LongMarginOutstanding" in df.columns:
             rename_map["LongMarginOutstanding"] = "margin_balance"
         if "ShortMarginOutstanding" in df.columns:
@@ -162,17 +202,27 @@ class DataSourceManager:
         # Ensure required columns exist
         if "code" not in out.columns:
             out = out.with_columns(pl.lit(None).cast(pl.Utf8).alias("code"))
-        if "date" not in out.columns:
-            out = out.with_columns(pl.lit(None).cast(pl.Date).alias("date"))
+        if "application_date" not in out.columns:
+            out = out.with_columns(pl.lit(None).cast(pl.Date).alias("application_date"))
 
-        date_dtype = out.schema.get("date")
-        if date_dtype != pl.Date:
+        if "application_date" in out.columns:
             out = out.with_columns(
-                pl.col("date").cast(pl.Utf8, strict=False).str.strptime(pl.Date, strict=False).alias("date")
+                pl.col("application_date")
+                .cast(pl.Utf8, strict=False)
+                .str.strptime(pl.Date, strict=False)
+                .alias("application_date")
             )
 
         if "code" in out.columns:
             out = out.with_columns(pl.col("code").cast(pl.Utf8).alias("code"))
+
+        if "published_date" in out.columns:
+            out = out.with_columns(
+                pl.col("published_date")
+                .cast(pl.Utf8, strict=False)
+                .str.strptime(pl.Date, strict=False)
+                .alias("published_date")
+            )
 
         for column, alias in [
             ("margin_balance", "margin_balance"),
@@ -181,9 +231,36 @@ class DataSourceManager:
             if column in out.columns:
                 out = out.with_columns(pl.col(column).cast(pl.Float64, strict=False).alias(alias))
             else:
-                out = out.with_columns(pl.lit(0.0).cast(pl.Float64).alias(alias))
+                out = out.with_columns(pl.lit(None).cast(pl.Float64).alias(alias))
 
-        return out.select(["code", "date", "margin_balance", "short_balance"]).sort(["code", "date"])
+        if "published_date" in out.columns:
+            out = out.with_columns(
+                pl.col("published_date")
+                .cast(pl.Utf8, strict=False)
+                .str.strptime(pl.Date, strict=False)
+                .alias("published_date")
+            )
+
+        out = out.with_columns(
+            pl.when(pl.col("published_date").is_not_null())
+            .then(pl.col("published_date"))
+            .otherwise(pl.col("application_date"))
+            .alias("date")
+        )
+
+        order_by = ["code", "application_date", "date"]
+        if "published_date" in out.columns:
+            order_by.append("published_date")
+        ordered = out.sort(order_by)
+        dedup_subset = ["code", "application_date"] if "application_date" in ordered.columns else ["code", "date"]
+        ordered = ordered.unique(subset=dedup_subset, keep="last")
+
+        select_cols = ["code", "date", "margin_balance", "short_balance"]
+        if "application_date" in ordered.columns:
+            select_cols.append("application_date")
+        if "published_date" in ordered.columns:
+            select_cols.append("published_date")
+        return ordered.select(select_cols).sort(["code", "date"])
 
     def _macro_cache_file(self, prefix: str, start: str, end: str) -> Path:
         cache_dir = self.settings.data_cache_dir / "macro"

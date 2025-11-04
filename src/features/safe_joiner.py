@@ -36,10 +36,10 @@ class SafeJoiner:
     def prepare_base_quotes(self, quotes_df: pl.DataFrame) -> pl.DataFrame:
         """
         daily_quotes を基盤データとして準備
-        
+
         Args:
             quotes_df: daily_quotes データ
-        
+
         Returns:
             型変換・重複排除済みの基盤データ
         """
@@ -80,13 +80,13 @@ class SafeJoiner:
     ) -> pl.DataFrame:
         """
         財務諸表データをas-of結合（T+1ルール）
-        
+
         Args:
             base_df: 基盤データ（daily_quotes）
             statements_df: 財務諸表データ
             use_time_cutoff: 15:00判定を使用するか（デフォルトTrue）
             cutoff_time: 当日有効とする締切時刻
-        
+
         Returns:
             財務諸表特徴量が付与されたデータ
         """
@@ -252,12 +252,12 @@ class SafeJoiner:
     ) -> pl.DataFrame:
         """
         週次フローデータを区間結合
-        
+
         Args:
             base_df: 基盤データ（Section付き）
             trades_df: trades_spec データ
             section_mapping_df: Section マッピング（省略時は base_df から推定）
-        
+
         Returns:
             フロー特徴量が付与されたデータ
         """
@@ -377,11 +377,11 @@ class SafeJoiner:
     ) -> pl.DataFrame:
         """
         TOPIXデータを同日結合
-        
+
         Args:
             base_df: 基盤データ
             topix_df: TOPIXデータ（市場特徴量計算済み）
-        
+
         Returns:
             市場特徴量が付与されたデータ
         """

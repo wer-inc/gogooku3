@@ -5,8 +5,8 @@ from __future__ import annotations
 Schema (flat): id, start, end, type, source?, notes?
 """
 
-from dataclasses import dataclass, asdict
-from typing import Iterable, List, Optional
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
 
 import pandas as pd
 

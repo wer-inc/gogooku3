@@ -11,11 +11,11 @@ GPU高速化版: 系列相関に基づく金融グラフ構築器
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import logging
 import pickle
 from datetime import date, datetime, timedelta
-import gzip
 from pathlib import Path
 from typing import Any
 
@@ -524,7 +524,7 @@ class FinancialGraphBuilder:
         n_stocks = len(valid_codes)
 
         # Create node mapping
-        node_mapping = {code: idx for idx, code in enumerate(valid_codes)}
+        {code: idx for idx, code in enumerate(valid_codes)}
 
         # Extract significant edges
         edge_list = []
@@ -547,7 +547,7 @@ class FinancialGraphBuilder:
             else:
                 # Only positive correlations
                 valid_indices = np.where(
-                    (corr_matrix_cpu[i] >= self.correlation_threshold)
+                    corr_matrix_cpu[i] >= self.correlation_threshold
                 )[0]
 
             # Sort by absolute correlation and take top-K

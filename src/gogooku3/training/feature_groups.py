@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Sequence
 
 import yaml
 
@@ -9,7 +9,7 @@ import yaml
 def resolve_groups_from_prefixes(
     feature_cols: Sequence[str],
     config_path: str | Path,
-) -> Dict[str, list[int]]:
+) -> dict[str, list[int]]:
     """Resolve group prefixes to column indices based on the provided feature columns.
 
     YAML schema:
@@ -21,9 +21,9 @@ def resolve_groups_from_prefixes(
         prefixes: ["margin_"]
       ...
     """
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
-    groups: Dict[str, list[int]] = {}
+    groups: dict[str, list[int]] = {}
     for name, spec in (cfg.get("groups") or {}).items():
         prefixes = list(spec.get("prefixes") or [])
         idxs: list[int] = []

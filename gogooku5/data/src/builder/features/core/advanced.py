@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from ..utils.rolling import roll_mean_safe, roll_std_safe
+
 EPS = 1e-9
 
 
@@ -15,8 +17,9 @@ class AdvancedFeatureConfig:
     date_column: str = "date"
     close_column: str = "close"
     volume_column: str = "volume"
-    returns_1d: str = "returns_1d"
-    returns_5d: str = "returns_5d"
+    # Phase 2 Patch B: Updated to use past returns (ret_prev_*)
+    returns_1d: str = "ret_prev_1d"
+    returns_5d: str = "ret_prev_5d"
     dollar_volume: str = "dollar_volume"
 
 
@@ -33,12 +36,11 @@ class AdvancedFeatureEngineer:
         if not required.issubset(df.columns):
             return df
 
-        out = df
+        out = df.sort([cfg.code_column, cfg.date_column])
         if cfg.volume_column in out.columns:
-            out = out.with_columns(pl.col(cfg.volume_column).rolling_mean(5).over(cfg.code_column).alias("volume_ma_5"))
-            out = out.with_columns(
-                pl.col(cfg.volume_column).rolling_mean(20).over(cfg.code_column).alias("volume_ma_20")
-            )
+            # Phase 2 Patch C: Exclude current day (shift(1) before rolling)
+            out = out.with_columns(roll_mean_safe(pl.col(cfg.volume_column), 5, min_periods=3).alias("volume_ma_5"))
+            out = out.with_columns(roll_mean_safe(pl.col(cfg.volume_column), 20, min_periods=10).alias("volume_ma_20"))
 
         out = self._compute_rsi14(out)
         out = self._compute_realized_vol(out)
@@ -87,7 +89,8 @@ class AdvancedFeatureEngineer:
                 pl.when(pl.col("_pos") == 1).then(pl.col("_seq")).otherwise(0).alias("up_streak_1d"),
                 pl.when(pl.col("_pos") == 0).then(pl.col("_seq")).otherwise(0).alias("down_streak_1d"),
             )
-            out = out.with_columns(pl.col("_pos").rolling_mean(5).over(cfg.code_column).alias("mom_persist_5d"))
+            # Phase 2 Patch C: Exclude current day (shift(1) before rolling)
+            out = out.with_columns(roll_mean_safe(pl.col("_pos"), 5, min_periods=3).alias("mom_persist_5d"))
             out = out.drop([c for c in ("_pos", "_chg", "_grp_id", "_seq") if c in out.columns])
 
         out = self._add_calendar_flags(out)
@@ -112,6 +115,11 @@ class AdvancedFeatureEngineer:
         return out
 
     def _compute_rsi14(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Phase 2 Patch C: RSI calculation with current day excluded.
+
+        Delta is computed from previous close, then rolling average excludes current day.
+        """
         cfg = self.config
         if "rsi_14" in df.columns:
             return df
@@ -119,9 +127,10 @@ class AdvancedFeatureEngineer:
         gain = pl.when(delta > 0).then(delta).otherwise(0.0)
         loss = pl.when(delta < 0).then(-delta).otherwise(0.0)
         tmp = df.with_columns([gain.alias("_gain"), loss.alias("_loss")])
+        # Phase 2 Patch C: Exclude current day (shift(1) before rolling)
         tmp = tmp.with_columns(
-            pl.col("_gain").rolling_mean(14).over(cfg.code_column).alias("_avg_gain"),
-            pl.col("_loss").rolling_mean(14).over(cfg.code_column).alias("_avg_loss"),
+            roll_mean_safe(pl.col("_gain"), 14, min_periods=7).alias("_avg_gain"),
+            roll_mean_safe(pl.col("_loss"), 14, min_periods=7).alias("_avg_loss"),
         )
         rs = pl.col("_avg_gain") / (pl.col("_avg_loss") + EPS)
         rsi = 100.0 - (100.0 / (1.0 + rs))
@@ -129,30 +138,36 @@ class AdvancedFeatureEngineer:
         return tmp.drop([c for c in ("_gain", "_loss", "_avg_gain", "_avg_loss") if c in tmp.columns])
 
     def _compute_realized_vol(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Phase 2 Patch C: Realized volatility with current day excluded.
+
+        Uses ret_prev_1d if available, otherwise computes from close prices.
+        """
         cfg = self.config
         if "realized_vol_20" in df.columns:
             return df
         try:
             if cfg.returns_1d in df.columns:
+                # Phase 2 Patch C: ret_prev_1d already excludes current day, but rolling needs shift(1) too
                 tmp = (
                     df.lazy()
                     .with_columns(
-                        pl.col(cfg.returns_1d).rolling_std(20).over(cfg.code_column).alias("_realized_vol_20")
+                        roll_std_safe(pl.col(cfg.returns_1d), 20, min_periods=10).alias("_realized_vol_20")
                     )
                     .collect()
                 )
                 return tmp.with_columns((pl.col("_realized_vol_20") * math.sqrt(252.0)).alias("realized_vol_20")).drop(
                     "_realized_vol_20"
                 )
+            # Phase 2 Patch C: Compute return, then exclude current day with shift(1)
             tmp = (
                 df.lazy()
                 .with_columns(
-                    (
-                        (pl.col(cfg.close_column) / pl.col(cfg.close_column).shift(1).over(cfg.code_column) - 1.0)
-                        .rolling_std(20)
-                        .over(cfg.code_column)
-                        .alias("_realized_vol_20")
-                    )
+                    roll_std_safe(
+                        (pl.col(cfg.close_column) / pl.col(cfg.close_column).shift(1).over(cfg.code_column) - 1.0),
+                        20,
+                        min_periods=10
+                    ).alias("_realized_vol_20")
                 )
                 .collect()
             )
@@ -190,12 +205,12 @@ class AdvancedFeatureEngineer:
             pl.col(cfg.date_column).dt.month().alias("_mm"),
         )
         cal = cal.with_columns(
-            pl.col(cfg.date_column).cum_count().over(["_yy", "_mm"]).alias("_pos"),
+            (pl.col(cfg.date_column).cum_count().over(["_yy", "_mm"]) + 1).alias("_pos"),
             pl.count().over(["_yy", "_mm"]).alias("_n"),
         )
         cal = cal.with_columns(
             (pl.col("_pos") <= 5).cast(pl.Int8).alias("month_start_flag"),
-            ((pl.col("_n") - pl.col("_pos") + 1) <= 5).cast(pl.Int8).alias("month_end_flag"),
+            ((pl.col("_n") - pl.col("_pos")) < 5).cast(pl.Int8).alias("month_end_flag"),
             (pl.col("_dow") == 0).cast(pl.Int8).alias("is_mon"),
             (pl.col("_dow") == 1).cast(pl.Int8).alias("is_tue"),
             (pl.col("_dow") == 2).cast(pl.Int8).alias("is_wed"),

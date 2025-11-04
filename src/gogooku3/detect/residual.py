@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """Residual-based anomaly scoring with robust rolling normalization."""
 
-from typing import Iterable
 
 import numpy as np
 import pandas as pd

@@ -5,22 +5,21 @@ Optuna-based hyperparameter optimization with financial metrics focus
 
 import logging
 import os
-import json
+import shutil
+import subprocess
 import time
-from typing import Dict, Any, Optional, List, Union, Tuple
 from pathlib import Path
+from typing import Any
+
 import numpy as np
 import optuna
-from optuna.samplers import TPESampler
-from optuna.pruners import MedianPruner
-from optuna.trial import TrialState
 import torch
-import subprocess
-import tempfile
-import shutil
+from optuna.pruners import MedianPruner
+from optuna.samplers import TPESampler
+from optuna.trial import TrialState
 
-from .objectives import MultiHorizonObjective
 from .metrics_extractor import MetricsExtractor, TrainingMetrics
+from .objectives import MultiHorizonObjective
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +29,12 @@ class ATFTHPOOptimizer:
 
     def __init__(self,
                  study_name: str = "atft_hpo",
-                 storage: Optional[str] = None,
+                 storage: str | None = None,
                  n_trials: int = 100,
                  n_jobs: int = 1,
                  gpu_memory_fraction: float = 0.8,
-                 timeout: Optional[float] = None,
-                 base_config_path: Optional[str] = None,
+                 timeout: float | None = None,
+                 base_config_path: str | None = None,
                  load_if_exists: bool = True):
         """
         Initialize ATFT HPO optimizer
@@ -88,7 +87,7 @@ class ATFTHPOOptimizer:
         self.work_dir = Path("hpo_trials")
         self.work_dir.mkdir(exist_ok=True)
 
-    def _setup_storage(self, storage: Optional[str]) -> Optional[str]:
+    def _setup_storage(self, storage: str | None) -> str | None:
         """
         Setup Optuna storage with environment variable support
 
@@ -146,7 +145,7 @@ class ATFTHPOOptimizer:
         except Exception as e:
             logger.warning(f"Failed to setup GPU optimization: {e}")
 
-    def suggest_hyperparameters(self, trial: optuna.Trial) -> Dict[str, Any]:
+    def suggest_hyperparameters(self, trial: optuna.Trial) -> dict[str, Any]:
         """
         Suggest hyperparameters for ATFT-GAT-FAN model
 
@@ -271,13 +270,13 @@ class ATFTHPOOptimizer:
             logger.error(f"❌ Trial {trial.number} failed: {e}")
             return -1.0
 
-    def _create_trial_config(self, params: Dict[str, Any], config_path: Path):
+    def _create_trial_config(self, params: dict[str, Any], config_path: Path):
         """Create Hydra config file for trial"""
         try:
             # Load base config if provided
             if self.base_config_path and Path(self.base_config_path).exists():
                 import yaml
-                with open(self.base_config_path, 'r') as f:
+                with open(self.base_config_path) as f:
                     base_config = yaml.safe_load(f)
             else:
                 base_config = {}
@@ -339,7 +338,7 @@ class ATFTHPOOptimizer:
     def _run_training_trial(self,
                           config_path: Path,
                           trial_dir: Path,
-                          trial: optuna.Trial) -> Optional[TrainingMetrics]:
+                          trial: optuna.Trial) -> TrainingMetrics | None:
         """Run training for a single trial"""
         try:
             # Setup environment
@@ -397,7 +396,7 @@ class ATFTHPOOptimizer:
     def _extract_trial_metrics(self,
                              trial_dir: Path,
                              stdout: str,
-                             training_time: float) -> Optional[TrainingMetrics]:
+                             training_time: float) -> TrainingMetrics | None:
         """Extract metrics from trial results"""
         try:
             # Try multiple extraction methods
@@ -440,7 +439,7 @@ class ATFTHPOOptimizer:
             Completed Optuna study
         """
         try:
-            logger.info(f"🚀 Starting ATFT HPO optimization")
+            logger.info("🚀 Starting ATFT HPO optimization")
             logger.info(f"   Study: {self.study_name}")
             logger.info(f"   Trials: {self.n_trials}")
             logger.info(f"   Jobs: {self.n_jobs}")
@@ -476,7 +475,7 @@ class ATFTHPOOptimizer:
             )
 
             # Log results
-            logger.info(f"✅ HPO optimization completed")
+            logger.info("✅ HPO optimization completed")
             logger.info(f"   Best score: {study.best_value:.4f}")
             logger.info(f"   Total trials: {len(study.trials)}")
             logger.info(f"   Completed trials: {len([t for t in study.trials if t.state == optuna.TrialState.COMPLETE])}")
@@ -491,7 +490,7 @@ class ATFTHPOOptimizer:
             logger.error(f"HPO optimization failed: {e}")
             raise
 
-    def get_best_config(self, study: optuna.Study) -> Dict[str, Any]:
+    def get_best_config(self, study: optuna.Study) -> dict[str, Any]:
         """
         Generate best configuration from study
 
@@ -558,7 +557,7 @@ class ATFTHPOOptimizer:
 
         return config
 
-    def save_best_config(self, study: optuna.Study, output_path: Union[str, Path]):
+    def save_best_config(self, study: optuna.Study, output_path: str | Path):
         """Save best configuration to file"""
         try:
             config = self.get_best_config(study)
@@ -576,7 +575,7 @@ class ATFTHPOOptimizer:
             logger.error(f"Failed to save best config: {e}")
             raise
 
-    def get_study_status(self) -> Dict[str, Any]:
+    def get_study_status(self) -> dict[str, Any]:
         """
         Get current study status and statistics
 
@@ -630,7 +629,7 @@ class ATFTHPOOptimizer:
             logger.error(f"Failed to get study status: {e}")
             return {"error": str(e)}
 
-    def resume_study(self, additional_trials: Optional[int] = None) -> optuna.Study:
+    def resume_study(self, additional_trials: int | None = None) -> optuna.Study:
         """
         Resume optimization of an existing study
 
@@ -680,7 +679,7 @@ class ATFTHPOOptimizer:
 
             # Log final results
             final_status = self.get_study_status()
-            logger.info(f"✅ Resume completed")
+            logger.info("✅ Resume completed")
             logger.info(f"   Final: {final_status['completed_trials']}/{final_status['total_trials']} trials")
             logger.info(f"   Best score: {final_status['best_value']:.4f}")
 

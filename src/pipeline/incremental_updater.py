@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 
@@ -14,22 +13,22 @@ import polars as pl
 @dataclass
 class IncrementalConfig:
     update_mode: str = "full"  # "full" | "incremental"
-    since_date: Optional[str] = None  # YYYY-MM-DD
+    since_date: str | None = None  # YYYY-MM-DD
 
 
 class IncrementalDatasetUpdater:
     def __init__(
-        self, output_dir: Path, cfg: Optional[IncrementalConfig] = None
+        self, output_dir: Path, cfg: IncrementalConfig | None = None
     ) -> None:
         self.output_dir = output_dir
         self.cfg = cfg or IncrementalConfig()
 
-    def latest_artifacts(self) -> tuple[Optional[Path], Optional[Path]]:
+    def latest_artifacts(self) -> tuple[Path | None, Path | None]:
         pq = self.output_dir / "ml_dataset_latest_full.parquet"
         meta = self.output_dir / "ml_dataset_latest_full_metadata.json"
         return (pq if pq.exists() else None, meta if meta.exists() else None)
 
-    def read_last_date_range(self) -> tuple[Optional[str], Optional[str]]:
+    def read_last_date_range(self) -> tuple[str | None, str | None]:
         _, meta = self.latest_artifacts()
         if not meta:
             return (None, None)
@@ -40,7 +39,7 @@ class IncrementalDatasetUpdater:
         except Exception:
             return (None, None)
 
-    def compute_since_date(self, fallback_end: Optional[str] = None) -> Optional[str]:
+    def compute_since_date(self, fallback_end: str | None = None) -> str | None:
         if self.cfg.since_date:
             return self.cfg.since_date
         _, last_end = self.read_last_date_range()

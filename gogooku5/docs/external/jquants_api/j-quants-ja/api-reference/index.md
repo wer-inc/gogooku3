@@ -82,6 +82,10 @@ Google Colaboratoryを利用したJ-Quants APIのクイックスタートガイ�
 
 ### 指数情報 (/indices)
 
+{% content-ref url="api-reference/indices" %}
+[indices](https://jpx.gitbook.io/j-quants-ja/api-reference/indices)
+{% endcontent-ref %}
+
 {% content-ref url="api-reference/topix" %}
 [topix](https://jpx.gitbook.io/j-quants-ja/api-reference/topix)
 {% endcontent-ref %}

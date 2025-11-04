@@ -38,6 +38,10 @@ class DatasetBuilderSettings(BaseSettings):
 
     request_timeout_seconds: float = Field(30.0, ge=1.0, env="REQUEST_TIMEOUT_SECONDS")
 
+    # Phase 2 Patch E: ADV filter configuration
+    min_adv_yen: int | None = Field(None, ge=0, env="MIN_ADV_YEN")
+    adv_min_periods: int = Field(20, ge=1, env="ADV_MIN_PERIODS")
+
     @model_validator(mode="after")
     def _ensure_directories(self) -> "DatasetBuilderSettings":
         """Make sure important directories exist to avoid runtime surprises."""

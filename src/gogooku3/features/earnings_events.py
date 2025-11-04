@@ -34,9 +34,6 @@ References:
 - Feature Specification lines 753-825: Earnings proximity and surprise metrics
 """
 
-import datetime as _dt
-from collections.abc import Callable
-from typing import Optional
 
 import polars as pl
 
@@ -183,7 +180,7 @@ def add_earnings_proximity_features(
 def add_earnings_surprise_features(
     quotes: pl.DataFrame,
     announcement_df: pl.DataFrame,
-    statements_df: Optional[pl.DataFrame] = None
+    statements_df: pl.DataFrame | None = None
 ) -> pl.DataFrame:
     """Add earnings surprise and reaction features.
 
@@ -387,8 +384,8 @@ def add_earnings_volatility_features(quotes: pl.DataFrame) -> pl.DataFrame:
 
 def add_earnings_event_block(
     quotes: pl.DataFrame,
-    announcement_df: Optional[pl.DataFrame],
-    statements_df: Optional[pl.DataFrame] = None,
+    announcement_df: pl.DataFrame | None,
+    statements_df: pl.DataFrame | None = None,
     *,
     enable_pead: bool = True,
     enable_volatility: bool = True,

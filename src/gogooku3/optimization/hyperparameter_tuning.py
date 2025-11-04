@@ -7,15 +7,16 @@ PDFで提案された改善: ベースライン性能を初期値としたOptuna
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Dict, Optional, Callable
+from typing import Any
+
 import optuna
-from optuna import Trial, Study
-from optuna.samplers import TPESampler
-from optuna.pruners import MedianPruner, HyperbandPruner
 import torch
-import numpy as np
 from omegaconf import DictConfig, OmegaConf
+from optuna import Study, Trial
+from optuna.pruners import HyperbandPruner, MedianPruner
+from optuna.samplers import TPESampler
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,10 @@ class ATFTHyperparameterOptimizer:
     def __init__(
         self,
         config: DictConfig,
-        objective_fn: Optional[Callable] = None,
+        objective_fn: Callable | None = None,
         study_name: str = "atft_optimization",
-        storage: Optional[str] = None,
-        baseline_metrics: Optional[Dict[str, float]] = None,
+        storage: str | None = None,
+        baseline_metrics: dict[str, float] | None = None,
     ):
         """
         Initialize the hyperparameter optimizer.
@@ -145,7 +146,7 @@ class ATFTHyperparameterOptimizer:
         except Exception as e:
             logger.warning(f"Could not add baseline trial: {e}")
 
-    def suggest_hyperparameters(self, trial: Trial) -> Dict[str, Any]:
+    def suggest_hyperparameters(self, trial: Trial) -> dict[str, Any]:
         """
         Suggest hyperparameters for a trial.
 
@@ -189,7 +190,7 @@ class ATFTHyperparameterOptimizer:
 
         return suggestions
 
-    def create_config_override(self, suggestions: Dict[str, Any]) -> DictConfig:
+    def create_config_override(self, suggestions: dict[str, Any]) -> DictConfig:
         """
         Create configuration override from suggestions.
 
@@ -221,9 +222,9 @@ class ATFTHyperparameterOptimizer:
 
     def optimize(
         self,
-        train_fn: Optional[Callable] = None,
-        n_trials: Optional[int] = None,
-        timeout: Optional[int] = None,
+        train_fn: Callable | None = None,
+        n_trials: int | None = None,
+        timeout: int | None = None,
     ) -> Study:
         """
         Run hyperparameter optimization.
@@ -359,7 +360,7 @@ class ATFTHyperparameterOptimizer:
         best_params = self.study.best_params
         return self.create_config_override(best_params)
 
-    def visualize_optimization(self, output_dir: Optional[Path] = None) -> None:
+    def visualize_optimization(self, output_dir: Path | None = None) -> None:
         """Create visualization plots for optimization results."""
         try:
             import optuna.visualization as vis

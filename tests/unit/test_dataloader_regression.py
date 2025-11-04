@@ -74,6 +74,10 @@ class TestDataLoaderRegression:
                 }
             }
         }
+        config["features"] = {
+            "manifest_path": None,
+            "strict": False,
+        }
         return OmegaConf.create(config)
 
     @pytest.fixture

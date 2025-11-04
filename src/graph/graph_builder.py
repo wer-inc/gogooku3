@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date as _date_cls
 from datetime import datetime as _datetime_cls
 from datetime import timedelta
-from typing import Any, Optional, Sequence, Union
+from typing import Any
 
 import polars as pl
 import torch
@@ -52,7 +52,7 @@ class GBConfig:
     size_tau: float = 1.0
     source_glob: str | None = None
     symmetric: bool = True
-    returns_channel_index: Optional[int] = None
+    returns_channel_index: int | None = None
     date_column: str = "date"
     code_column: str = "code"
     market_col: str | None = None
@@ -83,7 +83,7 @@ class GraphBuilder:
         self.edge_index = None
         self.edge_attr = None
         self._warned_missing_returns = False
-        self._last_asof_ts: Optional[_datetime_cls] = None
+        self._last_asof_ts: _datetime_cls | None = None
         self._last_result: dict[str, Any] | None = None
 
         # Allow GRAPH_RET_IDX env override to align with runtime pipelines
@@ -112,7 +112,7 @@ class GraphBuilder:
         if not self.return_columns:
             self.return_columns = ["return_1d", "feat_ret_1d", "target_1d"]
 
-        self._financial_builder: Optional[FinancialGraphBuilder] = None
+        self._financial_builder: FinancialGraphBuilder | None = None
         if self.source_glob:
             try:
                 self._financial_builder = FinancialGraphBuilder(
@@ -151,7 +151,7 @@ class GraphBuilder:
 
     def build_graph(
         self,
-        features: Union[torch.Tensor, dict[str, Any]],
+        features: torch.Tensor | dict[str, Any],
         codes: list | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -221,8 +221,8 @@ class GraphBuilder:
         return edge_index, edge_attr
 
     def _extract_returns_matrix(
-        self, features: Union[torch.Tensor, dict[str, Any]]
-    ) -> Optional[torch.Tensor]:
+        self, features: torch.Tensor | dict[str, Any]
+    ) -> torch.Tensor | None:
         """
         Try to extract a (N, T) returns matrix from different feature containers.
 
@@ -279,8 +279,8 @@ class GraphBuilder:
         data: torch.Tensor,
         window: int | None = None,
         k: int | None = None,
-        sectors: Optional[Sequence[Any]] = None,
-        markets: Optional[Sequence[Any]] = None,
+        sectors: Sequence[Any] | None = None,
+        markets: Sequence[Any] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Build edges based on returns correlation (A+ approach).
@@ -490,7 +490,7 @@ class GraphBuilder:
     # ------------------------------------------------------------------
     # FinancialGraphBuilder integration
     # ------------------------------------------------------------------
-    def _parse_date(self, value: Union[str, _date_cls, _datetime_cls]) -> _date_cls:
+    def _parse_date(self, value: str | _date_cls | _datetime_cls) -> _date_cls:
         if isinstance(value, _datetime_cls):
             return value.date()
         if isinstance(value, _date_cls):
@@ -503,8 +503,8 @@ class GraphBuilder:
         raise TypeError(f"Unsupported date value: {value!r}")
 
     def _load_source_data(
-        self, date_end: Union[str, _date_cls, _datetime_cls], codes: Sequence[str]
-    ) -> Optional[pl.DataFrame]:
+        self, date_end: str | _date_cls | _datetime_cls, codes: Sequence[str]
+    ) -> pl.DataFrame | None:
         if not self.source_glob:
             return None
         try:
@@ -546,8 +546,8 @@ class GraphBuilder:
         return pl.concat(frames, how="vertical")
 
     def build_for_day(
-        self, date_end: Union[str, _date_cls, _datetime_cls], codes: Sequence[str]
-    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        self, date_end: str | _date_cls | _datetime_cls, codes: Sequence[str]
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
         """Build graph using FinancialGraphBuilder for a specific day."""
         if self._financial_builder is None or not self.source_glob:
             logger.debug("FinancialGraphBuilder unavailable; skipping build_for_day.")
@@ -608,7 +608,7 @@ class GraphBuilder:
 
         return edge_index, edge_attr
 
-    def last_asof_ts(self) -> Optional[_datetime_cls]:
+    def last_asof_ts(self) -> _datetime_cls | None:
         """Return the timestamp corresponding to the most recent financial graph build."""
         return self._last_asof_ts
 

@@ -8,8 +8,8 @@ compatible interface and falls back to the simple zero-shot baseline so the
 end-to-end pipeline wiring (Forecast→Detect→Decide) remains runnable.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence, Dict
 
 import numpy as np
 import pandas as pd
@@ -32,7 +32,7 @@ class TFTAdapter:
 
     horizons: Sequence[int]
     quantiles: Sequence[float] = (0.1, 0.5, 0.9)
-    _models: Dict[int, Dict[float, QuantileRegressor]] = field(default_factory=dict, init=False)
+    _models: dict[int, dict[float, QuantileRegressor]] = field(default_factory=dict, init=False)
     _feature_cols: list[str] = field(default_factory=list, init=False)
 
     def fit(
@@ -40,7 +40,7 @@ class TFTAdapter:
         df_obs: pd.DataFrame,
         df_known_future: pd.DataFrame | None = None,
         df_static: pd.DataFrame | None = None,
-    ) -> "TFTAdapter":
+    ) -> TFTAdapter:
         """Train lightweight per-horizon quantile regressors.
 
         - Pooled across ids, using current-time features to predict y at t+h.
@@ -76,7 +76,7 @@ class TFTAdapter:
                 continue
             X = dd[self._feature_cols].astype(float).to_numpy()
             y = dd[f"target_{h}"].astype(float).to_numpy()
-            models_h: Dict[float, QuantileRegressor] = {}
+            models_h: dict[float, QuantileRegressor] = {}
             for q in self.quantiles:
                 # Use L2 regularization small alpha for stability; solver requires scipy
                 model = QuantileRegressor(quantile=float(q), alpha=1e-4, solver="highs")

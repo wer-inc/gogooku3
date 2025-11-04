@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class WalkForwardSplitterV2:
     """
     強化版Walk-Forward分割器
-    
+
     データリーク防止の3重保護:
     1. Walk-Forward分割: 厳密な時系列順序
     2. Embargo: train/val境界にgap_days空白期間
@@ -225,7 +225,7 @@ class WalkForwardSplitterV2:
     ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """
         Walk-Forward分割を生成
-        
+
         Yields:
             (train_indices, test_indices): インデックス配列のタプル
         """
@@ -318,7 +318,7 @@ class WalkForwardSplitterV2:
 class WalkForwardDateBucketSamplerV2:
     """
     Walk-Forward分割 + Date-Bucketed Sampling (V2)
-    
+
     強化版の統合サンプラー:
     - WalkForwardSplitterV2との統合
     - embargo=20対応

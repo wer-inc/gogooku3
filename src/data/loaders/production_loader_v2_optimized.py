@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 import polars as pl
 import torch
@@ -38,13 +38,13 @@ class ProductionDatasetOptimized(Dataset):
 
     def __init__(
         self,
-        files: Union[list[Path], list[str], Path, str],
+        files: list[Path] | list[str] | Path | str,
         config: Any,
         mode: str = "train",
-        target_scalers: Optional[dict] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        required_feature_cols: Optional[list[str]] = None,
+        target_scalers: dict | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        required_feature_cols: list[str] | None = None,
     ):
         self.config = config
         self.mode = mode
@@ -123,7 +123,7 @@ class ProductionDatasetOptimized(Dataset):
     def _resolve_feature_columns(
         self,
         schema: pl.Schema,
-        required_feature_cols: Optional[list[str]],
+        required_feature_cols: list[str] | None,
     ) -> list[str]:
         if required_feature_cols:
             available = set(schema.names())

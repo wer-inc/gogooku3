@@ -271,8 +271,7 @@ class PeerFeatureExtractor:
         """相関行列を計算"""
         try:
             # 履歴データから相関を計算（当日を含む過去期間）
-            end_date = date
-            start_date = date - pd.Timedelta(days=self.correlation_window)
+            date - pd.Timedelta(days=self.correlation_window)
 
             # 仮のデータフレーム作成（実際の実装では外部データソースから取得）
             # ここでは日次のreturn_5dを使用
@@ -351,7 +350,7 @@ class PeerFeatureExtractor:
 
             # セクター:相関 = 6:4 の比率で統合
             sector_count = min(len(sector_list), int(self.k_neighbors * 0.6))
-            corr_count = self.k_neighbors - sector_count
+            self.k_neighbors - sector_count
 
             peers = sector_list[:sector_count]
 

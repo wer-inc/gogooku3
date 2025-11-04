@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -77,22 +78,43 @@ class DatasetArtifactWriter:
         metadata = self._build_metadata(df)
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
 
-        latest_symlink = self._update_symlink(
-            link_name=self.settings.latest_dataset_symlink,
-            target=parquet_path,
-        )
-        tagged_symlink = self._update_symlink(
-            link_name=f"ml_dataset_latest_{self.tag}.parquet",
-            target=parquet_path,
-        )
-        self._update_symlink(
-            link_name=self.settings.latest_metadata_symlink,
-            target=metadata_path,
-        )
-        self._update_symlink(
-            link_name=f"ml_dataset_latest_{self.tag}_metadata.json",
-            target=metadata_path,
-        )
+        # BATCH-2B Safety: Check if dataset should update 'latest' symlinks
+        should_update = self._should_update_latest(df, metadata)
+
+        if should_update:
+            latest_symlink = self._update_symlink(
+                link_name=self.settings.latest_dataset_symlink,
+                target=parquet_path,
+            )
+            tagged_symlink = self._update_symlink(
+                link_name=f"ml_dataset_latest_{self.tag}.parquet",
+                target=parquet_path,
+            )
+            self._update_symlink(
+                link_name=self.settings.latest_metadata_symlink,
+                target=metadata_path,
+            )
+            self._update_symlink(
+                link_name=f"ml_dataset_latest_{self.tag}_metadata.json",
+                target=metadata_path,
+            )
+            LOGGER.info(
+                "✅ Updated 'latest' symlinks to %s (%d rows, %d cols)",
+                parquet_path.name,
+                df.height,
+                df.width,
+            )
+        else:
+            # Return paths to non-existent symlinks (not updated)
+            latest_symlink = self.output_dir / self.settings.latest_dataset_symlink
+            tagged_symlink = self.output_dir / f"ml_dataset_latest_{self.tag}.parquet"
+            LOGGER.info(
+                "⚠️  Skipped 'latest' symlink update (safety gate). "
+                "Dataset saved to %s (%d rows, %d cols)",
+                parquet_path.name,
+                df.height,
+                df.width,
+            )
 
         self._prune_history(pattern=f"ml_dataset_*_{self.tag}.parquet")
         self._prune_history(pattern=f"ml_dataset_*_{self.tag}_metadata.json")
@@ -146,6 +168,52 @@ class DatasetArtifactWriter:
         if rename_map:
             return df.rename(rename_map)
         return df
+
+    def _should_update_latest(self, df: pl.DataFrame, metadata: dict) -> bool:
+        """Determine if dataset should update 'latest' symlinks.
+
+        Safety gates:
+        1. NO_LATEST_SYMLINK=1: Test mode (prevents test data from overwriting production)
+        2. Minimum row threshold: Prevents tiny test datasets from becoming 'latest'
+
+        Args:
+            df: Dataset DataFrame
+            metadata: Dataset metadata with row counts
+
+        Returns:
+            True if dataset should update latest symlinks
+        """
+        # Gate 1: Test mode - never update latest
+        if os.getenv("NO_LATEST_SYMLINK") == "1":
+            LOGGER.info("NO_LATEST_SYMLINK=1 detected - skipping latest symlink update (test mode)")
+            return False
+
+        # Gate 2: Minimum row threshold
+        rows = df.height
+        min_codes = int(os.getenv("LATEST_MIN_CODES", "80"))
+        floor = int(os.getenv("LATEST_MIN_ROWS_FLOOR", "100000"))
+
+        # Calculate expected minimum rows (70% of days × min_codes)
+        # For 1-year dataset: ~250 days × 80 codes × 0.7 = 14,000 rows
+        days_output = metadata.get("n_days_output", 0)
+        if days_output > 0:
+            threshold = max(floor, int(0.7 * days_output * min_codes))
+        else:
+            threshold = floor
+
+        if rows < threshold:
+            LOGGER.warning(
+                "Dataset too small for latest update: %d rows < %d threshold "
+                "(days=%d, min_codes=%d, floor=%d). Skipping latest symlink.",
+                rows,
+                threshold,
+                days_output,
+                min_codes,
+                floor,
+            )
+            return False
+
+        return True
 
     def _update_symlink(self, *, link_name: str, target: Path) -> Path:
         link_path = self.output_dir / link_name

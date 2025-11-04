@@ -1,0 +1,69 @@
+{
+  "bundle_version": "v0.1.0-prod",
+  "created": "2025-11-04T00:30:00Z",
+  "git_tag": "apex-ranker-v0.1.0-prod",
+  "checkpoint": {
+    "file": "models/apex_ranker_v0_enhanced.pt",
+    "sha256": "639c119640bc55ad8c8fc1e890a1c91bcf4e92b2406f752356a24971d7b6703d",
+    "base_features": 89,
+    "effective_dim": 178,
+    "csz_mode": "trained_with_csz",
+    "patch_multiplier": "auto",
+    "comment": "Model trained WITH CS-Z (178ch = 89×2). Config MUST use auto-detection."
+  },
+  "config": {
+    "file": "configs/v0_base_89_cleanADV.yaml",
+    "sha256": "ec3f74e3f8e264ff76ed16a33e095b49f2ef98112afddcc07daeafe7e8e50be2",
+    "patch_multiplier": "auto (unset)",
+    "comment": "NO explicit patch_multiplier line. Allows auto-detection from checkpoint."
+  },
+  "dataset": {
+    "file": "output/ml_dataset_latest_clean_with_adv.parquet",
+    "sha256": "c8b4f6bb052a71f9b240d058895aba5761a782a8332eb0770b961c944634ef5a",
+    "features": 89,
+    "date_range": "2024-12-24 to 2025-10-03",
+    "rows": 694253,
+    "stocks": 3863
+  },
+  "expected_behavior": {
+    "model_init_log": "[Model Init] in_features=89, patch_multiplier=auto, add_csz=False",
+    "effective_dim": 178,
+    "candidate_kept": 53,
+    "rebalance_freq": "monthly",
+    "top_k": 35,
+    "horizon": 20
+  },
+  "performance_benchmarks": {
+    "sharpe_ratio": 1.439,
+    "total_return": 0.4485,
+    "max_drawdown": 0.1640,
+    "win_rate": 0.569,
+    "transaction_costs_pct": 0.037,
+    "backtest_period": "2024-01-01 to 2025-10-31",
+    "rebalances": 22
+  },
+  "critical_alerts": {
+    "apex_selected_count": {
+      "normal": 53,
+      "threshold": "<53",
+      "severity": "CRITICAL"
+    },
+    "apex_effective_dim": {
+      "normal": 178,
+      "threshold": "!=178",
+      "severity": "CRITICAL",
+      "comment": "Detects CS-Z configuration mismatch"
+    },
+    "apex_daily_cost_bps": {
+      "normal": "<20",
+      "threshold": ">20",
+      "severity": "WARNING"
+    }
+  },
+  "operational_rules": {
+    "patch_multiplier_policy": "NEVER set explicit value unless checkpoint is verified raw=89ch",
+    "config_freeze": "EI=OFF, A.3=OFF, A.4=OFF (BASELINE configuration)",
+    "rebalance_schedule": "1st business day of month, 09:00 JST",
+    "cache_persistence": "/var/lib/apex-ranker/panel_cache"
+  }
+}

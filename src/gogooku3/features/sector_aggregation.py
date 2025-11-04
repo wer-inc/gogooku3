@@ -15,13 +15,13 @@ Requirements:
 - Date column for time-series operations
 """
 
+
 import polars as pl
-from typing import Optional
 
 EPS = 1e-12
 
 
-def _find_sector_col(df: pl.DataFrame) -> Optional[str]:
+def _find_sector_col(df: pl.DataFrame) -> str | None:
     """Find the sector column to use for grouping."""
     candidates = ["sector33_id", "sector33_code", "sec33", "Sector33Code"]
     for c in candidates:
@@ -33,7 +33,7 @@ def _find_sector_col(df: pl.DataFrame) -> Optional[str]:
 def add_sector_aggregation_features(
     df: pl.DataFrame,
     *,
-    sector_col: Optional[str] = None,
+    sector_col: str | None = None,
     min_members: int = 3,
 ) -> pl.DataFrame:
     """

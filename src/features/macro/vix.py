@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 
 import polars as pl
-
-import logging
 
 from .yfinance_utils import (
     flatten_yfinance_columns,

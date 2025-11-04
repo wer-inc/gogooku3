@@ -11,11 +11,11 @@ Graph Builder for Financial Time Series Correlation
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import logging
 import pickle
 from datetime import date, datetime, timedelta
-import gzip
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class FinancialGraphBuilder:
     """
     金融時系列の相関グラフ構築器
-    
+
     正しい系列相関の実装:
     - 同一期間T日のリターンベクトルで銘柄×銘柄の相関行列を計算
     - 負相関も含む有意なエッジを抽出
@@ -180,7 +180,7 @@ class FinancialGraphBuilder:
     ) -> tuple[np.ndarray, list[str]]:
         """
         リターン行列を準備（N×T形式）
-        
+
         Returns:
             (return_matrix, valid_codes): リターン行列と有効銘柄コード
         """
@@ -350,7 +350,7 @@ class FinancialGraphBuilder:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         相関行列からエッジを抽出
-        
+
         Returns:
             (edge_index, edge_attr): エッジインデックスとエッジ属性
         """
@@ -488,13 +488,13 @@ class FinancialGraphBuilder:
     ) -> dict[str, Any]:
         """
         グラフを構築
-        
+
         Args:
             data: 時系列データ
             codes: 銘柄コードリスト
             date_end: 基準日
             return_column: リターン列名
-            
+
         Returns:
             グラフ情報辞書
         """

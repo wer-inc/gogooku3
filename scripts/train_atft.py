@@ -878,6 +878,9 @@ except ImportError:
     except ImportError:
         ATFT_GAT_FAN = None
 from src.data.validation.normalization_check import NormalizationValidator  # noqa: E402
+
+# P0-3: RFI-5/6 Metrics
+from src.gogooku3.utils.rfi_metrics import log_rfi_56_metrics  # noqa: E402
 from src.utils.config_validator import ConfigValidator  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -3220,8 +3223,16 @@ def train_epoch(
                     targets = mixed_targets
                 outputs = model(features)
 
-                # Reshape outputs to [B] format and fix non-finite values
-                outputs = _reshape_to_batch_only(outputs)
+                # 🔧 FIX (2025-11-03): Unwrap predictions BEFORE reshaping
+                # Model returns {"predictions": {...}, "features": ..., ...}
+                # We need to extract predictions dict first
+                if isinstance(outputs, dict) and "predictions" in outputs:
+                    predictions_dict = outputs["predictions"]
+                else:
+                    predictions_dict = outputs
+
+                # Reshape predictions to [B] format and fix non-finite values
+                outputs = _reshape_to_batch_only(predictions_dict)
 
                 # Optional: add small Gaussian noise to outputs for warmup (point heads only)
                 if (
@@ -3518,6 +3529,18 @@ def train_epoch(
         for k, v in losses.items():
             horizon_losses[k] += v.item()
         n_batches += 1
+
+        # 🔧 QUICK RUN: Early stop check (2025-11-03)
+        max_steps_per_epoch = os.getenv("MAX_STEPS_PER_EPOCH")
+        if max_steps_per_epoch:
+            try:
+                if batch_idx >= int(max_steps_per_epoch) - 1:
+                    logger.info(
+                        f"[QuickRun] Reached MAX_STEPS_PER_EPOCH={max_steps_per_epoch} at batch {batch_idx}, epoch {epoch}"
+                    )
+                    break  # Exit batch loop early
+            except ValueError:
+                pass
 
         # プログレスバー更新
         if batch_idx % 10 == 0:
@@ -5556,6 +5579,59 @@ def run_phase_training(model, train_loader, val_loader, config, device):
 
                     loss_result = criterion(predictions, tdict, batch_metadata=batch)
 
+                    # P0-3: RFI-5/6 Metrics Logging (first batch only)
+                    if batch_idx == 0 and epoch % 1 == 0:  # Every epoch, first batch only
+                        try:
+                            # Extract point and quantile forecasts
+                            y_point = None
+                            y_q = None
+
+                            if isinstance(predictions, dict):
+                                # Multi-horizon prediction dict
+                                # Use horizon=1 for point forecast
+                                y_point = predictions.get(1, predictions.get("point_forecast", None))
+                                y_q = predictions.get("quantile_forecast", None)
+
+                                # If no quantile forecast, synthesize from multi-horizon
+                                if y_q is None and len(predictions) > 0:
+                                    # Stack all horizons as pseudo-quantiles [B, H, num_horizons]
+                                    horizon_preds = [predictions[h] for h in sorted(predictions.keys()) if isinstance(h, int)]
+                                    if len(horizon_preds) > 0:
+                                        y_q = torch.stack(horizon_preds, dim=-1)
+                            else:
+                                # Single tensor output
+                                y_point = predictions
+                                # Synthesize dummy quantiles
+                                y_q = predictions.unsqueeze(-1).repeat(1, 1, 5)  # [B, H, 5]
+
+                            # Extract ground truth (use horizon=1)
+                            y_true = tdict.get(1, tdict.get("target", None))
+                            if y_true is None and len(tdict) > 0:
+                                # Use first available target
+                                y_true = list(tdict.values())[0]
+
+                            # Ensure tensors are valid
+                            if y_point is not None and y_true is not None and y_q is not None:
+                                # Prepare batch dict for graph stats
+                                batch_for_stats = {
+                                    "dynamic_features": batch.get("features", None),
+                                    "edge_index": batch.get("edge_index", None),
+                                    "edge_attr": batch.get("edge_attr", None),
+                                }
+
+                                # Log RFI-5/6
+                                log_rfi_56_metrics(
+                                    logger=logger,
+                                    model=model,
+                                    batch=batch_for_stats,
+                                    y_point=y_point,
+                                    y_q=y_q,
+                                    y_true=y_true,
+                                    epoch=epoch
+                                )
+                        except Exception as e:
+                            logger.warning(f"[RFI-5/6] Logging failed: {e}")
+
                     # Handle both single value and tuple return from criterion
                     if isinstance(loss_result, tuple):
                         _val_total, _ = loss_result
@@ -5942,6 +6018,13 @@ def run_mini_training(
     stabilizing training. Enable via env: USE_MINI_TRAIN=1.
     """
     logger.info("=== Running mini training loop (stability mode) ===")
+
+    # 🔧 FIX (2025-11-03): Clear GPU memory before mini training
+    # Prevents OOM from previous initialization steps
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+        gc.collect()
+        logger.info("✓ Cleared GPU cache before mini training")
     train_loader = (
         data_module.train_dataloader()
         if hasattr(data_module, "train_dataloader")
@@ -6285,7 +6368,7 @@ def fix_seed(seed: int = 42, deterministic: bool = False):
     return seed
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs/atft", config_name="config")
 def train(config: DictConfig) -> None:
     """メイン学習関数"""
     logger.info("Starting production training...")
@@ -7905,6 +7988,51 @@ def train(config: DictConfig) -> None:
                     _ = model(dummy)
             except Exception:
                 pass
+
+            # P0-2: Feature ABI fingerprint check
+            try:
+                import hashlib
+                from pathlib import Path as _P
+
+                import yaml
+                manifest_path = _P(
+                    OmegaConf.select(final_config, "features.manifest_path") or
+                    "output/reports/feature_manifest_306.yaml"
+                )
+                if manifest_path.exists():
+                    man = yaml.safe_load(manifest_path.read_text())
+                    abi = man.get("meta", {}).get("abi_sha1")
+                    feat_list = man["features"]
+                    cur_abi = hashlib.sha1(",".join(feat_list).encode()).hexdigest()
+                    if abi and abi != cur_abi:
+                        logger.warning(
+                            f"[FeatureABI] Mismatch: manifest={abi}, computed={cur_abi}"
+                        )
+                    else:
+                        logger.info(
+                            f"[FeatureABI] n={len(feat_list)} sha1={cur_abi}"
+                        )
+                else:
+                    logger.warning(f"[FeatureABI] Manifest not found: {manifest_path}")
+            except Exception as e:
+                logger.warning(f"[FeatureABI] Check failed: {e}")
+
+            # P0-2: Parameter count guard (5-6M expected)
+            def _count_params(m):
+                t = sum(p.numel() for p in m.parameters())
+                tr = sum(p.numel() for p in m.parameters() if p.requires_grad)
+                return t, tr
+
+            tot, trn = _count_params(model)
+            logger.info(f"[PARAMS] total={tot/1e6:.2f}M trainable={trn/1e6:.2f}M")
+
+            min_trainable_m = float(os.getenv("MIN_TRAINABLE_M", "5.0"))
+            if trn / 1e6 < min_trainable_m:
+                raise RuntimeError(
+                    f"Trainable params too small ({trn/1e6:.2f}M < {min_trainable_m}M). "
+                    f"Check feature manifest or hidden_size."
+                )
+
             # Enable gradient checkpointing through model config if set
             try:
                 if bool(
@@ -8484,7 +8612,8 @@ def train(config: DictConfig) -> None:
         # Time budget configuration
         time_budget_hours = float(os.getenv("TIME_BUDGET_HOURS", "2.0"))
         time_budget_seconds = time_budget_hours * 3600
-        eval_every_steps = int(os.getenv("EVAL_EVERY_STEPS", "100"))
+        # Support both EVAL_EVERY_STEPS and VAL_INTERVAL_STEPS (alias)
+        eval_every_steps = int(os.getenv("VAL_INTERVAL_STEPS", os.getenv("EVAL_EVERY_STEPS", "100")))
         heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "30"))  # seconds
 
         # Training batch cap: PHASE_MAX_BATCHES
@@ -8847,6 +8976,11 @@ def train(config: DictConfig) -> None:
                 n_micro_steps = 0
                 pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
                 optimizer.zero_grad()
+
+                # 🔧 FIX (2025-11-04): Initialize epoch_step counter for MAX_STEPS_PER_EPOCH control
+                epoch_step = 0
+                _max_steps_per_epoch = int(os.getenv("MAX_STEPS_PER_EPOCH", "0"))
+
                 micro_bs = int(os.getenv("MICRO_BATCH_SIZE", "2048"))
                 grad_accum = int(
                     getattr(final_config.train.batch, "gradient_accumulation_steps", 1)
@@ -9689,6 +9823,19 @@ def train(config: DictConfig) -> None:
                                             normalized_outputs[k] = v
                                     outputs = normalized_outputs
 
+                            # 🔧 FIX (2025-11-04): Normalize targets horizon keys (horizon_X → horizon_Xd)
+                            # This matches the predictions format and prevents loss computation key mismatch.
+                            if isinstance(targets, dict):
+                                normalized_targets = {}
+                                for k, v in targets.items():
+                                    if k.startswith("horizon_") and not k.endswith("d"):
+                                        # Convert horizon_X to horizon_Xd
+                                        new_key = f"{k}d"
+                                        normalized_targets[new_key] = v
+                                    else:
+                                        normalized_targets[k] = v
+                                targets = normalized_targets
+
                             # Force ALL outputs to FP32 for loss calculation
                             outputs = {
                                 k: v.float() if torch.is_tensor(v) else v
@@ -9987,6 +10134,19 @@ def train(config: DictConfig) -> None:
                                             else:
                                                 normalized_outputs[k] = v
                                         outputs = normalized_outputs
+
+                                # 🔧 FIX (2025-11-04): Normalize targets horizon keys (horizon_X → horizon_Xd)
+                                # to match model outputs format. Prevents loss computation key mismatch.
+                                if isinstance(targets, dict):
+                                    normalized_targets = {}
+                                    for k, v in targets.items():
+                                        if k.startswith("horizon_") and not k.endswith("d"):
+                                            # Convert horizon_X to horizon_Xd
+                                            new_key = f"{k}d"
+                                            normalized_targets[new_key] = v
+                                        else:
+                                            normalized_targets[k] = v
+                                    targets = normalized_targets
 
                                 # outputs/targets 双方をサニタイズ
                                 if isinstance(outputs, dict):
@@ -10442,9 +10602,34 @@ def train(config: DictConfig) -> None:
                                     )
                                     raise SystemExit(3)
 
+                            # 🔧 FIX (2025-11-04): Log gradient norm before/after clipping
+                            grad_log_interval = int(os.getenv("GRAD_LOG_EVERY", "100"))
+                            if grad_log_interval > 0 and global_step % grad_log_interval == 0:
+                                # Compute total L2 norm before clipping
+                                total_norm_sq_pre = 0.0
+                                for p in model.parameters():
+                                    if p.grad is not None:
+                                        total_norm_sq_pre += float(p.grad.detach().norm(2).item() ** 2)
+                                grad_norm_pre = math.sqrt(total_norm_sq_pre)
+                            else:
+                                grad_norm_pre = None
+
+                            grad_clip_max_norm = float(os.getenv("GRAD_CLIP_NORM", "1.0"))
                             torch.nn.utils.clip_grad_norm_(
-                                model.parameters(), max_norm=1.0
+                                model.parameters(), max_norm=grad_clip_max_norm
                             )
+
+                            # Log post-clipping norm
+                            if grad_norm_pre is not None:
+                                total_norm_sq_post = 0.0
+                                for p in model.parameters():
+                                    if p.grad is not None:
+                                        total_norm_sq_post += float(p.grad.detach().norm(2).item() ** 2)
+                                grad_norm_post = math.sqrt(total_norm_sq_post)
+                                logger.info(
+                                    f"[GradClip] step={global_step} norm_pre={grad_norm_pre:.4f} "
+                                    f"norm_post={grad_norm_post:.4f} max_norm={grad_clip_max_norm}"
+                                )
 
                             # Optimizer step - always attempt even with no/zero gradients
                             # This ensures scaler state consistency
@@ -10462,6 +10647,15 @@ def train(config: DictConfig) -> None:
 
                             optimizer.zero_grad(set_to_none=True)
                             global_step += 1
+                            epoch_step += 1
+
+                            # 🔧 FIX (2025-11-04): Early epoch termination by MAX_STEPS_PER_EPOCH
+                            if _max_steps_per_epoch > 0 and epoch_step >= _max_steps_per_epoch:
+                                logger.info(
+                                    f"[SMOKE] Early-stop epoch at step={epoch_step} "
+                                    f"(MAX_STEPS_PER_EPOCH={_max_steps_per_epoch})"
+                                )
+                                break
 
                             # Quick evaluation at intervals
                             if (
@@ -10497,6 +10691,18 @@ def train(config: DictConfig) -> None:
                                     logger.info(
                                         f"Quick eval at step {global_step}: {quick_metrics}"
                                     )
+
+                                    # 🔧 FIX (2025-11-04): RFI56 summary log for coefficient pinning
+                                    if isinstance(quick_metrics, dict):
+                                        sharpe_ema = quick_metrics.get("Sharpe_EMA", quick_metrics.get("sharpe", float("nan")))
+                                        rank_ic = quick_metrics.get("RankIC", quick_metrics.get("rank_ic", float("nan")))
+                                        crps = quick_metrics.get("CRPS", quick_metrics.get("crps", float("nan")))
+                                        qx_rate = quick_metrics.get("qx_rate", float("nan"))
+                                        logger.info(
+                                            f"RFI56 | step={global_step} Sharpe_EMA={sharpe_ema:.4f} "
+                                            f"RankIC={rank_ic:.4f} CRPS={crps:.4f} qx_rate={qx_rate:.4f}"
+                                        )
+
                                     if mlf is not None:
                                         try:
                                             if (

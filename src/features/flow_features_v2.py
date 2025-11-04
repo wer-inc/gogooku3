@@ -30,11 +30,11 @@ class FlowFeaturesGeneratorV2:
     ) -> pl.DataFrame:
         """
         listed_infoから正確な銘柄→Sectionマッピングを作成
-        
+
         Args:
             listed_info_df: listed_info APIから取得したデータ
                            (Code, Date, MarketCode, SectorCode等を含む)
-        
+
         Returns:
             銘柄コードとSectionのマッピングテーブル
         """
@@ -76,10 +76,10 @@ class FlowFeaturesGeneratorV2:
     ) -> pl.DataFrame:
         """
         週次フローイベント表を作成し、日次データ用に前方補完
-        
+
         Args:
             trades_df: trades_specデータ（週次）
-        
+
         Returns:
             日次に展開されたフロー特徴量テーブル
         """
@@ -193,7 +193,7 @@ class FlowFeaturesGeneratorV2:
     def _expand_weekly_to_daily(self, weekly_flow: pl.DataFrame) -> pl.DataFrame:
         """
         週次データを日次に展開（前方補完）
-        
+
         金曜日に公表されたデータを翌週の月〜金まで使用
         """
         if weekly_flow.is_empty():
@@ -222,12 +222,12 @@ class FlowFeaturesGeneratorV2:
     ) -> pl.DataFrame:
         """
         改善版: 日次パネルにフロー特徴量を正確にas-of結合
-        
+
         Args:
             stock_df: 銘柄日次データ
             flow_event_df: 週次フローイベント表（展開済み）
             section_mapping_df: 銘柄→Sectionマッピング
-        
+
         Returns:
             フロー特徴量を含む日次パネル
         """

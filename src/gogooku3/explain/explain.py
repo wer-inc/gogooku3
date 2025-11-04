@@ -11,15 +11,14 @@ Optional:
   - If 'shap' is available, expose a KernelExplainer entry point.
 """
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Optional
-
 import json
 import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 import torch
 import torch.nn as nn
-
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ class ExplainConfig:
     top_k: int = 20
 
 
-def export_vsn_gates(model: nn.Module, output_path: Path) -> Optional[Path]:
+def export_vsn_gates(model: nn.Module, output_path: Path) -> Path | None:
     """Export last VSN gates if present on the model instance."""
     gates = getattr(model, "_last_variable_gates", None)
     if gates is None or not torch.is_tensor(gates):
@@ -73,7 +72,7 @@ def integrated_gradients(model: nn.Module, inputs: torch.Tensor, target_index: i
     return attributions.detach()
 
 
-def try_shap_kernel(model: nn.Module, sample: torch.Tensor, nsamples: int = 100) -> Optional[Any]:
+def try_shap_kernel(model: nn.Module, sample: torch.Tensor, nsamples: int = 100) -> Any | None:
     """Best-effort SHAP KernelExplainer (optional dependency)."""
     try:
         import shap  # type: ignore

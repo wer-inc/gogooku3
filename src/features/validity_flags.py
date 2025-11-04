@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ValidityFlagManager:
     """
     データの有効性フラグを管理
-    
+
     各種フラグ:
     - is_stmt_valid: 財務諸表データの有効性
     - is_flow_valid: フローデータの有効性
@@ -52,11 +52,11 @@ class ValidityFlagManager:
     ) -> pl.DataFrame:
         """
         財務諸表データの有効性フラグを追加
-        
+
         Args:
             df: 対象DataFrame
             stmt_prefix: 財務諸表列のプレフィックス
-        
+
         Returns:
             有効性フラグが追加されたDataFrame
         """
@@ -122,11 +122,11 @@ class ValidityFlagManager:
     ) -> pl.DataFrame:
         """
         フローデータの有効性フラグを追加
-        
+
         Args:
             df: 対象DataFrame
             flow_prefix: フロー列のプレフィックス
-        
+
         Returns:
             有効性フラグが追加されたDataFrame
         """
@@ -179,11 +179,11 @@ class ValidityFlagManager:
     ) -> pl.DataFrame:
         """
         市場データの有効性フラグを追加
-        
+
         Args:
             df: 対象DataFrame
             mkt_prefix: 市場データ列のプレフィックス
-        
+
         Returns:
             有効性フラグが追加されたDataFrame
         """
@@ -224,11 +224,11 @@ class ValidityFlagManager:
     ) -> pl.DataFrame:
         """
         ベータ計算の有効性フラグを追加
-        
+
         Args:
             df: 対象DataFrame
             beta_col: ベータ列名
-        
+
         Returns:
             有効性フラグが追加されたDataFrame
         """
@@ -259,11 +259,11 @@ class ValidityFlagManager:
     ) -> pl.DataFrame:
         """
         Sectionマッピングのフォールバック使用フラグを追加
-        
+
         Args:
             df: 対象DataFrame
             section_col: Section列名
-        
+
         Returns:
             フォールバックフラグが追加されたDataFrame
         """
@@ -301,10 +301,10 @@ class ValidityFlagManager:
     def add_all_validity_flags(df: pl.DataFrame) -> pl.DataFrame:
         """
         全ての有効性フラグを追加
-        
+
         Args:
             df: 対象DataFrame
-        
+
         Returns:
             全有効性フラグが追加されたDataFrame
         """
@@ -355,7 +355,7 @@ class ValidityFlagManager:
     ) -> pl.DataFrame:
         """
         有効性フラグに基づいてデータをフィルタリング
-        
+
         Args:
             df: 対象DataFrame
             require_stmt: 財務諸表データの有効性を要求
@@ -363,7 +363,7 @@ class ValidityFlagManager:
             require_mkt: 市場データの有効性を要求
             require_beta: ベータの有効性を要求
             allow_section_fallback: Sectionフォールバックを許可
-        
+
         Returns:
             フィルタリングされたDataFrame
         """

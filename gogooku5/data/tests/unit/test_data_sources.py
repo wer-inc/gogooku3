@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -20,6 +21,7 @@ class StubAdvancedFetcher:
             {
                 "Code": ["1301", "1305"],
                 "ApplicationDate": ["2024-01-01", "2024-01-01"],
+                "PublishedDate": ["2024-01-02", "2024-01-02"],
                 "LongMarginOutstanding": [100_000.0, 0.0],
                 "ShortMarginOutstanding": [50_000.0, 0.0],
             }
@@ -60,7 +62,7 @@ def test_margin_daily_cached(settings: DatasetBuilderSettings, tmp_path: Path) -
     manager = DataSourceManager(settings=settings, cache=cache, fetcher=fetcher)
 
     df1 = manager.margin_daily(start="2024-01-01", end="2024-01-31")
-    assert df1.columns == ["code", "date", "margin_balance", "short_balance"]
+    assert df1.columns == ["code", "date", "margin_balance", "short_balance", "application_date", "published_date"]
     assert df1.height == 2
     assert fetcher.calls == 1
 
@@ -101,3 +103,23 @@ def test_macro_vix_cached(settings: DatasetBuilderSettings, monkeypatch: pytest.
 
     df2 = manager.macro_vix(start="2024-01-01", end="2024-01-02")
     assert df2.equals(df1)
+
+
+def test_margin_daily_deduplicates_latest_published_date() -> None:
+    raw = pl.DataFrame(
+        {
+            "Code": ["1301", "1301"],
+            "ApplicationDate": ["2024-01-01", "2024-01-01"],
+            "PublishedDate": ["2024-01-02", "2024-01-03"],
+            "LongMarginOutstanding": [100.0, 200.0],
+            "ShortMarginOutstanding": [50.0, 70.0],
+        }
+    )
+
+    normalized = DataSourceManager._normalize_margin_daily(raw)
+    assert normalized.height == 1
+    assert normalized.select("margin_balance").item(0, 0) == pytest.approx(200.0)
+    assert normalized.select("short_balance").item(0, 0) == pytest.approx(70.0)
+    assert normalized["date"][0] == date(2024, 1, 3)
+    assert "application_date" in normalized.columns
+    assert "published_date" in normalized.columns

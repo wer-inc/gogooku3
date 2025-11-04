@@ -5,17 +5,17 @@ APEX-Ranker v0 Backtest Script
 Simple backtest framework to validate ranking model performance with portfolio metrics.
 
 Usage:
-    # Backtest enhanced model
+    # Backtest production (pruned) model
     python gogooku5/models/apex_ranker/scripts/backtest_v0.py \
-        --model models/apex_ranker_v0_enhanced.pt \
-        --config models/apex_ranker/configs/v0_base.yaml \
-        --output results/backtest_enhanced.json
+        --model models/apex_ranker_v0_pruned.pt \
+        --config models/apex_ranker/configs/v0_pruned.yaml \
+        --output results/backtest_pruned.json
 
-    # Compare baseline vs enhanced
+    # Compare alternative checkpoints
     python gogooku5/models/apex_ranker/scripts/backtest_v0.py \
-        --model models/apex_ranker_v0_early_stopping.pt \
-        --config models/apex_ranker/configs/v0_base.yaml \
-        --output results/backtest_baseline.json
+        --model models/apex_ranker_v0_pruned.pt \
+        --config models/apex_ranker/configs/v0_pruned.yaml \
+        --output results/backtest_experiment.json
 """
 
 import argparse
@@ -215,7 +215,10 @@ def load_model_and_config(
 
     model_candidate = resolve_artifact_path(
         model_path,
-        ("models/apex_ranker_v0_enhanced.pt",),
+        (
+            "models/apex_ranker_v0_pruned.pt",
+            "output/models/apex_ranker_v0_pruned.pt",
+        ),
         kind="model checkpoint",
         extra_bases=[config_dir],
     )

@@ -18,13 +18,13 @@ import polars as pl
 
 from src.features.calendar_utils import build_next_bday_expr_from_dates
 from src.features.macro import (
+    load_btc_history,
+    load_fx_history,
     load_vix_history,
+    prepare_btc_features,
+    prepare_fx_features,
     prepare_vix_features,
     shift_to_next_business_day,
-    load_fx_history,
-    prepare_fx_features,
-    load_btc_history,
-    prepare_btc_features,
 )
 from src.features.macro.yfinance_utils import ensure_yfinance_available
 

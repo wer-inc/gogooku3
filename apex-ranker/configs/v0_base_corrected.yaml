@@ -1,0 +1,86 @@
+version: 0
+data:
+  parquet_path: output/ml_dataset_latest_full_filled_89feat.parquet
+  metadata_path: null
+  feature_groups_config: apex-ranker/configs/feature_groups_dataset145.yaml
+  feature_groups:
+  - all_features
+  optional_groups: []
+  use_plus30: false
+  lookback: 180
+  min_stocks_per_day: 80
+  date_column: Date
+  code_column: Code
+  target_columns:
+    1: target_1d
+    5: target_5d
+    10: target_10d
+    20: target_20d
+normalization:
+  mode: cross_section_z
+  clip_sigma: 5.0
+train:
+  horizons:
+  - 1
+  - 5
+  - 10
+  - 20
+  epochs: 50
+  lr: 0.0005
+  weight_decay: 0.0001
+  grad_clip: 0.5
+  val_days: 120
+  log_interval: 10
+  amp: true
+  device: auto
+  num_workers: 0
+  warmup_epochs: 3
+  warmup_start_factor: 0.1
+  early_stopping:
+    patience: 3
+    metric: short_term_score
+    min_delta: 0.0
+  evaluation:
+    splitter: purged_kfold
+    purged_kfold:
+      n_splits: 5
+      embargo_days: 5
+  time_decay_tau_days: 120
+  use_ema: true
+  ema_beta: 0.999
+eval:
+  k_ratio: 0.10  # CORRECTED: 0.07 → 0.10 (evaluation固定比率)
+  ndcg_beta: 1.0
+  es_weights: "0.6,0.3,0.1"
+selection:
+  default:
+    k_ratio: 0.60  # CORRECTED: 0.07 → 0.60 (候補70 × 0.6 = 42銘柄 → 35へ最適化可能)
+    k_min: 40      # CORRECTED: 5 → 40 (最低40銘柄確保、1.5倍ルール遵守)
+    sign: 1
+  horizons:
+    "5":
+      sign: 1
+    "10":
+      sign: 1
+    "20":
+      sign: 1
+model:
+  d_model: 256
+  depth: 4
+  patch_len: 16
+  stride: 8
+  n_heads: 8
+  dropout: 0.2
+  patch_multiplier: 2  # Explicit: Matches checkpoint (89 × 2 = 178 output)
+loss:
+  listnet:
+    weight: 1.0
+    tau: 0.4
+    topk: null
+  ranknet:
+    weight: 0.5
+    neg_sample: 4096
+  mse:
+    weight: 0.1
+  turnover:
+    weight: 0.001

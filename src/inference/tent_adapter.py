@@ -17,15 +17,15 @@ Key Features:
 - Entropy-based confidence estimation
 """
 
-import logging
-from typing import Dict, List, Tuple, Optional, Union, Any
-from dataclasses import dataclass
 import copy
+import logging
+from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import Adam, SGD
+from torch.optim import SGD, Adam
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class TENTConfig:
     confidence_threshold: float = 0.9  # Skip adaptation if confidence > threshold
 
     # Multi-horizon settings
-    horizon_weights: Dict[str, float] = None  # Weights per horizon for multi-horizon models
+    horizon_weights: dict[str, float] = None  # Weights per horizon for multi-horizon models
     primary_horizon: str = "horizon_1d"       # Primary horizon for single-horizon mode
 
     # Quantile handling
@@ -85,7 +85,7 @@ class TENTAdapter:
         self.optimizer = self._setup_optimizer()
 
         # Statistics tracking
-        self.adaptation_history: List[Dict[str, float]] = []
+        self.adaptation_history: list[dict[str, float]] = []
         self.total_adaptations = 0
 
         # Multi-horizon weights
@@ -152,7 +152,7 @@ class TENTAdapter:
         """Count number of adaptable parameters"""
         return sum(p.numel() for p in self.adapted_model.parameters() if p.requires_grad)
 
-    def adapt_batch(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def adapt_batch(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Adapt model to a batch and return adapted predictions
 
@@ -236,14 +236,14 @@ class TENTAdapter:
 
         return final_outputs
 
-    def _get_batch_size(self, batch: Dict[str, torch.Tensor]) -> int:
+    def _get_batch_size(self, batch: dict[str, torch.Tensor]) -> int:
         """Get batch size from batch dictionary"""
         for key, tensor in batch.items():
             if isinstance(tensor, torch.Tensor) and tensor.dim() > 0:
                 return tensor.shape[0]
         return 0
 
-    def _compute_entropy_loss(self, outputs: Dict[str, Any]) -> Tuple[Optional[torch.Tensor], Dict[str, float]]:
+    def _compute_entropy_loss(self, outputs: dict[str, Any]) -> tuple[torch.Tensor | None, dict[str, float]]:
         """
         Compute entropy loss for adaptation
 
@@ -362,7 +362,7 @@ class TENTAdapter:
             self.optimizer.state = {}
         logger.info("TENT adapter reset to original model state")
 
-    def get_adaptation_summary(self) -> Dict[str, Any]:
+    def get_adaptation_summary(self) -> dict[str, Any]:
         """Get summary of adaptation statistics"""
         if not self.adaptation_history:
             return {

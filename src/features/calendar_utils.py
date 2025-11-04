@@ -94,11 +94,11 @@ class TradingCalendarUtil:
     def next_business_day(self, date: pl.Date, days: int = 1) -> pl.Date:
         """
         指定日から次のN営業日後を取得
-        
+
         Args:
             date: 基準日
             days: 何営業日後か（デフォルト1）
-        
+
         Returns:
             N営業日後の日付
         """
@@ -118,11 +118,11 @@ class TradingCalendarUtil:
     def prev_business_day(self, date: pl.Date, days: int = 1) -> pl.Date:
         """
         指定日から前のN営業日前を取得
-        
+
         Args:
             date: 基準日
             days: 何営業日前か（デフォルト1）
-        
+
         Returns:
             N営業日前の日付
         """
@@ -142,11 +142,11 @@ class TradingCalendarUtil:
     def business_days_between(self, start_date: pl.Date, end_date: pl.Date) -> int:
         """
         2つの日付間の営業日数を計算
-        
+
         Args:
             start_date: 開始日
             end_date: 終了日
-        
+
         Returns:
             営業日数
         """
@@ -179,11 +179,11 @@ class TradingCalendarUtil:
     ) -> pl.DataFrame:
         """
         指定期間の営業日カレンダーを作成
-        
+
         Args:
             start_date: 開始日（YYYY-MM-DD）
             end_date: 終了日（YYYY-MM-DD）
-        
+
         Returns:
             営業日のDataFrame
         """
@@ -206,13 +206,13 @@ class TradingCalendarUtil:
 def create_next_bd_expr(calendar_df: pl.DataFrame) -> pl.Expr:
     """
     Polars式として使える next_business_day 関数を作成
-    
+
     Args:
         calendar_df: Trading Calendar データ
-    
+
     Returns:
         次営業日を計算するPolars式
-    
+
     使用例:
         df.with_columns(next_bd_expr(calendar_df).alias("next_bd"))
     """
@@ -330,12 +330,12 @@ def validate_business_day_coverage(
 ) -> dict[str, float]:
     """
     データの営業日カバレッジを検証
-    
+
     Args:
         data_df: 検証対象のデータ
         calendar_df: Trading Calendar
         date_col: 日付列名
-    
+
     Returns:
         カバレッジ統計
     """

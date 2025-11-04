@@ -3,12 +3,13 @@ ATFT Training Environment Setup Module
 環境設定とシード固定を管理するモジュール
 """
 
+import logging
 import os
 import random
-import logging
-from typing import Dict, Optional, Any
-import torch
+from typing import Any
+
 import numpy as np
+import torch
 from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ class ATFTEnvironment:
         self.profile = profile
         self.original_env = {}
 
-    def setup(self, override_vars: Optional[Dict[str, str]] = None) -> None:
+    def setup(self, override_vars: dict[str, str] | None = None) -> None:
         """
         Set up the training environment.
 
@@ -166,7 +167,7 @@ class ATFTEnvironment:
         logger.info("✅ Environment restored to original state")
 
     @staticmethod
-    def get_device(gpu_id: Optional[int] = None) -> torch.device:
+    def get_device(gpu_id: int | None = None) -> torch.device:
         """
         Get the appropriate torch device.
 
@@ -251,7 +252,7 @@ class ATFTEnvironment:
 
         return config
 
-    def get_hardware_info(self) -> Dict[str, Any]:
+    def get_hardware_info(self) -> dict[str, Any]:
         """Get hardware information for logging."""
         info = {
             "cuda_available": torch.cuda.is_available(),

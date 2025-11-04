@@ -1,0 +1,195 @@
+# APEX Ranker Prometheus Alerting Rules
+# Installation:
+#   cp apex-ranker/deploy/prometheus_rules.yml /etc/prometheus/rules/
+#   Add to prometheus.yml:
+#     rule_files:
+#       - /etc/prometheus/rules/prometheus_rules.yml
+#   sudo systemctl reload prometheus
+
+groups:
+  - name: apex_ranker_critical
+    interval: 30s
+    rules:
+      # CRITICAL: Dimension mismatch (MANIFEST.lock violation)
+      - alert: ApexRankerDimensionMismatch
+        expr: apex_model_effective_dim != 178
+        for: 0s
+        labels:
+          severity: critical
+          component: model
+        annotations:
+          summary: "CRITICAL: Model dimension mismatch detected"
+          description: |
+            Expected effective_dim=178 (CS-Z trained), got {{ $value }}.
+            This indicates MANIFEST.lock violation or wrong checkpoint loaded.
+            ACTION: STOP production immediately, validate bundle.
+
+      # CRITICAL: Supply shortage (k_min constraint violated)
+      - alert: ApexRankerSupplyShortage
+        expr: apex_selected_count < 53
+        for: 1m
+        labels:
+          severity: critical
+          component: portfolio
+        annotations:
+          summary: "CRITICAL: Stock supply below k_min threshold"
+          description: |
+            Selected count: {{ $value }} (expected ≥53 for Top-35 target).
+            Autosupply failed, portfolio may be undersized.
+            ACTION: Check data quality, verify selection gate ratio.
+
+      # CRITICAL: API health check failure
+      - alert: ApexRankerAPIDown
+        expr: up{job="apex-ranker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "CRITICAL: APEX Ranker API is down"
+          description: |
+            API health endpoint unreachable for >2 minutes.
+            ACTION: Check systemd service status, review logs.
+
+      # CRITICAL: Portfolio size mismatch
+      - alert: ApexRankerPortfolioSizeMismatch
+        expr: apex_portfolio_size != 35
+        for: 0s
+        labels:
+          severity: critical
+          component: portfolio
+        annotations:
+          summary: "CRITICAL: Portfolio size ≠ 35 stocks"
+          description: |
+            Portfolio contains {{ $value }} stocks (expected exactly 35).
+            This violates BASELINE configuration freeze.
+            ACTION: STOP trading, investigate configuration.
+
+  - name: apex_ranker_warnings
+    interval: 1m
+    rules:
+      # WARNING: High transaction costs
+      - alert: ApexRankerHighTransactionCosts
+        expr: apex_daily_transaction_cost_bps > 20
+        for: 5m
+        labels:
+          severity: warning
+          component: costs
+        annotations:
+          summary: "WARNING: Daily transaction costs exceeding threshold"
+          description: |
+            Daily costs: {{ $value }} bps (threshold: 20 bps).
+            Monthly rebalancing should keep costs low.
+            ACTION: Review turnover, check for data staleness.
+
+      # WARNING: Sharpe ratio degradation
+      - alert: ApexRankerSharpeDegradation
+        expr: apex_sharpe_ratio_30d < 1.0
+        for: 1h
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "WARNING: 30-day Sharpe ratio below target"
+          description: |
+            30d Sharpe: {{ $value }} (BASELINE target: 1.439).
+            Possible market regime shift or model drift.
+            ACTION: Compare vs historical averages, run monthly rehearsal.
+
+      # WARNING: Panel cache size overflow
+      - alert: ApexRankerCacheSizeOverflow
+        expr: apex_panel_cache_size_gb > 10
+        for: 10m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "WARNING: Panel cache exceeding 10GB limit"
+          description: |
+            Cache size: {{ $value }}GB (limit: 10GB).
+            ACTION: Prune cache files older than 30 days.
+
+      # WARNING: API response time degradation
+      - alert: ApexRankerSlowResponse
+        expr: histogram_quantile(0.95, rate(apex_api_duration_seconds_bucket[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "WARNING: API response time >5s (p95)"
+          description: |
+            95th percentile response time: {{ $value }}s (threshold: 5s).
+            Possible causes: cache miss, dataset loading, resource contention.
+            ACTION: Check cache hit rate, dataset freshness.
+
+      # WARNING: Prediction consistency drift
+      - alert: ApexRankerPredictionDrift
+        expr: abs(apex_top5_correlation_vs_yesterday - 1.0) > 0.05
+        for: 30m
+        labels:
+          severity: warning
+          component: predictions
+        annotations:
+          summary: "WARNING: Top-5 predictions changed >5% vs yesterday"
+          description: |
+            Top-5 correlation: {{ $value }} (expected ~1.0 for stable model).
+            Significant prediction shift detected.
+            ACTION: Manual review, check dataset for anomalies.
+
+  - name: apex_ranker_info
+    interval: 5m
+    rules:
+      # INFO: Daily rebalance executed (monthly only)
+      - alert: ApexRankerRebalanceExecuted
+        expr: increase(apex_rebalances_total[1d]) > 0
+        for: 0s
+        labels:
+          severity: info
+          component: portfolio
+        annotations:
+          summary: "INFO: Monthly rebalance executed"
+          description: |
+            Rebalances in last 24h: {{ $value }}.
+            Expected: 1 on 1st business day of month only.
+            ACTION: Audit trade log, verify monthly schedule.
+
+      # INFO: Model version tracking
+      - alert: ApexRankerModelVersion
+        expr: apex_model_version{version="v0.1.0"} == 1
+        for: 0s
+        labels:
+          severity: info
+          component: model
+        annotations:
+          summary: "INFO: Running APEX Ranker v0.1.0 BASELINE"
+          description: |
+            Model: v0.1.0 (Top-35/Monthly/H20/EI OFF)
+            Checkpoint: 178ch CS-Z trained
+            This is the frozen production configuration.
+
+# Recording rules for metrics aggregation
+  - name: apex_ranker_recordings
+    interval: 1m
+    rules:
+      # 30-day rolling Sharpe ratio
+      - record: apex_sharpe_ratio_30d
+        expr: |
+          (avg_over_time(apex_daily_return[30d]) * sqrt(252))
+          /
+          stddev_over_time(apex_daily_return[30d])
+
+      # Daily transaction costs in basis points
+      - record: apex_daily_transaction_cost_bps
+        expr: apex_transaction_costs_total / apex_portfolio_value * 10000
+
+      # Panel cache size in GB
+      - record: apex_panel_cache_size_gb
+        expr: apex_panel_cache_bytes / 1024 / 1024 / 1024
+
+      # Top-5 stability (correlation with previous day)
+      - record: apex_top5_correlation_vs_yesterday
+        expr: |
+          sum(apex_top5_codes{day="today"} * apex_top5_codes{day="yesterday"})
+          /
+          sqrt(sum(apex_top5_codes{day="today"}^2) * sum(apex_top5_codes{day="yesterday"}^2))

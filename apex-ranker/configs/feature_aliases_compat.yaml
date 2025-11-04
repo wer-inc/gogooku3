@@ -1,0 +1,13 @@
+version: 1
+description: Feature aliases for backward compatibility with filled.parquet
+
+aliases:
+  # Daily margin interest (DMI) - reconstruct net from long/short components
+  dmi_z26_net: "dmi_z26_long - dmi_z26_short"
+
+  # DMI net position normalized by ADV20
+  dmi_net_to_adv20: "dmi_long_to_adv20 - dmi_short_to_adv20"
+
+  # Add more aliases as needed for other missing features
+  # Format: "new_column_name: expression"
+  # Supported operations: addition (+), subtraction (-)

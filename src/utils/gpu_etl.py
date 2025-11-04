@@ -12,9 +12,9 @@ If RAPIDS/cuDF or a CUDA device is not available, every function falls back to
 CPU/Polars and preserves the original outputs/column names to avoid regressions.
 """
 
-from typing import Iterable, List, Tuple
 import logging
 import os
+from collections.abc import Iterable
 
 import polars as pl
 
@@ -75,8 +75,8 @@ def init_rmm_legacy(initial_pool_size: str | None = None) -> bool:
     logger = logging.getLogger(__name__)
 
     try:
-        import rmm  # type: ignore
         import cupy as cp  # type: ignore
+        import rmm  # type: ignore
 
         # Check RMM_ALLOCATOR environment variable (cuda_async vs pool)
         allocator_mode = os.getenv("RMM_ALLOCATOR", "pool").lower()
@@ -134,8 +134,8 @@ def init_rmm_legacy(initial_pool_size: str | None = None) -> bool:
         logger.warning(f"RMM init failed: {e}")
         # Try simpler initialization without managed memory
         try:
-            import rmm
             import cupy as cp
+            import rmm
             rmm.reinitialize(pool_allocator=False)
             attached = _attach_cupy_allocator(cp, rmm, logger)
             if attached:
@@ -203,7 +203,6 @@ def cs_rank_and_z(
                 )
             )
             if gdf is not None:
-                import cudf  # type: ignore
 
                 keys = list(group_keys)
                 # Rank within groups (average ties), NA kept
@@ -292,8 +291,8 @@ def init_rmm(initial_pool_size: str | None = None) -> bool:
             return None
 
     try:
-        import rmm  # type: ignore
         import cupy as cp  # type: ignore
+        import rmm  # type: ignore
 
         allocator_mode = os.getenv("RMM_ALLOCATOR", "pool").lower().strip()
         size_str = (initial_pool_size if initial_pool_size is not None else os.getenv("RMM_POOL_SIZE", "")).strip()

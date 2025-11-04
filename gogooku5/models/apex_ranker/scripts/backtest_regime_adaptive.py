@@ -14,8 +14,8 @@ Key Features:
 Usage:
     python gogooku5/models/apex_ranker/scripts/backtest_regime_adaptive.py \
         --start-date 2021-11-01 --end-date 2022-03-31 \
-        --model models/apex_ranker_v0_enhanced.pt \
-        --config models/apex_ranker/configs/v0_base.yaml \
+        --model models/apex_ranker_v0_pruned.pt \
+        --config models/apex_ranker/configs/v0_pruned.yaml \
         --enable-regime-detection \
         --output results/regime_adaptive_crisis_test.json
 """

@@ -16,10 +16,10 @@ Key Components:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 
 class ForecastModel(Protocol):
@@ -44,7 +44,7 @@ class ModelMetrics:
     mape: float
     rank_ic: float = 0.0  # Rank Information Coefficient for financial models
     sharpe_ratio: float = 0.0  # For financial model evaluation
-    backtest_results: Dict[str, Any] = field(default_factory=dict)
+    backtest_results: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -54,7 +54,7 @@ class ModelRegistration:
     name: str
     version: str
     registered_at: datetime
-    performance_history: List[ModelMetrics] = field(default_factory=list)
+    performance_history: list[ModelMetrics] = field(default_factory=list)
     status: str = "challenger"  # "champion", "challenger", "retired"
 
 
@@ -145,8 +145,8 @@ class PromotionEngine:
 
     def should_promote(
         self,
-        champion_metrics: List[ModelMetrics],
-        challenger_metrics: List[ModelMetrics]
+        champion_metrics: list[ModelMetrics],
+        challenger_metrics: list[ModelMetrics]
     ) -> bool:
         """Determine if challenger should be promoted to champion.
 
@@ -186,10 +186,10 @@ class ChampionChallengerFramework:
     """Main interface for champion/challenger model management."""
 
     def __init__(self):
-        self.models: Dict[str, ModelRegistration] = {}
+        self.models: dict[str, ModelRegistration] = {}
         self.performance_tracker = PerformanceTracker()
         self.promotion_engine = PromotionEngine()
-        self._champion_model: Optional[str] = None
+        self._champion_model: str | None = None
 
     def register_model(
         self,
@@ -220,13 +220,13 @@ class ChampionChallengerFramework:
         if as_champion or self._champion_model is None:
             self._champion_model = model_key
 
-    def get_champion(self) -> Optional[ForecastModel]:
+    def get_champion(self) -> ForecastModel | None:
         """Get the current champion model."""
         if self._champion_model and self._champion_model in self.models:
             return self.models[self._champion_model].model
         return None
 
-    def get_challenger(self, name: str) -> Optional[ForecastModel]:
+    def get_challenger(self, name: str) -> ForecastModel | None:
         """Get a specific challenger model."""
         for key, registration in self.models.items():
             if registration.name == name and registration.status == "challenger":
@@ -237,7 +237,7 @@ class ChampionChallengerFramework:
         self,
         test_data: pd.DataFrame,
         ground_truth: pd.DataFrame
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Run evaluation and promotion logic.
 
         Args:
@@ -292,7 +292,7 @@ class ChampionChallengerFramework:
         results["champion"] = self._champion_model
         return results
 
-    def get_model_status(self) -> Dict[str, Dict[str, Any]]:
+    def get_model_status(self) -> dict[str, dict[str, Any]]:
         """Get status of all registered models."""
         status = {}
         for key, registration in self.models.items():

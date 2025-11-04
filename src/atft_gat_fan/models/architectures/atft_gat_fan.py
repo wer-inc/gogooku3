@@ -19,10 +19,12 @@ from src.training.curriculum import (
 
 from ..components import (
     FreqDropout1D,
-    MultiLayerGAT,
     TemporalFusionTransformer,
     VariableSelectionNetwork,
 )
+
+# P0-3: GAT Fusion imports
+from ..components.gat_fuse import GATBlock, GatedCrossSectionFusion
 
 logger = logging.getLogger(__name__)
 
@@ -191,11 +193,9 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         """モデルアーキテクチャの構築"""
 
         self.hidden_size = int(getattr(self.config.model, "hidden_size", 128))
-        self.gat_output_dim = 0
-        self.gat_edge_weight = 0.0
+        # P0-3: 旧Phase2変数は削除（gat_output_dim, gat_output_norm, gat_residual_clip等）
+        # Attention entropy weightのみ残す（P0-3で使用）
         self.gat_entropy_weight = 0.0
-        self.gat_output_norm: nn.LayerNorm | None = None
-        self.gat_residual_clip: float = 0.0
         self.encoder_diag_enabled = os.getenv("ENABLE_ENCODER_DIAGNOSTICS", "0") == "1"
         self.encoder_diag_interval = max(1, int(os.getenv("ENCODER_DIAG_EVERY", "50")))
         self._encoder_diag_counter = 0
@@ -215,48 +215,17 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         # Temporal Fusion Transformer backbone
         self.tft = self._build_tft()
 
-        # Graph Attention Network (銘柄間メッセージパッシング)
-        self.gat = (
-            self._build_gat()
-            if getattr(self.config.model.gat, "enabled", False)
-            else None
-        )
+        # P0-3: Graph Attention Network with Gated Fusion
+        self.edge_dropout_p = 0.0  # デフォルト初期化（use_gat=Falseでも存在）
+        self.gat = self._build_gat()
+        self.fuse = self._build_gat_fusion()  # P0-3: Gated cross-section fusion
 
-        self.combined_feature_dim = self.hidden_size + (
-            self.gat_output_dim if self.gat is not None else 0
-        )
-        self.backbone_projection = nn.Linear(
-            self.combined_feature_dim, self.hidden_size
-        )
+        # P0-3: No separate projection needed, fusion outputs hidden_size directly
+        # Old Phase 2 code (backbone_projection, gat_residual_gate) removed - replaced by gated fusion
 
         self.enable_nan_guard = os.getenv("ENABLE_ATFT_NAN_GUARD", "1") == "1"
         self.nan_guard_max_log = int(os.getenv("ATFT_NAN_GUARD_MAX_LOG", "5"))
         self._nan_guard_counts: dict[str, int] = {}
-
-        # GAT Residual Bypass修正 (Phase 2)
-        if self.gat is not None:
-            with torch.no_grad():
-                # GAT部分の重みを3倍スケーリング（勾配フロー保証）
-                gat_start_idx = self.hidden_size
-                self.backbone_projection.weight.data[:, gat_start_idx:] *= 3.0
-            # Residual接続用の学習可能なゲート（α初期値=0.5）
-            self.gat_residual_gate = nn.Parameter(torch.tensor(0.0))  # sigmoid(0)=0.5
-            # GAT出力の安定化: LayerNorm + optional clamp
-            self.gat_output_norm = nn.LayerNorm(self.gat_output_dim)
-            clip_cfg = None
-            try:
-                clip_cfg = self.config.model.gat.residual_clip
-            except Exception:
-                clip_cfg = None
-            if clip_cfg is None:
-                clip_cfg = os.getenv("GAT_RESIDUAL_CLIP", "10.0")
-            try:
-                self.gat_residual_clip = float(clip_cfg) if clip_cfg else 0.0
-            except (TypeError, ValueError):
-                self.gat_residual_clip = 10.0
-            logger.info(
-                "✅ [GAT-FIX] Applied 3x weight scaling + residual gate (α=0.5)"
-            )
 
         # 適応正規化 (FAN/SAN)
         self.adaptive_norm = self._build_adaptive_normalization()
@@ -448,57 +417,132 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             for param in module.parameters():
                 param.register_hook(make_hook(name))
 
-    def _build_gat(self) -> MultiLayerGAT | None:
-        """Graph Attention Networkの構築"""
-        gat_cfg = getattr(self.config.model, "gat", None)
-        if gat_cfg is None or not getattr(gat_cfg, "enabled", False):
+    def _build_gat(self) -> GATBlock | None:
+        """Graph Attention Networkの構築 (P0-3: GATBlock with gated fusion)"""
+        # Try both config paths for P0-3 migration
+        gat_cfg = None
+        try:
+            # P0-3 style config: top-level gat section
+            if hasattr(self.config, "gat"):
+                gat_cfg = self.config.gat
+        except Exception:
+            pass
+
+        if gat_cfg is None:
+            # Fallback: model.gat section
+            try:
+                gat_cfg = getattr(self.config.model, "gat", None)
+            except Exception:
+                pass
+
+        # Check if GAT is enabled
+        use_gat = False
+        if gat_cfg is not None:
+            if isinstance(gat_cfg, dict):
+                use_gat = gat_cfg.get("use", False)
+            else:
+                use_gat = getattr(gat_cfg, "use", False) or getattr(gat_cfg, "enabled", False)
+
+        if not use_gat:
             return None
 
-        arch_cfg = getattr(gat_cfg, "architecture", {})
-        hidden_channels = list(getattr(arch_cfg, "hidden_channels", [self.hidden_size]))
-        heads = list(getattr(arch_cfg, "heads", [4] * len(hidden_channels)))
-        concat = list(getattr(arch_cfg, "concat", [True] * len(hidden_channels)))
-        num_layers = int(getattr(arch_cfg, "num_layers", len(hidden_channels)))
+        # P0-3: Extract GATBlock parameters
+        if isinstance(gat_cfg, dict):
+            heads = gat_cfg.get("heads", [4, 2])
+            edge_dim = gat_cfg.get("edge_dim", 3)
+            dropout = gat_cfg.get("dropout", 0.2)
+            self.edge_dropout_p = gat_cfg.get("edge_dropout", 0.05)
+            attn_entropy_coef = gat_cfg.get("attn_entropy_coef", 0.0)
+        else:
+            heads = getattr(gat_cfg, "heads", [4, 2])
+            edge_dim = getattr(gat_cfg, "edge_dim", 3)
+            dropout = getattr(gat_cfg, "dropout", 0.2)
+            self.edge_dropout_p = getattr(gat_cfg, "edge_dropout", 0.05)
+            attn_entropy_coef = getattr(gat_cfg, "attn_entropy_coef", 0.0)
 
-        layer_cfg = getattr(gat_cfg, "layer_config", {})
-        dropout = float(getattr(layer_cfg, "dropout", 0.2))
-        edge_dropout = float(getattr(layer_cfg, "edge_dropout", 0.1))
-        edge_cfg = getattr(gat_cfg, "edge_features", {})
-        edge_dim = int(getattr(edge_cfg, "edge_dim", 0)) or None
+        # Convert heads to tuple if needed
+        if isinstance(heads, list):
+            heads = tuple(heads)
 
-        reg_cfg = getattr(gat_cfg, "regularization", {})
-        edge_penalty = float(getattr(reg_cfg, "edge_weight_penalty", 0.0))
-        entropy_penalty = float(getattr(reg_cfg, "attention_entropy_penalty", 0.0))
+        self.gat_entropy_weight = attn_entropy_coef
+        self._last_gate = None  # For monitoring
 
-        self.gat_output_dim = hidden_channels[-1] * (heads[-1] if concat[-1] else 1)
-        self.gat_entropy_weight = entropy_penalty
-        self.gat_edge_weight = edge_penalty
-
-        # 🔧 DEBUG (2025-10-06): Log initialized GAT weights
         logger.info(
-            f"[GAT-INIT] gat_entropy_weight={self.gat_entropy_weight}, gat_edge_weight={self.gat_edge_weight}, gat_output_dim={self.gat_output_dim}"
+            f"[P0-3 GAT-INIT] GATBlock: hidden={self.hidden_size}, heads={heads}, "
+            f"edge_dim={edge_dim}, dropout={dropout}, edge_dropout={self.edge_dropout_p}, "
+            f"entropy_coef={attn_entropy_coef}"
         )
 
-        return MultiLayerGAT(
-            num_layers=num_layers,
-            in_channels=self.hidden_size,
-            hidden_channels=hidden_channels,
+        return GATBlock(
+            in_dim=self.hidden_size,
+            hidden_dim=self.hidden_size,
             heads=heads,
-            concat_list=concat,
-            dropout=dropout,
-            edge_dropout=edge_dropout,
             edge_dim=edge_dim,
-            edge_weight_penalty=edge_penalty,
-            attention_entropy_penalty=entropy_penalty,
-            use_graph_norm=True,
+            dropout=dropout
+        )
+
+    def _build_gat_fusion(self) -> GatedCrossSectionFusion | None:
+        """P0-3: Gated Cross-Section Fusion for GAT output"""
+        if self.gat is None:
+            return None
+
+        # Get fusion config from gat section
+        gat_cfg = None
+        try:
+            if hasattr(self.config, "gat"):
+                gat_cfg = self.config.gat
+        except Exception:
+            pass
+
+        if gat_cfg is None:
+            try:
+                gat_cfg = getattr(self.config.model, "gat", None)
+            except Exception:
+                pass
+
+        if gat_cfg is None:
+            # Use defaults
+            tau = 1.25
+            gate_per_feature = False
+            gate_init_bias = -0.5
+        else:
+            if isinstance(gat_cfg, dict):
+                tau = gat_cfg.get("tau", 1.25)
+                gate_per_feature = gat_cfg.get("gate_per_feature", False)
+                gate_init_bias = gat_cfg.get("gate_init_bias", -0.5)
+            else:
+                tau = getattr(gat_cfg, "tau", 1.25)
+                gate_per_feature = getattr(gat_cfg, "gate_per_feature", False)
+                gate_init_bias = getattr(gat_cfg, "gate_init_bias", -0.5)
+
+        logger.info(
+            f"[P0-3 FUSION-INIT] GatedCrossSectionFusion: hidden={self.hidden_size}, "
+            f"tau={tau}, gate_per_feature={gate_per_feature}, init_bias={gate_init_bias}"
+        )
+
+        return GatedCrossSectionFusion(
+            hidden=self.hidden_size,
+            gate_per_feature=gate_per_feature,
+            tau=tau,
+            init_bias=gate_init_bias
         )
 
     def _build_adaptive_normalization(self) -> nn.Module:
-        """適応正規化層の構築 (FAN -> SAN)"""
-        # Diagnostic analysis showed Sequential(FAN, SAN) collapsed gradients by ~1e10.
-        # Replace with a single LayerNorm to preserve gradient flow while retaining
-        # normalization benefits. (See ENABLE_ENCODER_GRAD_HOOKS diagnostics, 2025-10-30)
-        return nn.LayerNorm(self.hidden_size, eps=1e-5)
+        """TFT入力（[B,T,H]）で使う適応正規化（FAN→SAN, Pre-Norm + Residual）
+
+        P0-1修復: 勾配崩壊問題を解決した安定版FAN/SANを使用。
+        - Pre-Normalization: TFT入力直前に適用
+        - Residual connection: 元のスケールを保持
+        - エントロピー正則化: αの一極集中を防止
+        - 数値安定性: すべての分母にフロア、NaN自動除去
+        """
+        from ..components.adaptive_normalization import StableFANSAN
+        return StableFANSAN(
+            feat_dim=self.hidden_size,      # VSN後/投影後のH
+            windows=(5, 10, 20),
+            num_slices=3, overlap=0.5,
+            eps=1e-4, entropy_coef=1e-4,
+        )
 
     def _build_freq_dropout(self) -> nn.Module | None:
         """周波数領域のDropout設定"""
@@ -706,7 +750,7 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             self._reconfigure_dynamic_feature_dim(
                 current_feature_dim, dynamic_features.device
             )
-        static_features = batch.get("static_features", None)  # [batch, n_static]
+        batch.get("static_features", None)  # [batch, n_static]
         edge_index = batch.get("edge_index", None)
         edge_attr = batch.get("edge_attr", None)
 
@@ -740,115 +784,55 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             self._encoder_diag_counter += 1
 
         # Temporal Fusion Transformer
-        # FIX: Always compute attention (train/eval mode consistency)
-        # Loss is only added during training, but forward behavior should be identical
-        return_attention = self.gat is not None and self.gat_entropy_weight > 0
-
-        logger.debug(
-            f"[RETURN-ATT] self.training={self.training}, gat_is_not_none={self.gat is not None}, entropy_weight={self.gat_entropy_weight} → return_attention={return_attention}"
-        )
-
+        # P0-3: Simplified - no return_attention logic (replaced by gated fusion)
         tft_output, attn_weights = self.tft(
             projected,
-            return_attention_weights=return_attention,
+            return_attention_weights=False,
         )
         self._last_tft_attention = attn_weights
 
-        # Graph Attention Network（有効な場合）
-        gat_features = None
-        gat_residual_base: torch.Tensor | None = None
-        self._gat_attention_entropy = None
-        self._gat_edge_reg_value = None
-        if self.gat is not None and edge_index is not None:
-            # 🔧 DEBUG (2025-10-06): Log GAT execution
-            logger.debug(
-                f"[GAT-EXEC] GAT layer executing with edge_index.shape={edge_index.shape}"
-            )
+        # P0-3: GAT with Gated Fusion (prevents gradient dilution)
+        z_base = tft_output[:, -1, :]  # [batch, hidden_size]
+        self._nan_guard(z_base, "z_base_from_tft")
 
-            last_step = tft_output[:, -1, :]  # [batch, hidden]
-            self._nan_guard(last_step, "last_step_before_gat")
-            if return_attention:
-                logger.debug(
-                    "[RETURN-ATT] Taking return_attention=True branch - computing GAT loss metrics"
-                )
-                gat_emb, attention_weights = self.gat(
-                    last_step, edge_index, edge_attr, return_attention_weights=True
-                )
-                self._gat_attention_entropy = self.gat.get_attention_entropy(
-                    attention_weights
-                )
-                # Use final layer attention weights for edge regularization proxy
-                _, att_tensor = attention_weights[-1]
-                self._gat_edge_reg_value = att_tensor.pow(2).mean()
-                self._last_attention_weights = attention_weights
-                logger.debug(
-                    f"[RETURN-ATT] Set _gat_attention_entropy={self._gat_attention_entropy.item():.6f}, _gat_edge_reg_value={self._gat_edge_reg_value.item():.6f}"
+        if self.gat is not None and self.fuse is not None and edge_index is not None and edge_attr is not None:
+            # P0-3: Edge attribute standardization and dropout
+            from src.graph.graph_utils import apply_edge_dropout, standardize_edge_attr
+
+            # Standardize edge attributes (column-wise)
+            edge_attr_std = standardize_edge_attr(edge_attr)
+
+            # Edge dropout (training only)
+            if self.training and hasattr(self, 'edge_dropout_p'):
+                edge_index_drop, edge_attr_drop = apply_edge_dropout(
+                    edge_index, edge_attr_std, self.edge_dropout_p, True
                 )
             else:
-                logger.debug(
-                    "[RETURN-ATT] Taking return_attention=False branch - GAT loss metrics will be None"
-                )
-                gat_emb = self.gat(last_step, edge_index, edge_attr)
-                self._last_attention_weights = None
+                edge_index_drop, edge_attr_drop = edge_index, edge_attr_std
 
-            if self.gat_output_norm is not None:
-                gat_emb = self.gat_output_norm(gat_emb)
-            if self.gat_residual_clip > 0:
-                gat_emb = torch.clamp(
-                    gat_emb, -self.gat_residual_clip, self.gat_residual_clip
-                )
-            self._nan_guard(gat_emb, "gat_emb_post_norm")
-            gat_residual_base = gat_emb
-            # 🔧 FIX (2025-10-20): use repeat instead of expand to keep gradient flow
-            gat_features = (
-                gat_emb.unsqueeze(1).repeat(1, tft_output.size(1), 1).contiguous()
-            )
             logger.debug(
-                f"[GAT-EXEC] GAT output shape={gat_emb.shape}, repeated={gat_features.shape}"
+                f"[P0-3 GAT-EXEC] edge_index.shape={edge_index_drop.shape}, "
+                f"edge_attr.shape={edge_attr_drop.shape}, training={self.training}"
             )
-            # 🔧 DEBUG (2025-10-06): Verify gat_features status
-            logger.debug(f"[GAT-DEBUG] gat_features is None: {gat_features is None}")
-            if gat_features is not None:
-                logger.debug(
-                    f"[GAT-DEBUG] gat_features.shape={gat_features.shape}, requires_grad={gat_features.requires_grad}"
-                )
-            self._nan_guard(gat_features, "gat_features_expanded")
 
-        # Combine temporal and graph context
-        # 🔧 FIX (2025-10-06): Always use consistent dimensions to prevent backbone_projection recreation
-        # When GAT is skipped, pad with zeros to maintain dimension=hidden_size+gat_output_dim
-        # 🔧 DEBUG (2025-10-06): Log which branch is taken
-        logger.debug(
-            f"[GAT-DEBUG] Checking concatenation: gat_features is not None = {gat_features is not None}"
-        )
-        if gat_features is not None:
+            # GAT forward (same dimension as z_base)
+            z_gat = self.gat(z_base, edge_index_drop, edge_attr_drop)  # [batch, hidden_size]
+            self._nan_guard(z_gat, "z_gat")
+
+            # Gated fusion (prevents gradient dilution)
+            z, gate_val = self.fuse(z_base, z_gat)  # [batch, hidden_size], [batch, 1 or H]
+            self._last_gate = gate_val.detach()  # For monitoring
+
             logger.debug(
-                f"[GAT-DEBUG] Using GAT features branch, combined shape will be {tft_output.size()[-1] + gat_features.size()[-1]}"
+                f"[P0-3 FUSION] z_base.shape={z_base.shape}, z_gat.shape={z_gat.shape}, "
+                f"z.shape={z.shape}, gate_mean={gate_val.mean().item():.3f}"
             )
-            combined_features = torch.cat([tft_output, gat_features], dim=-1)
         else:
-            logger.debug("[GAT-DEBUG] Using zero-padding branch")
-            # GAT disabled or no edges: pad with zeros to match expected dimension
-            if self.gat is not None:
-                # GAT exists but not executed: use gat_output_dim for padding
-                zero_pad = torch.zeros(
-                    tft_output.size(0),
-                    tft_output.size(1),
-                    self.gat_output_dim,
-                    device=tft_output.device,
-                    dtype=tft_output.dtype,
-                )
-                combined_features = torch.cat([tft_output, zero_pad], dim=-1)
-            else:
-                # GAT completely disabled: no padding needed
-                combined_features = tft_output
+            # GAT disabled or no edges: use base representation
+            z = z_base
 
-        # FreqDropout適用（オプション）
-        if self.freq_dropout is not None and self.training:
-            combined_features = self.freq_dropout(combined_features)
-
-        # Project back to hidden size
-        projected_features = self.backbone_projection(combined_features)
+        # Expand to temporal dimension for downstream processing
+        projected_features = z.unsqueeze(1).expand(-1, tft_output.size(1), -1).contiguous()
         self._nan_guard(projected_features, "projected_features")
 
         if self.training and os.getenv("ENABLE_ENCODER_GRAD_HOOKS", "0") == "1":
@@ -1021,74 +1005,11 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
                 norm_max,
             )
 
-        # GAT Residual Bypass適用 (Phase 2) - post-normalization so FAN/SAN do not zero-out GAT signal
-        # 🔧 Tier 2.2: Environment variable override for testing GAT bypass hypothesis
-        bypass_gat_completely = os.environ.get("BYPASS_GAT_COMPLETELY", "0") == "1"
-
-        if (
-            self.gat is not None
-            and gat_residual_base is not None
-            and hasattr(self, "gat_residual_gate")
-        ):
-            if bypass_gat_completely:
-                # Tier 2.2 Test: Force alpha=0 (100% temporal features, 0% GAT)
-                alpha = torch.tensor(0.0, device=normalized_features.device)
-                if self.training:
-                    logger.warning(
-                        "[TIER2.2] GAT COMPLETELY BYPASSED (alpha=0.0, BYPASS_GAT_COMPLETELY=1)"
-                    )
-            else:
-                alpha = torch.sigmoid(self.gat_residual_gate)
-            gat_residual = (
-                gat_residual_base.unsqueeze(1)
-                .repeat(1, normalized_features.size(1), 1)
-                .contiguous()
-            )
-            if self.gat_residual_clip > 0:
-                gat_residual = torch.clamp(
-                    gat_residual,
-                    -self.gat_residual_clip,
-                    self.gat_residual_clip,
-                )
-
-            if self.training:
-                gate_raw = self.gat_residual_gate.item()
-                alpha_val = alpha.item()
-                gat_norm = gat_residual.norm().item()
-                norm_feat = normalized_features.norm().item()
-                logger.info(
-                    f"[GAT-FLOW] gate_raw={gate_raw:.4f}, alpha={alpha_val:.4f}, "
-                    f"(1-alpha)={1-alpha_val:.4f}, gat_norm={gat_norm:.2e}, "
-                    f"norm_feat_norm={norm_feat:.2e}"
-                )
-
-            normalized_before = normalized_features
-            normalized_features = (
-                alpha * normalized_features + (1 - alpha) * gat_residual
-            )
-
-            if self.training:
-                combined_norm_after = normalized_features.norm().item()
-                gat_contribution = ((1 - alpha) * gat_residual).norm().item()
-                proj_contribution = (alpha * normalized_before).norm().item()
-                logger.info(
-                    f"[GAT-FLOW] combined_norm={combined_norm_after:.2e}, "
-                    f"gat_contrib={gat_contribution:.2e}, proj_contrib={proj_contribution:.2e}"
-                )
-
-            if self.training and hasattr(gat_residual_base, "register_hook"):
-
-                def log_gat_grad(grad):
-                    if grad is not None:
-                        grad_norm = grad.norm().item()
-                        if grad_norm < 1e-8:
-                            logger.warning(
-                                f"[GAT-GRAD] Low gradient detected: {grad_norm:.2e}"
-                            )
-                        else:
-                            logger.info(f"[GAT-GRAD] gradient norm: {grad_norm:.2e}")
-
-                gat_residual_base.register_hook(log_gat_grad)
+        # GAT Residual Bypass適用 (Phase 2) - DEPRECATED: P0-3では Gated Fusion を使用
+        # [P0-1 CLEANUP] Removed deprecated GAT residual gate code (2025-11-03)
+        # This Phase 2 implementation was replaced by P0-3 Gated Fusion (lines 799-834)
+        # Historical context: Used gat_residual_base + alpha gating, but P0-3's
+        # GATFuse provides cleaner architecture with learnable fusion weights
         self._nan_guard(normalized_features, "normalized_features_post_residual")
         # 🔧 DEBUG (2025-10-06): Check gradient flow
         logger.debug(
@@ -1244,7 +1165,7 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
             and self.decision_scheduler is not None
             and batch_idx == 0
         ):  # エポックの最初のバッチでのみ更新
-            scheduled_params = self.decision_scheduler.step(
+            self.decision_scheduler.step(
                 current_epoch, self.decision_layer
             )
             # Note: scheduled_params logging removed (was Lightning self.log)
@@ -1401,6 +1322,17 @@ class ATFT_GAT_FAN(nn.Module):  # Changed from pl.LightningModule due to import 
         ):
             total_loss = total_loss + self._vsn_sparsity_loss
             # Note: VSN sparsity logging removed (was Lightning self.log)
+
+        # FAN/SAN エントロピー正則化（P0-1修復）
+        if (
+            hasattr(self, "adaptive_norm")
+            and hasattr(self.adaptive_norm, "regularizer")
+            and not self.bypass_adaptive_norm
+        ):
+            fan_san_reg = self.adaptive_norm.regularizer()
+            if isinstance(fan_san_reg, torch.Tensor) and fan_san_reg.numel() > 0:
+                total_loss = total_loss + fan_san_reg
+                # Note: FAN/SAN regularization logging removed (was Lightning self.log)
 
         # GAT正則化 (edge weight / attention entropy)
         if self.gat is not None:

@@ -1,15 +1,10 @@
 version: 0_pruned
-
-# Pruned configuration based on feature importance analysis (2025-10-29)
-# Removed 25 features: 10 negative impact + 15 zero impact
-# Expected improvement: P@K +7.4% (0.513 → 0.551)
-
 data:
   parquet_path: output/ml_dataset_latest_full.parquet
   metadata_path: dataset_features_detail.json
   feature_groups_config: apex-ranker/configs/feature_groups.yaml
   feature_groups:
-    - core50
+  - core50
   optional_groups: []
   use_plus30: true
   lookback: 180
@@ -21,44 +16,41 @@ data:
     5: target_5d
     10: target_10d
     20: target_20d
-
-  # Features to exclude (25 total)
   exclude_features:
-    # Bottom 10 features (negative impact)
-    - rsi_2                        # -0.27%
-    - flow_individual_net_ratio    # -0.30%
-    - idio_vol_ratio               # -0.32%
-    - stoch_k                      # -0.32%
-    - ema_5                        # -0.57%
-    - flow_foreign_net_z           # -0.58%
-    - ema_200                      # -1.16%
-    - ema_20                       # -1.39%
-    - returns_20d                  # -1.78%
-    - flow_breadth_pos             # -2.03% (worst feature)
-
-    # Zero impact features (15 market features)
-    - mkt_ret_1d
-    - mkt_ret_5d
-    - mkt_ret_10d
-    - mkt_ret_20d
-    - mkt_gap_5_20
-    - mkt_vol_20d
-    - mkt_bull_200
-    - mkt_high_vol
-    - mkt_ret_1d_z
-    - mkt_dd_from_peak
-    - mkt_bb_bw
-    - mkt_bb_pct_b
-    - mkt_ema20_slope_3
-    - flow_impulse
-    - flow_days_since
-
+  - rsi_2
+  - flow_individual_net_ratio
+  - idio_vol_ratio
+  - stoch_k
+  - ema_5
+  - flow_foreign_net_z
+  - ema_200
+  - ema_20
+  - returns_20d
+  - flow_breadth_pos
+  - mkt_ret_1d
+  - mkt_ret_5d
+  - mkt_ret_10d
+  - mkt_ret_20d
+  - mkt_gap_5_20
+  - mkt_vol_20d
+  - mkt_bull_200
+  - mkt_high_vol
+  - mkt_ret_1d_z
+  - mkt_dd_from_peak
+  - mkt_bb_bw
+  - mkt_bb_pct_b
+  - mkt_ema20_slope_3
+  - flow_impulse
+  - flow_days_since
 normalization:
   mode: cross_section_z
   clip_sigma: 5.0
-
 train:
-  horizons: [1, 5, 10, 20]
+  horizons:
+  - 1
+  - 5
+  - 10
+  - 20
   epochs: 50
   lr: 0.0005
   weight_decay: 0.0001
@@ -72,9 +64,20 @@ train:
   warmup_start_factor: 0.1
   early_stopping:
     patience: 3
-    metric: 20d_pak
+    metric: short_term_score
     min_delta: 0.0
-
+  evaluation:
+    splitter: purged_kfold
+    purged_kfold:
+      n_splits: 5
+      embargo_days: 5
+  time_decay_tau_days: 120
+  use_ema: true
+  ema_beta: 0.999
+eval:
+  k_ratio: 0.1
+  ndcg_beta: 1.0
+  es_weights: 0.5,0.35,0.15
 model:
   d_model: 256
   depth: 4
@@ -82,7 +85,6 @@ model:
   stride: 8
   n_heads: 8
   dropout: 0.2
-
 loss:
   listnet:
     weight: 1.0

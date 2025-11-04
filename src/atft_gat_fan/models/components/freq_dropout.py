@@ -5,7 +5,6 @@ Frequency Adaptive Normalization (FAN) with FreqDropout
 
 import logging
 import math
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -168,7 +167,7 @@ class AdaptiveNormalization(nn.Module):
     def __init__(
         self,
         hidden_size: int,
-        config: Optional[any] = None,
+        config: any | None = None,
         fan_enabled: bool = True,
         san_enabled: bool = False,
     ):

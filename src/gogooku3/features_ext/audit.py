@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Iterable, List
-
 import polars as pl
 
 
@@ -25,15 +23,15 @@ def audit_loo_present(df: pl.DataFrame, col: str = "sec_ret_1d_eq_loo") -> None:
             raise AuditError("LOO column equals self return for some rows – check sector group sizes")
 
 
-def run_basic_audits(df: pl.DataFrame) -> List[str]:
+def run_basic_audits(df: pl.DataFrame) -> list[str]:
     """Run lightweight, non-destructive audits; return list of warnings.
 
     Audits raise only for critical as-of violations; less strict checks return warnings.
     """
-    notes: List[str] = []
+    notes: list[str] = []
     try:
         audit_stmt_nonnegative(df)
-    except AuditError as e:
+    except AuditError:
         raise
     try:
         audit_loo_present(df)

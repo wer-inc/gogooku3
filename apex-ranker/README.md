@@ -78,6 +78,76 @@ apex-ranker/
    - GPU-enabled training with composite ranking loss
    - simple validation metrics (RankIC / Precision@K per horizon)
 
+## Purged K-Fold evaluation
+
+The training configs now describe an evaluation splitter. Setting
+`train.evaluation.splitter: purged_kfold` (the default for `v0_base` /
+`v0_pruned`) enables Lopez de Prado style Purged K-Fold with an embargo window:
+
+```yaml
+train:
+  evaluation:
+    splitter: purged_kfold
+    purged_kfold:
+      n_splits: 5
+      embargo_days: 5
+```
+
+Invoke the trainer with a specific fold via `--cv-fold` (1-based):
+
+```bash
+python apex-ranker/scripts/train_v0.py \
+  --config apex-ranker/configs/v0_base.yaml \
+  --cv-type purged_kfold \
+  --cv-fold 3
+```
+
+Each fold excludes `lookback + max(horizon) + embargo` days around the
+validation window. The console log prints the exact train/validation date
+ranges so ablation sweeps can reuse identical folds across toggles.
+
+## Metrics and Δ baselines
+
+Add an `eval` block to control ranking diagnostics:
+
+```yaml
+eval:
+  k_ratio: 0.1      # evaluate top 10% of the universe (or set k: 50 explicitly)
+  ndcg_beta: 1.0    # softplus gain temperature
+```
+
+During validation the trainer now reports:
+
+- `ΔP@K_pos = P@K_pos − P@K_pos_rand` (how much the positive-rate exceeds chance)
+- `ΔNDCG = NDCG − NDCG_rand` (softplus-gain NDCG minus random baseline)
+- `TopKOverlap` (predicted vs. true top-K agreement)
+- `Spread` (mean of top-K minus mean of bottom-K)
+- `K/N` (effective concentration)
+
+If `--output path/to/model.pt` is provided we also emit
+`path/to/model_val_perday.npz`, containing fold × day arrays for every metric.
+These arrays plug straight into `scripts/analyze_run_comparison.py` for DM /
+bootstrap / DSR / PBO calculations.
+
+## Comparing walk-forward runs
+
+`run_walk_forward_backtest.py` now serialises per-day cross-sectional
+metrics, bootstrap confidence intervals, and deflated Sharpe diagnostics.
+Use the comparison helper to quantify deltas between two runs:
+
+```bash
+python apex-ranker/scripts/analyze_run_comparison.py \
+  --baseline results/baseline_run.json \
+  --candidate results/candidate_run.json \
+  --metric ndcg_at_k \
+  --output results/ndcg_dm_report.json
+```
+
+The report includes Diebold–Mariano statistics, moving-block bootstrap
+confidence intervals, Ledoit–Wolf Sharpe difference, and deflated Sharpe
+ratios for each strategy—providing a consistent reproducible evaluation
+workflow across experiments.
+
 ### Mask handling
 
 Some mask columns (e.g. `is_stmt_valid`) may have zero positive coverage in certain datasets.  

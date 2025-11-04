@@ -3,7 +3,7 @@ from __future__ import annotations
 """Pipeline data quality validation utilities (Polars-based)."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import polars as pl
 
@@ -18,14 +18,14 @@ class QualityConfig:
 class DataQualityChecker:
     """Run lightweight data quality checks on the final dataset."""
 
-    def __init__(self, cfg: Optional[QualityConfig] = None) -> None:
+    def __init__(self, cfg: QualityConfig | None = None) -> None:
         self.cfg = cfg or QualityConfig()
 
-    def validate_dataset(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def validate_dataset(self, df: pl.DataFrame) -> dict[str, Any]:
         num_cols = [c for c, dt in zip(df.columns, df.dtypes) if pl.datatypes.is_numeric(dt)]
         date_cols = [c for c, dt in zip(df.columns, df.dtypes) if dt == pl.Date or dt == pl.Datetime]
 
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
 
         # Missingness
         total = df.height * len(df.columns)
@@ -36,7 +36,7 @@ class DataQualityChecker:
         results["missing_by_col"] = miss_by_col
 
         # Outliers via z-score cutoff (per column)
-        outlier_stats: Dict[str, float] = {}
+        outlier_stats: dict[str, float] = {}
         for c in num_cols:
             try:
                 s = df[c].cast(pl.Float64)
@@ -53,7 +53,7 @@ class DataQualityChecker:
         results["outlier_fraction_by_col"] = outlier_stats
 
         # Temporal consistency (coarse):
-        temporal: Dict[str, Any] = {}
+        temporal: dict[str, Any] = {}
         if date_cols:
             tcol = date_cols[0]
             try:
@@ -73,7 +73,7 @@ class DataQualityChecker:
         results["temporal_consistency"] = temporal
 
         # Feature distribution summary for numeric columns
-        dist: Dict[str, Dict[str, float]] = {}
+        dist: dict[str, dict[str, float]] = {}
         for c in num_cols:
             try:
                 s = df[c].cast(pl.Float64)
@@ -95,7 +95,7 @@ class DataQualityChecker:
 
         return results
 
-    def generate_quality_report(self, results: Dict[str, Any]) -> str:
+    def generate_quality_report(self, results: dict[str, Any]) -> str:
         lines = []
         lines.append("# Data Quality Report")
         lines.append("")

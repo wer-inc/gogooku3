@@ -22,6 +22,9 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset, Sampler
 
 from data.parquet_stock_dataset import OnlineRobustScaler, ParquetStockIterableDataset
 
+# P0-5: DataLoader factory with spawn and persistent workers
+from src.gogooku3.training.atft.loader_factory import make_loader
+
 try:  # pragma: no cover - optional acceleration path
     import pyarrow.parquet as pq
 
@@ -41,6 +44,37 @@ except Exception:  # pragma: no cover - fallback for environments without full p
     _USE_EXT_SAMPLER = False
 
 logger = logging.getLogger(__name__)
+
+# 🔧 PATCH F (2025-11-04): IdentityScaler for smoke test bypass
+# Allows fast smoke tests by skipping expensive OnlineRobustScaler fitting
+class _IdentityScaler:
+    """No-op scaler for smoke tests. Bypasses OnlineRobustScaler fitting."""
+
+    def __init__(self):
+        self._count = float('inf')  # Always report as fully fitted
+        self.is_fitted = True  # Always report as fitted
+
+    def fit(self, df):
+        return self
+
+    def partial_fit(self, df):
+        return self
+
+    def finalise(self):
+        """Finalize fitting (no-op for IdentityScaler)."""
+        pass
+
+    def transform(self, df):
+        return df
+
+    def inverse_transform(self, df):
+        return df
+
+    def clone(self):
+        return _IdentityScaler()
+
+    def export_fitted_scaler(self):
+        return _IdentityScaler()
 
 
 def _resolve_dl_params(config: DictConfig) -> dict[str, Any]:
@@ -392,6 +426,14 @@ class StreamingParquetDataset(Dataset):
         # Lazy cache for pyarrow row-group metadata per file (file_idx -> (offsets, lengths))
         self._rg_meta: dict[int, tuple[list[int], list[int]]] = {}
 
+        # Exposure-related mappings are needed even when exposure features are disabled.
+        self.date_to_group_id: dict[str, int] = {}
+        self.code_to_sid: dict[str, int] = {}
+        self.sector_to_id: dict[str, int] = {}
+        self._next_group_id = 0
+        self._next_sid = 0
+        self._next_sector_id = 0
+
         # Phase 2: 露出中立・回転率・整合性ロスのための拡張フィールド
         self.use_exposure_features = os.getenv("USE_EXPOSURE_FEATURES", "0") == "1"
         if self.use_exposure_features:
@@ -422,13 +464,6 @@ class StreamingParquetDataset(Dataset):
                 # Keep the requested columns for placeholder generation
                 self.exposure_columns = exposure_columns
 
-            # マッピング辞書の初期化
-            self.date_to_group_id: dict[str, int] = {}
-            self.code_to_sid: dict[str, int] = {}
-            self.sector_to_id: dict[str, int] = {}
-            self._next_group_id = 0
-            self._next_sid = 0
-            self._next_sector_id = 0
         else:
             self.exposure_columns = []
             logger.debug(
@@ -483,6 +518,29 @@ class StreamingParquetDataset(Dataset):
         self._cumulative_windows: list[int] = []
         self._length = 0
         self._build_index()
+
+    def __getstate__(self) -> dict:
+        """
+        Remove unpicklable attributes for multi-worker DataLoader.
+
+        P0-4 Fix: threading.Lock cannot be pickled, causing DataLoader crashes
+        in multi-worker mode. This method excludes the lock during serialization.
+        """
+        state = self.__dict__.copy()
+        # Remove the unpicklable lock
+        state.pop("_refresh_lock", None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        """
+        Restore unpicklable attributes after unpickling.
+
+        P0-4 Fix: Recreate threading.Lock after DataLoader worker unpickles
+        the dataset object.
+        """
+        self.__dict__.update(state)
+        # Recreate the lock in the new process
+        self._refresh_lock = threading.Lock()
 
     @staticmethod
     def _detect_columns(sample_path: Path) -> list[str]:
@@ -1485,6 +1543,17 @@ class ProductionDataModuleV2:
         self.test_dataset = None
         self._loader_impl: str | None = None
 
+        # P0-2: Feature Manifest (473-column Feature ABI)
+        self.feature_manifest_path = Path(
+            OmegaConf.select(config, "features.manifest_path") or
+            "output/reports/feature_manifest_473.yaml"
+        )
+        self.feature_manifest_strict = bool(
+            OmegaConf.select(config, "features.strict") if OmegaConf.select(config, "features.strict") is not None else True
+        )
+        self.feature_manifest = None
+        self.feature_manifest_abi = None
+
     def setup(self) -> None:
         """Set up datasets."""
         data_dir = Path(self.config.data.source.data_dir)
@@ -1624,10 +1693,21 @@ class ProductionDataModuleV2:
         except Exception:
             random_state = 42
 
-        train_scaler = OnlineRobustScaler(
-            max_samples=max_samples,
-            random_state=random_state,
-        )
+        # 🔧 PATCH F (2025-11-04): Smoke test bypass for OnlineRobustScaler
+        # Check environment variable to bypass expensive fitting
+        BYPASS_ONLINE_ROBUST_SCALER = os.getenv("BYPASS_ONLINE_ROBUST_SCALER", "0") == "1"
+
+        if BYPASS_ONLINE_ROBUST_SCALER:
+            train_scaler = _IdentityScaler()
+            logger.warning(
+                "[SMOKE] OnlineRobustScaler is BYPASSED (IdentityScaler). "
+                "Data will NOT be normalized. Use only for smoke tests!"
+            )
+        else:
+            train_scaler = OnlineRobustScaler(
+                max_samples=max_samples,
+                random_state=random_state,
+            )
 
         self.train_dataset = ParquetStockIterableDataset(
             file_paths=train_files,
@@ -1807,7 +1887,7 @@ class ProductionDataModuleV2:
         Resolve cache_size based on num_workers configuration.
 
         Memory calculation:
-        - Single sample: ~73KB (60 × 306 features × 4 bytes)
+        - Single sample: ~113KB (60 × 473 features × 4 bytes)
         - Multi-worker (8 workers × 10000 cache): ~5.8GB → Memory explosion → Crash
         - Multi-worker (4 workers × 256 cache): ~72MB → Safe
         - Single-worker (1 process × 10000 cache): ~0.7GB → Safe
@@ -1840,6 +1920,19 @@ class ProductionDataModuleV2:
 
     def _get_feature_columns(self) -> list[str]:
         """Get feature column names."""
+        # P0-2: Load from Feature Manifest (473-column Feature ABI)
+        if not self.feature_manifest:
+            self._load_feature_manifest()
+
+        if self.feature_manifest:
+            logger.info(
+                "[FeatureABI] Using manifest: %d features, sha1=%s",
+                len(self.feature_manifest),
+                self.feature_manifest_abi,
+            )
+            return self.feature_manifest
+
+        # Fallback: original logic
         if self.config.data.schema.feature_columns:
             cols = list(self.config.data.schema.feature_columns)
             selected_path = os.getenv("SELECTED_FEATURES_JSON", "").strip()
@@ -1922,6 +2015,53 @@ class ProductionDataModuleV2:
 
         return feature_cols
 
+    def _load_feature_manifest(self) -> None:
+        """
+        Load feature manifest (P0-2: 473-column Feature ABI).
+
+        Raises:
+            AssertionError: If manifest not found (strict mode) or invalid
+        """
+        if not self.feature_manifest_path.exists():
+            if self.feature_manifest_strict:
+                raise FileNotFoundError(
+                    f"[FeatureABI] Manifest not found (strict mode): {self.feature_manifest_path}"
+                )
+            logger.warning(
+                "[FeatureABI] Manifest not found (non-strict): %s", self.feature_manifest_path
+            )
+            return
+
+        import hashlib
+
+        import yaml
+
+        man = yaml.safe_load(self.feature_manifest_path.read_text())
+        feats = man.get("features", [])
+        abi = man.get("meta", {}).get("abi_sha1")
+
+        if len(feats) != 473:
+            msg = f"[FeatureABI] Manifest must have 473 features, got {len(feats)}"
+            if self.feature_manifest_strict:
+                raise ValueError(msg)
+            logger.warning(msg)
+
+        # Verify ABI
+        computed_abi = hashlib.sha1(",".join(feats).encode()).hexdigest()
+        if abi and abi != computed_abi:
+            msg = f"[FeatureABI] ABI mismatch: manifest={abi}, computed={computed_abi}"
+            if self.feature_manifest_strict:
+                raise ValueError(msg)
+            logger.warning(msg)
+
+        self.feature_manifest = feats
+        self.feature_manifest_abi = abi or computed_abi
+        logger.info(
+            "[FeatureABI] Loaded manifest: %d features, sha1=%s",
+            len(self.feature_manifest),
+            self.feature_manifest_abi,
+        )
+
     def _get_target_columns(self) -> list[str]:
         """Get target column names."""
         # First, check if explicit target_columns are provided in config
@@ -1946,7 +2086,10 @@ class ProductionDataModuleV2:
         return target_cols
 
     def train_dataloader(self) -> DataLoader:
-        """Get training dataloader."""
+        """Get training dataloader.
+
+        P0-5: IterableDatasetの場合はmake_loader()を使用（spawn + persistent_workers）
+        """
         if self.train_dataset is None:
             self.setup()
 
@@ -1967,15 +2110,18 @@ class ProductionDataModuleV2:
                 **_build_loader_kwargs(dl_params),
             )
 
+        # P0-5: IterableDatasetの場合はmake_loader()を使用
         if is_iterable:
             logger.info(
-                "Using iterable DataLoader (shuffle disabled) for training split"
+                "[P0-5] Using stable DataLoader (spawn + persistent_workers) for iterable training split"
             )
-            return DataLoader(
+            num_workers = dl_params.num_workers if hasattr(dl_params, 'num_workers') else None
+            return make_loader(
                 dataset,
-                batch_size=self.config.train.batch.train_batch_size,
-                shuffle=False,
-                **_build_loader_kwargs(dl_params),
+                num_workers=num_workers,
+                pin_memory=dl_params.pin_memory if hasattr(dl_params, 'pin_memory') else True,
+                prefetch_factor=dl_params.prefetch_factor if hasattr(dl_params, 'prefetch_factor') else 2,
+                timeout=0,
             )
 
         return DataLoader(
@@ -1986,11 +2132,28 @@ class ProductionDataModuleV2:
         )
 
     def val_dataloader(self) -> DataLoader | None:
-        """Get validation dataloader."""
+        """Get validation dataloader.
+
+        P0-5: IterableDatasetの場合はmake_loader()を使用（spawn + persistent_workers）
+        """
         if self.val_dataset is None:
             return None
 
         dl_params = _resolve_dl_params(self.config)
+
+        # P0-5: IterableDatasetの場合はmake_loader()を使用
+        if isinstance(self.val_dataset, IterableDataset):
+            logger.info(
+                "[P0-5] Using stable DataLoader (spawn + persistent_workers) for iterable validation split"
+            )
+            num_workers = max(1, dl_params.num_workers // 2) if hasattr(dl_params, 'num_workers') and dl_params.num_workers else 1
+            return make_loader(
+                self.val_dataset,
+                num_workers=num_workers,
+                pin_memory=dl_params.pin_memory if hasattr(dl_params, 'pin_memory') else True,
+                prefetch_factor=2,
+                timeout=0,
+            )
 
         return DataLoader(
             self.val_dataset,

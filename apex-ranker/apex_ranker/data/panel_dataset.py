@@ -210,6 +210,7 @@ def panel_cache_key(
     lookback: int,
     feature_cols: Sequence[str],
     version: str = "v1",
+    extra_salt: str | None = None,
 ) -> str:
     """Generate a deterministic key for panel cache persistence."""
     resolved = Path(dataset_path).resolve()
@@ -220,6 +221,9 @@ def panel_cache_key(
         "features": list(feature_cols),
         "version": version,
     }
+    if extra_salt:
+        payload["salt"] = extra_salt
+
     encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
     digest = hashlib.sha1(encoded).hexdigest()
     stem = resolved.stem or resolved.name

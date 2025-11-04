@@ -279,6 +279,7 @@ dev = [
 - パリティ検証の運用フローを明文化するため、`docs/parity_check.md` を新設。CLI 実行例、JSON レポートのサンプル、指標の読み解き方を整理し、運用チームが即座に活用できるようにした。
 - `gogooku5/data/README.md` に `PARITY_BASELINE_PATH` / `PARITY_CANDIDATE_PATH` を通じた health-check 連携手順を追記し、環境変数の指定漏れによるパリティスキップを防止。
 - health-check スクリプトのセクション構成を 9 ステップ体制へ更新し、Dataset Parity ステージを正式導入。基準データセット未指定時はスキップ、指定時は JSON 要約を解析して成果（SUCCESS/ WARN）へ反映。
+- DatasetBuilder が営業日カレンダー（日本祝日考慮）と実際のクォーツ日付のユニオンで時間軸を構築し、全銘柄×営業日グリッドを生成するように更新。gogooku3 同等のカバレッジ（欠損日の明示化）を再現。
 
 ### 1.3 Makefile
 

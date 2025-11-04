@@ -3,7 +3,6 @@ from __future__ import annotations
 """Calibration and simple ensembling utilities for anomaly scores."""
 
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -21,7 +20,7 @@ class PlattParams:
 
 def calibrate_sigmoid(
     scores: np.ndarray,
-    labels: Optional[np.ndarray] = None,
+    labels: np.ndarray | None = None,
 ) -> tuple[np.ndarray, PlattParams]:
     """Calibrate anomaly scores to probabilities using Platt scaling.
 
@@ -65,7 +64,7 @@ def stack_and_score(
     ts_col: str = "ts",
     score_col: str = "score",
     calibrate: bool = False,
-    labels: Optional[pd.DataFrame] = None,
+    labels: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Stack multiple component scores and produce a calibrated ensemble.
 
@@ -106,21 +105,28 @@ class DetectionEnsemble:
         """
         self.methods = methods or ["residual", "change_point", "spectral"]
 
-    def detect(self, data: pd.DataFrame, symbol: str = "unknown", threshold: float = 0.25) -> dict:
+    def detect(
+        self,
+        data: pd.DataFrame,
+        symbol: str = "unknown",
+        threshold: float = 0.25,
+        labels: list | None = None,
+    ) -> dict:
         """Run ensemble detection on time series data.
 
         Args:
             data: DataFrame with time series data (expects columns: timestamp, value)
             symbol: Symbol identifier
             threshold: Anomaly detection threshold
+            labels: Optional ground truth labels for evaluation (list of anomaly ranges)
 
         Returns:
             Detection results dictionary
         """
-        from .residual import ResidualAnomalyDetector
         from .change_point import ChangePointDetector
+        from .ranges import VUS_PR, score_to_ranges
+        from .residual import ResidualAnomalyDetector
         from .spectral_residual import SpectralResidualDetector
-        from .ranges import score_to_ranges, VUS_PR
 
         # Initialize detection methods
         detectors = {}
@@ -139,10 +145,10 @@ class DetectionEnsemble:
 
         # Run individual detection methods
         method_scores = []
-        for method_name, detector in detectors.items():
+        for _method_name, _detector in detectors.items():
             try:
                 # Create detection input format: id, ts, y
-                detect_df = pd.DataFrame({
+                pd.DataFrame({
                     "id": symbol,
                     "ts": data["timestamp"],
                     "value": data["value"]
@@ -156,7 +162,7 @@ class DetectionEnsemble:
                     "score": scores
                 })
                 method_scores.append(score_df)
-            except Exception as e:
+            except Exception:
                 # Skip failed methods
                 continue
 
@@ -181,10 +187,10 @@ class DetectionEnsemble:
         # Convert point scores to ranges
         ranges = score_to_ranges(ensemble_df, threshold=threshold, min_len=1)
 
-        # Calculate VUS-PR (mock labels for now)
+        # Calculate VUS-PR with actual labels if provided
         vus_pr_evaluator = VUS_PR(min_iou=0.25)
-        mock_labels = []  # TODO: Integrate with actual labels
-        vus_pr_result = vus_pr_evaluator.evaluate(ranges, mock_labels)
+        evaluation_labels = labels if labels is not None else []
+        vus_pr_result = vus_pr_evaluator.evaluate(ranges, evaluation_labels)
 
         # Extract key metrics
         anomaly_score = ensemble_df["score"].max() if not ensemble_df.empty else 0.0

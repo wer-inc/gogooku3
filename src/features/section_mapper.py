@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class SectionMapper:
     """
     銘柄コード → Section（市場区分）のマッピング管理
-    
+
     注意:
     - listed_info の MarketCode を trades_spec の Section に変換
     - JASDAQは listed_info では Standard/Growth に分かれているが、
@@ -76,11 +76,11 @@ class SectionMapper:
     ) -> pl.DataFrame:
         """
         listed_info から Section マッピングテーブルを作成
-        
+
         Args:
             listed_info_df: listed_info APIから取得したデータ
             as_of_date: 基準日（省略時は最新）
-        
+
         Returns:
             Code, Section, valid_from, valid_to を含むマッピングテーブル
         """
@@ -149,15 +149,15 @@ class SectionMapper:
     def _apply_market_transition(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         2022年4月の市場再編を適用
-        
+
         市場再編のルール:
         - 2022年4月4日以降: 新市場コード（0111-0113）が使用される
         - 2022年4月3日まで: 旧市場コード（0101,0102,0104,0106,0107）が使用される
         - 新市場コードが既に正しくマッピングされているため、特別な変換は不要
-        
+
         Args:
             df: マッピングデータ
-        
+
         Returns:
             市場再編を考慮したマッピング
         """
@@ -174,13 +174,13 @@ class SectionMapper:
     ) -> pl.DataFrame:
         """
         日次データに Section を付与（期間を考慮）
-        
+
         Args:
             daily_df: 日次データ（Code, Date を含む）
             mapping_df: Section マッピングテーブル
             date_col: 日付列名
             code_col: 銘柄コード列名
-        
+
         Returns:
             Section が付与されたデータ
         """
@@ -233,12 +233,12 @@ class SectionMapper:
     ) -> str:
         """
         特定の銘柄・日付のSectionを取得
-        
+
         Args:
             code: 銘柄コード
             as_of_date: 基準日
             mapping_df: マッピングテーブル
-        
+
         Returns:
             Section名
         """
@@ -262,11 +262,11 @@ class SectionMapper:
     ) -> dict[str, float]:
         """
         Section カバレッジを検証
-        
+
         Args:
             daily_df: Section付きの日次データ
             section_col: Section列名
-        
+
         Returns:
             カバレッジ統計
         """
@@ -304,12 +304,12 @@ class SectionMapper:
     def get_section_for_trades_spec(self, section: str) -> str:
         """
         trades_spec用にSectionを調整
-        
+
         JASDAQStandard/JASDAQGrowth を TSEJASDAQ に統合する場合などに使用
-        
+
         Args:
             section: 元のSection名
-        
+
         Returns:
             trades_spec用に調整されたSection名
         """

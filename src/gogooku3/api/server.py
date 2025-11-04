@@ -8,24 +8,23 @@ Endpoints (JSON in/out):
 - POST /index/esvi        { fcst: [...], name?: "ESVI_JP", weights?: [...] }
 """
 
-from typing import List, Literal, Optional
+from typing import Literal
 
 import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from src.gogooku3.forecast import timesfm_predict, TFTAdapter
+from src.gogooku3.decide import build_pseudo_vix
 from src.gogooku3.detect import (
-    residual_q_score,
     change_point_score,
+    evaluate_vus_pr,
+    residual_q_score,
+    score_to_ranges,
     spectral_residual_score,
     stack_and_score,
-    score_to_ranges,
-    evaluate_vus_pr,
 )
-from src.gogooku3.detect.ranges import evaluate_vus_pr_iou, RangeLabel
-from src.gogooku3.decide import build_pseudo_vix
-
+from src.gogooku3.detect.ranges import RangeLabel, evaluate_vus_pr_iou
+from src.gogooku3.forecast import TFTAdapter, timesfm_predict
 
 app = FastAPI(title="Gogooku3 API", version="0.1")
 
@@ -33,7 +32,7 @@ app = FastAPI(title="Gogooku3 API", version="0.1")
 class Record(BaseModel):
     id: str
     ts: str
-    y: Optional[float] = None
+    y: float | None = None
     # arbitrary additional fields allowed
     class Config:
         extra = "allow"
@@ -41,8 +40,8 @@ class Record(BaseModel):
 
 class PredictRequest(BaseModel):
     model: Literal["timesfm", "tft"] = "timesfm"
-    horizons: List[int] = Field(default_factory=lambda: [1, 5, 10, 20, 30])
-    obs: List[Record]
+    horizons: list[int] = Field(default_factory=lambda: [1, 5, 10, 20, 30])
+    obs: list[Record]
     model_config = {
         "json_schema_extra": {
             "examples": [
@@ -75,13 +74,13 @@ def forecast_predict(req: PredictRequest):
 
 
 class DetectRequest(BaseModel):
-    obs: List[Record]
-    fcst: List[dict]
+    obs: list[Record]
+    fcst: list[dict]
     h: int = 1
     min_len: int = 2
     perc: float = 0.95
-    labels: Optional[List[dict]] = None
-    eval_iou: Optional[float] = None
+    labels: list[dict] | None = None
+    eval_iou: float | None = None
     model_config = {
         "json_schema_extra": {
             "examples": [
@@ -128,9 +127,9 @@ def detect_score(req: DetectRequest):
 
 
 class IndexRequest(BaseModel):
-    fcst: List[dict]
+    fcst: list[dict]
     name: str = "ESVI_JP"
-    weights: Optional[List[dict]] = None
+    weights: list[dict] | None = None
     model_config = {
         "json_schema_extra": {
             "examples": [

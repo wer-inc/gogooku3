@@ -40,9 +40,9 @@ def main():
         "PHASE_MAX_BATCHES": "0",
         "FUSE_START_PHASE": "0",
         "USE_ADV_GRAPH_TRAIN": "1",  # Enable training-time graph builder optimizations
-        "GRAPH_EDGE_THR": "0.18",  # TODO recommendation: 0.18 for improved RankIC
-        "GRAPH_K_DEFAULT": "28",  # More neighbors for message passing (better than TODO's 24)
-        "GRAPH_MIN_EDGES": "90",  # Higher than TODO's 75 for denser graph
+        "GRAPH_EDGE_THR": "0.18",  # Optimized threshold for improved RankIC (implemented)
+        "GRAPH_K_DEFAULT": "28",  # More neighbors for message passing (optimized from 24)
+        "GRAPH_MIN_EDGES": "90",  # Denser graph for better connectivity (optimized from 75)
         "BATCH_SIZE": "512",  # Ensure train_atft picks large micro-batch via env fallback
         "OMP_NUM_THREADS": "2",  # OPTIMIZED: 8 workers × 2 threads = 16 total (conservative)
         "USE_RANKIC": "1",

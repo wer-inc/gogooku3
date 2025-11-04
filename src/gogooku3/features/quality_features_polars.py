@@ -6,10 +6,10 @@ PDFで提案された改善: Pandas変換を完全に削除し、Polars native�
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
-import polars as pl
 import numpy as np
+import polars as pl
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +57,9 @@ class QualityFinancialFeaturesGeneratorPolars:
 
     def generate_quality_features(
         self,
-        df: Union[pl.DataFrame, pl.LazyFrame],
-        target_column: Optional[str] = "target",
-    ) -> Union[pl.DataFrame, pl.LazyFrame]:
+        df: pl.DataFrame | pl.LazyFrame,
+        target_column: str | None = "target",
+    ) -> pl.DataFrame | pl.LazyFrame:
         """
         Generate quality features using Polars native operations.
 
@@ -303,7 +303,7 @@ class QualityFinancialFeaturesGeneratorPolars:
 
         return df
 
-    def validate_features(self, df: Union[pl.DataFrame, pl.LazyFrame]) -> Dict[str, Any]:
+    def validate_features(self, df: pl.DataFrame | pl.LazyFrame) -> dict[str, Any]:
         """
         Validate generated features for quality issues.
 
@@ -376,7 +376,7 @@ class QualityFinancialFeaturesGeneratorPolars:
 
         return validation
 
-    def get_feature_importance_hints(self) -> Dict[str, float]:
+    def get_feature_importance_hints(self) -> dict[str, float]:
         """
         Provide hints about expected feature importance.
 

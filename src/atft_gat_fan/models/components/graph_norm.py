@@ -3,9 +3,9 @@
 Reference: https://arxiv.org/abs/2009.03294
 """
 
+
 import torch
 import torch.nn as nn
-from typing import Optional
 
 
 class GraphNorm(nn.Module):
@@ -45,8 +45,8 @@ class GraphNorm(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        batch: Optional[torch.Tensor] = None,
-        batch_size: Optional[int] = None,
+        batch: torch.Tensor | None = None,
+        batch_size: int | None = None,
     ) -> torch.Tensor:
         """Forward pass of GraphNorm.
 
@@ -72,8 +72,8 @@ class GraphNorm(nn.Module):
     def _graph_norm(
         self,
         x: torch.Tensor,
-        batch: Optional[torch.Tensor],
-        batch_size: Optional[int],
+        batch: torch.Tensor | None,
+        batch_size: int | None,
     ) -> torch.Tensor:
         """Graph normalization (default).
 
@@ -114,8 +114,8 @@ class GraphNorm(nn.Module):
     def _batch_norm(
         self,
         x: torch.Tensor,
-        batch: Optional[torch.Tensor],
-        batch_size: Optional[int],
+        batch: torch.Tensor | None,
+        batch_size: int | None,
     ) -> torch.Tensor:
         """Batch normalization across all nodes."""
         mean = x.mean(dim=0, keepdim=True)
@@ -145,8 +145,8 @@ class GraphNorm(nn.Module):
     def _instance_norm(
         self,
         x: torch.Tensor,
-        batch: Optional[torch.Tensor],
-        batch_size: Optional[int],
+        batch: torch.Tensor | None,
+        batch_size: int | None,
     ) -> torch.Tensor:
         """Instance normalization (normalize each node independently)."""
         # For GNNs, instance norm is equivalent to layer norm

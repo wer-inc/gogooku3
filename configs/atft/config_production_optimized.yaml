@@ -7,6 +7,8 @@ defaults:
   - model: atft_gat_fan  # 256 hidden_size version
   - train: production_improved
   - hardware: default
+  - features: features/manifest_389feat  # P0 Phase 3: 389 base features + 50 CS-Z = 454 columns
+  - gat: gat/default  # P0-3: GAT Gradient Flow
   - override hydra/hydra_logging: default
   - override hydra/job_logging: default
 
@@ -68,14 +70,14 @@ model:
   name: ATFT_GAT_FAN
   hidden_size: 256  # Increased from 64
 
-  # Input dimensions aligned with curated core50/plus30 bundles (83 columns incl. masks)
+  # Input dimensions updated for Phase 3 CS-Z dataset
   input_dims:
-    total_features: 83      # Updated 2025-10-27: curated feature bundles
+    total_features: 389     # P0 Phase 3: 389 base features (454 total with 50 CS-Z)
     historical_features: 0  # No historical features for now
 
     # Feature group breakdown (NOT USED - category split disabled)
     # Counts retained for documentation only; aggregation handled dynamically
-    basic_features: 83
+    basic_features: 389
     technical_features: 0
     ma_derived_features: 0
     returns_features: 0

@@ -8,19 +8,18 @@ selection. Designed to run offline against a Parquet/Polars DataFrame and
 emit a JSON list of selected column names for the training DataModule to use.
 """
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, Literal
-
 import json
 import logging
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import polars as pl
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import mutual_info_regression
 from sklearn.linear_model import LassoCV
-from sklearn.ensemble import RandomForestRegressor
-
 
 logger = logging.getLogger(__name__)
 

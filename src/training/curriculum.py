@@ -173,7 +173,7 @@ class CurriculumScheduler:
 
     def should_update_dataset(self, epoch: int) -> bool:
         """データセット更新が必要かチェック"""
-        current_phase = self.get_phase_config(epoch)
+        self.get_phase_config(epoch)
 
         # フェーズ切り替わりエポックで更新
         phase_starts = [phase.start_epoch for phase in self.phases]

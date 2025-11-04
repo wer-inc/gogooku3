@@ -157,12 +157,15 @@ class Settings:
 def _load_settings_from_env() -> Settings:
     model_path = resolve_artifact_path(
         os.environ.get("APEX_MODEL_PATH"),
-        ("models/apex_ranker_v0_enhanced.pt",),
+        (
+            "models/apex_ranker_v0_pruned.pt",
+            "output/models/apex_ranker_v0_pruned.pt",
+        ),
         kind="model checkpoint",
     )
     config_path = resolve_artifact_path(
         os.environ.get("APEX_CONFIG_PATH"),
-        ("models/apex_ranker/configs/v0_base.yaml",),
+        ("models/apex_ranker/configs/v0_pruned.yaml",),
         kind="training config",
     )
     data_path = resolve_dataset_path(

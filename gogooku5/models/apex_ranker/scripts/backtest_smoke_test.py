@@ -260,6 +260,10 @@ def run_backtest_smoke_test(
         current_frame = daily_frames.get(current_date)
         next_frame = daily_frames.get(next_date)
 
+        candidate_pool_size: int | None = None
+        k_over_n_value: float | None = None
+        fallback_used = False
+
         if current_frame is None or next_frame is None:
             continue
 
@@ -339,6 +343,7 @@ def run_backtest_smoke_test(
                                 )
                             else:
                                 filtered = filtered.head(pool_limit)
+                                candidate_pool_size = filtered.height
                                 predictions = {
                                     row["Code"]: float(row["Score"])
                                     for row in filtered.iter_rows(named=True)
@@ -394,6 +399,7 @@ def run_backtest_smoke_test(
 
                 if opt_result:
                     optimization_summary = opt_result.to_dict()
+                    fallback_used = "fallback_equal_weights" in opt_result.notes
 
                 if opt_weights:
                     target_weights = opt_weights
@@ -411,6 +417,10 @@ def run_backtest_smoke_test(
                     last_prediction_source = prediction_source
                     rebalance_count += 1
                     did_rebalance = True
+                    if candidate_pool_size:
+                        k_over_n_value = len(target_weights) / max(
+                            1, candidate_pool_size
+                        )
                 else:
                     predictions = last_predictions
             else:
@@ -447,6 +457,15 @@ def run_backtest_smoke_test(
         state["optimized_top_k"] = (
             len(target_weights) if target_weights else len(portfolio.positions)
         )
+        state["candidate_count"] = (
+            candidate_pool_size
+            if candidate_pool_size is not None
+            else len(active_predictions)
+        )
+        state["k_over_n"] = (
+            float(k_over_n_value) if k_over_n_value is not None else None
+        )
+        state["fallback_used"] = int(fallback_used)
         if target_weights:
             state["target_weights"] = {
                 code: float(weight) for code, weight in target_weights.items()
@@ -468,6 +487,23 @@ def run_backtest_smoke_test(
             str(last_rebalance_date) if last_rebalance_date else None
         )
         daily_results.append(state)
+
+        if did_rebalance:
+            selected_count = len(target_weights)
+            candidate_logged = (
+                candidate_pool_size
+                if candidate_pool_size is not None
+                else len(active_predictions)
+            )
+            ratio_display = k_over_n_value if k_over_n_value is not None else 0.0
+            print(
+                "[Backtest] "
+                f"{current_date}: rebalance "
+                f"selected={selected_count} "
+                f"candidate_pool={candidate_logged} "
+                f"k_over_n={ratio_display:.3f} "
+                f"fallback={int(fallback_used)}"
+            )
 
         if idx % 5 == 0:
             print(
@@ -732,7 +768,10 @@ def main() -> None:
     if args.model:
         model_path = resolve_artifact_path(
             args.model,
-            ("output/models/apex_ranker_v0_enhanced.pt",),
+            (
+                "models/apex_ranker_v0_pruned.pt",
+                "output/models/apex_ranker_v0_pruned.pt",
+            ),
             kind="model checkpoint",
             extra_bases=[config_path.parent] if config_path else None,
         )

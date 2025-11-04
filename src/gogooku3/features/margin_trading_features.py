@@ -12,7 +12,7 @@ Extracts advanced margin trading signals:
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import polars as pl
 
@@ -42,9 +42,9 @@ class EnhancedMarginTradingExtractor:
     def extract_features(
         self,
         df_base: pl.DataFrame,
-        df_margin_daily: Optional[pl.DataFrame] = None,
-        df_margin_weekly: Optional[pl.DataFrame] = None,
-        df_listed: Optional[pl.DataFrame] = None,
+        df_margin_daily: pl.DataFrame | None = None,
+        df_margin_weekly: pl.DataFrame | None = None,
+        df_listed: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Extract enhanced margin trading features.
 
@@ -88,7 +88,7 @@ class EnhancedMarginTradingExtractor:
         self,
         df_base: pl.DataFrame,
         df_margin: pl.DataFrame,
-        df_listed: Optional[pl.DataFrame] = None,
+        df_listed: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Process daily margin data for feature extraction.
 
@@ -416,7 +416,7 @@ def add_enhanced_margin_features(
 
     # Run async fetch
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         try:
             import nest_asyncio  # type: ignore
 

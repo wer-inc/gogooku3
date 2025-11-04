@@ -15,7 +15,6 @@ import numpy as np
 import polars as pl
 import torch
 import torch.nn as nn
-from typing import Dict, List, Optional, Tuple
 
 
 class JUVXCalculator:
@@ -279,7 +278,7 @@ class AdaptiveMovingAverageCalculator:
 
         return pl.Series(kama, name="kama")
 
-    def calculate_vidya(self, prices: pl.Series, volumes: Optional[pl.Series] = None) -> pl.Series:
+    def calculate_vidya(self, prices: pl.Series, volumes: pl.Series | None = None) -> pl.Series:
         """Variable Index Dynamic Average"""
 
         price_array = prices.to_numpy()
@@ -287,11 +286,10 @@ class AdaptiveMovingAverageCalculator:
 
         # Use volume if available, otherwise use price volatility as proxy
         if volumes is not None:
-            vol_array = volumes.to_numpy()
+            volumes.to_numpy()
         else:
             # Use price change volatility as volume proxy
-            returns = np.abs(np.diff(price_array, prepend=price_array[0]))
-            vol_array = returns
+            np.abs(np.diff(price_array, prepend=price_array[0]))
 
         # Calculate Chande Momentum Oscillator (CMO) as volatility index
         cmo = np.zeros(n)
@@ -374,9 +372,9 @@ class RegimeFeatureExtractor(nn.Module):
     """Complete Regime Feature Extractor for MoE Gate Enhancement"""
 
     def __init__(self,
-                 juvx_config: Optional[Dict] = None,
-                 kama_config: Optional[Dict] = None,
-                 regime_config: Optional[Dict] = None):
+                 juvx_config: dict | None = None,
+                 kama_config: dict | None = None,
+                 regime_config: dict | None = None):
         super().__init__()
 
         # Feature calculators
@@ -391,7 +389,7 @@ class RegimeFeatureExtractor(nn.Module):
 
         self.all_regime_features = self.juvx_features + self.ama_features + self.regime_features
 
-    def extract_regime_features(self, market_data: pl.DataFrame) -> Tuple[pl.DataFrame, List[str]]:
+    def extract_regime_features(self, market_data: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
         """Extract all regime features from market data"""
 
         # 1. Calculate J-UVX features
@@ -426,7 +424,7 @@ class RegimeFeatureExtractor(nn.Module):
         return regime_features
 
 
-def create_regime_features_from_data(market_data: pl.DataFrame) -> Tuple[torch.Tensor, List[str]]:
+def create_regime_features_from_data(market_data: pl.DataFrame) -> tuple[torch.Tensor, list[str]]:
     """Convenience function to create regime features for MoE gating"""
 
     extractor = RegimeFeatureExtractor()

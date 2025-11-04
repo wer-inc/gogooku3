@@ -18,15 +18,15 @@ Usage:
 
 import argparse
 import logging
-from pathlib import Path
-import time
-from typing import Dict, Any, List, Optional, Union
 import sys
+import time
+from pathlib import Path
+from typing import Any
 
+import numpy as np
+import polars as pl
 import torch
 import torch.nn as nn
-import polars as pl
-import numpy as np
 from tqdm import tqdm
 
 # Setup logging
@@ -34,7 +34,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def load_model(model_path: Union[str, Path]) -> nn.Module:
+def load_model(model_path: str | Path) -> nn.Module:
     """Load pre-trained model from checkpoint"""
     try:
         model_path = Path(model_path)
@@ -78,7 +78,7 @@ def load_model(model_path: Union[str, Path]) -> nn.Module:
         raise
 
 
-def load_data(input_path: Union[str, Path]) -> pl.DataFrame:
+def load_data(input_path: str | Path) -> pl.DataFrame:
     """Load input data for inference"""
     try:
         input_path = Path(input_path)
@@ -102,7 +102,7 @@ def load_data(input_path: Union[str, Path]) -> pl.DataFrame:
         raise
 
 
-def prepare_batch(df: pl.DataFrame, start_idx: int, batch_size: int) -> Dict[str, torch.Tensor]:
+def prepare_batch(df: pl.DataFrame, start_idx: int, batch_size: int) -> dict[str, torch.Tensor]:
     """Prepare batch for model inference"""
     end_idx = min(start_idx + batch_size, len(df))
     batch_df = df[start_idx:end_idx]
@@ -133,7 +133,7 @@ def prepare_batch(df: pl.DataFrame, start_idx: int, batch_size: int) -> Dict[str
     return batch
 
 
-def save_predictions(predictions: List[Dict[str, Any]], output_path: Union[str, Path]):
+def save_predictions(predictions: list[dict[str, Any]], output_path: str | Path):
     """Save predictions to file"""
     try:
         output_path = Path(output_path)
@@ -191,14 +191,14 @@ def save_predictions(predictions: List[Dict[str, Any]], output_path: Union[str, 
 
 
 def run_tent_inference(
-    model_path: Union[str, Path],
-    input_path: Union[str, Path],
-    output_path: Union[str, Path],
+    model_path: str | Path,
+    input_path: str | Path,
+    output_path: str | Path,
     tent_steps: int = 3,
     tent_lr: float = 1e-4,
     batch_size: int = 32,
     **tent_kwargs
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run TENT inference on input data
 

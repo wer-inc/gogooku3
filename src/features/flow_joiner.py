@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def normalize_section_name(name: str) -> str:
     """市場再編を跨ぐ名称ゆらぎを正規化。
-    
+
     trades_specデータのSection名を統一形式に変換。
     旧市場名は使用時期に応じて適切に扱う必要がある。
     """
@@ -96,11 +96,11 @@ def build_flow_intervals(
 ) -> pl.DataFrame:
     """
     trades_spec → 有効区間テーブル
-    
+
     Args:
         trades_spec: 投資部門別売買データ（PublishedDate, Section必須）
         next_bd: 翌営業日を返す関数
-        
+
     Returns:
         section, effective_start, effective_end を含むDataFrame
     """
@@ -152,10 +152,10 @@ def build_flow_intervals(
 def add_flow_features(flow_intervals: pl.DataFrame) -> pl.DataFrame:
     """
     フロー特徴量の生成（コア8列）
-    
+
     Args:
         flow_intervals: effective_start/endを含む区間データ
-        
+
     Returns:
         フロー特徴量を追加したDataFrame
     """
@@ -271,11 +271,11 @@ def expand_flow_daily(
     """
     P0-2: 区間データを日次データに展開（as-of結合で最適化）
     O(n²) cross join → O(n log n) as-of join
-    
+
     Args:
         flow_feat: 区間ベースのフロー特徴量
         business_days: 営業日リスト
-        
+
     Returns:
         日次展開されたフロー特徴量
     """
@@ -341,12 +341,12 @@ def attach_flow_to_quotes(
 ) -> pl.DataFrame:
     """
     価格データにフロー特徴量を結合（Section一致）
-    
+
     Args:
         quotes_sec: Section列を持つ価格データ
         flow_daily: 日次展開されたフロー特徴量
         section_col: quotes_sec内のSection列名
-        
+
     Returns:
         フロー特徴量を結合した価格データ
     """
@@ -425,13 +425,13 @@ def attach_flow_with_fallback(
 ) -> pl.DataFrame:
     """
     Section不明の銘柄にフォールバック処理を適用して結合
-    
+
     Args:
         quotes: 価格データ
         flow_daily: 日次フロー特徴量
         section_mapper: SectionMapper インスタンス
         fallback_section: フォールバック用のSection名
-        
+
     Returns:
         フロー特徴量を結合した価格データ（フォールバック済み）
     """

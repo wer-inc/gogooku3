@@ -18,7 +18,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import polars as pl
@@ -357,14 +357,13 @@ class SafeTrainingPipeline:
             ewm_halflife = int(os.getenv("EWM_HALFLIFE", "20"))
             shrink_gamma = float(os.getenv("SHRINKAGE_GAMMA", "0.05"))
             k_per_node = int(os.getenv("GRAPH_K", "10"))
-            corr_thr = float(os.getenv("GRAPH_EDGE_THR", "0.3"))
+            float(os.getenv("GRAPH_EDGE_THR", "0.3"))
             symmetric = os.getenv("GRAPH_SYMMETRIC", "1") in ("1", "true", "True")
         except Exception:
             corr_method = "ewm_demean"
             ewm_halflife = 20
             shrink_gamma = 0.05
             k_per_node = 10
-            corr_thr = 0.3
             symmetric = True
 
         graph_builder = FinancialGraphBuilder(

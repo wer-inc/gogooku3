@@ -7,11 +7,11 @@ Available loss functions:
 - HuberMultiHorizon: Smooth L1 (Huber) loss per horizon with optional volatility scaling (legacy)
 """
 
-from .rank_preserving_loss import MultiHorizonRankPreservingLoss, RankPreservingLoss
-
 # Import legacy HuberMultiHorizon from parent losses.py for backward compatibility
 import importlib.util
 from pathlib import Path
+
+from .rank_preserving_loss import MultiHorizonRankPreservingLoss, RankPreservingLoss
 
 _legacy_losses_path = Path(__file__).parent.parent / "losses.py"
 _spec = importlib.util.spec_from_file_location("gogooku3.training.losses_legacy", _legacy_losses_path)

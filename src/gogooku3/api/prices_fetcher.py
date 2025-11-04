@@ -7,7 +7,6 @@ Extracted from legacy JQuantsAsyncFetcher for better separation of concerns.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import aiohttp
 import polars as pl

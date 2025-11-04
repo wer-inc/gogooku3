@@ -28,12 +28,12 @@ class LeakDetector:
     ) -> dict[str, bool]:
         """
         全てのリーク検査を実行
-        
+
         Args:
             df: 検査対象のデータフレーム
             date_col: 日付列名
             verbose: 詳細ログを出力するか
-        
+
         Returns:
             検査結果の辞書
         """
@@ -84,7 +84,7 @@ class LeakDetector:
     ) -> bool:
         """
         財務諸表データのリークチェック
-        
+
         Returns:
             リークがない場合True
         """
@@ -128,7 +128,7 @@ class LeakDetector:
     ) -> bool:
         """
         フローデータのリークチェック
-        
+
         Returns:
             リークがない場合True
         """
@@ -174,7 +174,7 @@ class LeakDetector:
     ) -> bool:
         """
         TOPIXデータのリークチェック
-        
+
         Returns:
             リークがない場合True
         """
@@ -215,7 +215,7 @@ class LeakDetector:
     ) -> bool:
         """
         ターゲット変数のリークチェック
-        
+
         Returns:
             リークがない場合True
         """
@@ -255,7 +255,7 @@ class LeakDetector:
     ) -> bool:
         """
         一般的なリークパターンのチェック
-        
+
         Returns:
             リークがない場合True
         """
@@ -304,13 +304,13 @@ class LeakDetector:
     ) -> bool:
         """
         訓練データとテストデータの時間的重複をチェック
-        
+
         Args:
             train_df: 訓練データ
             test_df: テストデータ
             date_col: 日付列名
             embargo_days: エンバーゴ期間（日数）
-        
+
         Returns:
             重複がない場合True
         """
@@ -341,11 +341,11 @@ class LeakDetector:
     ) -> str:
         """
         詳細なリークレポートを生成
-        
+
         Args:
             df: 検査対象データ
             output_path: レポートの保存先（省略時は文字列で返す）
-        
+
         Returns:
             レポート文字列
         """

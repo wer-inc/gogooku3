@@ -37,6 +37,7 @@ from ..features.utils import (
     add_asof_timestamp,
     apply_adv_filter,
     compute_adv60_from_raw,
+    ensure_sector_dimensions,
     get_raw_quotes_paths,
     interval_join_pl,
     prepare_snapshot_pl,
@@ -268,7 +269,13 @@ class DatasetBuilder:
         finalized = self._finalize_for_output(enriched_df)
         artifact = self._persist_dataset(finalized, start=start_out, end=end_out)
         self.storage.ensure_remote_symlink(target=str(artifact.latest_symlink))
-        return artifact.latest_symlink
+
+        # BATCH-2B Safety: Return actual parquet if symlink not created (test mode)
+        if artifact.latest_symlink.exists() or artifact.latest_symlink.is_symlink():
+            return artifact.latest_symlink
+        else:
+            LOGGER.info("Latest symlink not created (safety gate). Returning parquet_path instead.")
+            return artifact.parquet_path
 
     def _fetch_quotes(self, codes: Iterable[str], *, start: str, end: str) -> List[dict[str, str]]:
         codes_list = list(codes)
@@ -487,6 +494,9 @@ class DatasetBuilder:
 
         # Join quotes with listed metadata
         aligned = quotes.join(listed.select(["code", "sector_code_listed", "market_code"]), on="code", how="left")
+
+        # BATCH-2B: Ensure sector dimensions for sector_short_selling_ratio (#12)
+        aligned = ensure_sector_dimensions(aligned)
 
         # Fill missing sector_code from listed or use UNKNOWN
         if "sector_code" in aligned.columns:

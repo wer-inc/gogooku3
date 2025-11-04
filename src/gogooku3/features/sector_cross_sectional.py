@@ -163,7 +163,7 @@ def add_sector_cross_sectional_features(
         ])
 
     # Cleanup temp columns
-    out = out.drop([c for c in out.columns if c.startswith("_sec_mean_") or c.startswith("_sec_std_") or c == "_vol_rank"]) 
+    out = out.drop([c for c in out.columns if c.startswith("_sec_mean_") or c.startswith("_sec_std_") or c == "_vol_rank"])
 
     # Generic sector-relative for additional numeric columns (if present)
     # Compute diff and z for a shortlist of candidates not already handled

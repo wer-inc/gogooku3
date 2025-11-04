@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class CodeNormalizer:
     """
     銘柄コードの正規化処理
-    
+
     J-Quants APIのエンドポイント間で異なる表記を統一:
     - Code vs LocalCode
     - 4桁 vs 5桁（末尾0）
@@ -36,13 +36,13 @@ class CodeNormalizer:
     def normalize_code(code: str | int | None) -> str | None:
         """
         単一の銘柄コードを正規化
-        
+
         Args:
             code: 銘柄コード（文字列または数値）
-        
+
         Returns:
             正規化された4桁の銘柄コード文字列
-        
+
         Examples:
             >>> normalize_code("1301")
             "1301"
@@ -102,12 +102,12 @@ class CodeNormalizer:
     ) -> pl.DataFrame:
         """
         DataFrameの銘柄コード列を正規化
-        
+
         Args:
             df: 対象のDataFrame
             code_columns: 正規化する列名のリスト（Noneの場合は自動検出）
             target_column: 正規化後の列名
-        
+
         Returns:
             正規化されたDataFrame
         """
@@ -159,11 +159,11 @@ class CodeNormalizer:
     ) -> dict:
         """
         正規化の検証とレポート
-        
+
         Args:
             df: 検証対象のDataFrame
             code_column: 銘柄コード列名
-        
+
         Returns:
             検証結果の辞書
         """
@@ -228,7 +228,7 @@ class CodeNormalizer:
     ) -> pl.DataFrame:
         """
         正規化を適用してから結合
-        
+
         Args:
             left_df: 左側のDataFrame
             right_df: 右側のDataFrame
@@ -236,7 +236,7 @@ class CodeNormalizer:
             right_code_col: 右側の銘柄コード列名
             on_date: Date列でも結合するか
             how: 結合方法
-        
+
         Returns:
             結合されたDataFrame
         """
@@ -291,10 +291,10 @@ def apply_code_normalization_to_all_sources(
 ) -> dict:
     """
     全データソースにCode正規化を適用
-    
+
     Args:
         各データソースのDataFrame（省略可）
-    
+
     Returns:
         正規化されたDataFrameの辞書
     """

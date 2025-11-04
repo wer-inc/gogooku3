@@ -11,7 +11,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +94,8 @@ def validate_gcs_credentials() -> bool:
 
 def upload_to_gcs(
     local_path: Path | str,
-    gcs_path: Optional[str] = None,
-    bucket: Optional[str] = None,
+    gcs_path: str | None = None,
+    bucket: str | None = None,
 ) -> bool:
     """Upload a local file to Google Cloud Storage.
 
@@ -148,9 +147,9 @@ def upload_to_gcs(
 
 def download_from_gcs(
     gcs_path: str,
-    local_path: Optional[Path | str] = None,
-    bucket: Optional[str] = None,
-) -> Optional[Path]:
+    local_path: Path | str | None = None,
+    bucket: str | None = None,
+) -> Path | None:
     """Download a file from GCS to local storage.
 
     Args:
@@ -196,9 +195,9 @@ def download_from_gcs(
 
 def sync_directory_to_gcs(
     local_dir: Path | str,
-    gcs_prefix: Optional[str] = None,
-    bucket: Optional[str] = None,
-    exclude_patterns: Optional[list[str]] = None,
+    gcs_prefix: str | None = None,
+    bucket: str | None = None,
+    exclude_patterns: list[str] | None = None,
 ) -> tuple[int, int]:
     """Sync entire local directory to GCS.
 
@@ -258,7 +257,7 @@ def sync_directory_to_gcs(
 
 def list_gcs_files(
     prefix: str = "",
-    bucket: Optional[str] = None,
+    bucket: str | None = None,
 ) -> list[str]:
     """List files in GCS bucket with optional prefix filter.
 
@@ -292,8 +291,8 @@ def list_gcs_files(
 
 def find_latest_in_gcs(
     pattern: str,
-    bucket: Optional[str] = None,
-) -> Optional[str]:
+    bucket: str | None = None,
+) -> str | None:
     """Find the latest file matching pattern in GCS (by lexicographic sort).
 
     Args:
@@ -333,7 +332,7 @@ def find_latest_in_gcs(
 def save_parquet_with_gcs(
     df,  # pl.DataFrame or pd.DataFrame
     local_path: Path | str,
-    gcs_path: Optional[str] = None,
+    gcs_path: str | None = None,
     auto_sync: bool = True,
 ) -> Path:
     """Save parquet file locally and optionally upload to GCS.

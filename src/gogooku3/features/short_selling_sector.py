@@ -34,9 +34,7 @@ References:
 - セクター集計 → 個別銘柄as-of配布でリーク防止
 """
 
-import datetime as _dt
 from collections.abc import Callable
-from typing import Optional
 
 import polars as pl
 
@@ -59,7 +57,7 @@ def _next_business_day_jp(date_col: pl.Expr) -> pl.Expr:
 
 def build_sector_short_features(
     ss_df: pl.DataFrame,
-    calendar_next_bday: Optional[Callable[[pl.Expr], pl.Expr]] = None,
+    calendar_next_bday: Callable[[pl.Expr], pl.Expr] | None = None,
     enable_z_scores: bool = True
 ) -> pl.DataFrame:
     """
@@ -201,7 +199,7 @@ def build_sector_short_features(
 def attach_sector_short_to_quotes(
     quotes: pl.DataFrame,
     sector_feats: pl.DataFrame,
-    sector_map: Optional[pl.DataFrame] = None
+    sector_map: pl.DataFrame | None = None
 ) -> pl.DataFrame:
     """
     Attach sector short selling features to individual quotes via as-of join.
@@ -285,12 +283,12 @@ def attach_sector_short_to_quotes(
 
 def add_sector_short_selling_block(
     quotes: pl.DataFrame,
-    ss_df: Optional[pl.DataFrame],
-    listed_info_df: Optional[pl.DataFrame] = None,
+    ss_df: pl.DataFrame | None,
+    listed_info_df: pl.DataFrame | None = None,
     *,
     enable_z_scores: bool = True,
     enable_relative_features: bool = True,
-    calendar_next_bday: Optional[Callable[[pl.Expr], pl.Expr]] = None,
+    calendar_next_bday: Callable[[pl.Expr], pl.Expr] | None = None,
 ) -> pl.DataFrame:
     """
     Complete sector short selling features integration pipeline.

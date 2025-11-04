@@ -8,13 +8,12 @@ regularizers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
 
 import torch
 import torch.nn as nn
 
 
-def quantiles_to_ms(q: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def quantiles_to_ms(q: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Convert quantile outputs [B, n_quantiles] to expectation (m) and scale (s).
 
     Uses endpoints as an uncertainty proxy: m ≈ 0.5*(q_low+q_high), s ≈ 0.5*(q_high-q_low).
@@ -79,7 +78,7 @@ class DecisionLayer(nn.Module):
         super().__init__()
         self.cfg = cfg
 
-    def forward(self, q: torch.Tensor, y: torch.Tensor) -> Tuple[torch.Tensor, dict]:
+    def forward(self, q: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, dict]:
         """
         Args:
             q: [B, n_quantiles] (sorted or not)

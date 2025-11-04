@@ -217,7 +217,14 @@ class TechnicalFeatureEngineer:
                 )
 
             # Phase 2: try multiple column names for returns
-            returns_1d = g.get("ret_prev_1d") or g.get("returns_1d") or g.get("log_returns_1d")
+            returns_1d = None
+            if "ret_prev_1d" in g.keys():
+                returns_1d = g.get("ret_prev_1d")
+            elif "returns_1d" in g.keys():
+                returns_1d = g.get("returns_1d")
+            elif "log_returns_1d" in g.keys():
+                returns_1d = g.get("log_returns_1d")
+
             if returns_1d is not None:
                 for window, name in (
                     (5, "volatility_5d"),

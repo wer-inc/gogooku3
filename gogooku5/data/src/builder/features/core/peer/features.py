@@ -48,28 +48,49 @@ class PeerFeatureEngineer:
 
             out = out.with_columns(
                 [
-                    pl.col(column).mean().over(group_keys).alias(f"__{column}_group_mean"),
-                    pl.col(column).std().over(group_keys).alias(f"__{column}_group_std"),
+                    pl.col(column).sum().over(group_keys).alias(f"__{column}_group_sum"),
+                    (pl.col(column) ** 2).sum().over(group_keys).alias(f"__{column}_group_sq_sum"),
                 ]
             )
 
-            # Exclude self from peer statistics
-            denominator = pl.when(pl.col("_peer_count") > 1).then(pl.col("_peer_count") - 1).otherwise(1)
+            peer_count = pl.col("_peer_count") - 1
+            peer_sum = pl.col(f"__{column}_group_sum") - pl.col(column)
+            peer_sq_sum = pl.col(f"__{column}_group_sq_sum") - (pl.col(column) ** 2)
+
+            # Exclude self from peer statistics; require at least one peer
             out = out.with_columns(
                 [
-                    ((pl.col(f"__{column}_group_mean") * pl.col("_peer_count") - pl.col(column)) / denominator).alias(
-                        mean_col
-                    ),
-                    (pl.when(pl.col("_peer_count") > 1).then(pl.col(f"__{column}_group_std")).otherwise(None)).alias(
-                        std_col
-                    ),
+                    pl.when(peer_count > 0).then(peer_sum / peer_count).otherwise(None).alias(mean_col),
                 ]
+            )
+            variance = (
+                pl.when(peer_count > 1)
+                .then((peer_sq_sum - (peer_sum * peer_sum) / peer_count) / (peer_count - 1 + EPS))
+                .otherwise(None)
+            )
+            out = out.with_columns(variance.alias(f"__{column}_peer_var"))
+            out = out.with_columns(
+                pl.when(pl.col(f"__{column}_peer_var").is_not_null())
+                .then(
+                    pl.when(pl.col(f"__{column}_peer_var") < 0.0)
+                    .then(0.0)
+                    .otherwise(pl.col(f"__{column}_peer_var"))
+                    .sqrt()
+                )
+                .otherwise(None)
+                .alias(std_col)
             )
 
             out = out.with_columns(
                 [
-                    (pl.col(column) - pl.col(mean_col)).alias(diff_col),
-                    (pl.col(column) / (pl.col(mean_col) + EPS)).alias(ratio_col),
+                    pl.when(pl.col(mean_col).is_not_null())
+                    .then(pl.col(column) - pl.col(mean_col))
+                    .otherwise(None)
+                    .alias(diff_col),
+                    pl.when(pl.col(mean_col).abs() > EPS)
+                    .then(pl.col(column) / pl.col(mean_col))
+                    .otherwise(None)
+                    .alias(ratio_col),
                 ]
             )
 

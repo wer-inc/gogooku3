@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 class LightGBMFinancialBaseline:
     """
     LightGBM金融ベースライン
-    
+
     特徴:
     - 多ホライズン回帰（1/5/10/20日）
     - 安全なWalk-Forward検証
@@ -201,7 +201,7 @@ class LightGBMFinancialBaseline:
     def fit(self, data: pd.DataFrame | pl.DataFrame) -> LightGBMFinancialBaseline:
         """
         Walk-Forward検証でモデルを学習
-        
+
         Args:
             data: 学習データ
         """

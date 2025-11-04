@@ -7,8 +7,8 @@ Loads a trained model and generates stock rankings for a given date.
 
 Usage:
     python scripts/inference_v0.py \\
-        --model models/apex_ranker_v0_enhanced.pt \\
-        --config configs/v0_base.yaml \\
+        --model models/apex_ranker_v0_pruned.pt \\
+        --config configs/v0_pruned.yaml \\
         --date 2025-10-29 \\
         --output predictions_20251029.csv
 
@@ -114,7 +114,10 @@ def load_model_checkpoint(
     config_dir = Path(config["_config_dir"])
     model_path = resolve_artifact_path(
         model_path,
-        ("models/apex_ranker_v0_enhanced.pt",),
+        (
+            "models/apex_ranker_v0_pruned.pt",
+            "output/models/apex_ranker_v0_pruned.pt",
+        ),
         kind="model checkpoint",
         extra_bases=[config_dir],
     )

@@ -1,4 +1,4 @@
-.PHONY: help build build-optimized test lint format clean
+.PHONY: help build build-optimized test lint format clean quick-validate
 
 START ?= $(shell date -u -d '30 days ago' +%F)
 END ?= $(shell date -u +%F)
@@ -52,3 +52,8 @@ clean-cache:
 
 check-env:
 	@test -f .env || (echo ".env missing. Copy from .env.example" && exit 1)
+
+quick-validate:
+	@echo "🔍 Running Phase 2 acceptance gate..."
+	@python /tmp/phase2_dataset_accept.py || (echo "❌ ACCEPTANCE FAILED -> see /tmp/phase2_dataset_accept_report.json"; exit 1)
+	@echo "✅ Validation passed"

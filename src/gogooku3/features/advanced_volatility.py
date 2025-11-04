@@ -9,8 +9,8 @@ Implements leak-safety by shifting EOD features to the next business day
 using the equity panel's unique business dates (no external calendar required).
 """
 
-from math import sqrt, log
-from typing import Iterable
+from collections.abc import Iterable
+from math import log, sqrt
 
 import polars as pl
 

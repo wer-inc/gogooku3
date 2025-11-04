@@ -7,14 +7,15 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any
+
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Optimizer
-from torch.cuda.amp import GradScaler, autocast
-from torch.utils.data import DataLoader
-import numpy as np
 from omegaconf import DictConfig
+from torch.cuda.amp import GradScaler, autocast
+from torch.optim import Optimizer
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class ATFTTrainer:
         model: nn.Module,
         config: DictConfig,
         device: torch.device,
-        output_dir: Optional[Path] = None,
+        output_dir: Path | None = None,
     ):
         """
         Initialize the trainer.
@@ -115,7 +116,7 @@ class ATFTTrainer:
 
         return optimizer
 
-    def _get_parameter_groups(self) -> List[Dict]:
+    def _get_parameter_groups(self) -> list[dict]:
         """Get parameter groups for optimizer."""
         # Simple version - can be extended for layer-wise learning rates
         return [{"params": self.model.parameters()}]
@@ -171,9 +172,9 @@ class ATFTTrainer:
     def train(
         self,
         train_loader: DataLoader,
-        val_loader: Optional[DataLoader] = None,
-        max_epochs: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        val_loader: DataLoader | None = None,
+        max_epochs: int | None = None,
+    ) -> dict[str, Any]:
         """
         Main training loop.
 
@@ -230,7 +231,7 @@ class ATFTTrainer:
         # Final summary
         return self._create_training_summary()
 
-    def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]:
+    def train_epoch(self, dataloader: DataLoader) -> dict[str, float]:
         """Train for one epoch."""
         self.model.train()
         epoch_losses = []
@@ -306,7 +307,7 @@ class ATFTTrainer:
 
         return epoch_metrics
 
-    def validate(self, dataloader: DataLoader) -> Dict[str, float]:
+    def validate(self, dataloader: DataLoader) -> dict[str, float]:
         """Validate the model."""
         self.model.eval()
         val_losses = []
@@ -429,8 +430,8 @@ class ATFTTrainer:
     def _log_epoch_summary(
         self,
         epoch: int,
-        train_metrics: Dict[str, float],
-        val_metrics: Optional[Dict[str, float]],
+        train_metrics: dict[str, float],
+        val_metrics: dict[str, float] | None,
     ) -> None:
         """Log epoch summary."""
         summary = f"Epoch {epoch}: Train Loss={train_metrics['loss']:.4f}"
@@ -443,7 +444,7 @@ class ATFTTrainer:
 
         logger.info(summary)
 
-    def _create_training_summary(self) -> Dict[str, Any]:
+    def _create_training_summary(self) -> dict[str, Any]:
         """Create training summary."""
         summary = {
             "total_epochs": self.current_epoch + 1,

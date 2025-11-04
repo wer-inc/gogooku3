@@ -4,14 +4,19 @@ Complete ATFT-GAT-FAN Training Pipeline for gogooku3
 ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する統合学習パイプライン
 """
 
-# CRITICAL: Safe mode thread limiting MUST happen before importing torch
-# Otherwise PyTorch will already have spawned 128 threads causing deadlock with Parquet I/O
+# CRITICAL: Thread control and multiprocessing setup MUST happen before importing torch
+# P0-5: Unified thread management via bootstrap_threads
 import os
+import sys
+from pathlib import Path
+
+# プロジェクトルートをパスに追加（bootstrap_threadsのimportのため）
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # Load environment variables from .env file (must be done before any os.environ access)
-from pathlib import Path as _TempPath
-
-_env_file = _TempPath(__file__).resolve().parents[1] / ".env"
+_env_file = project_root / ".env"
 if _env_file.exists():
     with open(_env_file) as _f:
         for _line in _f:
@@ -22,31 +27,28 @@ if _env_file.exists():
                 _val = _val.split("#")[0].strip()  # Remove inline comments
                 if _key and _val and _key not in os.environ:
                     os.environ[_key] = _val
-del _TempPath, _env_file
 
-if os.getenv("FORCE_SINGLE_PROCESS", "0") == "1":
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    os.environ["NUMEXPR_NUM_THREADS"] = "1"
-    os.environ["POLARS_MAX_THREADS"] = "1"
-    # Note: torch.set_num_threads(1) will still be called in data_module.py as backup
+# ---- P0-5: 必ず torch より前にスレッド制御とspawn設定 ----
+import scripts.bootstrap_threads as boot
+
+boot.set_spawn_start_method()
 
 import asyncio
 import hashlib
 import json
 import logging
 import subprocess
-import sys
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import polars as pl
 import torch
 import yaml
+
+# torch import後にスレッド設定
+boot.configure_torch_threads()
 
 # パスを追加（repo root と src を import path へ）
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1057,17 +1059,25 @@ class CompleteATFTTrainingPipeline:
                 if "train.trainer.enable_progress_bar" not in cli_override_keys:
                     overrides.append("train.trainer.enable_progress_bar=true")
 
-                # 特徴量次元の整合性（カスタムfeature groupsと同期）
-                if "model.input_dims.total_features" not in cli_override_keys:
-                    overrides.append(
-                        f"model.input_dims.total_features={self.atft_settings['input_dim']}"
-                    )
-                if "model.input_dims.historical_features" not in cli_override_keys:
-                    overrides.append("model.input_dims.historical_features=0")
-                if "model.input_dims.basic_features" not in cli_override_keys:
-                    overrides.append(
-                        f"model.input_dims.basic_features={self.atft_settings['input_dim']}"
-                    )
+                # 🔧 FIX (2025-11-03): Disable automatic feature count override
+                # ISSUE: Curated feature count (82) != actual DataLoader output (437)
+                #        - Parquet file: 390 features
+                #        - DataLoader adds 47 dynamic features → 437 total
+                #        - Auto-override causes checkpoint incompatibility
+                # SOLUTION: Let config file control feature count (now set to 437)
+                # NOTE: If re-enabling, update curated logic to match actual DataLoader behavior
+                #
+                # # 特徴量次元の整合性（カスタムfeature groupsと同期）
+                # if "model.input_dims.total_features" not in cli_override_keys:
+                #     overrides.append(
+                #         f"model.input_dims.total_features={self.atft_settings['input_dim']}"
+                #     )
+                # if "model.input_dims.historical_features" not in cli_override_keys:
+                #     overrides.append("model.input_dims.historical_features=0")
+                # if "model.input_dims.basic_features" not in cli_override_keys:
+                #     overrides.append(
+                #         f"model.input_dims.basic_features={self.atft_settings['input_dim']}"
+                #     )
 
                 # Respect ALLOW_UNSAFE_DATALOADER environment variable for multi-worker DataLoader
                 # If ALLOW_UNSAFE_DATALOADER=1, use NUM_WORKERS from environment (default behavior)

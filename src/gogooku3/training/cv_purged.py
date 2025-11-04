@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence, Tuple
 
 import numpy as np
 
@@ -17,7 +17,7 @@ def purged_kfold_indices(
     *,
     n_splits: int = 5,
     embargo_days: int = 20,
-) -> List[Fold]:
+) -> list[Fold]:
     """Time-ordered KFold with an embargo around validation windows.
 
     Parameters
@@ -33,7 +33,7 @@ def purged_kfold_indices(
     d_ord = np.array(dates, dtype="datetime64[D]").astype("datetime64[D]")
     unique_days = np.unique(d_ord)
     splits = np.array_split(unique_days, n_splits)
-    folds: List[Fold] = []
+    folds: list[Fold] = []
     for val_days in splits:
         if val_days.size == 0:
             continue
