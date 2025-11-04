@@ -185,12 +185,8 @@ class WalkForwardSplitter:
             (train_data, val_data) DataFrames
         """
         # Convert to polars date format if needed
-        train_mask = (pl.col(date_col) >= split.train_start) & (
-            pl.col(date_col) <= split.train_end
-        )
-        val_mask = (pl.col(date_col) >= split.val_start) & (
-            pl.col(date_col) <= split.val_end
-        )
+        train_mask = (pl.col(date_col) >= split.train_start) & (pl.col(date_col) <= split.train_end)
+        val_mask = (pl.col(date_col) >= split.val_start) & (pl.col(date_col) <= split.val_end)
 
         train_data = dataset.filter(train_mask)
         val_data = dataset.filter(val_mask)
@@ -210,9 +206,7 @@ class WalkForwardSplitter:
         if not splits:
             return {"num_splits": 0}
 
-        train_sizes = [
-            (split.train_end - split.train_start).days + 1 for split in splits
-        ]
+        train_sizes = [(split.train_end - split.train_start).days + 1 for split in splits]
         val_sizes = [(split.val_end - split.val_start).days + 1 for split in splits]
 
         return {
@@ -277,3 +271,100 @@ def generate_splits_for_backtest(
     )
 
     return splitter.split_from_dataset(dataset, start_date=start, end_date=end)
+
+
+@dataclass(frozen=True)
+class PurgeParams:
+    """Bundle of lookback / horizon / embargo days used to compute purge gaps."""
+
+    lookback_days: int
+    max_horizon_days: int
+    embargo_days: int = 0
+
+    @property
+    def purge_days(self) -> int:
+        """Total trading-day purge applied around each test block."""
+        return int(self.lookback_days + self.max_horizon_days + self.embargo_days)
+
+
+class PurgedKFoldSplitter:
+    """
+    Time-ordered K-fold splitter with purge + embargo.
+
+    The positional gap between any training day and any validation day is at least
+    ``lookback + max_horizon + embargo`` trading days, eliminating feature/label
+    leakage when using rolling windows.
+    """
+
+    def __init__(
+        self,
+        *,
+        n_splits: int,
+        params: PurgeParams,
+        min_train_size: int = 60,
+    ) -> None:
+        if n_splits < 2:
+            raise ValueError("n_splits must be >= 2 for PurgedKFoldSplitter")
+        self.n_splits = int(n_splits)
+        self.params = params
+        self.min_train_size = int(min_train_size)
+
+    def split(
+        self,
+        days: np.ndarray | list[int] | list[Date],
+        fold_index: int,
+    ):
+        """
+        Yield a single (train_idx, test_idx) pair for the requested fold.
+
+        Args:
+            days: Sorted unique trading-day sequence (positional order matters).
+            fold_index: 1-based fold selector.
+        """
+        array = np.asarray(days)
+        if array.ndim != 1:
+            raise ValueError("days must be a 1-D sequence")
+        if array.size < self.n_splits:
+            raise ValueError(f"Insufficient days ({array.size}) for {self.n_splits}-fold split")
+        if np.any(np.diff(array) < 0):
+            raise ValueError("days must be sorted ascending")
+
+        fold_index = int(fold_index)
+        if not (1 <= fold_index <= self.n_splits):
+            raise ValueError(f"fold_index must be within [1, {self.n_splits}], got {fold_index}")
+
+        n = array.size
+        block = n // self.n_splits
+        if block == 0:
+            raise ValueError("Too few samples per fold; increase dataset length")
+
+        test_start = (fold_index - 1) * block
+        test_end = (fold_index * block) if fold_index < self.n_splits else n
+
+        test_mask = np.zeros(n, dtype=bool)
+        test_mask[test_start:test_end] = True
+
+        purge = self.params.purge_days
+        gap_start = max(0, test_start - purge)
+        gap_end = min(n, test_end + purge)
+
+        gap_mask = np.zeros(n, dtype=bool)
+        gap_mask[gap_start:gap_end] = True
+
+        train_mask = ~gap_mask
+        train_size = int(train_mask.sum())
+        if train_size < self.min_train_size:
+            raise RuntimeError(
+                "Not enough training samples after purge/embargo: "
+                f"{train_size} < {self.min_train_size} (purge_days={purge})"
+            )
+
+        train_idx = np.nonzero(train_mask)[0]
+        test_idx = np.nonzero(test_mask)[0]
+
+        if train_idx.size and test_idx.size:
+            # Positional distance between any train/test index must exceed purge.
+            min_dist = np.abs(train_idx[:, None] - test_idx[None, :]).min()
+            assert min_dist >= purge, f"Leakage detected: min distance {min_dist} < purge {purge}"
+
+        yield train_idx, test_idx

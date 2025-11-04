@@ -18,31 +18,40 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
-from _bootstrap import ensure_import_paths
-
-ensure_import_paths()
-from apex_ranker.backtest import (  # noqa: E402
+import torch
+from apex_ranker.backtest import (
     CostCalculator,
     OptimizationConfig,
     Portfolio,
     Trade,
     generate_target_weights,
     normalise_frequency,
+    select_by_percentile,
     should_rebalance,
 )
-from apex_ranker.backtest.inference import (  # noqa: E402
+from apex_ranker.backtest.enhanced_inference import (
+    hysteresis_selection,
+    risk_neutralize,
+)
+from apex_ranker.backtest.inference import (
     BacktestInferenceEngine,
     compute_weight_turnover,
     ensure_date,
 )
-from apex_ranker.data import (  # noqa: E402
-    FeatureSelector,
-    resolve_artifact_path,
-    resolve_dataset_path,
-    resolve_metadata_path,
+from apex_ranker.data import FeatureSelector
+from apex_ranker.data.loader import load_backtest_frame
+from apex_ranker.utils import (
+    block_bootstrap_ci,
+    deflated_sharpe_ratio,
+    load_config,
+    ndcg_at_k,
+    ndcg_random_baseline,
+    precision_at_k_pos,
+    spearman_ic,
+    top_bottom_spread,
+    topk_overlap,
+    wil_at_k,
 )
-from apex_ranker.data.loader import load_backtest_frame  # noqa: E402
-from apex_ranker.utils import load_config  # noqa: E402
 
 DATE_EPOCH = Date(1970, 1, 1)
 
@@ -50,15 +59,7 @@ DATE_EPOCH = Date(1970, 1, 1)
 def get_feature_columns(config: dict) -> list[str]:
     """Determine active feature list from config (respecting exclusions)."""
     data_cfg = config["data"]
-    config_dir = Path(config["_config_dir"])
-    selector = FeatureSelector(
-        resolve_artifact_path(
-            data_cfg.get("feature_groups_config"),
-            ("models/apex_ranker/configs/feature_groups.yaml",),
-            kind="feature groups config",
-            extra_bases=[config_dir],
-        )
-    )
+    selector = FeatureSelector(data_cfg["feature_groups_config"])
     groups = list(data_cfg.get("feature_groups", []))
     if data_cfg.get("use_plus30"):
         groups.append("plus30")
@@ -66,9 +67,6 @@ def get_feature_columns(config: dict) -> list[str]:
         groups=groups,
         optional_groups=data_cfg.get("optional_groups", []),
         exclude_features=data_cfg.get("exclude_features"),
-        metadata_path=resolve_metadata_path(
-            data_cfg.get("metadata_path"), extra_bases=[config_dir]
-        ),
     )
     return list(selection.features)
 
@@ -108,10 +106,7 @@ def generate_mock_predictions(
         .head(top_k)
     )
 
-    return {
-        row["Code"]: float(row["returns_5d"])
-        for row in predictions.iter_rows(named=True)
-    }
+    return {row["Code"]: float(row["returns_5d"]) for row in predictions.iter_rows(named=True)}
 
 
 def run_backtest_smoke_test(
@@ -137,6 +132,21 @@ def run_backtest_smoke_test(
     candidate_multiplier: float = 2.0,
     min_alpha: float = 0.1,
     panel_cache_dir: Path | None = None,
+    selection_k_ratio: float | None = None,
+    selection_k_min: int | None = None,
+    selection_sign: int | None = None,
+    panel_cache_salt: str | None = None,
+    use_enhanced_inference: bool = False,
+    ei_hysteresis_entry_k: int = 35,
+    ei_hysteresis_exit_k: int = 60,
+    ei_neutralize_risk: bool = False,
+    ei_risk_factors: list[str] | None = None,
+    ei_neutralize_gamma: float = 0.3,
+    ei_ridge_alpha: float = 10.0,
+    infer_add_csz: bool = False,
+    infer_csz_eps: float = 1e-6,
+    infer_csz_clip: float = 5.0,
+    features_mode: str = "drop-missing",
 ) -> dict:
     """
     Execute backtest using either mock predictions or model inference.
@@ -144,6 +154,9 @@ def run_backtest_smoke_test(
     Returns:
         Backtest summary dictionary (also written to disk when requested).
     """
+    if selection_sign is not None and selection_sign not in (-1, 1):
+        raise ValueError("selection_sign must be either +1 or -1 when provided.")
+
     print("\n" + "=" * 80)
     print("Phase 3: Backtest Driver")
     print("=" * 80)
@@ -153,29 +166,48 @@ def run_backtest_smoke_test(
     config: dict | None = None
     feature_cols: list[str] | None = None
     lookback = 0
-    config_dir: Path | None = None
 
+    aliases_yaml: str | None = None
     if config_path is not None and config_path.exists():
         config = load_config(str(config_path))
+        # Fix ①: CLI --data priority override (take precedence over config default)
+        if data_path is not None:
+            config.setdefault("data", {})["parquet_path"] = str(data_path)
+            print(f"[override] data.parquet_path = {config['data']['parquet_path']}")
         feature_cols = get_feature_columns(config)
         lookback = config["data"]["lookback"]
-        config_dir = Path(config["_config_dir"])
+        # Check for feature aliases configuration
+        aliases_yaml = config.get("data", {}).get("feature_aliases_yaml")
         print(f"[Backtest] Loaded config: {config_path}")
     elif model_path is not None and not use_mock:
-        raise FileNotFoundError(
-            "Model inference requested but config file was not provided or found."
-        )
+        raise FileNotFoundError("Model inference requested but config file was not provided or found.")
 
-    extra_bases = [config_dir] if config_dir else []
-    resolved_data_path = resolve_dataset_path(data_path, extra_bases=extra_bases)
+    # Prepare passthrough columns for Enhanced Inference (A.4)
+    passthrough_cols = []
+    if use_enhanced_inference and ei_neutralize_risk and ei_risk_factors:
+        passthrough_cols = ei_risk_factors
+        print(f"[A.4] Requesting passthrough columns for risk neutralization: {passthrough_cols}")
 
     frame = load_backtest_frame(
-        data_path=resolved_data_path,
+        data_path=data_path,
         start_date=start_date,
         end_date=end_date,
         feature_cols=feature_cols or [],
         lookback=lookback,
+        aliases_yaml=aliases_yaml,
+        features_mode=features_mode,
+        passthrough_cols=passthrough_cols,
     )
+
+    # Extract risk factors from the loaded frame (now included via passthrough_cols)
+    # These are NOT in feature_cols but needed for risk neutralization
+    risk_factors_frame = None
+    if use_enhanced_inference and ei_neutralize_risk and passthrough_cols:
+        # Risk factors are now in the main frame thanks to passthrough_cols
+        available_risk_cols = ["Code", "Date"] + [c for c in passthrough_cols if c in frame.columns]
+        risk_factors_frame = frame.select(available_risk_cols)
+        loaded_factors = [c for c in available_risk_cols if c not in ["Code", "Date"]]
+        print(f"[A.4] Risk factors extracted from frame: {loaded_factors}")
 
     daily_frames = build_daily_lookup(frame)
 
@@ -193,11 +225,25 @@ def run_backtest_smoke_test(
 
     inference_engine: BacktestInferenceEngine | None = None
     prediction_dates: set[Date] = set()
-    cache_directory = (
-        Path(panel_cache_dir).expanduser()
-        if panel_cache_dir is not None
-        else Path("cache/panel")
-    )
+    cache_directory = Path(panel_cache_dir).expanduser() if panel_cache_dir is not None else Path("cache/panel")
+
+    # Print Enhanced Inference configuration
+    if use_enhanced_inference:
+        print("\n" + "=" * 80)
+        print("Enhanced Inference (EI) Configuration")
+        print("=" * 80)
+        if ei_neutralize_risk:
+            print("[A.4] Risk Neutralization: ENABLED")
+            factors_str = ", ".join(ei_risk_factors) if ei_risk_factors else "sector33_code, volatility_60d"
+            print(f"      Factors: {factors_str}")
+            print(f"      Gamma (partial neutralization): {ei_neutralize_gamma}")
+            print(f"      Ridge alpha: {ei_ridge_alpha}")
+        else:
+            print("[A.4] Risk Neutralization: DISABLED")
+        print("[A.3] Hysteresis Selection: ENABLED")
+        print(f"      Entry threshold: {ei_hysteresis_entry_k}")
+        print(f"      Exit threshold: {ei_hysteresis_exit_k}")
+        print("=" * 80 + "\n")
 
     if model_path is not None and not use_mock:
         inference_engine = BacktestInferenceEngine(
@@ -206,14 +252,16 @@ def run_backtest_smoke_test(
             frame=frame,
             feature_cols=feature_cols or [],
             device=device,
-            dataset_path=resolved_data_path,
+            dataset_path=data_path,
             panel_cache_dir=cache_directory,
+            cache_salt=panel_cache_salt,
+            aliases_yaml=aliases_yaml,
+            add_csz=infer_add_csz,
+            csz_eps=infer_csz_eps,
+            csz_clip=infer_csz_clip,
         )
         prediction_dates = inference_engine.available_dates()
-        print(
-            f"[Backtest] Inference ready on {len(prediction_dates)} dates "
-            f"(device={inference_engine.device})"
-        )
+        print(f"[Backtest] Inference ready on {len(prediction_dates)} dates " f"(device={inference_engine.device})")
     else:
         print("[Backtest] Using mock predictions (returns_5d proxy)")
 
@@ -243,6 +291,30 @@ def run_backtest_smoke_test(
     print(f"[Backtest] Horizon: {horizon}d")
     print(f"[Backtest] Panel cache directory: {cache_directory}")
 
+    selection_cfg = config.get("selection", {}) if config else {}
+    default_selection = selection_cfg.get("default", {}) if isinstance(selection_cfg, dict) else {}
+    horizon_selection = (
+        selection_cfg.get("horizons", {}).get(str(horizon), {}) if isinstance(selection_cfg, dict) else {}
+    )
+    effective_k_ratio = (
+        selection_k_ratio
+        if selection_k_ratio is not None
+        else horizon_selection.get("k_ratio", default_selection.get("k_ratio"))
+    )
+    effective_k_min = (
+        selection_k_min
+        if selection_k_min is not None
+        else horizon_selection.get("k_min", default_selection.get("k_min"))
+    )
+    effective_sign = (
+        selection_sign if selection_sign is not None else horizon_selection.get("sign", default_selection.get("sign"))
+    )
+    if effective_sign is None:
+        effective_sign = 1
+    effective_sign = int(effective_sign)
+    if effective_sign not in (-1, 1):
+        raise ValueError("selection_sign must resolve to either +1 or -1.")
+
     candidate_request = max(
         resolved_top_k,
         int(resolved_top_k * max(candidate_multiplier, 1.0)),
@@ -250,6 +322,7 @@ def run_backtest_smoke_test(
     )
 
     daily_results: list[dict] = []
+    cross_section_metrics: list[dict[str, object]] = []
     rebalance_count = 0
     last_rebalance_date: Date | None = None
     last_predictions: dict[str, float] | None = None
@@ -260,12 +333,14 @@ def run_backtest_smoke_test(
         current_frame = daily_frames.get(current_date)
         next_frame = daily_frames.get(next_date)
 
-        candidate_pool_size: int | None = None
-        k_over_n_value: float | None = None
-        fallback_used = False
-
         if current_frame is None or next_frame is None:
             continue
+
+        candidate_pool_size: int | None = None
+        gate_candidate_total: int | None = None
+        gate_threshold_value: float | None = None
+        gate_ratio_used: float | None = None
+        gate_fallback_used = False
 
         # Build price/volume maps
         price_map = {
@@ -308,10 +383,7 @@ def run_backtest_smoke_test(
         if should_rebalance(current_date, last_rebalance_date, rebalance_mode):
             if inference_engine is not None and not use_mock:
                 if current_date not in prediction_dates:
-                    print(
-                        f"[Backtest] {current_date}: insufficient lookback, skipping "
-                        "rebalance attempt"
-                    )
+                    print(f"[Backtest] {current_date}: insufficient lookback, skipping " "rebalance attempt")
                 else:
                     rankings = inference_engine.predict(
                         target_date=current_date,
@@ -320,40 +392,198 @@ def run_backtest_smoke_test(
                     )
 
                     if rankings.is_empty():
-                        print(
-                            f"[Backtest] {current_date}: model produced no candidates"
-                        )
+                        print(f"[Backtest] {current_date}: model produced no candidates")
                     else:
                         available_codes = set(price_map.keys())
-                        filtered = rankings.filter(
-                            pl.col("Code").is_in(list(available_codes))
-                        ).sort("Rank")
+                        filtered = rankings.filter(pl.col("Code").is_in(list(available_codes))).sort("Rank")
                         if filtered.is_empty():
-                            print(
-                                f"[Backtest] {current_date}: "
-                                "no overlap between predictions and price data"
-                            )
+                            print(f"[Backtest] {current_date}: " "no overlap between predictions and price data")
                         else:
-                            pool_limit = optimization_config.candidate_count(
-                                filtered.height
-                            )
+                            pool_limit = optimization_config.candidate_count(filtered.height)
                             if pool_limit <= 0:
-                                print(
-                                    f"[Backtest] {current_date}: candidate pool exhausted"
-                                )
+                                print(f"[Backtest] {current_date}: candidate pool exhausted")
                             else:
                                 filtered = filtered.head(pool_limit)
-                                candidate_pool_size = filtered.height
-                                predictions = {
-                                    row["Code"]: float(row["Score"])
-                                    for row in filtered.iter_rows(named=True)
-                                }
-                                prediction_source = "model"
+                                gate_candidate_total = filtered.height
+                                scores_tensor = torch.tensor(filtered["Score"].to_numpy(), dtype=torch.float32)
+                                gate_candidate_total = int(scores_tensor.numel())
+                                if scores_tensor.numel() == 0:
+                                    print(f"[Backtest] {current_date}: no usable scores after filtering")
+                                else:
+                                    gate_ratio_used = (
+                                        effective_k_ratio
+                                        if effective_k_ratio is not None
+                                        else optimization_config.target_top_k / max(1, scores_tensor.numel())
+                                    )
+                                    gate_ratio_used = float(max(0.0, min(1.0, gate_ratio_used)))
+                                    gate_minimum = (
+                                        effective_k_min
+                                        if effective_k_min is not None
+                                        else optimization_config.target_top_k
+                                    )
+                                    gate_minimum = max(1, int(gate_minimum))
+
+                                    # ----- A.4: Risk Neutralization (if enabled) -----
+                                    if use_enhanced_inference and ei_neutralize_risk:
+                                        # Extract risk factors from current_frame
+                                        # SAFE defaults: Start with sector+vol only (per user spec)
+                                        # NOTE: Use lowercase names to match dataset columns
+                                        default_factors = ["sector33_code", "volatility_60d"]
+                                        risk_factors_to_use = ei_risk_factors or default_factors
+
+                                        # Get risk factor data from preloaded risk_factors_frame
+                                        if risk_factors_frame is not None:
+                                            # Filter to current date and codes
+                                            codes_in_order = filtered["Code"].to_list()
+                                            df_risk = risk_factors_frame.filter(
+                                                (pl.col("Date") == current_date)
+                                                & (pl.col("Code").is_in(codes_in_order))
+                                            ).sort("Code")  # Sort by Code to match order
+
+                                            # Case-insensitive factor matching
+                                            cols_lower = {c.lower(): c for c in df_risk.columns}
+                                            available_factors = []
+                                            missing_factors = []
+                                            for f in risk_factors_to_use:
+                                                f_lower = f.lower()
+                                                if f_lower in cols_lower:
+                                                    available_factors.append(cols_lower[f_lower])
+                                                else:
+                                                    missing_factors.append(f)
+
+                                            if missing_factors:
+                                                print(f"[A.4] WARNING: Risk factors not found: {missing_factors}")
+
+                                            # Convert to Pandas (risk_neutralize expects pd.DataFrame)
+                                            df_risk_pd = (
+                                                df_risk.select(available_factors).to_pandas()
+                                                if available_factors
+                                                else None
+                                            )
+                                        else:
+                                            print("[A.4] ERROR: risk_factors_frame not loaded")
+                                            df_risk_pd = None
+                                            available_factors = []
+
+                                        # Apply risk neutralization (SAFE VERSION with gamma)
+                                        if df_risk_pd is not None and len(available_factors) > 0:
+                                            try:
+                                                print(
+                                                    f"[A.4] {current_date}: Applying risk neutralization "
+                                                    f"(n={len(scores_tensor)}, factors={available_factors}, "
+                                                    f"gamma={ei_neutralize_gamma}, alpha={ei_ridge_alpha})"
+                                                )
+                                                scores_neutralized = risk_neutralize(
+                                                    scores_tensor.numpy(),
+                                                    df_risk_pd,
+                                                    factors=available_factors,
+                                                    alpha=ei_ridge_alpha,
+                                                    gamma=ei_neutralize_gamma,
+                                                )
+                                                # Convert back to tensor
+                                                scores_tensor = torch.from_numpy(scores_neutralized).to(
+                                                    dtype=torch.float32
+                                                )
+                                                print(f"[A.4] {current_date}: Risk neutralization applied successfully")
+                                            except Exception as e:
+                                                print(
+                                                    f"[Backtest] {current_date}: "
+                                                    f"Risk neutralization failed ({e}), using raw scores"
+                                                )
+                                        else:
+                                            print(
+                                                f"[Backtest] {current_date}: "
+                                                f"No risk factors available, skipping neutralization"
+                                            )
+
+                                    # ----- A.3: Hysteresis Selection (if enabled) -----
+                                    if use_enhanced_inference:
+                                        # Get previous holdings as Code→index mapping
+                                        prev_codes = list(portfolio.positions.keys())
+                                        code_to_idx = {code: i for i, code in enumerate(filtered["Code"].to_list())}
+                                        prev_indices = [code_to_idx[code] for code in prev_codes if code in code_to_idx]
+
+                                        # Apply hysteresis selection
+                                        selected_indices = hysteresis_selection(
+                                            scores_tensor.numpy(),
+                                            current_holdings=prev_indices if prev_indices else None,
+                                            entry_k=ei_hysteresis_entry_k,
+                                            exit_k=ei_hysteresis_exit_k,
+                                        )
+
+                                        # Convert to tensor
+                                        idx_tensor = torch.tensor(selected_indices, dtype=torch.long)
+
+                                        # Threshold is minimum score (for logging)
+                                        if len(selected_indices) > 0:
+                                            threshold_signed = float(scores_tensor[selected_indices[-1]].item())
+                                        else:
+                                            threshold_signed = float("nan")
+
+                                        # Fallback flag (hysteresis doesn't use fallback)
+                                        gate_fallback_used = False
+                                    else:
+                                        # Existing logic (select_by_percentile)
+                                        idx_tensor, threshold_signed, gate_fallback_used = select_by_percentile(
+                                            scores_tensor,
+                                            k_ratio=gate_ratio_used,
+                                            k_min=gate_minimum,
+                                            sign=effective_sign,
+                                        )
+                                    if idx_tensor.numel() == 0:
+                                        gate_fallback_used = True
+                                        fallback_count = min(scores_tensor.numel(), gate_minimum)
+                                        if fallback_count == 0:
+                                            idx_tensor = torch.empty(0, dtype=torch.long)
+                                            filtered = filtered.head(0)
+                                        else:
+                                            signed_scores = scores_tensor * float(effective_sign)
+                                            idx_tensor = torch.topk(
+                                                signed_scores,
+                                                fallback_count,
+                                                sorted=True,
+                                            ).indices
+                                            threshold_signed = float(signed_scores[idx_tensor[-1]].item())
+                                    if idx_tensor.numel() > 0:
+                                        idx_tensor = torch.unique(idx_tensor, sorted=True)
+                                        idx_list = idx_tensor.tolist()
+                                        if idx_list:
+                                            selected_rows = [filtered.row(i) for i in idx_list]
+                                            filtered = pl.DataFrame(
+                                                selected_rows,
+                                                schema=filtered.schema,
+                                                orient="row",
+                                            )
+                                        else:
+                                            filtered = filtered.head(0)
+                                    candidate_pool_size = filtered.height
+                                    if idx_tensor.numel() > 0:
+                                        gate_threshold_value = float(threshold_signed * float(effective_sign))
+                                    else:
+                                        gate_threshold_value = None
+                                    predictions = {
+                                        row["Code"]: float(row["Score"]) for row in filtered.iter_rows(named=True)
+                                    }
+                                    if candidate_pool_size is None:
+                                        candidate_pool_size = len(predictions)
+                                    if gate_ratio_used is not None:
+                                        threshold_display = (
+                                            gate_threshold_value if gate_threshold_value is not None else float("nan")
+                                        )
+                                        print(
+                                            "[Backtest] "
+                                            f"{current_date}: gate_ratio={gate_ratio_used:.3f} "
+                                            f"threshold={threshold_display:.6f} "
+                                            f"fallback={int(gate_fallback_used)} "
+                                            f"candidate_total={gate_candidate_total} "
+                                            f"candidate_kept={candidate_pool_size} "
+                                            f"sign={effective_sign}"
+                                        )
+                                    prediction_source = "model"
             else:
-                predictions = generate_mock_predictions(
-                    current_frame, candidate_request
-                )
+                predictions = generate_mock_predictions(current_frame, candidate_request)
                 prediction_source = "mock"
+                candidate_pool_size = len(predictions)
 
             if predictions:
                 opt_weights, opt_result = generate_target_weights(
@@ -382,16 +612,12 @@ def run_backtest_smoke_test(
                     opt_result.notes.append("turnover_constraint_relaxed")
 
                 if not opt_weights:
-                    fallback_codes = list(predictions.keys())[
-                        : optimization_config.target_top_k
-                    ]
+                    fallback_codes = list(predictions.keys())[: optimization_config.target_top_k]
                     if fallback_codes:
                         weight = 1.0 / len(fallback_codes)
                         opt_weights = dict.fromkeys(fallback_codes, weight)
                         opt_result.selected_codes = list(opt_weights.keys())
-                        fallback_turnover = compute_weight_turnover(
-                            portfolio.weights, opt_weights
-                        )
+                        fallback_turnover = compute_weight_turnover(portfolio.weights, opt_weights)
                         opt_result.unconstrained_turnover = fallback_turnover
                         opt_result.constrained_turnover = fallback_turnover
                         opt_result.applied_alpha = 1.0
@@ -399,7 +625,6 @@ def run_backtest_smoke_test(
 
                 if opt_result:
                     optimization_summary = opt_result.to_dict()
-                    fallback_used = "fallback_equal_weights" in opt_result.notes
 
                 if opt_weights:
                     target_weights = opt_weights
@@ -417,10 +642,6 @@ def run_backtest_smoke_test(
                     last_prediction_source = prediction_source
                     rebalance_count += 1
                     did_rebalance = True
-                    if candidate_pool_size:
-                        k_over_n_value = len(target_weights) / max(
-                            1, candidate_pool_size
-                        )
                 else:
                     predictions = last_predictions
             else:
@@ -431,6 +652,78 @@ def run_backtest_smoke_test(
 
         active_predictions = predictions or {}
         daily_turnover = portfolio.calculate_turnover(trades)
+
+        cross_metrics_record: dict[str, object] | None = None
+        label_col = f"returns_{horizon}d"
+        if active_predictions and label_col in current_frame.columns:
+            codes = current_frame["Code"].to_list()
+            label_values = current_frame[label_col].to_list()
+            label_map = {
+                code: float(value)
+                for code, value in zip(codes, label_values, strict=False)
+                if value is not None and np.isfinite(value)
+            }
+
+            scored_codes: list[str] = []
+            score_buffer: list[float] = []
+            label_buffer: list[float] = []
+
+            for code, score in active_predictions.items():
+                label_value = label_map.get(code)
+                if label_value is None or not np.isfinite(label_value):
+                    continue
+                scored_codes.append(code)
+                score_buffer.append(float(score))
+                label_buffer.append(float(label_value))
+
+            if score_buffer:
+                score_tensor = torch.tensor(score_buffer, dtype=torch.float32)
+                label_tensor = torch.tensor(label_buffer, dtype=torch.float32)
+                k_eval = max(1, min(resolved_top_k, score_tensor.numel()))
+                p_at_k, p_rand = precision_at_k_pos(score_tensor, label_tensor, k_eval)
+                ndcg_val = ndcg_at_k(score_tensor, label_tensor, k_eval)
+                ndcg_rand = ndcg_random_baseline(label_tensor, k_eval)
+                overlap_val = topk_overlap(score_tensor, label_tensor, k_eval)
+                spread_val = top_bottom_spread(score_tensor, label_tensor, k_eval)
+                wil_val = wil_at_k(score_tensor, label_tensor, k_eval)
+                cross_metrics_record = {
+                    "prediction_date": str(current_date),
+                    "prediction_source": prediction_source,
+                    "cross_section_total": int(
+                        sum(1 for value in label_values if value is not None and np.isfinite(value))
+                    ),
+                    "scored_count": int(score_tensor.numel()),
+                    "k_eval": int(k_eval),
+                    "rank_ic": float(spearman_ic(score_tensor, label_tensor)),
+                    "topk_overlap": float(overlap_val),
+                    "p_at_k_pos": float(p_at_k),
+                    "p_at_k_pos_rand": float(p_rand),
+                    "delta_p_at_k_pos": float(p_at_k - p_rand),
+                    "ndcg_at_k": float(ndcg_val),
+                    "ndcg_rand": float(ndcg_rand),
+                    "delta_ndcg": float(ndcg_val - ndcg_rand),
+                    "wil_at_k": float(wil_val),
+                    "spread": float(spread_val),
+                    "k_over_n": float(k_eval / max(1, score_tensor.numel())),
+                    "mean_label": float(np.mean(label_buffer)) if label_buffer else float("nan"),
+                }
+                cross_metrics_record["selection_threshold"] = (
+                    float(gate_threshold_value) if gate_threshold_value is not None else None
+                )
+                cross_metrics_record["selection_gate_fallback"] = (
+                    int(gate_fallback_used) if gate_candidate_total is not None else None
+                )
+                cross_metrics_record["selection_k_ratio"] = (
+                    float(gate_ratio_used) if gate_ratio_used is not None else None
+                )
+                cross_metrics_record["selection_candidates_total"] = (
+                    int(gate_candidate_total) if gate_candidate_total is not None else None
+                )
+                cross_metrics_record["selection_candidates_kept"] = (
+                    int(candidate_pool_size) if candidate_pool_size is not None else None
+                )
+                cross_metrics_record["selection_k_min"] = int(effective_k_min) if effective_k_min is not None else None
+                cross_metrics_record["selection_sign"] = effective_sign
 
         next_prices = {
             code: float(price)
@@ -450,26 +743,46 @@ def run_backtest_smoke_test(
             transaction_cost=daily_cost,
         )
         state["prediction_date"] = str(current_date)
-        state["prediction_source"] = (
-            last_prediction_source if last_prediction_source else prediction_source
-        )
+        state["prediction_source"] = last_prediction_source if last_prediction_source else prediction_source
         state["selection_count"] = len(portfolio.positions)
-        state["optimized_top_k"] = (
-            len(target_weights) if target_weights else len(portfolio.positions)
-        )
-        state["candidate_count"] = (
-            candidate_pool_size
-            if candidate_pool_size is not None
-            else len(active_predictions)
-        )
+        state["optimized_top_k"] = len(target_weights) if target_weights else len(portfolio.positions)
+        effective_candidate_count = candidate_pool_size if candidate_pool_size is not None else len(active_predictions)
+        state["candidate_count"] = int(effective_candidate_count)
         state["k_over_n"] = (
-            float(k_over_n_value) if k_over_n_value is not None else None
+            float(len(target_weights) / max(1, effective_candidate_count))
+            if target_weights and effective_candidate_count
+            else None
         )
-        state["fallback_used"] = int(fallback_used)
+        state["selection_threshold"] = (
+            float(gate_threshold_value) if gate_ratio_used is not None and gate_threshold_value is not None else None
+        )
+        state["selection_gate_fallback"] = int(gate_fallback_used) if gate_candidate_total is not None else None
+        state["selection_k_ratio"] = (
+            float(gate_ratio_used)
+            if gate_ratio_used is not None
+            else (float(effective_k_ratio) if effective_k_ratio is not None else None)
+        )
+        state["selection_candidates_total"] = int(gate_candidate_total) if gate_candidate_total is not None else None
+        state["selection_k_min"] = int(effective_k_min) if effective_k_min is not None else None
+        state["selection_sign"] = effective_sign
+        if cross_metrics_record:
+            state["cs_cross_section"] = cross_metrics_record["cross_section_total"]
+            state["cs_scored_count"] = cross_metrics_record["scored_count"]
+            state["cs_k_eval"] = cross_metrics_record["k_eval"]
+            state["cs_rank_ic"] = cross_metrics_record["rank_ic"]
+            state["cs_topk_overlap"] = cross_metrics_record["topk_overlap"]
+            state["cs_p_at_k_pos"] = cross_metrics_record["p_at_k_pos"]
+            state["cs_p_at_k_pos_rand"] = cross_metrics_record["p_at_k_pos_rand"]
+            state["cs_delta_p_at_k_pos"] = cross_metrics_record["delta_p_at_k_pos"]
+            state["cs_ndcg_at_k"] = cross_metrics_record["ndcg_at_k"]
+            state["cs_ndcg_rand"] = cross_metrics_record["ndcg_rand"]
+            state["cs_delta_ndcg"] = cross_metrics_record["delta_ndcg"]
+            state["cs_wil_at_k"] = cross_metrics_record["wil_at_k"]
+            state["cs_spread"] = cross_metrics_record["spread"]
+            state["cs_k_over_n"] = cross_metrics_record["k_over_n"]
+            state["cs_mean_label"] = cross_metrics_record["mean_label"]
         if target_weights:
-            state["target_weights"] = {
-                code: float(weight) for code, weight in target_weights.items()
-            }
+            state["target_weights"] = {code: float(weight) for code, weight in target_weights.items()}
         if optimization_summary is not None:
             state["optimization"] = optimization_summary
         if portfolio.positions:
@@ -477,33 +790,23 @@ def run_backtest_smoke_test(
         else:
             state["selected_codes"] = ""
         state["avg_prediction_score"] = (
-            float(np.mean(list(active_predictions.values())))
-            if active_predictions
-            else None
+            float(np.mean(list(active_predictions.values()))) if active_predictions else None
         )
         state["num_trades"] = len(trades)
         state["rebalanced"] = did_rebalance
-        state["last_rebalance_date"] = (
-            str(last_rebalance_date) if last_rebalance_date else None
-        )
+        state["last_rebalance_date"] = str(last_rebalance_date) if last_rebalance_date else None
         daily_results.append(state)
 
-        if did_rebalance:
-            selected_count = len(target_weights)
-            candidate_logged = (
-                candidate_pool_size
-                if candidate_pool_size is not None
-                else len(active_predictions)
+        if cross_metrics_record is not None:
+            cross_metrics_record.update(
+                {
+                    "result_date": str(next_date),
+                    "daily_return_pct": state.get("daily_return"),
+                    "turnover": state.get("turnover"),
+                    "transaction_cost": state.get("transaction_cost"),
+                }
             )
-            ratio_display = k_over_n_value if k_over_n_value is not None else 0.0
-            print(
-                "[Backtest] "
-                f"{current_date}: rebalance "
-                f"selected={selected_count} "
-                f"candidate_pool={candidate_logged} "
-                f"k_over_n={ratio_display:.3f} "
-                f"fallback={int(fallback_used)}"
-            )
+            cross_section_metrics.append(cross_metrics_record)
 
         if idx % 5 == 0:
             print(
@@ -568,15 +871,17 @@ def run_backtest_smoke_test(
             "model_path": str(model_path) if model_path else None,
             "config_path": str(config_path) if config_path else None,
             "device": device,
+            "panel_cache_salt": panel_cache_salt,
             "prediction_mode": "model" if inference_engine else "mock",
+            "selection_k_ratio": effective_k_ratio,
+            "selection_k_min": effective_k_min,
+            "selection_sign": effective_sign,
         },
         "cost_model": cost_model_info,
         "summary": {
             "trading_days": len(daily_results),
             "total_trades": total_trades,
-            "prediction_days_available": len(prediction_dates)
-            if inference_engine
-            else len(trading_dates),
+            "prediction_days_available": len(prediction_dates) if inference_engine else len(trading_dates),
             "rebalance_count": rebalance_count,
         },
         "performance": metrics,
@@ -584,29 +889,98 @@ def run_backtest_smoke_test(
         "trades_sample": trades_records[:10],
     }
 
+    evaluation_payload: dict[str, object] = {}
+
+    if cross_section_metrics:
+
+        def _nanmean(key: str) -> float:
+            values = [record.get(key) for record in cross_section_metrics]
+            values = [v for v in values if v is not None and np.isfinite(v)]
+            if not values:
+                return float("nan")
+            return float(np.mean(values))
+
+        summary = {
+            "count": len(cross_section_metrics),
+            "rank_ic_mean": _nanmean("rank_ic"),
+            "topk_overlap_mean": _nanmean("topk_overlap"),
+            "p_at_k_pos_mean": _nanmean("p_at_k_pos"),
+            "p_at_k_pos_rand_mean": _nanmean("p_at_k_pos_rand"),
+            "delta_p_at_k_pos_mean": _nanmean("delta_p_at_k_pos"),
+            "ndcg_at_k_mean": _nanmean("ndcg_at_k"),
+            "ndcg_rand_mean": _nanmean("ndcg_rand"),
+            "delta_ndcg_mean": _nanmean("delta_ndcg"),
+            "wil_at_k_mean": _nanmean("wil_at_k"),
+            "spread_mean": _nanmean("spread"),
+            "k_over_n_mean": _nanmean("k_over_n"),
+            "scored_count_mean": _nanmean("scored_count"),
+            "cross_section_mean": _nanmean("cross_section_total"),
+        }
+
+        bootstrap_results: dict[str, dict[str, float]] = {}
+        bootstrap_metrics = [
+            "rank_ic",
+            "delta_p_at_k_pos",
+            "delta_ndcg",
+            "topk_overlap",
+            "spread",
+        ]
+        for metric in bootstrap_metrics:
+            series = [
+                float(record[metric])
+                for record in cross_section_metrics
+                if record.get(metric) is not None and np.isfinite(record[metric])
+            ]
+            if len(series) >= 5:
+                block_len = max(2, int(np.sqrt(len(series))))
+                bootstrap_results[metric] = block_bootstrap_ci(
+                    series,
+                    block_size=block_len,
+                    n_bootstrap=500,
+                )
+
+        evaluation_payload["summary"] = summary
+        evaluation_payload["per_day"] = cross_section_metrics
+        if bootstrap_results:
+            evaluation_payload["bootstrap"] = bootstrap_results
+
+    returns_series = (
+        np.array(
+            [record["daily_return"] for record in history_records[1:]],
+            dtype=float,
+        )
+        / 100.0
+    )
+    dsr_result = deflated_sharpe_ratio(
+        returns_series,
+        n_trials=1,
+    )
+    if dsr_result is not None:
+        evaluation_payload["risk"] = {
+            "sharpe": dsr_result.sharpe,
+            "dsr": dsr_result.dsr,
+            "threshold": dsr_result.sr_threshold,
+            "sharpe_std": dsr_result.sr_std,
+            "n_obs": dsr_result.n_obs,
+            "n_trials": dsr_result.n_trials,
+        }
+
+    if evaluation_payload:
+        results["evaluation_metrics"] = evaluation_payload
+
     artifacts: dict[str, str] = {}
 
     if daily_metrics_path and str(daily_metrics_path).strip():
         daily_metrics_path.parent.mkdir(parents=True, exist_ok=True)
         flattened_history = []
         for record in history_records:
-            flat = {
-                k: v
-                for k, v in record.items()
-                if k not in {"positions", "target_weights", "optimization"}
-            }
+            flat = {k: v for k, v in record.items() if k not in {"positions", "target_weights", "optimization"}}
             if "positions" in record:
-                flat["positions_json"] = json.dumps(
-                    record["positions"], ensure_ascii=False
-                )
+                flat["positions_json"] = json.dumps(record["positions"], ensure_ascii=False)
             if "target_weights" in record:
-                flat["target_weights_json"] = json.dumps(
-                    record["target_weights"], ensure_ascii=False
-                )
+                flat["target_weights_json"] = json.dumps(record["target_weights"], ensure_ascii=False)
             if "optimization" in record:
-                flat["optimization_json"] = json.dumps(
-                    record["optimization"], ensure_ascii=False
-                )
+                flat["optimization_json"] = json.dumps(record["optimization"], ensure_ascii=False)
             flattened_history.append(flat)
         if flattened_history:
             pl.DataFrame(flattened_history).write_csv(daily_metrics_path)
@@ -697,13 +1071,88 @@ def parse_args() -> argparse.Namespace:
         help="Minimum adjustment factor when enforcing turnover constraints (default: 0.1)",
     )
     parser.add_argument(
+        "--selection-k-ratio",
+        type=float,
+        default=None,
+        help="Percentile gating ratio (0–1). Defaults to target_top_k divided by candidate count.",
+    )
+    parser.add_argument(
+        "--selection-k-min",
+        type=int,
+        default=None,
+        help="Minimum number of securities to keep after gating (default: target_top_k).",
+    )
+    parser.add_argument(
+        "--selection-sign",
+        type=int,
+        default=None,
+        help="Signal orientation for gating (1 keeps highest scores, -1 keeps lowest). Overrides config when set.",
+    )
+    parser.add_argument(
+        "--use-enhanced-inference",
+        action="store_true",
+        help="Enable enhanced inference (A.3 Hysteresis + A.4 Risk Neutralization)",
+    )
+    parser.add_argument(
+        "--ei-hysteresis-entry-k",
+        type=int,
+        default=35,
+        help="Hysteresis entry threshold (default: 35)",
+    )
+    parser.add_argument(
+        "--ei-hysteresis-exit-k",
+        type=int,
+        default=60,
+        help="Hysteresis exit threshold (default: 60)",
+    )
+    parser.add_argument(
+        "--ei-neutralize-risk",
+        action="store_true",
+        help="Enable risk neutralization (A.4)",
+    )
+    parser.add_argument(
+        "--ei-risk-factors",
+        type=str,
+        default=None,
+        help="Comma-separated risk factors (default: Sector33Code,volatility_60d)",
+    )
+    parser.add_argument(
+        "--ei-neutralize-gamma",
+        type=float,
+        default=0.3,
+        help="Partial neutralization factor (default: 0.3, range: [0.2, 0.5]). 0.0=no neutralization, 1.0=full neutralization",
+    )
+    parser.add_argument(
+        "--ei-ridge-alpha",
+        type=float,
+        default=10.0,
+        help="Ridge regression regularization (default: 10.0, higher=more conservative)",
+    )
+    parser.add_argument(
+        "--infer-add-csz",
+        action="store_true",
+        help="Enable cross-sectional Z-score generation at inference (89→178 dims)",
+    )
+    parser.add_argument(
+        "--infer-csz-eps",
+        type=float,
+        default=1e-6,
+        help="Epsilon for CS-Z std protection (default: 1e-6)",
+    )
+    parser.add_argument(
+        "--infer-csz-clip",
+        type=float,
+        default=5.0,
+        help="Clip CS-Z outliers to ±N sigma (default: 5.0)",
+    )
+    parser.add_argument(
         "--model",
         default=None,
         help="Path to trained model checkpoint (.pt). If omitted, uses mock predictions.",
     )
     parser.add_argument(
         "--config",
-        default="models/apex_ranker/configs/v0_pruned.yaml",
+        default="apex-ranker/configs/v0_pruned.yaml",
         help="Model config YAML path (required when using --model).",
     )
     parser.add_argument(
@@ -746,6 +1195,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to write trade log CSV",
     )
     parser.add_argument(
+        "--features-mode",
+        default="drop-missing",
+        choices=["strict", "fill-zero", "drop-missing"],
+        help="Feature validation mode: strict (error on missing), fill-zero (fill missing with 0.0), drop-missing (continue with available features)",
+    )
+    parser.add_argument(
         "--output",
         default="results/backtest_phase3.json",
         help="Output JSON summary path",
@@ -756,33 +1211,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    config_path = None
-    if args.config:
-        config_path = resolve_artifact_path(
-            args.config,
-            ("models/apex_ranker/configs/v0_pruned.yaml",),
-            kind="model config",
-        )
-
-    model_path = None
-    if args.model:
-        model_path = resolve_artifact_path(
-            args.model,
-            (
-                "models/apex_ranker_v0_pruned.pt",
-                "output/models/apex_ranker_v0_pruned.pt",
-            ),
-            kind="model checkpoint",
-            extra_bases=[config_path.parent] if config_path else None,
-        )
-
     data_path = Path(args.data)
+    model_path = Path(args.model) if args.model else None
+    config_path = Path(args.config) if args.config else None
     output_path = Path(args.output) if args.output else None
     daily_metrics_path = Path(args.daily_csv) if args.daily_csv else None
     trades_path = Path(args.trades_csv) if args.trades_csv else None
-    panel_cache_dir = (
-        Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
-    )
+    panel_cache_dir = Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
 
     run_backtest_smoke_test(
         data_path=data_path,
@@ -806,6 +1241,20 @@ def main() -> None:
         candidate_multiplier=args.candidate_multiplier,
         min_alpha=args.min_alpha,
         panel_cache_dir=panel_cache_dir,
+        selection_k_ratio=args.selection_k_ratio,
+        selection_k_min=args.selection_k_min,
+        selection_sign=args.selection_sign,
+        use_enhanced_inference=args.use_enhanced_inference,
+        ei_hysteresis_entry_k=args.ei_hysteresis_entry_k,
+        ei_hysteresis_exit_k=args.ei_hysteresis_exit_k,
+        ei_neutralize_risk=args.ei_neutralize_risk,
+        ei_risk_factors=(args.ei_risk_factors.split(",") if args.ei_risk_factors else None),
+        ei_neutralize_gamma=args.ei_neutralize_gamma,
+        ei_ridge_alpha=args.ei_ridge_alpha,
+        infer_add_csz=args.infer_add_csz,
+        infer_csz_eps=args.infer_csz_eps,
+        infer_csz_clip=args.infer_csz_clip,
+        features_mode=args.features_mode,
     )
 
 

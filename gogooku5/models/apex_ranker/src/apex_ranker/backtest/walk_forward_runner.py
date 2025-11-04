@@ -121,9 +121,7 @@ def run_walk_forward_backtest(
     unique_dates = _load_unique_dates(data_path, date_column)
     folds = splitter.split(unique_dates)
 
-    start_bound = (
-        datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
-    )
+    start_bound = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
     end_bound = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
     folds = _filter_folds_by_range(folds, start_bound, end_bound)
 
@@ -133,9 +131,7 @@ def run_walk_forward_backtest(
         folds = folds[:max_folds]
 
     if not folds:
-        raise ValueError(
-            "No folds selected to execute. Check date filters or parameters."
-        )
+        raise ValueError("No folds selected to execute. Check date filters or parameters.")
 
     if fold_output_dir:
         fold_output_dir.mkdir(parents=True, exist_ok=True)
@@ -147,11 +143,13 @@ def run_walk_forward_backtest(
     fold_results: list[dict[str, Any]] = []
     skipped_folds: list[dict[str, Any]] = []
     failed_folds: list[dict[str, Any]] = []
+    evaluation_summaries: list[dict[str, Any]] = []
+    evaluation_daily: list[dict[str, Any]] = []
+    evaluation_bootstrap: list[dict[str, Any]] = []
+    evaluation_risk: list[dict[str, Any]] = []
 
     for idx, fold in enumerate(folds, start=1):
-        available_test_days = _count_unique_dates(
-            unique_dates, fold.test_start, fold.test_end
-        )
+        available_test_days = _count_unique_dates(unique_dates, fold.test_start, fold.test_end)
         if available_test_days < min_test_days:
             skip_record = {
                 "fold_id": fold.fold_id,
@@ -172,21 +170,9 @@ def run_walk_forward_backtest(
                 )
             continue
 
-        fold_json_path = (
-            fold_output_dir / f"fold_{fold.fold_id:03d}.json"
-            if fold_output_dir
-            else None
-        )
-        fold_metrics_path = (
-            fold_metrics_dir / f"fold_{fold.fold_id:03d}_daily.csv"
-            if fold_metrics_dir
-            else None
-        )
-        fold_trades_path = (
-            fold_trades_dir / f"fold_{fold.fold_id:03d}_trades.csv"
-            if fold_trades_dir
-            else None
-        )
+        fold_json_path = fold_output_dir / f"fold_{fold.fold_id:03d}.json" if fold_output_dir else None
+        fold_metrics_path = fold_metrics_dir / f"fold_{fold.fold_id:03d}_daily.csv" if fold_metrics_dir else None
+        fold_trades_path = fold_trades_dir / f"fold_{fold.fold_id:03d}_trades.csv" if fold_trades_dir else None
 
         backtest_kwargs: dict[str, Any] = {
             "data_path": data_path,
@@ -200,15 +186,19 @@ def run_walk_forward_backtest(
             "rebalance_freq": rebalance_frequency,
             "daily_metrics_path": fold_metrics_path,
             "trades_path": fold_trades_path,
+            "panel_cache_salt": (
+                f"fold{fold.fold_id}_"
+                f"{fold.train_start.isoformat()}_"
+                f"{fold.test_start.isoformat()}_"
+                f"{fold.test_end.isoformat()}"
+            ),
         }
 
         if use_mock_predictions:
             backtest_kwargs["use_mock"] = True
         else:
             if model_path is None or config_path is None:
-                raise ValueError(
-                    "model_path and config_path are required unless use_mock_predictions=True"
-                )
+                raise ValueError("model_path and config_path are required unless use_mock_predictions=True")
             backtest_kwargs["model_path"] = model_path
             backtest_kwargs["config_path"] = config_path
 
@@ -239,6 +229,35 @@ def run_walk_forward_backtest(
 
         performance = result.get("performance", {})
         summary = result.get("summary", {})
+        evaluation = result.get("evaluation_metrics", {})
+        artifacts = result.get("artifacts", {})
+        if evaluation:
+            summary_payload = evaluation.get("summary")
+            if summary_payload:
+                summary_record = dict(summary_payload)
+                summary_record["fold_id"] = fold.fold_id
+                summary_record["test_start"] = fold.test_start.isoformat()
+                summary_record["test_end"] = fold.test_end.isoformat()
+                evaluation_summaries.append(summary_record)
+            per_day_records = evaluation.get("per_day", [])
+            for entry in per_day_records:
+                daily_record = dict(entry)
+                daily_record["fold_id"] = fold.fold_id
+                daily_record["test_start"] = fold.test_start.isoformat()
+                daily_record["test_end"] = fold.test_end.isoformat()
+                evaluation_daily.append(daily_record)
+            bootstrap_payload = evaluation.get("bootstrap")
+            if bootstrap_payload:
+                bootstrap_record = {
+                    "fold_id": fold.fold_id,
+                    "metrics": bootstrap_payload,
+                }
+                evaluation_bootstrap.append(bootstrap_record)
+            risk_payload = evaluation.get("risk")
+            if risk_payload:
+                risk_record = dict(risk_payload)
+                risk_record["fold_id"] = fold.fold_id
+                evaluation_risk.append(risk_record)
 
         fold_record = {
             "fold_id": fold.fold_id,
@@ -258,6 +277,10 @@ def run_walk_forward_backtest(
             "summary": summary,
             "status": "success",
         }
+        if evaluation:
+            fold_record["evaluation"] = evaluation
+        if artifacts:
+            fold_record["artifacts"] = artifacts
 
         fold_results.append(fold_record)
 
@@ -291,10 +314,18 @@ def run_walk_forward_backtest(
         "max_drawdown": _compute_metric_summary(_collect("max_drawdown")),
         "win_rate": _compute_metric_summary(_collect("win_rate")),
         "avg_turnover": _compute_metric_summary(_collect("avg_turnover")),
-        "transaction_cost_pct": _compute_metric_summary(
-            _collect("transaction_cost_pct")
-        ),
+        "transaction_cost_pct": _compute_metric_summary(_collect("transaction_cost_pct")),
     }
+
+    evaluation_payload: dict[str, Any] = {}
+    if evaluation_summaries:
+        evaluation_payload["summaries"] = evaluation_summaries
+    if evaluation_daily:
+        evaluation_payload["daily_metrics"] = evaluation_daily
+    if evaluation_bootstrap:
+        evaluation_payload["bootstrap"] = evaluation_bootstrap
+    if evaluation_risk:
+        evaluation_payload["risk"] = evaluation_risk
 
     run_config = WalkForwardRunConfig(
         data_path=data_path,
@@ -329,6 +360,7 @@ def run_walk_forward_backtest(
     return {
         "config": config_payload,
         "metrics": aggregate_metrics,
+        "evaluation": evaluation_payload,
         "folds": fold_results,
         "skipped_folds": skipped_folds,
         "failed_folds": failed_folds,

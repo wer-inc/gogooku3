@@ -5,6 +5,7 @@ Frequency Adaptive Normalization (FAN) with FreqDropout
 
 import logging
 import math
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -84,9 +85,7 @@ class FrequencyAdaptiveNormalization(nn.Module):
     帯域ごとに適応的なゲイン制御
     """
 
-    def __init__(
-        self, num_features: int, seq_len: int, num_bands: int = 8, dropout: float = 0.1
-    ):
+    def __init__(self, num_features: int, seq_len: int, num_bands: int = 8, dropout: float = 0.1):
         """
         Args:
             num_features: 特徴量数
@@ -167,7 +166,7 @@ class AdaptiveNormalization(nn.Module):
     def __init__(
         self,
         hidden_size: int,
-        config: any | None = None,
+        config: Optional[Any] = None,
         fan_enabled: bool = True,
         san_enabled: bool = False,
     ):

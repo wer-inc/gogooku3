@@ -7,20 +7,19 @@ from torch import nn
 class ListNetLoss(nn.Module):
     """ListNet loss with optional Top-K reweighting."""
 
-    def __init__(
-        self, tau: float = 0.5, topk: int | None = None, eps: float = 1e-12
-    ) -> None:
+    def __init__(self, tau: float = 0.5, topk: int | None = None, eps: float = 1e-12) -> None:
         super().__init__()
         self.tau = tau
         self.topk = topk
         self.eps = eps
 
-    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor | None:
+        # GRADIENT-SAFE: Return None instead of requires_grad=False tensor
         if scores.numel() <= 1:
-            return torch.tensor(0.0, device=scores.device)
+            return None
 
         if torch.std(labels) < 1e-8:
-            return torch.tensor(0.0, device=scores.device)
+            return None
 
         p = torch.softmax(scores / self.tau, dim=0)
         q = torch.softmax(labels / self.tau, dim=0)
@@ -44,13 +43,14 @@ class RankNetLoss(nn.Module):
         super().__init__()
         self.neg_sample = neg_sample
 
-    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor | None:
         n = scores.numel()
+        # GRADIENT-SAFE: Return None instead of requires_grad=False tensor
         if n <= 1:
-            return torch.tensor(0.0, device=scores.device)
+            return None
 
         if torch.std(labels) < 1e-8:
-            return torch.tensor(0.0, device=scores.device)
+            return None
 
         if self.neg_sample is None or n * (n - 1) // 2 <= self.neg_sample:
             idx_i, idx_j = torch.triu_indices(n, n, offset=1, device=scores.device)
@@ -60,7 +60,7 @@ class RankNetLoss(nn.Module):
             mask = idx_i != idx_j
             idx_i, idx_j = idx_i[mask], idx_j[mask]
             if idx_i.numel() == 0:
-                return torch.tensor(0.0, device=scores.device)
+                return None
 
         s_diff = scores[idx_i] - scores[idx_j]
         y_diff = labels[idx_i] - labels[idx_j]
@@ -90,14 +90,28 @@ class CompositeLoss(nn.Module):
         self.ranknet = RankNetLoss(neg_sample=ranknet_neg_sample)
         self.mse = nn.MSELoss()
 
-    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        loss = torch.tensor(0.0, device=scores.device)
+    def forward(self, scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor | None:
+        # GRADIENT-SAFE: Collect loss terms as tensors, then stack
+        # Avoids leaf tensor in-place update (torch.tensor(0.0) + ...)
+        loss_terms: list[torch.Tensor] = []
 
         if self.listnet_weight > 0:
-            loss = loss + self.listnet_weight * self.listnet(scores, labels)
-        if self.ranknet_weight > 0:
-            loss = loss + self.ranknet_weight * self.ranknet(scores, labels)
-        if self.mse_weight > 0:
-            loss = loss + self.mse_weight * self.mse(scores, labels)
+            l_listnet = self.listnet(scores, labels)
+            if l_listnet is not None:
+                loss_terms.append(self.listnet_weight * l_listnet)
 
-        return loss
+        if self.ranknet_weight > 0:
+            l_ranknet = self.ranknet(scores, labels)
+            if l_ranknet is not None:
+                loss_terms.append(self.ranknet_weight * l_ranknet)
+
+        if self.mse_weight > 0:
+            l_mse = self.mse(scores, labels)
+            loss_terms.append(self.mse_weight * l_mse)
+
+        # Empty aggregation → return None (caller should skip)
+        if not loss_terms:
+            return None
+
+        # Stack and reduce → maintains gradient graph
+        return torch.stack(loss_terms).sum()

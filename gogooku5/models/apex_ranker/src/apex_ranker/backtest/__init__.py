@@ -8,8 +8,10 @@ from .costs import (
 from .optimizer import OptimizationConfig, OptimizationResult, generate_target_weights
 from .portfolio import Portfolio, Position, Trade
 from .rebalance import normalise_frequency, should_rebalance
-from .splitter import Split, generate_splits_for_backtest
+from .selection import select_by_percentile
+from .splitter import PurgedKFoldSplitter, PurgeParams, Split
 from .splitter import WalkForwardSplitter as LegacyWalkForwardSplitter
+from .splitter import generate_splits_for_backtest
 from .walk_forward import WalkForwardFold, WalkForwardSplitter
 from .walk_forward_runner import WalkForwardRunConfig, run_walk_forward_backtest
 
@@ -30,11 +32,14 @@ __all__ = [
     "OptimizationConfig",
     "OptimizationResult",
     "generate_target_weights",
+    "select_by_percentile",
     # Splitter
     "Split",
+    "PurgeParams",
     "WalkForwardFold",
     "WalkForwardSplitter",
     "LegacyWalkForwardSplitter",
+    "PurgedKFoldSplitter",
     "generate_splits_for_backtest",
     # Walk-forward runner
     "WalkForwardRunConfig",

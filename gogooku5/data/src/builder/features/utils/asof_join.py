@@ -49,9 +49,29 @@ def prepare_snapshot_pl(
     if df.is_empty():
         return df.with_columns(pl.lit(None).cast(pl.Datetime("us", "Asia/Tokyo")).alias("available_ts"))
 
-    # 1) Get unique published dates (exclude NULLs)
+    # 1) Resolve published date with fallbacks
+    fallback_candidates = [published_date_col] + [
+        candidate
+        for candidate in ("application_date", "ApplicationDate", "date", "Date")
+        if candidate != published_date_col
+    ]
+    date_exprs = [
+        pl.col(col_name).cast(pl.Date, strict=False) for col_name in fallback_candidates if col_name in df.columns
+    ]
+
+    if not date_exprs:
+        LOGGER.warning(
+            "No candidate columns available for published date resolution (%s, fallbacks=%s); setting available_ts to NULL",
+            published_date_col,
+            fallback_candidates[1:],
+        )
+        return df.with_columns(pl.lit(None).cast(pl.Datetime("us", "Asia/Tokyo")).alias("available_ts"))
+
+    work = df.with_columns(pl.coalesce(date_exprs).alias("_published_effective"))
+
+    # 2) Get unique published dates (exclude NULLs)
     unique_dates = (
-        df.select(pl.col(published_date_col).cast(pl.Date).alias("published_date"))
+        work.select(pl.col("_published_effective").alias("published_date"))
         .unique()
         .filter(pl.col("published_date").is_not_null())  # Filter out None values
         .sort("published_date")
@@ -59,10 +79,16 @@ def prepare_snapshot_pl(
 
     # If no valid published dates, return with NULL available_ts
     if unique_dates.is_empty():
-        LOGGER.warning("No valid published dates in %s column, setting available_ts to NULL", published_date_col)
-        return df.with_columns(pl.lit(None).cast(pl.Datetime("us", "Asia/Tokyo")).alias("available_ts"))
+        LOGGER.warning(
+            "No valid published dates resolved from %s (fallbacks=%s); setting available_ts to NULL",
+            published_date_col,
+            fallback_candidates[1:],
+        )
+        return work.drop("_published_effective").with_columns(
+            pl.lit(None).cast(pl.Datetime("us", "Asia/Tokyo")).alias("available_ts")
+        )
 
-    # 2) Calculate next business day
+    # 3) Calculate next business day
     if trading_calendar is not None:
         # Use trading calendar for accurate business day calculation
         cal_dates = trading_calendar.select(pl.col("date").cast(pl.Date).alias("date")).sort("date")
@@ -103,12 +129,10 @@ def prepare_snapshot_pl(
             [pl.col("published_date").map_elements(next_weekday, return_dtype=pl.Date).alias("next_business_date")]
         )
 
-    # 3) Join next business date back to original dataframe
-    result = df.with_columns([pl.col(published_date_col).cast(pl.Date).alias("_published_date_cast")]).join(
-        date_mapping, left_on="_published_date_cast", right_on="published_date", how="left"
-    )
+    # 4) Join next business date back to original dataframe
+    result = work.join(date_mapping, left_on="_published_effective", right_on="published_date", how="left")
 
-    # 4) Convert next business date to datetime at specified availability time (JST)
+    # 5) Convert next business date to datetime at specified availability time (JST)
     result = result.with_columns(
         [
             pl.datetime(
@@ -121,7 +145,7 @@ def prepare_snapshot_pl(
                 time_zone="Asia/Tokyo",
             ).alias("available_ts")
         ]
-    ).drop(["_published_date_cast", "next_business_date"])
+    ).drop(["_published_effective", "next_business_date", "published_date"], strict=False)
 
     LOGGER.info(
         "Prepared snapshot data: %d rows, T+1 availability at %02d:%02d JST",

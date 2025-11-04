@@ -15,7 +15,4 @@ def load_config(config_path: str | Path) -> dict:
 
     if not isinstance(data, dict):
         raise ValueError(f"Invalid configuration file: {config_path}")
-
-    data["_config_path"] = str(path)
-    data["_config_dir"] = str(path.parent)
     return data

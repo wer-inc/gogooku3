@@ -12,9 +12,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float) -> None:
         super().__init__()
         self.ln1 = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
-        )
+        self.attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.ln2 = nn.LayerNorm(d_model)
 
         self.ffn = nn.Sequential(
@@ -111,12 +109,7 @@ class PatchTSTEncoder(nn.Module):
         )
 
         self.positional = PositionalEncoding(d_model)
-        self.blocks = nn.ModuleList(
-            [
-                TransformerBlock(d_model, n_heads, d_model * 4, dropout)
-                for _ in range(depth)
-            ]
-        )
+        self.blocks = nn.ModuleList([TransformerBlock(d_model, n_heads, d_model * 4, dropout) for _ in range(depth)])
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -145,10 +138,7 @@ class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 2048) -> None:
         super().__init__()
         position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, d_model, 2, dtype=torch.float32)
-            * (-math.log(10000.0) / d_model)
-        )
+        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000.0) / d_model))
         pe = torch.zeros(max_len, d_model, dtype=torch.float32)
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)

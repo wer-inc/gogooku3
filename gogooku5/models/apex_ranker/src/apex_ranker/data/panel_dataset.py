@@ -63,20 +63,11 @@ def build_panel_cache(
         codes_data[str(code)] = {
             "dates": dates_int,
             "features": feat_arr.astype(np.float32, copy=False),
-            "targets": None
-            if targ_arr is None
-            else targ_arr.astype(np.float32, copy=False),
-            "masks": None
-            if mask_arr is None
-            else mask_arr.astype(np.float32, copy=False),
+            "targets": None if targ_arr is None else targ_arr.astype(np.float32, copy=False),
+            "masks": None if mask_arr is None else mask_arr.astype(np.float32, copy=False),
         }
 
-    unique_dates = (
-        sorted_df.select(pl.col(date_col).unique())
-        .to_series()
-        .to_numpy()
-        .astype("datetime64[D]")
-    )
+    unique_dates = sorted_df.select(pl.col(date_col).unique()).to_series().to_numpy().astype("datetime64[D]")
     unique_date_ints = np.unique(unique_dates.astype("int64"))
 
     date_to_codes: dict[int, list[str]] = {}
@@ -210,6 +201,7 @@ def panel_cache_key(
     lookback: int,
     feature_cols: Sequence[str],
     version: str = "v1",
+    extra_salt: str | None = None,
 ) -> str:
     """Generate a deterministic key for panel cache persistence."""
     resolved = Path(dataset_path).resolve()
@@ -220,6 +212,9 @@ def panel_cache_key(
         "features": list(feature_cols),
         "version": version,
     }
+    if extra_salt:
+        payload["salt"] = extra_salt
+
     encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
     digest = hashlib.sha1(encoded).hexdigest()
     stem = resolved.stem or resolved.name
