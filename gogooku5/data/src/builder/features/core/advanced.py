@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Sequence
 
 import polars as pl
 
@@ -21,6 +22,8 @@ class AdvancedFeatureConfig:
     returns_1d: str = "ret_prev_1d"
     returns_5d: str = "ret_prev_5d"
     dollar_volume: str = "dollar_volume"
+    # Multi-period indicator support
+    rsi_periods: Sequence[int] = (14, 2)
 
 
 class AdvancedFeatureEngineer:
@@ -42,7 +45,10 @@ class AdvancedFeatureEngineer:
             out = out.with_columns(roll_mean_safe(pl.col(cfg.volume_column), 5, min_periods=3).alias("volume_ma_5"))
             out = out.with_columns(roll_mean_safe(pl.col(cfg.volume_column), 20, min_periods=10).alias("volume_ma_20"))
 
-        out = self._compute_rsi14(out)
+        # Compute RSI for all configured periods
+        for period in cfg.rsi_periods:
+            out = self._compute_rsi(out, period)
+
         out = self._compute_realized_vol(out)
 
         if {"rsi_14", "realized_vol_20"}.issubset(out.columns):
@@ -114,27 +120,46 @@ class AdvancedFeatureEngineer:
 
         return out
 
-    def _compute_rsi14(self, df: pl.DataFrame) -> pl.DataFrame:
+    def _compute_rsi(self, df: pl.DataFrame, period: int) -> pl.DataFrame:
         """
-        Phase 2 Patch C: RSI calculation with current day excluded.
+        RSI calculation with configurable period.
 
+        Phase 2 Patch C: RSI calculation with current day excluded.
         Delta is computed from previous close, then rolling average excludes current day.
+
+        Args:
+            df: Input DataFrame
+            period: RSI period (e.g., 2, 14)
+
+        Returns:
+            DataFrame with rsi_{period} column added
         """
         cfg = self.config
-        if "rsi_14" in df.columns:
+        col_name = f"rsi_{period}"
+
+        # Skip if already computed
+        if col_name in df.columns:
             return df
+
+        # Delta from previous close
         delta = pl.col(cfg.close_column).diff().over(cfg.code_column)
         gain = pl.when(delta > 0).then(delta).otherwise(0.0)
         loss = pl.when(delta < 0).then(-delta).otherwise(0.0)
         tmp = df.with_columns([gain.alias("_gain"), loss.alias("_loss")])
+
         # Phase 2 Patch C: Exclude current day (shift(1) before rolling)
+        # min_periods = max(1, period // 2) for flexibility
+        min_periods = max(1, period // 2)
         tmp = tmp.with_columns(
-            roll_mean_safe(pl.col("_gain"), 14, min_periods=7).alias("_avg_gain"),
-            roll_mean_safe(pl.col("_loss"), 14, min_periods=7).alias("_avg_loss"),
+            roll_mean_safe(pl.col("_gain"), period, min_periods=min_periods).alias("_avg_gain"),
+            roll_mean_safe(pl.col("_loss"), period, min_periods=min_periods).alias("_avg_loss"),
         )
+
+        # Calculate RSI
         rs = pl.col("_avg_gain") / (pl.col("_avg_loss") + EPS)
         rsi = 100.0 - (100.0 / (1.0 + rs))
-        tmp = tmp.with_columns(rsi.alias("rsi_14"))
+        tmp = tmp.with_columns(rsi.alias(col_name))
+
         return tmp.drop([c for c in ("_gain", "_loss", "_avg_gain", "_avg_loss") if c in tmp.columns])
 
     def _compute_realized_vol(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -151,9 +176,7 @@ class AdvancedFeatureEngineer:
                 # Phase 2 Patch C: ret_prev_1d already excludes current day, but rolling needs shift(1) too
                 tmp = (
                     df.lazy()
-                    .with_columns(
-                        roll_std_safe(pl.col(cfg.returns_1d), 20, min_periods=10).alias("_realized_vol_20")
-                    )
+                    .with_columns(roll_std_safe(pl.col(cfg.returns_1d), 20, min_periods=10).alias("_realized_vol_20"))
                     .collect()
                 )
                 return tmp.with_columns((pl.col("_realized_vol_20") * math.sqrt(252.0)).alias("realized_vol_20")).drop(
@@ -166,7 +189,7 @@ class AdvancedFeatureEngineer:
                     roll_std_safe(
                         (pl.col(cfg.close_column) / pl.col(cfg.close_column).shift(1).over(cfg.code_column) - 1.0),
                         20,
-                        min_periods=10
+                        min_periods=10,
                     ).alias("_realized_vol_20")
                 )
                 .collect()

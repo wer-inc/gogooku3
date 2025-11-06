@@ -106,10 +106,7 @@ def generate_mock_predictions(
         .head(top_k)
     )
 
-    return {
-        row["Code"]: float(row["returns_5d"])
-        for row in predictions.iter_rows(named=True)
-    }
+    return {row["Code"]: float(row["returns_5d"]) for row in predictions.iter_rows(named=True)}
 
 
 def run_backtest_smoke_test(
@@ -183,9 +180,7 @@ def run_backtest_smoke_test(
         aliases_yaml = config.get("data", {}).get("feature_aliases_yaml")
         print(f"[Backtest] Loaded config: {config_path}")
     elif model_path is not None and not use_mock:
-        raise FileNotFoundError(
-            "Model inference requested but config file was not provided or found."
-        )
+        raise FileNotFoundError("Model inference requested but config file was not provided or found.")
 
     # Prepare passthrough columns for Enhanced Inference (A.4)
     passthrough_cols = []
@@ -211,7 +206,7 @@ def run_backtest_smoke_test(
         # Risk factors are now in the main frame thanks to passthrough_cols
         available_risk_cols = ["Code", "Date"] + [c for c in passthrough_cols if c in frame.columns]
         risk_factors_frame = frame.select(available_risk_cols)
-        loaded_factors = [c for c in available_risk_cols if c not in ['Code', 'Date']]
+        loaded_factors = [c for c in available_risk_cols if c not in ["Code", "Date"]]
         print(f"[A.4] Risk factors extracted from frame: {loaded_factors}")
 
     daily_frames = build_daily_lookup(frame)
@@ -230,17 +225,13 @@ def run_backtest_smoke_test(
 
     inference_engine: BacktestInferenceEngine | None = None
     prediction_dates: set[Date] = set()
-    cache_directory = (
-        Path(panel_cache_dir).expanduser()
-        if panel_cache_dir is not None
-        else Path("cache/panel")
-    )
+    cache_directory = Path(panel_cache_dir).expanduser() if panel_cache_dir is not None else Path("cache/panel")
 
     # Print Enhanced Inference configuration
     if use_enhanced_inference:
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("Enhanced Inference (EI) Configuration")
-        print("="*80)
+        print("=" * 80)
         if ei_neutralize_risk:
             print("[A.4] Risk Neutralization: ENABLED")
             factors_str = ", ".join(ei_risk_factors) if ei_risk_factors else "sector33_code, volatility_60d"
@@ -252,7 +243,7 @@ def run_backtest_smoke_test(
         print("[A.3] Hysteresis Selection: ENABLED")
         print(f"      Entry threshold: {ei_hysteresis_entry_k}")
         print(f"      Exit threshold: {ei_hysteresis_exit_k}")
-        print("="*80 + "\n")
+        print("=" * 80 + "\n")
 
     if model_path is not None and not use_mock:
         inference_engine = BacktestInferenceEngine(
@@ -270,10 +261,7 @@ def run_backtest_smoke_test(
             csz_clip=infer_csz_clip,
         )
         prediction_dates = inference_engine.available_dates()
-        print(
-            f"[Backtest] Inference ready on {len(prediction_dates)} dates "
-            f"(device={inference_engine.device})"
-        )
+        print(f"[Backtest] Inference ready on {len(prediction_dates)} dates " f"(device={inference_engine.device})")
     else:
         print("[Backtest] Using mock predictions (returns_5d proxy)")
 
@@ -304,15 +292,9 @@ def run_backtest_smoke_test(
     print(f"[Backtest] Panel cache directory: {cache_directory}")
 
     selection_cfg = config.get("selection", {}) if config else {}
-    default_selection = (
-        selection_cfg.get("default", {})
-        if isinstance(selection_cfg, dict)
-        else {}
-    )
+    default_selection = selection_cfg.get("default", {}) if isinstance(selection_cfg, dict) else {}
     horizon_selection = (
-        selection_cfg.get("horizons", {}).get(str(horizon), {})
-        if isinstance(selection_cfg, dict)
-        else {}
+        selection_cfg.get("horizons", {}).get(str(horizon), {}) if isinstance(selection_cfg, dict) else {}
     )
     effective_k_ratio = (
         selection_k_ratio
@@ -325,9 +307,7 @@ def run_backtest_smoke_test(
         else horizon_selection.get("k_min", default_selection.get("k_min"))
     )
     effective_sign = (
-        selection_sign
-        if selection_sign is not None
-        else horizon_selection.get("sign", default_selection.get("sign"))
+        selection_sign if selection_sign is not None else horizon_selection.get("sign", default_selection.get("sign"))
     )
     if effective_sign is None:
         effective_sign = 1
@@ -403,10 +383,7 @@ def run_backtest_smoke_test(
         if should_rebalance(current_date, last_rebalance_date, rebalance_mode):
             if inference_engine is not None and not use_mock:
                 if current_date not in prediction_dates:
-                    print(
-                        f"[Backtest] {current_date}: insufficient lookback, skipping "
-                        "rebalance attempt"
-                    )
+                    print(f"[Backtest] {current_date}: insufficient lookback, skipping " "rebalance attempt")
                 else:
                     rankings = inference_engine.predict(
                         target_date=current_date,
@@ -415,48 +392,30 @@ def run_backtest_smoke_test(
                     )
 
                     if rankings.is_empty():
-                        print(
-                            f"[Backtest] {current_date}: model produced no candidates"
-                        )
+                        print(f"[Backtest] {current_date}: model produced no candidates")
                     else:
                         available_codes = set(price_map.keys())
-                        filtered = rankings.filter(
-                            pl.col("Code").is_in(list(available_codes))
-                        ).sort("Rank")
+                        filtered = rankings.filter(pl.col("Code").is_in(list(available_codes))).sort("Rank")
                         if filtered.is_empty():
-                            print(
-                                f"[Backtest] {current_date}: "
-                                "no overlap between predictions and price data"
-                            )
+                            print(f"[Backtest] {current_date}: " "no overlap between predictions and price data")
                         else:
-                            pool_limit = optimization_config.candidate_count(
-                                filtered.height
-                            )
+                            pool_limit = optimization_config.candidate_count(filtered.height)
                             if pool_limit <= 0:
-                                print(
-                                    f"[Backtest] {current_date}: candidate pool exhausted"
-                                )
+                                print(f"[Backtest] {current_date}: candidate pool exhausted")
                             else:
                                 filtered = filtered.head(pool_limit)
                                 gate_candidate_total = filtered.height
-                                scores_tensor = torch.tensor(
-                                    filtered["Score"].to_numpy(), dtype=torch.float32
-                                )
+                                scores_tensor = torch.tensor(filtered["Score"].to_numpy(), dtype=torch.float32)
                                 gate_candidate_total = int(scores_tensor.numel())
                                 if scores_tensor.numel() == 0:
-                                    print(
-                                        f"[Backtest] {current_date}: no usable scores after filtering"
-                                    )
+                                    print(f"[Backtest] {current_date}: no usable scores after filtering")
                                 else:
                                     gate_ratio_used = (
                                         effective_k_ratio
                                         if effective_k_ratio is not None
-                                        else optimization_config.target_top_k
-                                        / max(1, scores_tensor.numel())
+                                        else optimization_config.target_top_k / max(1, scores_tensor.numel())
                                     )
-                                    gate_ratio_used = float(
-                                        max(0.0, min(1.0, gate_ratio_used))
-                                    )
+                                    gate_ratio_used = float(max(0.0, min(1.0, gate_ratio_used)))
                                     gate_minimum = (
                                         effective_k_min
                                         if effective_k_min is not None
@@ -477,9 +436,82 @@ def run_backtest_smoke_test(
                                             # Filter to current date and codes
                                             codes_in_order = filtered["Code"].to_list()
                                             df_risk = risk_factors_frame.filter(
-                                                (pl.col("Date") == current_date) &
-                                                (pl.col("Code").is_in(codes_in_order))
-                                            ).sort("Code")  # Sort by Code to match order
+                                                (pl.col("Date") == current_date)
+                                                & (pl.col("Code").is_in(codes_in_order))
+                                            )
+                                            # CRITICAL: Reorder df_risk to match codes_in_order (not alphabetically)
+                                            # This ensures alignment between scores_tensor and risk factors
+                                            # Create a mapping from code to index in codes_in_order
+                                            code_to_index = {code: idx for idx, code in enumerate(codes_in_order)}
+                                            df_risk = (
+                                                df_risk.with_columns(
+                                                    pl.col("Code")
+                                                    .map_elements(
+                                                        lambda c: code_to_index.get(c, len(codes_in_order)),
+                                                        return_dtype=pl.Int64,
+                                                    )
+                                                    .alias("_sort_order")
+                                                )
+                                                .sort("_sort_order")
+                                                .drop("_sort_order")
+                                            )
+
+                                            # Verify alignment: df_risk codes should match codes_in_order
+                                            df_risk_codes = df_risk["Code"].to_list()
+                                            codes_in_risk = set(df_risk_codes)
+                                            codes_in_scores = set(codes_in_order)
+
+                                            # Find codes that are missing in either direction
+                                            missing_in_risk = codes_in_scores - codes_in_risk
+                                            missing_in_scores = codes_in_risk - codes_in_scores
+
+                                            if missing_in_risk or missing_in_scores:
+                                                print(
+                                                    f"[A.4] WARNING: Code mismatch detected. "
+                                                    f"Missing in risk factors: {missing_in_risk if missing_in_risk else 'none'}, "
+                                                    f"Extra in risk factors: {missing_in_scores if missing_in_scores else 'none'}"
+                                                )
+
+                                            # Filter to only codes that exist in both
+                                            common_codes = list(codes_in_risk & codes_in_scores)
+                                            original_count = len(codes_in_order)
+                                            if len(common_codes) != len(codes_in_order):
+                                                # Reorder common codes to match codes_in_order
+                                                common_codes = [c for c in codes_in_order if c in common_codes]
+                                                # Filter df_risk to common codes and maintain order
+                                                df_risk = df_risk.filter(pl.col("Code").is_in(common_codes))
+                                                # Re-sort to match common_codes order
+                                                code_to_index = {code: idx for idx, code in enumerate(common_codes)}
+                                                df_risk = (
+                                                    df_risk.with_columns(
+                                                        pl.col("Code")
+                                                        .map_elements(
+                                                            lambda c: code_to_index.get(c, len(common_codes)),
+                                                            return_dtype=pl.Int64,
+                                                        )
+                                                        .alias("_sort_order")
+                                                    )
+                                                    .sort("_sort_order")
+                                                    .drop("_sort_order")
+                                                )
+                                                # Filter scores_tensor to match common codes
+                                                scores_indices = [codes_in_order.index(c) for c in common_codes]
+                                                scores_tensor = scores_tensor[scores_indices]
+                                                codes_in_order = common_codes
+                                                print(
+                                                    f"[A.4] Filtered to {len(common_codes)} common codes "
+                                                    f"(removed {original_count - len(common_codes)} codes)"
+                                                )
+                                            elif df_risk_codes != codes_in_order:
+                                                # Log warning if order mismatch detected (should not happen after fix)
+                                                mismatched = sum(
+                                                    1 for a, b in zip(df_risk_codes, codes_in_order) if a != b
+                                                )
+                                                if mismatched > 0:
+                                                    print(
+                                                        f"[A.4] WARNING: {mismatched} codes misaligned between "
+                                                        f"scores and risk factors. This may cause incorrect neutralization."
+                                                    )
 
                                             # Case-insensitive factor matching
                                             cols_lower = {c.lower(): c for c in df_risk.columns}
@@ -496,7 +528,11 @@ def run_backtest_smoke_test(
                                                 print(f"[A.4] WARNING: Risk factors not found: {missing_factors}")
 
                                             # Convert to Pandas (risk_neutralize expects pd.DataFrame)
-                                            df_risk_pd = df_risk.select(available_factors).to_pandas() if available_factors else None
+                                            df_risk_pd = (
+                                                df_risk.select(available_factors).to_pandas()
+                                                if available_factors
+                                                else None
+                                            )
                                         else:
                                             print("[A.4] ERROR: risk_factors_frame not loaded")
                                             df_risk_pd = None
@@ -521,9 +557,7 @@ def run_backtest_smoke_test(
                                                 scores_tensor = torch.from_numpy(scores_neutralized).to(
                                                     dtype=torch.float32
                                                 )
-                                                print(
-                                                    f"[A.4] {current_date}: Risk neutralization applied successfully"
-                                                )
+                                                print(f"[A.4] {current_date}: Risk neutralization applied successfully")
                                             except Exception as e:
                                                 print(
                                                     f"[Backtest] {current_date}: "
@@ -539,12 +573,8 @@ def run_backtest_smoke_test(
                                     if use_enhanced_inference:
                                         # Get previous holdings as Code→index mapping
                                         prev_codes = list(portfolio.positions.keys())
-                                        code_to_idx = {
-                                            code: i for i, code in enumerate(filtered["Code"].to_list())
-                                        }
-                                        prev_indices = [
-                                            code_to_idx[code] for code in prev_codes if code in code_to_idx
-                                        ]
+                                        code_to_idx = {code: i for i, code in enumerate(filtered["Code"].to_list())}
+                                        prev_indices = [code_to_idx[code] for code in prev_codes if code in code_to_idx]
 
                                         # Apply hysteresis selection
                                         selected_indices = hysteresis_selection(
@@ -559,9 +589,7 @@ def run_backtest_smoke_test(
 
                                         # Threshold is minimum score (for logging)
                                         if len(selected_indices) > 0:
-                                            threshold_signed = float(
-                                                scores_tensor[selected_indices[-1]].item()
-                                            )
+                                            threshold_signed = float(scores_tensor[selected_indices[-1]].item())
                                         else:
                                             threshold_signed = float("nan")
 
@@ -569,45 +597,31 @@ def run_backtest_smoke_test(
                                         gate_fallback_used = False
                                     else:
                                         # Existing logic (select_by_percentile)
-                                        idx_tensor, threshold_signed, gate_fallback_used = (
-                                            select_by_percentile(
-                                                scores_tensor,
-                                                k_ratio=gate_ratio_used,
-                                                k_min=gate_minimum,
-                                                sign=effective_sign,
-                                            )
+                                        idx_tensor, threshold_signed, gate_fallback_used = select_by_percentile(
+                                            scores_tensor,
+                                            k_ratio=gate_ratio_used,
+                                            k_min=gate_minimum,
+                                            sign=effective_sign,
                                         )
                                     if idx_tensor.numel() == 0:
                                         gate_fallback_used = True
-                                        fallback_count = min(
-                                            scores_tensor.numel(), gate_minimum
-                                        )
+                                        fallback_count = min(scores_tensor.numel(), gate_minimum)
                                         if fallback_count == 0:
-                                            idx_tensor = torch.empty(
-                                                0, dtype=torch.long
-                                            )
+                                            idx_tensor = torch.empty(0, dtype=torch.long)
                                             filtered = filtered.head(0)
                                         else:
-                                            signed_scores = (
-                                                scores_tensor * float(effective_sign)
-                                            )
+                                            signed_scores = scores_tensor * float(effective_sign)
                                             idx_tensor = torch.topk(
                                                 signed_scores,
                                                 fallback_count,
                                                 sorted=True,
                                             ).indices
-                                            threshold_signed = float(
-                                                signed_scores[idx_tensor[-1]].item()
-                                            )
+                                            threshold_signed = float(signed_scores[idx_tensor[-1]].item())
                                     if idx_tensor.numel() > 0:
-                                        idx_tensor = torch.unique(
-                                            idx_tensor, sorted=True
-                                        )
+                                        idx_tensor = torch.unique(idx_tensor, sorted=True)
                                         idx_list = idx_tensor.tolist()
                                         if idx_list:
-                                            selected_rows = [
-                                                filtered.row(i) for i in idx_list
-                                            ]
+                                            selected_rows = [filtered.row(i) for i in idx_list]
                                             filtered = pl.DataFrame(
                                                 selected_rows,
                                                 schema=filtered.schema,
@@ -617,22 +631,17 @@ def run_backtest_smoke_test(
                                             filtered = filtered.head(0)
                                     candidate_pool_size = filtered.height
                                     if idx_tensor.numel() > 0:
-                                        gate_threshold_value = float(
-                                            threshold_signed * float(effective_sign)
-                                        )
+                                        gate_threshold_value = float(threshold_signed * float(effective_sign))
                                     else:
                                         gate_threshold_value = None
                                     predictions = {
-                                        row["Code"]: float(row["Score"])
-                                        for row in filtered.iter_rows(named=True)
+                                        row["Code"]: float(row["Score"]) for row in filtered.iter_rows(named=True)
                                     }
                                     if candidate_pool_size is None:
                                         candidate_pool_size = len(predictions)
                                     if gate_ratio_used is not None:
                                         threshold_display = (
-                                            gate_threshold_value
-                                            if gate_threshold_value is not None
-                                            else float("nan")
+                                            gate_threshold_value if gate_threshold_value is not None else float("nan")
                                         )
                                         print(
                                             "[Backtest] "
@@ -645,9 +654,7 @@ def run_backtest_smoke_test(
                                         )
                                     prediction_source = "model"
             else:
-                predictions = generate_mock_predictions(
-                    current_frame, candidate_request
-                )
+                predictions = generate_mock_predictions(current_frame, candidate_request)
                 prediction_source = "mock"
                 candidate_pool_size = len(predictions)
 
@@ -678,16 +685,12 @@ def run_backtest_smoke_test(
                     opt_result.notes.append("turnover_constraint_relaxed")
 
                 if not opt_weights:
-                    fallback_codes = list(predictions.keys())[
-                        : optimization_config.target_top_k
-                    ]
+                    fallback_codes = list(predictions.keys())[: optimization_config.target_top_k]
                     if fallback_codes:
                         weight = 1.0 / len(fallback_codes)
                         opt_weights = dict.fromkeys(fallback_codes, weight)
                         opt_result.selected_codes = list(opt_weights.keys())
-                        fallback_turnover = compute_weight_turnover(
-                            portfolio.weights, opt_weights
-                        )
+                        fallback_turnover = compute_weight_turnover(portfolio.weights, opt_weights)
                         opt_result.unconstrained_turnover = fallback_turnover
                         opt_result.constrained_turnover = fallback_turnover
                         opt_result.applied_alpha = 1.0
@@ -760,11 +763,7 @@ def run_backtest_smoke_test(
                     "prediction_date": str(current_date),
                     "prediction_source": prediction_source,
                     "cross_section_total": int(
-                        sum(
-                            1
-                            for value in label_values
-                            if value is not None and np.isfinite(value)
-                        )
+                        sum(1 for value in label_values if value is not None and np.isfinite(value))
                     ),
                     "scored_count": int(score_tensor.numel()),
                     "k_eval": int(k_eval),
@@ -779,38 +778,24 @@ def run_backtest_smoke_test(
                     "wil_at_k": float(wil_val),
                     "spread": float(spread_val),
                     "k_over_n": float(k_eval / max(1, score_tensor.numel())),
-                    "mean_label": float(np.mean(label_buffer))
-                    if label_buffer
-                    else float("nan"),
+                    "mean_label": float(np.mean(label_buffer)) if label_buffer else float("nan"),
                 }
                 cross_metrics_record["selection_threshold"] = (
-                    float(gate_threshold_value)
-                    if gate_threshold_value is not None
-                    else None
+                    float(gate_threshold_value) if gate_threshold_value is not None else None
                 )
                 cross_metrics_record["selection_gate_fallback"] = (
-                    int(gate_fallback_used)
-                    if gate_candidate_total is not None
-                    else None
+                    int(gate_fallback_used) if gate_candidate_total is not None else None
                 )
                 cross_metrics_record["selection_k_ratio"] = (
-                    float(gate_ratio_used)
-                    if gate_ratio_used is not None
-                    else None
+                    float(gate_ratio_used) if gate_ratio_used is not None else None
                 )
                 cross_metrics_record["selection_candidates_total"] = (
-                    int(gate_candidate_total)
-                    if gate_candidate_total is not None
-                    else None
+                    int(gate_candidate_total) if gate_candidate_total is not None else None
                 )
                 cross_metrics_record["selection_candidates_kept"] = (
-                    int(candidate_pool_size)
-                    if candidate_pool_size is not None
-                    else None
+                    int(candidate_pool_size) if candidate_pool_size is not None else None
                 )
-                cross_metrics_record["selection_k_min"] = (
-                    int(effective_k_min) if effective_k_min is not None else None
-                )
+                cross_metrics_record["selection_k_min"] = int(effective_k_min) if effective_k_min is not None else None
                 cross_metrics_record["selection_sign"] = effective_sign
 
         next_prices = {
@@ -831,18 +816,10 @@ def run_backtest_smoke_test(
             transaction_cost=daily_cost,
         )
         state["prediction_date"] = str(current_date)
-        state["prediction_source"] = (
-            last_prediction_source if last_prediction_source else prediction_source
-        )
+        state["prediction_source"] = last_prediction_source if last_prediction_source else prediction_source
         state["selection_count"] = len(portfolio.positions)
-        state["optimized_top_k"] = (
-            len(target_weights) if target_weights else len(portfolio.positions)
-        )
-        effective_candidate_count = (
-            candidate_pool_size
-            if candidate_pool_size is not None
-            else len(active_predictions)
-        )
+        state["optimized_top_k"] = len(target_weights) if target_weights else len(portfolio.positions)
+        effective_candidate_count = candidate_pool_size if candidate_pool_size is not None else len(active_predictions)
         state["candidate_count"] = int(effective_candidate_count)
         state["k_over_n"] = (
             float(len(target_weights) / max(1, effective_candidate_count))
@@ -850,28 +827,16 @@ def run_backtest_smoke_test(
             else None
         )
         state["selection_threshold"] = (
-            float(gate_threshold_value)
-            if gate_ratio_used is not None and gate_threshold_value is not None
-            else None
+            float(gate_threshold_value) if gate_ratio_used is not None and gate_threshold_value is not None else None
         )
-        state["selection_gate_fallback"] = (
-            int(gate_fallback_used) if gate_candidate_total is not None else None
-        )
+        state["selection_gate_fallback"] = int(gate_fallback_used) if gate_candidate_total is not None else None
         state["selection_k_ratio"] = (
             float(gate_ratio_used)
             if gate_ratio_used is not None
-            else (
-                float(effective_k_ratio)
-                if effective_k_ratio is not None
-                else None
-            )
+            else (float(effective_k_ratio) if effective_k_ratio is not None else None)
         )
-        state["selection_candidates_total"] = (
-            int(gate_candidate_total) if gate_candidate_total is not None else None
-        )
-        state["selection_k_min"] = (
-            int(effective_k_min) if effective_k_min is not None else None
-        )
+        state["selection_candidates_total"] = int(gate_candidate_total) if gate_candidate_total is not None else None
+        state["selection_k_min"] = int(effective_k_min) if effective_k_min is not None else None
         state["selection_sign"] = effective_sign
         if cross_metrics_record:
             state["cs_cross_section"] = cross_metrics_record["cross_section_total"]
@@ -890,9 +855,7 @@ def run_backtest_smoke_test(
             state["cs_k_over_n"] = cross_metrics_record["k_over_n"]
             state["cs_mean_label"] = cross_metrics_record["mean_label"]
         if target_weights:
-            state["target_weights"] = {
-                code: float(weight) for code, weight in target_weights.items()
-            }
+            state["target_weights"] = {code: float(weight) for code, weight in target_weights.items()}
         if optimization_summary is not None:
             state["optimization"] = optimization_summary
         if portfolio.positions:
@@ -900,15 +863,11 @@ def run_backtest_smoke_test(
         else:
             state["selected_codes"] = ""
         state["avg_prediction_score"] = (
-            float(np.mean(list(active_predictions.values())))
-            if active_predictions
-            else None
+            float(np.mean(list(active_predictions.values()))) if active_predictions else None
         )
         state["num_trades"] = len(trades)
         state["rebalanced"] = did_rebalance
-        state["last_rebalance_date"] = (
-            str(last_rebalance_date) if last_rebalance_date else None
-        )
+        state["last_rebalance_date"] = str(last_rebalance_date) if last_rebalance_date else None
         daily_results.append(state)
 
         if cross_metrics_record is not None:
@@ -995,9 +954,7 @@ def run_backtest_smoke_test(
         "summary": {
             "trading_days": len(daily_results),
             "total_trades": total_trades,
-            "prediction_days_available": len(prediction_dates)
-            if inference_engine
-            else len(trading_dates),
+            "prediction_days_available": len(prediction_dates) if inference_engine else len(trading_dates),
             "rebalance_count": rebalance_count,
         },
         "performance": metrics,
@@ -1008,6 +965,7 @@ def run_backtest_smoke_test(
     evaluation_payload: dict[str, object] = {}
 
     if cross_section_metrics:
+
         def _nanmean(key: str) -> float:
             values = [record.get(key) for record in cross_section_metrics]
             values = [v for v in values if v is not None and np.isfinite(v)]
@@ -1059,10 +1017,13 @@ def run_backtest_smoke_test(
         if bootstrap_results:
             evaluation_payload["bootstrap"] = bootstrap_results
 
-    returns_series = np.array(
-        [record["daily_return"] for record in history_records[1:]],
-        dtype=float,
-    ) / 100.0
+    returns_series = (
+        np.array(
+            [record["daily_return"] for record in history_records[1:]],
+            dtype=float,
+        )
+        / 100.0
+    )
     dsr_result = deflated_sharpe_ratio(
         returns_series,
         n_trials=1,
@@ -1086,23 +1047,13 @@ def run_backtest_smoke_test(
         daily_metrics_path.parent.mkdir(parents=True, exist_ok=True)
         flattened_history = []
         for record in history_records:
-            flat = {
-                k: v
-                for k, v in record.items()
-                if k not in {"positions", "target_weights", "optimization"}
-            }
+            flat = {k: v for k, v in record.items() if k not in {"positions", "target_weights", "optimization"}}
             if "positions" in record:
-                flat["positions_json"] = json.dumps(
-                    record["positions"], ensure_ascii=False
-                )
+                flat["positions_json"] = json.dumps(record["positions"], ensure_ascii=False)
             if "target_weights" in record:
-                flat["target_weights_json"] = json.dumps(
-                    record["target_weights"], ensure_ascii=False
-                )
+                flat["target_weights_json"] = json.dumps(record["target_weights"], ensure_ascii=False)
             if "optimization" in record:
-                flat["optimization_json"] = json.dumps(
-                    record["optimization"], ensure_ascii=False
-                )
+                flat["optimization_json"] = json.dumps(record["optimization"], ensure_ascii=False)
             flattened_history.append(flat)
         if flattened_history:
             pl.DataFrame(flattened_history).write_csv(daily_metrics_path)
@@ -1339,9 +1290,7 @@ def main() -> None:
     output_path = Path(args.output) if args.output else None
     daily_metrics_path = Path(args.daily_csv) if args.daily_csv else None
     trades_path = Path(args.trades_csv) if args.trades_csv else None
-    panel_cache_dir = (
-        Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
-    )
+    panel_cache_dir = Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
 
     run_backtest_smoke_test(
         data_path=data_path,
@@ -1372,9 +1321,7 @@ def main() -> None:
         ei_hysteresis_entry_k=args.ei_hysteresis_entry_k,
         ei_hysteresis_exit_k=args.ei_hysteresis_exit_k,
         ei_neutralize_risk=args.ei_neutralize_risk,
-        ei_risk_factors=(
-            args.ei_risk_factors.split(",") if args.ei_risk_factors else None
-        ),
+        ei_risk_factors=(args.ei_risk_factors.split(",") if args.ei_risk_factors else None),
         ei_neutralize_gamma=args.ei_neutralize_gamma,
         ei_ridge_alpha=args.ei_ridge_alpha,
         infer_add_csz=args.infer_add_csz,

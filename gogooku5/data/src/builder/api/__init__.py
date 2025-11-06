@@ -6,7 +6,7 @@ from .base import APIClient
 from .calendar_fetcher import TradingCalendarFetcher
 from .data_sources import DataSourceManager
 from .event_detector import EventDetector
-from .jquants_fetcher import JQuantsFetcher
+from .jquants_fetcher import JQuantsFetcher, RateLimitDetected
 from .listed_manager import ListedManager
 from .market_filter import MarketFilter
 from .quotes_fetcher import QuotesFetcher
@@ -18,6 +18,7 @@ __all__ = [
     "AxisDecider",
     "EventDetector",
     "JQuantsFetcher",
+    "RateLimitDetected",
     "ListedManager",
     "MarketFilter",
     "QuotesFetcher",

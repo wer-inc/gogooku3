@@ -55,5 +55,5 @@ check-env:
 
 quick-validate:
 	@echo "🔍 Running Phase 2 acceptance gate..."
-	@python /tmp/phase2_dataset_accept.py || (echo "❌ ACCEPTANCE FAILED -> see /tmp/phase2_dataset_accept_report.json"; exit 1)
+	@python ../../tools/phase2_dataset_accept.py || (echo "❌ ACCEPTANCE FAILED -> see /tmp/phase2_dataset_accept_report.json"; exit 1)
 	@echo "✅ Validation passed"

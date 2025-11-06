@@ -28,6 +28,13 @@ _TICKERS = {
     "DXY": "DX-Y.NYB",  # US Dollar Index
     "UUP": "UUP",  # Fallback for DXY
     "BTC": "BTC-USD",
+    "FX_USDJPY": "JPY=X",
+    "CREDIT_HYG": "HYG",
+    "CREDIT_LQD": "LQD",
+    "RATES_TLT": "TLT",
+    "RATES_IEF": "IEF",
+    "VIX9D": "^VIX9D",
+    "VIX3M": "^VIX3M",
 }
 
 
@@ -46,6 +53,10 @@ def load_global_regime_data(
     - ^VIX: CBOE Volatility Index
     - DX-Y.NYB: US Dollar Index (with UUP fallback)
     - BTC-USD: Bitcoin
+    - JPY=X: USD/JPY exchange rate (daily close)
+    - HYG/LQD: Credit spread proxies
+    - TLT/IEF: Treasury term slope proxies
+    - ^VIX9D/^VIX3M: VIX term structure endpoints
 
     Args:
         start: Start date (YYYY-MM-DD)
@@ -55,13 +66,13 @@ def load_global_regime_data(
 
     Returns:
         DataFrame with columns: Date, spy_close, spy_volume, qqq_close, qqq_volume,
-                                vix_close, dxy_close, btc_close
+                                vix_close, dxy_close, btc_close, fx_usdjpy_close,
+                                credit_hyg_close, credit_lqd_close, rates_tlt_close,
+                                rates_ief_close, vix9d_close, vix3m_close
     """
     resolved_cache = None
     if not force_refresh:
-        resolved_cache = resolve_cached_parquet(
-            parquet_path, prefix="global_regime", start=start, end=end
-        )
+        resolved_cache = resolve_cached_parquet(parquet_path, prefix="global_regime", start=start, end=end)
 
     if resolved_cache and resolved_cache.exists() and not force_refresh:
         try:
@@ -153,6 +164,10 @@ def load_global_regime_data(
             cols_to_keep.append("Close")
             rename_map["Close"] = f"{prefix}_close"
 
+        if prefix == "spy" and "Open" in data.columns:
+            cols_to_keep.append("Open")
+            rename_map["Open"] = f"{prefix}_open"
+
         if "Volume" in data.columns:
             cols_to_keep.append("Volume")
             rename_map["Volume"] = f"{prefix}_volume"
@@ -205,7 +220,7 @@ def _realized_vol(returns: pl.Expr, window: int, min_periods: int | None = None)
     """Calculate annualized realized volatility: rolling_std(returns) * sqrt(252)."""
     if min_periods is None:
         min_periods = max(1, window // 2)
-    return returns.rolling_std(window_size=window, min_periods=min_periods) * (252.0 ** 0.5)
+    return returns.rolling_std(window_size=window, min_periods=min_periods) * (252.0**0.5)
 
 
 def prepare_vvmd_features(regime_df: pl.DataFrame) -> pl.DataFrame:
@@ -229,12 +244,20 @@ def prepare_vvmd_features(regime_df: pl.DataFrame) -> pl.DataFrame:
     # Ensure required columns exist
     required = {
         "spy_close": pl.Float64,
+        "spy_open": pl.Float64,
         "spy_volume": pl.Float64,
         "qqq_close": pl.Float64,
         "qqq_volume": pl.Float64,
         "vix_close": pl.Float64,
         "dxy_close": pl.Float64,
         "btc_close": pl.Float64,
+        "fx_usdjpy_close": pl.Float64,
+        "credit_hyg_close": pl.Float64,
+        "credit_lqd_close": pl.Float64,
+        "rates_tlt_close": pl.Float64,
+        "rates_ief_close": pl.Float64,
+        "vix9d_close": pl.Float64,
+        "vix3m_close": pl.Float64,
     }
 
     missing_cols = set(required.keys()) - set(regime_df.columns)
@@ -243,7 +266,19 @@ def prepare_vvmd_features(regime_df: pl.DataFrame) -> pl.DataFrame:
         fill_exprs = [pl.lit(None, dtype=required[col]).alias(col) for col in missing_cols]
         regime_df = regime_df.with_columns(fill_exprs)
 
-    df = regime_df.sort("Date").with_columns(
+    df = regime_df.sort("Date")
+
+    fill_exprs = [
+        pl.col(col)
+        .cast(required[col], strict=False)
+        .fill_null(strategy="forward")
+        .fill_null(strategy="backward")
+        .alias(col)
+        for col in required.keys()
+    ]
+    df = df.with_columns(fill_exprs)
+
+    df = df.with_columns(
         [
             pl.col("Date").cast(pl.Date),
             # Calculate returns
@@ -258,66 +293,43 @@ def prepare_vvmd_features(regime_df: pl.DataFrame) -> pl.DataFrame:
     # === V (Volatility): 4 features ===
 
     # 1. SPY realized volatility 20d
-    df = df.with_columns(
-        _realized_vol(pl.col("_spy_ret"), window=20, min_periods=10)
-        .alias("macro_vvmd_vol_spy_rv20")
-    )
+    df = df.with_columns(_realized_vol(pl.col("_spy_ret"), window=20, min_periods=10).alias("macro_vvmd_vol_spy_rv20"))
 
     # 2. SPY volatility differential: RV20 - RV63
+    df = df.with_columns(_realized_vol(pl.col("_spy_ret"), window=63, min_periods=30).alias("_spy_rv63"))
     df = df.with_columns(
-        _realized_vol(pl.col("_spy_ret"), window=63, min_periods=30)
-        .alias("_spy_rv63")
-    )
-    df = df.with_columns(
-        (pl.col("macro_vvmd_vol_spy_rv20") - pl.col("_spy_rv63"))
-        .alias("macro_vvmd_vol_spy_drv_20_63")
+        (pl.col("macro_vvmd_vol_spy_rv20") - pl.col("_spy_rv63")).alias("macro_vvmd_vol_spy_drv_20_63")
     )
 
     # 3. QQQ realized volatility 20d
-    df = df.with_columns(
-        _realized_vol(pl.col("_qqq_ret"), window=20, min_periods=10)
-        .alias("macro_vvmd_vol_qqq_rv20")
-    )
+    df = df.with_columns(_realized_vol(pl.col("_qqq_ret"), window=20, min_periods=10).alias("macro_vvmd_vol_qqq_rv20"))
 
     # 4. VIX robust z-score 252d
-    df = df.with_columns(
-        _robust_z(pl.col("vix_close"), window=252, min_periods=60)
-        .alias("macro_vvmd_vol_vix_z_252d")
-    )
+    df = df.with_columns(_robust_z(pl.col("vix_close"), window=252, min_periods=60).alias("macro_vvmd_vol_vix_z_252d"))
 
     # === Vlm (Volume): 2 features ===
 
     # 5. SPY volume surge: vol / rolling_median(vol, 20) - 1
     df = df.with_columns(
         (
-            pl.col("spy_volume")
-            / (pl.col("spy_volume").rolling_median(window_size=20, min_periods=10) + eps)
-            - 1.0
+            pl.col("spy_volume") / (pl.col("spy_volume").rolling_median(window_size=20, min_periods=10) + eps) - 1.0
         ).alias("macro_vvmd_vlm_spy_surge20")
     )
 
     # 6. QQQ volume surge
     df = df.with_columns(
         (
-            pl.col("qqq_volume")
-            / (pl.col("qqq_volume").rolling_median(window_size=20, min_periods=10) + eps)
-            - 1.0
+            pl.col("qqq_volume") / (pl.col("qqq_volume").rolling_median(window_size=20, min_periods=10) + eps) - 1.0
         ).alias("macro_vvmd_vlm_qqq_surge20")
     )
 
     # === M (Momentum/Trend): 5 features ===
 
     # 7. SPY momentum 63d (simple cumulative return)
-    df = df.with_columns(
-        (pl.col("spy_close") / pl.col("spy_close").shift(63) - 1.0)
-        .alias("macro_vvmd_mom_spy_63d")
-    )
+    df = df.with_columns((pl.col("spy_close") / pl.col("spy_close").shift(63) - 1.0).alias("macro_vvmd_mom_spy_63d"))
 
     # 8. QQQ momentum 63d
-    df = df.with_columns(
-        (pl.col("qqq_close") / pl.col("qqq_close").shift(63) - 1.0)
-        .alias("macro_vvmd_mom_qqq_63d")
-    )
+    df = df.with_columns((pl.col("qqq_close") / pl.col("qqq_close").shift(63) - 1.0).alias("macro_vvmd_mom_qqq_63d"))
 
     # 9. SPY MA gap: (MA20 - MA100) / MA100
     df = df.with_columns(
@@ -327,8 +339,9 @@ def prepare_vvmd_features(regime_df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
     df = df.with_columns(
-        ((pl.col("_spy_ma20") - pl.col("_spy_ma100")) / (pl.col("_spy_ma100") + eps))
-        .alias("macro_vvmd_trend_spy_ma_gap_20_100")
+        ((pl.col("_spy_ma20") - pl.col("_spy_ma100")) / (pl.col("_spy_ma100") + eps)).alias(
+            "macro_vvmd_trend_spy_ma_gap_20_100"
+        )
     )
 
     # 10. QQQ MA gap
@@ -339,8 +352,9 @@ def prepare_vvmd_features(regime_df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
     df = df.with_columns(
-        ((pl.col("_qqq_ma20") - pl.col("_qqq_ma100")) / (pl.col("_qqq_ma100") + eps))
-        .alias("macro_vvmd_trend_qqq_ma_gap_20_100")
+        ((pl.col("_qqq_ma20") - pl.col("_qqq_ma100")) / (pl.col("_qqq_ma100") + eps)).alias(
+            "macro_vvmd_trend_qqq_ma_gap_20_100"
+        )
     )
 
     # 11. SPY 52-week breakout position: (close - low52) / (high52 - low52)
@@ -351,35 +365,155 @@ def prepare_vvmd_features(regime_df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
     df = df.with_columns(
-        (
-            (pl.col("spy_close") - pl.col("_spy_low52"))
-            / (pl.col("_spy_high52") - pl.col("_spy_low52") + eps)
-        ).alias("macro_vvmd_breakout_spy_bo52")
+        ((pl.col("spy_close") - pl.col("_spy_low52")) / (pl.col("_spy_high52") - pl.col("_spy_low52") + eps)).alias(
+            "macro_vvmd_breakout_spy_bo52"
+        )
     )
 
     # === D (Demand): 3 features ===
 
     # 12. DXY robust z-score 252d
     df = df.with_columns(
-        _robust_z(pl.col("dxy_close"), window=252, min_periods=60)
-        .alias("macro_vvmd_demand_dxy_z_252d")
+        _robust_z(pl.col("dxy_close"), window=252, min_periods=60).alias("macro_vvmd_demand_dxy_z_252d")
     )
 
     # 13. BTC relative momentum 63d: BTC_mom / SPY_mom - 1
+    df = df.with_columns((pl.col("btc_close") / pl.col("btc_close").shift(63) - 1.0).alias("_btc_mom_63d"))
     df = df.with_columns(
-        (pl.col("btc_close") / pl.col("btc_close").shift(63) - 1.0).alias("_btc_mom_63d")
-    )
-    df = df.with_columns(
-        (
-            pl.col("_btc_mom_63d") / (pl.col("macro_vvmd_mom_spy_63d") + eps) - 1.0
-        ).alias("macro_vvmd_demand_btc_rel_63d")
+        (pl.col("_btc_mom_63d") / (pl.col("macro_vvmd_mom_spy_63d") + eps) - 1.0).alias("macro_vvmd_demand_btc_rel_63d")
     )
 
     # 14. BTC realized volatility 20d
-    df = df.with_columns(
-        _realized_vol(pl.col("_btc_ret"), window=20, min_periods=10)
-        .alias("macro_vvmd_vol_btc_rv20")
-    )
+    df = df.with_columns(_realized_vol(pl.col("_btc_ret"), window=20, min_periods=10).alias("macro_vvmd_vol_btc_rv20"))
+
+    # === Cross-market extensions (P0 additions) ===
+
+    # Variance Risk Premium (VIX^2 - RV^2)
+    if {"vix_close", "macro_vvmd_vol_spy_rv20"}.issubset(df.columns):
+        df = df.with_columns(
+            ((pl.col("vix_close") / 100.0) ** 2 - (pl.col("macro_vvmd_vol_spy_rv20") ** 2)).alias("macro_vvmd_vrp_spy")
+        )
+        df = df.with_columns(
+            [
+                pl.col("macro_vvmd_vrp_spy").rolling_mean(window_size=252, min_periods=126).alias("_vvmd_vrp_mean_252"),
+                pl.col("macro_vvmd_vrp_spy").rolling_std(window_size=252, min_periods=126).alias("_vvmd_vrp_std_252"),
+            ]
+        )
+        df = df.with_columns(
+            ((pl.col("macro_vvmd_vrp_spy") - pl.col("_vvmd_vrp_mean_252")) / (pl.col("_vvmd_vrp_std_252") + eps)).alias(
+                "macro_vvmd_vrp_spy_z_252d"
+            )
+        )
+        df = df.with_columns(
+            pl.when(pl.col("macro_vvmd_vrp_spy_z_252d") > 1.0)
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("macro_vvmd_vrp_spy_high_flag")
+        )
+
+    # Credit spread proxy (HYG vs LQD)
+    if {"credit_hyg_close", "credit_lqd_close"}.issubset(df.columns):
+        df = df.with_columns(
+            (pl.col("credit_hyg_close") / (pl.col("credit_lqd_close") + eps) - 1.0).alias(
+                "macro_vvmd_credit_spread_ratio"
+            )
+        )
+        df = df.with_columns(
+            [
+                pl.col("macro_vvmd_credit_spread_ratio")
+                .rolling_mean(window_size=63, min_periods=30)
+                .alias("_vvmd_credit_mean_63"),
+                pl.col("macro_vvmd_credit_spread_ratio")
+                .rolling_std(window_size=63, min_periods=30)
+                .alias("_vvmd_credit_std_63"),
+            ]
+        )
+        df = df.with_columns(
+            (
+                (pl.col("macro_vvmd_credit_spread_ratio") - pl.col("_vvmd_credit_mean_63"))
+                / (pl.col("_vvmd_credit_std_63") + eps)
+            ).alias("macro_vvmd_credit_spread_z_63d")
+        )
+
+    # Rates term slope (TLT vs IEF)
+    if {"rates_tlt_close", "rates_ief_close"}.issubset(df.columns):
+        df = df.with_columns(
+            (pl.col("rates_tlt_close") / (pl.col("rates_ief_close") + eps) - 1.0).alias("macro_vvmd_rates_term_ratio")
+        )
+        df = df.with_columns(
+            [
+                pl.col("macro_vvmd_rates_term_ratio")
+                .rolling_mean(window_size=63, min_periods=30)
+                .alias("_vvmd_rates_mean_63"),
+                pl.col("macro_vvmd_rates_term_ratio")
+                .rolling_std(window_size=63, min_periods=30)
+                .alias("_vvmd_rates_std_63"),
+            ]
+        )
+        df = df.with_columns(
+            (
+                (pl.col("macro_vvmd_rates_term_ratio") - pl.col("_vvmd_rates_mean_63"))
+                / (pl.col("_vvmd_rates_std_63") + eps)
+            ).alias("macro_vvmd_rates_term_z_63d")
+        )
+
+    # VIX term structure metrics
+    if {"vix3m_close", "vix_close"}.issubset(df.columns):
+        df = df.with_columns((pl.col("vix3m_close") - pl.col("vix_close")).alias("macro_vvmd_vix_term_slope"))
+    if {"vix9d_close", "vix3m_close"}.issubset(df.columns):
+        df = df.with_columns(
+            (pl.col("vix9d_close") / (pl.col("vix3m_close") + eps) - 1.0).alias("macro_vvmd_vix_term_ratio")
+        )
+    if "macro_vvmd_vix_term_slope" in df.columns:
+        df = df.with_columns(
+            [
+                pl.col("macro_vvmd_vix_term_slope")
+                .rolling_mean(window_size=126, min_periods=60)
+                .alias("_vvmd_vix_term_mean_126"),
+                pl.col("macro_vvmd_vix_term_slope")
+                .rolling_std(window_size=126, min_periods=60)
+                .alias("_vvmd_vix_term_std_126"),
+            ]
+        )
+        df = df.with_columns(
+            (
+                (pl.col("macro_vvmd_vix_term_slope") - pl.col("_vvmd_vix_term_mean_126"))
+                / (pl.col("_vvmd_vix_term_std_126") + eps)
+            ).alias("macro_vvmd_vix_term_z_126d")
+        )
+
+    # SPY overnight / intraday returns (JST alignment handled downstream)
+    if {"spy_open", "spy_close"}.issubset(df.columns):
+        df = df.with_columns(
+            [
+                (pl.col("spy_open") / pl.col("spy_close").shift(1) - 1.0).alias("macro_vvmd_spy_overnight_ret"),
+                (pl.col("spy_close") / (pl.col("spy_open") + eps) - 1.0).alias("macro_vvmd_spy_intraday_ret"),
+            ]
+        )
+
+    # USDJPY directional metrics (T+0 availability handled downstream)
+    if "fx_usdjpy_close" in df.columns:
+        df = df.with_columns(
+            [
+                (pl.col("fx_usdjpy_close") / pl.col("fx_usdjpy_close").shift(1) - 1.0).alias(
+                    "macro_vvmd_fx_usdjpy_ret_1d"
+                ),
+                (pl.col("fx_usdjpy_close") / pl.col("fx_usdjpy_close").shift(5) - 1.0).alias(
+                    "macro_vvmd_fx_usdjpy_ret_5d"
+                ),
+                (pl.col("fx_usdjpy_close") / pl.col("fx_usdjpy_close").shift(20) - 1.0).alias(
+                    "macro_vvmd_fx_usdjpy_ret_20d"
+                ),
+                pl.col("fx_usdjpy_close").rolling_mean(window_size=20, min_periods=10).alias("_vvmd_fx_usdjpy_ma20"),
+                pl.col("fx_usdjpy_close").rolling_std(window_size=20, min_periods=10).alias("_vvmd_fx_usdjpy_std20"),
+            ]
+        )
+        df = df.with_columns(
+            (
+                (pl.col("fx_usdjpy_close") - pl.col("_vvmd_fx_usdjpy_ma20")) / (pl.col("_vvmd_fx_usdjpy_std20") + eps)
+            ).alias("macro_vvmd_fx_usdjpy_z_20d")
+        )
 
     # Drop temporary columns
     drop_cols = [c for c in df.columns if c.startswith("_")]

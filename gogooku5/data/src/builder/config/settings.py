@@ -23,6 +23,7 @@ class DatasetBuilderSettings(BaseSettings):
 
     latest_dataset_symlink: str = Field("ml_dataset_latest.parquet", env="LATEST_DATASET_SYMLINK")
     latest_metadata_symlink: str = Field("ml_dataset_latest_metadata.json", env="LATEST_METADATA_SYMLINK")
+    latest_feature_index_symlink: str = Field("feature_index_latest.json", env="LATEST_FEATURE_INDEX_SYMLINK")
     dataset_tag: str = Field("full", env="DATASET_TAG")
     dataset_retention_keep: int = Field(3, ge=1, env="DATASET_RETENTION_KEEP")
     dataset_parquet_compression: str = Field("zstd", env="DATASET_PARQUET_COMPRESSION")
@@ -38,9 +39,21 @@ class DatasetBuilderSettings(BaseSettings):
 
     request_timeout_seconds: float = Field(30.0, ge=1.0, env="REQUEST_TIMEOUT_SECONDS")
 
+    # Cache V2 configuration
+    quote_cache_subdir: str = Field("quotes_v2", env="QUOTE_CACHE_SUBDIR")
+    max_cache_size_gb: float | None = Field(None, ge=0.0, env="MAX_CACHE_SIZE_GB")
+    cache_stats_path: Path | None = Field(default=None, env="CACHE_STATS_PATH")
+
+    quotes_schema_tag: str = Field("limits_v1", env="QUOTES_SCHEMA_TAG")
+
     # Phase 2 Patch E: ADV filter configuration
     min_adv_yen: int | None = Field(None, ge=0, env="MIN_ADV_YEN")
     adv_min_periods: int = Field(20, ge=1, env="ADV_MIN_PERIODS")
+
+    # GPU-ETL configuration
+    use_gpu_etl: bool = Field(True, env="USE_GPU_ETL")
+    force_gpu: bool = Field(True, env="FORCE_GPU")
+    rmm_pool_size: str = Field("40GB", env="RMM_POOL_SIZE")
 
     @model_validator(mode="after")
     def _ensure_directories(self) -> "DatasetBuilderSettings":
@@ -48,6 +61,9 @@ class DatasetBuilderSettings(BaseSettings):
 
         self.data_output_dir.mkdir(parents=True, exist_ok=True)
         self.data_cache_dir.mkdir(parents=True, exist_ok=True)
+        # Quote cache v2 directories
+        self.quote_cache_dir.mkdir(parents=True, exist_ok=True)
+        (self.quote_cache_dir / "raw" / "quotes").mkdir(parents=True, exist_ok=True)
         return self
 
     @property
@@ -61,6 +77,26 @@ class DatasetBuilderSettings(BaseSettings):
         """Return the location where cache metadata should be stored."""
 
         return self.data_cache_dir / "cache_index.json"
+
+    @property
+    def quote_cache_dir(self) -> Path:
+        """Base directory for normalized quote shards."""
+
+        return self.data_cache_dir / self.quote_cache_subdir
+
+    @property
+    def quote_index_path(self) -> Path:
+        """Location of SQLite index for quote shards."""
+
+        return self.quote_cache_dir / "cache_index.db"
+
+    @property
+    def quote_stats_path(self) -> Path:
+        """Stream of cache metrics (jsonl)."""
+
+        if self.cache_stats_path is not None:
+            return self.cache_stats_path
+        return self.quote_cache_dir / "cache_stats.jsonl"
 
 
 SETTINGS_NAME: Final[str] = "dataset_builder_settings"

@@ -5,13 +5,13 @@ Implemented Phase 1 features to maximize utilization of existing J-Quants API en
 
 ## Implemented Features
 
-### 1. Earnings Event Features (`src/gogooku3/features/earnings_features.py`)
-Extracts decision event features from earnings announcements:
-- **days_to_earnings**: Days until next earnings announcement
-- **days_since_earnings**: Days since last earnings announcement
-- **is_earnings_week**: Boolean flag for earnings week (within 5 days)
-- **earnings_surprise**: Actual vs forecast comparison percentage
-- **earnings_momentum**: Quarter-over-quarter growth rate
+### 1. Earnings Event Features (`src/gogooku3/features/earnings_events.py`)
+Extracts as-of safe proximity signals from `/fins/announcement`:
+- **e_days_to / e_days_since**: Business-day distance to the next / previous announcement (availability-aware)
+- **e_win_pre{1,3,5} / e_win_post{1,3,5}**: ±window flags around the event date
+- **e_is_E0**: Event-day indicator (0 = away from event, 1 = announcement day)
+
+Announcements are throttled by publication timestamps and the 19:00 JST schedule refresh; the features respect configurable dataset as-of times (`asof_hour`).
 
 **API Endpoint Used**: `get_earnings_announcements(from_date, to_date)`
 
@@ -42,7 +42,7 @@ Added three new methods to `MLDatasetBuilder` class:
 ```python
 # Add earnings features
 df = builder.add_earnings_features(
-    df, 
+    df,
     fetcher=jquants_fetcher,
     start_date='2024-01-01',
     end_date='2024-12-31'

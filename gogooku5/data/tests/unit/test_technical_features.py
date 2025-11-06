@@ -32,9 +32,10 @@ def test_technical_feature_engineer_add_features() -> None:
 
     assert "kama_10_2_30" in out.columns
     assert "log_returns_1d" in out.columns
-    assert "feat_ret_5d" in out.columns
+    # Note: feat_ret_5d was removed (data leak: used shift(-horizon))
     assert "sma_20" in out.columns
     assert "ema_60" in out.columns
     assert "ma_gap_5_20" in out.columns
     assert "volume_ratio_5" in out.columns
     assert "atr_14" in out.columns
+    assert "atr_2" in out.columns  # Multi-period ATR support

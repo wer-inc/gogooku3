@@ -151,28 +151,62 @@ class FlowFeatureEngineer:
 
         # API field names corrected to match J-Quants API response
         # (all fields end with "Value" suffix, not just purchase/sales)
-        investor_columns = {
-            "foreigners": ("ForeignersPurchaseValue", "ForeignersSalesValue"),
-            "individuals": ("IndividualPurchaseValue", "IndividualSalesValue"),
-            "investment_trusts": ("InvestmentTrustsPurchaseValue", "InvestmentTrustsSalesValue"),
-            "trust_banks": ("TrustBanksPurchaseValue", "TrustBanksSalesValue"),
-            "securities": ("SecuritiesCompaniesPurchaseValue", "SecuritiesCompaniesSalesValue"),
-            "proprietary": ("ProprietaryPurchaseValue", "ProprietarySalesValue"),
-            "business": ("BusinessCorporationsPurchaseValue", "BusinessCorporationsSalesValue"),
-            "other_fin": ("OtherFinancialInstitutionsPurchaseValue", "OtherFinancialInstitutionsSalesValue"),
+        candidate_columns: dict[str, tuple[list[str], list[str]]] = {
+            "foreigners": (
+                ["ForeignersPurchaseValue", "ForeignersPurchases"],
+                ["ForeignersSalesValue", "ForeignersSales"],
+            ),
+            "individuals": (
+                ["IndividualPurchaseValue", "IndividualsPurchases"],
+                ["IndividualSalesValue", "IndividualsSales"],
+            ),
+            "investment_trusts": (
+                ["InvestmentTrustsPurchaseValue", "InvestmentTrustsPurchases"],
+                ["InvestmentTrustsSalesValue", "InvestmentTrustsSales"],
+            ),
+            "trust_banks": (
+                ["TrustBanksPurchaseValue", "TrustBanksPurchases"],
+                ["TrustBanksSalesValue", "TrustBanksSales"],
+            ),
+            "securities": (
+                ["SecuritiesCompaniesPurchaseValue", "SecuritiesCosPurchases"],
+                ["SecuritiesCompaniesSalesValue", "SecuritiesCosSales"],
+            ),
+            "proprietary": (
+                ["ProprietaryPurchaseValue", "ProprietaryPurchases"],
+                ["ProprietarySalesValue", "ProprietarySales"],
+            ),
+            "business": (
+                ["BusinessCorporationsPurchaseValue", "BusinessCosPurchases"],
+                ["BusinessCorporationsSalesValue", "BusinessCosSales"],
+            ),
+            "other_fin": (
+                ["OtherFinancialInstitutionsPurchaseValue", "OtherFinancialInstitutionsPurchases"],
+                ["OtherFinancialInstitutionsSalesValue", "OtherFinancialInstitutionsSales"],
+            ),
         }
 
+        resolved_columns: dict[str, tuple[str, str]] = {}
         missing_exprs: list[pl.Expr] = []
-        for purchase, sales in investor_columns.values():
-            if purchase not in df.columns:
-                missing_exprs.append(pl.lit(0.0).alias(purchase))
-            if sales not in df.columns:
-                missing_exprs.append(pl.lit(0.0).alias(sales))
+
+        for label, (purchase_candidates, sales_candidates) in candidate_columns.items():
+            purchase_col = next((name for name in purchase_candidates if name in df.columns), None)
+            sales_col = next((name for name in sales_candidates if name in df.columns), None)
+
+            if purchase_col is None:
+                purchase_col = purchase_candidates[0]
+                missing_exprs.append(pl.lit(0.0).alias(purchase_col))
+            if sales_col is None:
+                sales_col = sales_candidates[0]
+                missing_exprs.append(pl.lit(0.0).alias(sales_col))
+
+            resolved_columns[label] = (purchase_col, sales_col)
+
         if missing_exprs:
             df = df.with_columns(missing_exprs)
 
         cast_exprs = []
-        for purchase, sales in investor_columns.values():
+        for purchase, sales in resolved_columns.values():
             cast_exprs.extend(
                 [
                     pl.col(purchase).cast(pl.Float64).alias(purchase),
@@ -185,8 +219,8 @@ class FlowFeatureEngineer:
         # Group by both Code and release_date instead of just release_date
         group_cols = ["Code", "release_date"] if "Code" in df.columns else ["release_date"]
         aggregated = df.group_by(group_cols).agg(
-            [pl.col(purchase).sum().alias(purchase) for purchase, _ in investor_columns.values()]
-            + [pl.col(sales).sum().alias(sales) for _, sales in investor_columns.values()]
+            [pl.col(purchase).sum().alias(purchase) for purchase, _ in resolved_columns.values()]
+            + [pl.col(sales).sum().alias(sales) for _, sales in resolved_columns.values()]
         )
 
         if aggregated.is_empty():
@@ -198,7 +232,7 @@ class FlowFeatureEngineer:
             rename_map["Code"] = "code"
         aggregated = aggregated.rename(rename_map)
 
-        for label, (purchase, sales) in investor_columns.items():
+        for label, (purchase, sales) in resolved_columns.items():
             aggregated = aggregated.rename(
                 {
                     purchase: f"{label}_purchases",
@@ -206,17 +240,17 @@ class FlowFeatureEngineer:
                 }
             )
 
-        for label in investor_columns.keys():
+        for label in resolved_columns.keys():
             aggregated = aggregated.with_columns(
                 (pl.col(f"{label}_purchases") - pl.col(f"{label}_sales")).alias(f"{label}_net")
             )
 
         institutional_purchases = _sum_expr(
-            [pl.col(f"{label}_purchases") for label in investor_columns.keys() if label != "individuals"],
+            [pl.col(f"{label}_purchases") for label in resolved_columns.keys() if label != "individuals"],
             default=0.0,
         )
         institutional_sales = _sum_expr(
-            [pl.col(f"{label}_sales") for label in investor_columns.keys() if label != "individuals"],
+            [pl.col(f"{label}_sales") for label in resolved_columns.keys() if label != "individuals"],
             default=0.0,
         )
 
@@ -241,7 +275,7 @@ class FlowFeatureEngineer:
             ]
         )
 
-        flow_cols = [f"{label}_net" for label in investor_columns.keys()]
+        flow_cols = [f"{label}_net" for label in resolved_columns.keys()]
         aggregated = aggregated.with_columns(
             _sum_expr([pl.col(col).abs() for col in flow_cols]).alias("_flow_total_abs")
         )

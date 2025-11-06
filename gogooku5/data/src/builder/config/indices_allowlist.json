@@ -1,0 +1,106 @@
+{
+  "p0_indices": {
+    "description": "P0最小セット：ベンチマーク、市場区分、サイズ、スタイル",
+    "indices": [
+      {
+        "code": "0000",
+        "name": "TOPIX",
+        "category": "benchmark",
+        "prefix": "topix"
+      },
+      {
+        "code": "0101",
+        "name": "日経225",
+        "category": "benchmark",
+        "prefix": "nk225"
+      },
+      {
+        "code": "0500",
+        "name": "プライム",
+        "category": "market_segment",
+        "prefix": "prime"
+      },
+      {
+        "code": "0501",
+        "name": "スタンダード",
+        "category": "market_segment",
+        "prefix": "standard"
+      },
+      {
+        "code": "0502",
+        "name": "グロース",
+        "category": "market_segment",
+        "prefix": "growth"
+      },
+      {
+        "code": "0028",
+        "name": "Core30",
+        "category": "size",
+        "prefix": "core30"
+      },
+      {
+        "code": "0029",
+        "name": "Large70",
+        "category": "size",
+        "prefix": "large70"
+      },
+      {
+        "code": "002B",
+        "name": "Mid400",
+        "category": "size",
+        "prefix": "mid400"
+      },
+      {
+        "code": "002D",
+        "name": "Small",
+        "category": "size",
+        "prefix": "small"
+      },
+      {
+        "code": "8100",
+        "name": "TOPIXバリュー",
+        "category": "style",
+        "prefix": "value"
+      },
+      {
+        "code": "8101",
+        "name": "TOPIXグロース",
+        "category": "style",
+        "prefix": "growth_style"
+      }
+    ]
+  },
+  "spreads": {
+    "description": "スプレッド計算用のペア定義",
+    "pairs": [
+      {
+        "name": "topix_nk225",
+        "code1": "0000",
+        "code2": "0101",
+        "prefix1": "topix",
+        "prefix2": "nk225"
+      },
+      {
+        "name": "growth_value",
+        "code1": "8101",
+        "code2": "8100",
+        "prefix1": "growth_style",
+        "prefix2": "value"
+      },
+      {
+        "name": "small_large",
+        "code1": "002D",
+        "code2": "0028",
+        "prefix1": "small",
+        "prefix2": "core30"
+      },
+      {
+        "name": "prime_growth",
+        "code1": "0500",
+        "code2": "0502",
+        "prefix1": "prime",
+        "prefix2": "growth"
+      }
+    ]
+  }
+}

@@ -49,7 +49,9 @@ def main(cfg: DictConfig) -> None:
         pipe = JQuantsPipelineV4Optimized(output_dir=output_dir)
         profiler = PipelineProfiler() if bool(p.profiling.enabled) else None
         # Incremental mode: adjust start date based on last metadata (if not provided)
-        inc = IncrementalDatasetUpdater(output_dir, IncrementalConfig(update_mode=str(p.update_mode), since_date=p.since_date))
+        inc = IncrementalDatasetUpdater(
+            output_dir, IncrementalConfig(update_mode=str(p.update_mode), since_date=p.since_date)
+        )
         if str(p.update_mode) == "incremental":
             guess_since = inc.compute_since_date(fallback_end=end)
             if guess_since:
@@ -72,11 +74,14 @@ def main(cfg: DictConfig) -> None:
             print("❌ Base dataset build failed")
             return
         # Call enrichment/saver
-        resil = ResilientPipeline(output_dir, ResilienceConfig(
-            enabled=bool(p.resilience.enabled),
-            max_retries=int(p.resilience.max_retries),
-            checkpoint_enabled=bool(p.resilience.checkpoint_enabled),
-        ))
+        resil = ResilientPipeline(
+            output_dir,
+            ResilienceConfig(
+                enabled=bool(p.resilience.enabled),
+                max_retries=int(p.resilience.max_retries),
+                checkpoint_enabled=bool(p.resilience.checkpoint_enabled),
+            ),
+        )
 
         async def _enrich():
             return await enrich_and_save(
@@ -88,7 +93,7 @@ def main(cfg: DictConfig) -> None:
                 topix_parquet=Path(p.topix_parquet) if p.topix_parquet else None,
                 enable_indices=bool(p.enable_indices),
                 indices_parquet=Path(p.indices_parquet) if p.indices_parquet else None,
-                indices_codes=(str(p.indices_codes).split(',') if p.indices_codes else None),
+                indices_codes=(str(p.indices_codes).split(",") if p.indices_codes else None),
                 statements_parquet=Path(p.statements_parquet) if p.statements_parquet else None,
                 listed_info_parquet=Path(p.listed_info_parquet) if p.listed_info_parquet else None,
                 enable_futures=bool(p.enable_futures),
@@ -113,15 +118,24 @@ def main(cfg: DictConfig) -> None:
                 enable_macro_btc=bool(getattr(p, "enable_btc", True)),
                 btc_parquet=Path(p.btc_parquet) if getattr(p, "btc_parquet", None) else None,
                 btc_force_refresh=bool(getattr(p, "force_refresh_btc", False)),
+                am_quotes_parquet=Path(p.am_quotes_parquet) if getattr(p, "am_quotes_parquet", None) else None,
+                enable_am_features=bool(getattr(p, "enable_am_features", True)),
+                am_asof_policy=str(getattr(p, "am_asof_policy", "T+1")),
                 enable_short_selling=bool(p.enable_short_selling),
                 short_selling_parquet=Path(p.short_selling_parquet) if p.short_selling_parquet else None,
                 short_positions_parquet=Path(p.short_positions_parquet) if p.short_positions_parquet else None,
                 short_selling_z_window=int(p.short_selling_z_window),
                 enable_earnings_events=bool(p.enable_earnings_events),
-                earnings_announcements_parquet=Path(p.earnings_announcements_parquet) if p.earnings_announcements_parquet else None,
+                earnings_announcements_parquet=Path(p.earnings_announcements_parquet)
+                if p.earnings_announcements_parquet
+                else None,
                 enable_pead_features=bool(p.enable_pead_features),
+                earnings_windows=list(getattr(p, "earnings_windows", [])) or None,
+                earnings_asof_hour=int(getattr(p, "earnings_asof_hour", 15)),
                 enable_sector_short_selling=bool(p.enable_sector_short_selling),
-                sector_short_selling_parquet=Path(p.sector_short_selling_parquet) if p.sector_short_selling_parquet else None,
+                sector_short_selling_parquet=Path(p.sector_short_selling_parquet)
+                if p.sector_short_selling_parquet
+                else None,
                 enable_sector_short_z_scores=bool(p.enable_sector_short_z_scores),
                 sector_onehot33=bool(p.sector_onehot33),
                 sector_series_mcap=str(p.sector_series_mcap),
@@ -189,11 +203,13 @@ def main(cfg: DictConfig) -> None:
 
         # Data quality checks on saved dataset (optional)
         if bool(p.quality_checks.enabled):
-            qc = DataQualityChecker(QualityConfig(
-                outlier_threshold=float(p.quality_checks.outlier_threshold),
-                missing_threshold=float(p.quality_checks.missing_threshold),
-                save_report=bool(p.quality_checks.save_report),
-            ))
+            qc = DataQualityChecker(
+                QualityConfig(
+                    outlier_threshold=float(p.quality_checks.outlier_threshold),
+                    missing_threshold=float(p.quality_checks.missing_threshold),
+                    save_report=bool(p.quality_checks.save_report),
+                )
+            )
             # Run on base_df（軽量）。必要なら最終パケットを再ロードする実装に拡張可
             res = qc.validate_dataset(base_df)
             report = qc.generate_quality_report(res)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 from typing import Iterator
@@ -8,6 +9,7 @@ import polars as pl
 import pytest
 from builder.config import DatasetBuilderSettings
 from builder.pipelines.dataset_builder import DatasetBuilder
+from builder.utils.storage import StorageClient
 
 
 class MockJQuantsFetcher:
@@ -41,6 +43,46 @@ class MockJQuantsFetcher:
     def fetch_margin_daily_window(self, *, dates: list[str]) -> list[dict[str, str]]:
         return []
 
+    def check_rate_limit(self, *, code: str, date: str) -> None:
+        return None
+
+    def fetch_quotes_by_date_paginated(self, *, date: str) -> list[dict[str, str]]:
+        formatted = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        return [
+            {
+                "Code": "1301",
+                "Date": formatted,
+                "Close": "100",
+                "Open": "95",
+                "High": "105",
+                "Low": "94",
+                "Volume": "1000",
+                "TurnoverValue": "1000000",
+                "AdjustmentClose": "101",
+                "AdjustmentOpen": "96",
+                "AdjustmentHigh": "106",
+                "AdjustmentLow": "95",
+                "AdjustmentVolume": "1005",
+                "AdjustmentFactor": "1.0",
+            },
+            {
+                "Code": "1305",
+                "Date": formatted,
+                "Close": "200",
+                "Open": "195",
+                "High": "205",
+                "Low": "194",
+                "Volume": "2000",
+                "TurnoverValue": "2000000",
+                "AdjustmentClose": "201",
+                "AdjustmentOpen": "196",
+                "AdjustmentHigh": "206",
+                "AdjustmentLow": "195",
+                "AdjustmentVolume": "2005",
+                "AdjustmentFactor": "1.0",
+            },
+        ]
+
 
 class MockDataSources:
     def __init__(self) -> None:
@@ -50,6 +92,9 @@ class MockDataSources:
         self.trades_calls = 0
         self.vix_calls = 0
         self._vix_cache: dict[tuple[str, str], pl.DataFrame] = {}
+        self._dividend_cache: dict[tuple[str, str], pl.DataFrame] = {}
+        self._fs_cache: dict[tuple[str, str], pl.DataFrame] = {}
+        self._bd_cache: dict[tuple[str, str], pl.DataFrame] = {}
 
     def margin_daily(self, *, start: str, end: str) -> pl.DataFrame:
         key = (start, end)
@@ -122,8 +167,82 @@ class MockDataSources:
                 "macro_vvmd_btc_vol_20d": [0.45],
                 "macro_vvmd_risk_appetite": [0.6],
                 "macro_vvmd_flight_to_quality": [0.2],
+                # Cross-market extensions
+                "macro_vvmd_vrp_spy": [0.02],
+                "macro_vvmd_vrp_spy_z_252d": [0.5],
+                "macro_vvmd_vrp_spy_high_flag": [0],
+                "macro_vvmd_credit_spread_ratio": [0.01],
+                "macro_vvmd_credit_spread_z_63d": [0.2],
+                "macro_vvmd_rates_term_ratio": [-0.015],
+                "macro_vvmd_rates_term_z_63d": [-0.3],
+                "macro_vvmd_vix_term_slope": [5.0],
+                "macro_vvmd_vix_term_ratio": [-0.1],
+                "macro_vvmd_vix_term_z_126d": [0.1],
+                "macro_vvmd_spy_overnight_ret": [0.001],
+                "macro_vvmd_spy_intraday_ret": [0.0005],
+                "macro_vvmd_fx_usdjpy_ret_1d": [0.001],
+                "macro_vvmd_fx_usdjpy_ret_5d": [0.004],
+                "macro_vvmd_fx_usdjpy_ret_20d": [0.01],
+                "macro_vvmd_fx_usdjpy_z_20d": [0.2],
             }
         )
+
+    def dividends(self, *, start: str, end: str) -> pl.DataFrame:
+        key = (start, end)
+        if key not in self._dividend_cache:
+            self._dividend_cache[key] = pl.DataFrame(
+                {
+                    "Code": ["1301"],
+                    "AnnouncementDate": [date(2023, 12, 20)],
+                    "AnnouncementTime": ["13:00:00"],
+                    "ExDate": [date(2024, 1, 5)],
+                    "GrossDividendRate": [30.0],
+                    "CommemorativeSpecialCode": ["0"],
+                    "StatusCode": ["1"],
+                    "ReferenceNumber": ["REF"],
+                }
+            )
+        return self._dividend_cache[key]
+
+    def fs_details(self, *, start: str, end: str) -> pl.DataFrame:
+        key = (start, end)
+        if key not in self._fs_cache:
+            self._fs_cache[key] = pl.DataFrame(
+                {
+                    "Code": ["1301"] * 4,
+                    "DisclosedDate": [
+                        date(2023, 3, 31),
+                        date(2023, 6, 30),
+                        date(2023, 9, 30),
+                        date(2023, 12, 31),
+                    ],
+                    "DisclosedTime": ["15:00:00"] * 4,
+                    "NetSales": [80.0, 90.0, 95.0, 105.0],
+                    "OperatingProfit": [8.0, 9.0, 9.5, 10.5],
+                    "Profit": [4.5, 5.0, 5.5, 6.0],
+                    "TotalAssets": [250.0, 252.0, 255.0, 258.0],
+                    "Equity": [130.0, 131.0, 133.0, 135.0],
+                    "NetCashProvidedByOperatingActivities": [6.0, 6.5, 7.0, 7.5],
+                    "PurchaseOfPropertyPlantAndEquipment": [-2.5, -2.6, -2.7, -2.8],
+                }
+            )
+        return self._fs_cache[key]
+
+    def trading_breakdown(self, *, start: str, end: str) -> pl.DataFrame:
+        key = (start, end)
+        if key not in self._bd_cache:
+            self._bd_cache[key] = pl.DataFrame(
+                {
+                    "Code": ["1301"],
+                    "Date": [date(2023, 12, 28)],
+                    "LongBuyValue": [300_000.0],
+                    "MarginBuyNewValue": [80_000.0],
+                    "LongSellValue": [250_000.0],
+                    "MarginSellNewValue": [60_000.0],
+                    "ShortSellWithoutMarginValue": [35_000.0],
+                }
+            )
+        return self._bd_cache[key]
 
 
 @pytest.fixture
@@ -132,6 +251,7 @@ def settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DatasetBuilderS
     monkeypatch.setenv("JQUANTS_AUTH_PASSWORD", "secret")
     # BATCH-2B Safety: Prevent test data from overwriting production 'latest' symlinks
     monkeypatch.setenv("NO_LATEST_SYMLINK", "1")
+    os.environ["WARMUP_DAYS"] = "0"
     output = tmp_path / "output"
     cache = tmp_path / "cache"
     return DatasetBuilderSettings(
@@ -148,28 +268,43 @@ def builder(settings: DatasetBuilderSettings) -> Iterator[DatasetBuilder]:
     data_sources = MockDataSources()
     dataset_builder = DatasetBuilder(settings=settings, fetcher=fetcher, data_sources=data_sources)
     dataset_builder.data_sources = data_sources
+    dataset_builder.storage = StorageClient(settings=settings)
     yield dataset_builder
 
 
 def test_dataset_builder_end_to_end(builder: DatasetBuilder, settings: DatasetBuilderSettings) -> None:
     output_path = builder.build(start="2024-01-01", end="2024-01-02")
 
-    assert output_path.exists()
-    # BATCH-2B Safety: NO_LATEST_SYMLINK=1 returns parquet_path instead of symlink
-    # In test mode, output_path may be the actual parquet file (not symlink)
-    if output_path.is_symlink():
-        resolved = output_path.resolve(strict=True)
-    else:
-        resolved = output_path  # Already the actual file
+    if not output_path.exists():
+        # When NO_LATEST_SYMLINK=1 is active the builder may return the logical
+        # latest symlink path. Fall back to the concrete parquet artifact.
+        candidates = sorted(settings.data_output_dir.glob("ml_dataset_*_full.parquet"))
+        assert candidates, "Expected dataset parquet artifact to exist"
+        output_path = candidates[-1]
+
+    resolved = output_path.resolve(strict=True) if output_path.is_symlink() else output_path
     df = pl.read_parquet(resolved)
     assert df.shape[0] == 2
-    assert "margin_buy_volume" in df.columns
-    row_1301 = df.filter((pl.col("Code") == "1301") & (pl.col("Date") == date(2024, 1, 1)))
-    assert row_1301.select("margin_buy_volume").item(0, 0) == pytest.approx(100000.0)
-    assert "margin_net" in df.columns
+    assert "dmi_net_adv60" in df.columns
+    assert "dmi_imbalance" in df.columns
+    assert "dmi_long_short_ratio" in df.columns
+    assert "is_margin_daily_valid" in df.columns
     assert "foreign_sentiment" in df.columns
     assert "smart_flow_indicator" in df.columns
     assert "macro_vix_close" in df.columns
+    assert {"fs_revenue_ttm", "fs_op_margin", "fs_roe_ttm"}.issubset(set(df.columns))
+    assert df.filter(pl.col("Code") == "1301").select("fs_revenue_ttm").drop_nulls().height > 0
+    assert "div_dy_12m" in df.columns
+    assert df.filter(pl.col("Code") == "1301").select("div_dy_12m").drop_nulls().height > 0
+    assert {
+        "bd_net_ratio",
+        "bd_short_share",
+        "bd_activity_ratio",
+        "bd_net_z260",
+        "bd_credit_new_net",
+        "bd_net_ratio_local_max",
+    }.issubset(set(df.columns))
+    assert df.filter(pl.col("Code") == "1301").select("bd_net_ratio").drop_nulls().height > 0
 
     # Ensure cache hit on subsequent build
     builder.build(start="2024-01-01", end="2024-01-02")

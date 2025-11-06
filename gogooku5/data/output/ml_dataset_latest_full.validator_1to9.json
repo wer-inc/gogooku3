@@ -1,0 +1,98 @@
+{
+  "summary": {
+    "pass": 2,
+    "warn": 2,
+    "fail": 6,
+    "total": 10
+  },
+  "checks": [
+    {
+      "item": "0) Primary key & core coverage",
+      "status": "FAIL",
+      "detail": "missing core columns: ['AdjustmentClose', 'AdjustmentHigh', 'AdjustmentLow', 'AdjustmentOpen', 'AdjustmentVolume']; duplicate key rate=7.826e-01",
+      "metrics": {
+        "duplicate_rate": 0.7826303964181519,
+        "coverage": {
+          "ret_prev_1d": 0.999328558726078
+        },
+        "missing_core": [
+          "AdjustmentClose",
+          "AdjustmentHigh",
+          "AdjustmentLow",
+          "AdjustmentOpen",
+          "AdjustmentVolume"
+        ]
+      }
+    },
+    {
+      "item": "1) Schema governance (canonicalized OHLC)",
+      "status": "WARN",
+      "detail": "raw OHLC/Adj Close still present (should be removed at finalize)",
+      "metrics": {
+        "has_adj": true,
+        "has_raw": true
+      }
+    },
+    {
+      "item": "2) Returns separation & left-closed",
+      "status": "FAIL",
+      "detail": "ret_prev_1d deviates from adj-close formula (mae=1.35e-02, q99=1.09e-01)",
+      "metrics": {
+        "mae": 0.013508113313610452,
+        "q99": 0.10876132930513527
+      }
+    },
+    {
+      "item": "3) Gap/Intraday split",
+      "status": "FAIL",
+      "detail": "missing columns: ['ret_intraday', 'ret_overnight']. Implement ret_overnight/ret_intraday.",
+      "metrics": {}
+    },
+    {
+      "item": "4) Margin weekly/daily as‑of",
+      "status": "PASS",
+      "detail": "weekly(has=True, cov≈1.00); daily(has=True, cov≈0.04)",
+      "metrics": {
+        "cov_weekly": 0.9991608924657691,
+        "cov_daily": 0.044242158206312554
+      }
+    },
+    {
+      "item": "5) Earnings announcements",
+      "status": "WARN",
+      "detail": "no earnings columns found (days_to_earnings / windows)",
+      "metrics": {}
+    },
+    {
+      "item": "6) Financial statements & dividends (as‑of)",
+      "status": "FAIL",
+      "detail": "fs:missing: ['fs_revenue_ttm', 'fs_op_profit_ttm', 'fs_net_income_ttm', 'fs_cfo_ttm', 'fs_op_margin', 'fs_net_margin', 'fs_roe_ttm', 'fs_roa_ttm', 'fs_accruals_ttm', 'fs_fcf_ttm', 'fs_staleness_bd', 'fs_lag_days', 'is_fs_valid']; coverage≈0.00; div:div:none",
+      "metrics": {
+        "fs_coverage": 0.0,
+        "fs_valid_rate": null,
+        "fs_recent_rate": null,
+        "fs_staleness_p95": null,
+        "fs_lag_p95": null,
+        "div_coverage": 0.0
+      }
+    },
+    {
+      "item": "7) Indices (TOPIX etc.)",
+      "status": "PASS",
+      "detail": "present=['topix_idx_r_1d', 'topix_idx_atr14', 'topix_idx_natr14']",
+      "metrics": {}
+    },
+    {
+      "item": "8) Limit & session features",
+      "status": "FAIL",
+      "detail": "missing columns: ['afternoon_high', 'afternoon_low', 'afternoon_open', 'afternoon_volume', 'am_gap_prev_close', 'am_limit_any_flag', 'am_limit_down_flag', 'am_limit_up_flag', 'am_range', 'am_to_full_range', 'am_vol_share', 'days_since_limit', 'limit_any_flag', 'limit_down_5d', 'limit_down_flag', 'limit_up_5d', 'limit_up_flag', 'lower_limit', 'morning_close', 'morning_high', 'morning_low', 'morning_lower_limit', 'morning_open', 'morning_upper_limit', 'morning_volume', 'pm_gap_am_close', 'pm_range', 'price_locked_flag', 'upper_limit']",
+      "metrics": {}
+    },
+    {
+      "item": "9) Breakdown features (as‑of)",
+      "status": "FAIL",
+      "detail": "missing required bd_* columns: ['bd_total_value', 'bd_net_value', 'bd_net_ratio', 'bd_short_share', 'bd_activity_ratio', 'bd_net_ratio_chg_1d', 'bd_short_share_chg_1d', 'bd_net_z20', 'bd_net_z260', 'bd_short_z260', 'bd_credit_new_net', 'bd_credit_close_net', 'bd_net_ratio_local_max', 'bd_net_ratio_local_min', 'bd_turn_up', 'bd_staleness_bd', 'bd_is_recent', 'is_bd_valid']",
+      "metrics": {}
+    }
+  ]
+}

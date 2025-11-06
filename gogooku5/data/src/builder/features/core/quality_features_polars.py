@@ -51,10 +51,23 @@ class QualityFinancialFeaturesGeneratorPolars:
             working_df = df.lazy()
             schema = df.schema
 
+        exclude_prefixes = (
+            "fs_",
+            "div_",
+            "bd_",
+            "dmi_",
+            "wmi_",
+            "gap_",
+            "macro_",
+            "fut_",
+            "opt_",
+        )
         self.numeric_features = [
             col
             for col, dtype in schema.items()
-            if dtype in {pl.Float32, pl.Float64, pl.Int32, pl.Int64} and col not in {self.date_column, self.code_column}
+            if dtype in {pl.Float32, pl.Float64, pl.Int32, pl.Int64}
+            and col not in {self.date_column, self.code_column}
+            and not any(col.startswith(prefix) for prefix in exclude_prefixes)
         ]
         self._zscore_features = []
 

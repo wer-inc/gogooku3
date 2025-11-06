@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- 📐 **Canonical OHLCV Governance**: standardized dataset builder to use split-adjusted `Adjustment*` prices exclusively, persist schema governance metadata, and fail-fast when non-canonical columns appear.
+- 🧾 **Feature Manifest Enforcement**: emit `feature_index.json` with canonical column order/dtypes/normalization metadata, update dataset metadata with hash summaries, and teach loaders to fail-fast on manifest mismatches (optional strict mode).
+- ⚡ **Gap Decomposition**: split `ret_prev_1d` into `gap_ov_prev1`/`gap_id_prev1`, enforce leak-safe prev-day semantics, purge redundant `log_returns_1d`, and add persist-time validation.
+- 🕘 **Morning Session Features**: gate `/prices/prices_am` by default with T+1 as-of, emit a minimal six-column feature set (`am_gap_prev_close`, `am_body`, `am_range`, `am_vol_ratio_20`, `am_pos_in_am_range`, `am_to_full_range_prev`, `is_am_valid`), and add CLI/config controls for SAME_DAY_PM scenarios.
+
 ### Fixed
 - 🐛 **DataLoader Hanging Issue**: Fixed missing import causing training script to hang indefinitely
   - Added explicit import of `ProductionDataModuleV2` to prevent silent failures

@@ -1,11 +1,15 @@
 """High-level helpers for fetching quote data."""
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timedelta
+from time import perf_counter
 from typing import Iterable, List, Literal
 
 from .jquants_fetcher import JQuantsFetcher
+
+LOGGER = logging.getLogger(__name__)
 
 
 class QuotesFetcher:
@@ -16,20 +20,50 @@ class QuotesFetcher:
 
     def fetch_batch(self, *, codes: Iterable[str], start: str, end: str) -> List[dict[str, str]]:
         """Legacy method: by-code fetching (use fetch_batch_optimized for better performance)."""
+
+        codes_list = list(codes)
+        total = len(codes_list)
+        if total == 0:
+            LOGGER.warning("fetch_batch called with empty symbol list (%s to %s)", start, end)
+            return []
+
         result: List[dict[str, str]] = []
-        for code in codes:
+        timer_start = perf_counter()
+        for idx, code in enumerate(codes_list, start=1):
+            if idx == 1 or idx == total or idx % 25 == 0:
+                elapsed = perf_counter() - timer_start
+                LOGGER.info(
+                    "[QUOTES] Fetch by-code progress %d/%d (%.1fs elapsed)",
+                    idx,
+                    total,
+                    elapsed,
+                )
             rows = self.client.fetch_quotes_paginated(code=code, from_=start, to=end)
             result.extend(rows)
         return result
 
     def fetch_by_date(self, *, dates: Iterable[str], codes: set[str] | None = None) -> List[dict[str, str]]:
         """Fetch quotes by date axis (営業日ごと取得)."""
+
+        date_list = list(dates)
+        total = len(date_list)
+        if total == 0:
+            LOGGER.warning("fetch_by_date called with empty date list")
+            return []
+
         result: List[dict[str, str]] = []
-        for date in dates:
-            # API expects YYYYMMDD format
+        timer_start = perf_counter()
+        for idx, date in enumerate(date_list, start=1):
+            if idx == 1 or idx == total or idx % 20 == 0:
+                elapsed = perf_counter() - timer_start
+                LOGGER.info(
+                    "[QUOTES] Fetch by-date progress %d/%d (%.1fs elapsed)",
+                    idx,
+                    total,
+                    elapsed,
+                )
             date_api = date.replace("-", "")
             rows = self.client.fetch_quotes_by_date_paginated(date=date_api)
-            # Filter by codes if specified
             if codes:
                 rows = [row for row in rows if row.get("Code") in codes]
             result.extend(rows)
@@ -64,7 +98,9 @@ class QuotesFetcher:
             >>> # Force by-date axis for large symbol count scenarios
             >>> fetcher.fetch_batch_optimized(codes=all_codes, start="2024-01-01", end="2024-12-31", axis_override="by_date")
         """
-        codes_set = set(codes)
+        codes_list = list(codes)
+        codes_set = set(codes_list)
+        total_codes = len(codes_list)
         days = self._calculate_business_days(start, end)
 
         # Check for axis override (parameter takes precedence over env var)
@@ -76,18 +112,40 @@ class QuotesFetcher:
         # Apply axis override if specified
         if axis_override == "by_date":
             date_list = self._generate_date_list(start, end)
+            LOGGER.info(
+                "[QUOTES] Axis override=%s using by-date (%d days × %d codes)",
+                axis_override,
+                len(date_list),
+                total_codes,
+            )
             return self.fetch_by_date(dates=date_list, codes=codes_set)
         elif axis_override == "by_code":
-            return self.fetch_batch(codes=codes, start=start, end=end)
+            LOGGER.info(
+                "[QUOTES] Axis override=by_code for %d codes (%s to %s)",
+                total_codes,
+                start,
+                end,
+            )
+            return self.fetch_batch(codes=codes_list, start=start, end=end)
 
         # Auto-select axis (simple heuristic: if period is short, use by-date)
         if days <= 30:
             # By-date is more efficient for short periods
             date_list = self._generate_date_list(start, end)
+            LOGGER.info(
+                "[QUOTES] Auto-select by-date axis (%d days ≤ 30 for %d codes)",
+                len(date_list),
+                total_codes,
+            )
             return self.fetch_by_date(dates=date_list, codes=codes_set)
         else:
             # By-code is more efficient for long periods
-            return self.fetch_batch(codes=codes, start=start, end=end)
+            LOGGER.info(
+                "[QUOTES] Auto-select by-code axis (%d business days) for %d codes",
+                days,
+                total_codes,
+            )
+            return self.fetch_batch(codes=codes_list, start=start, end=end)
 
     def _calculate_business_days(self, start: str, end: str) -> int:
         """Estimate number of business days between two dates."""

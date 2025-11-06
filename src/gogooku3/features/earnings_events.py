@@ -1,449 +1,523 @@
 from __future__ import annotations
 
 """
-Earnings event features → announcement proximity flags and PEAD features.
+Earnings event features with strict as-of controls.
 
-This module implements earnings event data integration with:
-- Earnings announcement proximity detection (upcoming & recent flags)
-- Days-to-next-earnings countdown features
-- Post-earnings announcement drift (PEAD) momentum signals
-- Earnings surprise proxy via price reaction
-- Year-over-year earnings growth momentum
-- As-of backward join to prevent future data leakage
+Implements the minimal P0 feature set:
+  - e_days_to / e_days_since: distance to next / previous earnings (business days)
+  - e_win_pre{1,3,5} / e_win_post{1,3,5}: proximity flags
+  - e_is_E0: event-day indicator
 
-Key features generated:
-- earnings_upcoming_5d: Binary flag for announcements within 5 days
-- earnings_recent_5d: Binary flag for recent announcements (last 5 days)
-- days_to_earnings: Countdown to next earnings announcement
-- days_since_earnings: Days since last earnings announcement
-- earnings_day_return: Price reaction on announcement day (surprise proxy)
-- earnings_momentum_5d, earnings_momentum_10d: Post-earnings drift signals
-- yoy_eps_growth: Year-over-year EPS growth rate
-- earnings_event_volatility: Elevated volatility during earnings periods
-
-Public API:
-- build_earnings_schedule(announcement_df)
-- add_earnings_proximity_features(quotes, announcement_schedule)
-- add_earnings_surprise_features(quotes, announcement_df, statements_df)
-- add_pead_momentum_features(quotes)
-- add_earnings_event_block(quotes, announcement_df, statements_df, enable_pead=True)
-
-References:
-- Post-Earnings Announcement Drift (PEAD): Stocks with positive surprises
-  continue rising for days/weeks after announcement
-- Feature Specification lines 753-825: Earnings proximity and surprise metrics
+Data is sourced from J-Quants `/fins/announcement` and guarded so that announcements
+only become visible from the evening (default 19:00 JST) of the previous business day.
 """
 
+import bisect
+import logging
+from datetime import date, datetime, time
+from typing import Iterable, Sequence
 
 import polars as pl
 
-EPS = 1e-12
+logger = logging.getLogger(__name__)
+
+DEFAULT_WINDOWS: tuple[int, ...] = (1, 3, 5)
+SCHEDULE_REFRESH_HOUR: int = 19
 
 
-def build_earnings_schedule(announcement_df: pl.DataFrame) -> pl.DataFrame:
-    """Build earnings announcement schedule with event dates.
-
-    Args:
-        announcement_df: Raw earnings announcement data with Date, Code
-                        (Note: J-Quants API returns "Date" as the announcement date)
-
-    Returns:
-        DataFrame with structured announcement schedule
-    """
-    if announcement_df.is_empty():
-        return announcement_df
-
-    # Clean and structure announcement data
-    # Note: J-Quants API returns "Date" column (not "AnnouncementDate")
-    schedule = announcement_df.with_columns([
-        # Ensure proper date formats
-        pl.col("Date").cast(pl.Date),
-
-        # Add fiscal period indicators if available
-        pl.col("Code").cast(pl.Utf8),
-
-        # Sort key for temporal ordering
-        pl.col("Date").alias("event_date")
-    ])
-
-    # Remove duplicates (same stock, same announcement date)
-    schedule = schedule.unique(["Code", "Date"])
-
-    # Sort by code and announcement date for proper temporal processing
-    schedule = schedule.sort(["Code", "Date"])
-
-    return schedule
+def _coerce_date(value: object) -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            return None
+    return None
 
 
-def add_earnings_proximity_features(
-    quotes: pl.DataFrame,
-    announcement_schedule: pl.DataFrame
-) -> pl.DataFrame:
-    """Add earnings announcement proximity features.
+def _coerce_time(value: object) -> time:
+    if value in (None, ""):
+        return time(0, 0)
+    if isinstance(value, time):
+        return value
+    if isinstance(value, datetime):
+        return value.time()
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return time(0, 0)
+        parts = value.split(":")
+        try:
+            hour = int(parts[0]) if parts else 0
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            second = int(parts[2]) if len(parts) > 2 else 0
+            return time(hour % 24, minute % 60, second % 60)
+        except ValueError:
+            return time(0, 0)
+    if isinstance(value, (int, float)):
+        hour = int(value) % 24
+        return time(hour, 0)
+    return time(0, 0)
 
-    Features:
-    - earnings_upcoming_5d: Binary flag for announcements within 5 days
-    - earnings_recent_5d: Binary flag for recent announcements (last 5 days)
-    - days_to_earnings: Countdown to next earnings announcement
-    - days_since_earnings: Days since last earnings announcement
-    """
-    if announcement_schedule.is_empty():
-        null_features = [
-            pl.lit(0).cast(pl.Int8).alias("earnings_upcoming_5d"),
-            pl.lit(0).cast(pl.Int8).alias("earnings_recent_5d"),
-            pl.lit(None).cast(pl.Int32).alias("days_to_earnings"),
-            pl.lit(None).cast(pl.Int32).alias("days_since_earnings"),
-        ]
-        return quotes.with_columns(null_features)
 
-    # Prepare announcement schedule for joins
-    # Note: Using "Date" column from J-Quants API (announcement date)
-    earnings_events = announcement_schedule.select([
-        "Code",
-        pl.col("Date").alias("event_date")
-    ])
+def _coerce_datetime(value: object) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, date):
+        return datetime.combine(value, time(0, 0))
+    if isinstance(value, str):
+        token = value.strip()
+        if not token:
+            return None
+        token = token.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(token)
+            return dt.replace(tzinfo=None)
+        except ValueError:
+            pass
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(token, fmt)
+            except ValueError:
+                continue
+    return None
 
-    # Create date grid for each stock to compute proximity features
-    quotes_with_proximity = quotes.join(
-        earnings_events,
-        on="Code",
-        how="left"
+
+def _parse_business_days(
+    quotes: pl.DataFrame, business_days: Iterable[str] | None
+) -> tuple[list[date], dict[date, int], pl.DataFrame]:
+    """Build business-day index mapping used for distance calculations."""
+    if business_days:
+        try:
+            bd_dates = sorted(datetime.strptime(str(d), "%Y-%m-%d").date() for d in business_days)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"Invalid business day token: {exc}") from exc
+    else:
+        bd_dates = quotes.select("Date").unique().sort("Date")["Date"].to_list()
+        bd_dates = [d if isinstance(d, date) else d.date() for d in bd_dates]
+
+    if not bd_dates:
+        raise ValueError("Business day calendar cannot be empty")
+
+    date_to_idx = {d: idx for idx, d in enumerate(bd_dates)}
+    calendar_df = (
+        pl.DataFrame({"Date": bd_dates})
+        .with_row_count("day_index", offset=0)
+        .with_columns(pl.col("day_index").cast(pl.Int32))
     )
-
-    if quotes_with_proximity.is_empty():
-        null_features = [
-            pl.lit(0).cast(pl.Int8).alias("earnings_upcoming_5d"),
-            pl.lit(0).cast(pl.Int8).alias("earnings_recent_5d"),
-            pl.lit(None).cast(pl.Int32).alias("days_to_earnings"),
-            pl.lit(None).cast(pl.Int32).alias("days_since_earnings"),
-        ]
-        return quotes.with_columns(null_features)
-
-    # Calculate proximity features
-    proximity_features = quotes_with_proximity.with_columns([
-        # Days until/since announcement
-        (pl.col("event_date") - pl.col("Date")).dt.total_days().alias("days_diff"),
-    ]).with_columns([
-        # Upcoming earnings flags (positive days_diff = future events)
-        (pl.col("days_diff").is_between(0, 5)).cast(pl.Int8).alias("_upcoming_5d"),
-
-        # Recent earnings flags (negative days_diff = past events)
-        (pl.col("days_diff").is_between(-5, 0)).cast(pl.Int8).alias("_recent_5d"),
-
-        # Days to next earnings (minimum positive days_diff per stock-date)
-        pl.when(pl.col("days_diff") >= 0)
-        .then(pl.col("days_diff"))
-        .otherwise(None)
-        .alias("_days_to_earnings"),
-
-        # Days since last earnings (maximum negative days_diff per stock-date)
-        pl.when(pl.col("days_diff") <= 0)
-        .then(-pl.col("days_diff"))
-        .otherwise(None)
-        .alias("_days_since_earnings"),
-    ])
-
-    # Aggregate by stock-date to get final features
-    final_features = proximity_features.group_by(["Code", "Date"]).agg([
-        # Any upcoming earnings in next 5 days
-        pl.col("_upcoming_5d").max().alias("earnings_upcoming_5d"),
-
-        # Any recent earnings in last 5 days
-        pl.col("_recent_5d").max().alias("earnings_recent_5d"),
-
-        # Minimum days to next earnings
-        pl.col("_days_to_earnings").min().alias("days_to_earnings"),
-
-        # Minimum days since last earnings
-        pl.col("_days_since_earnings").min().alias("days_since_earnings"),
-
-        # Keep other columns
-        pl.exclude(["_upcoming_5d", "_recent_5d", "_days_to_earnings", "_days_since_earnings",
-                   "days_diff", "event_date"]).first()
-    ])
-
-    # Join back to original quotes
-    return quotes.join(
-        final_features.select([
-            "Code", "Date", "earnings_upcoming_5d", "earnings_recent_5d",
-            "days_to_earnings", "days_since_earnings"
-        ]),
-        on=["Code", "Date"],
-        how="left"
-    ).with_columns([
-        # Fill nulls for stocks without earnings data
-        pl.col("earnings_upcoming_5d").fill_null(0),
-        pl.col("earnings_recent_5d").fill_null(0),
-    ])
+    return bd_dates, date_to_idx, calendar_df
 
 
-def add_earnings_surprise_features(
-    quotes: pl.DataFrame,
+def _bisect_index(target: date, bd_dates: Sequence[date]) -> int | None:
+    """Return insertion index of target within business-day list or None if beyond."""
+    pos = bisect.bisect_left(bd_dates, target)
+    if pos >= len(bd_dates):
+        return None
+    return pos
+
+
+def _announcement_day_index(target: date, bd_dates: Sequence[date], date_to_idx: dict[date, int]) -> int | None:
+    """Map announcement date to business-day index (nearest forward business day)."""
+    if target in date_to_idx:
+        return date_to_idx[target]
+    return _bisect_index(target, bd_dates)
+
+
+def _prev_business_day_index(target: date, bd_dates: Sequence[date], date_to_idx: dict[date, int]) -> int:
+    """Return index of previous business day (inclusive of first day)."""
+    if target in date_to_idx:
+        idx = date_to_idx[target]
+        return max(idx - 1, 0)
+
+    pos = bisect.bisect_left(bd_dates, target)
+    if pos <= 0:
+        return 0
+    return min(pos - 1, len(bd_dates) - 1)
+
+
+def _resolve_effective_day_index(
+    available_ts: datetime,
+    bd_dates: Sequence[date],
+    asof_hour: int,
+) -> tuple[int, date]:
+    """Return first business-day index whose as-of timestamp covers available_ts."""
+    candidate_idx = bisect.bisect_left(bd_dates, available_ts.date())
+    if candidate_idx >= len(bd_dates):
+        return len(bd_dates) - 1, bd_dates[-1]
+
+    start_idx = max(candidate_idx - 1, 0)
+    asof_cutoff = time(hour=asof_hour, minute=0)
+    for idx in range(start_idx, len(bd_dates)):
+        candidate_date = bd_dates[idx]
+        candidate_ts = datetime.combine(candidate_date, asof_cutoff)
+        if candidate_ts >= available_ts:
+            return idx, candidate_date
+
+    return len(bd_dates) - 1, bd_dates[-1]
+
+
+def _build_snapshot(
     announcement_df: pl.DataFrame,
-    statements_df: pl.DataFrame | None = None
+    *,
+    bd_dates: Sequence[date],
+    date_to_idx: dict[date, int],
+    asof_hour: int,
 ) -> pl.DataFrame:
-    """Add earnings surprise and reaction features.
-
-    Features:
-    - earnings_day_return: Price reaction on announcement day (surprise proxy)
-    - yoy_eps_growth: Year-over-year EPS growth rate
-    - earnings_reaction_strength: Magnitude of earnings day reaction
-    """
+    """Normalize announcement schedule and attach availability metadata."""
     if announcement_df.is_empty():
-        null_features = [
-            pl.lit(None).cast(pl.Float64).alias("earnings_day_return"),
-            pl.lit(None).cast(pl.Float64).alias("yoy_eps_growth"),
-            pl.lit(None).cast(pl.Float64).alias("earnings_reaction_strength"),
+        return pl.DataFrame(
+            {
+                "Code": pl.Series([], dtype=pl.Utf8),
+                "announcement_date": pl.Series([], dtype=pl.Date),
+                "announcement_day_index": pl.Series([], dtype=pl.Int32),
+                "effective_day_index": pl.Series([], dtype=pl.Int32),
+                "effective_date": pl.Series([], dtype=pl.Date),
+                "available_ts": pl.Series([], dtype=pl.Datetime("us")),
+            }
+        )
+
+    df = announcement_df.rename({"Date": "announcement_date"})
+    if "announcement_date" not in df.columns:
+        raise ValueError("Earnings announcements require a 'Date' column")
+
+    df = df.with_columns(
+        [
+            pl.col("announcement_date").cast(pl.Date),
+            pl.col("Code").cast(pl.Utf8),
         ]
-        return quotes.with_columns(null_features)
+    )
+    df = df.unique(["Code", "announcement_date"])
 
-    # Get announcement dates
-    # Note: Using "Date" column from J-Quants API (announcement date)
-    announcements = announcement_df.select([
-        "Code",
-        pl.col("Date").alias("earnings_date")
-    ]).unique()
+    ann_dates = df["announcement_date"].to_list()
 
-    # Join quotes with announcement dates to find earnings day returns
-    earnings_returns = quotes.join(
-        announcements,
-        left_on=["Code", "Date"],
-        right_on=["Code", "earnings_date"],
-        how="inner"
-    ).with_columns([
-        # Calculate daily return as earnings surprise proxy
-        pl.col("returns_1d").alias("earnings_day_return"),
-
-        # Reaction strength (absolute return)
-        pl.col("returns_1d").abs().alias("earnings_reaction_strength"),
-    ]).select([
-        "Code", "Date", "earnings_day_return", "earnings_reaction_strength"
-    ])
-
-    # Add YoY EPS growth if statements available
-    eps_growth_features = []
-    if statements_df is not None and not statements_df.is_empty():
-        # Calculate year-over-year EPS growth
-        eps_growth = statements_df.with_columns([
-            pl.col("Date").cast(pl.Date),
-            # Extract fiscal year/quarter for YoY matching
-            pl.col("Date").dt.year().alias("fiscal_year"),
-            pl.col("Date").dt.quarter().alias("fiscal_quarter"),
-        ]).with_columns([
-            # Calculate EPS (earnings per share)
-            (pl.col("NetIncome") / (pl.col("NumberOfShares") + EPS)).alias("eps_current"),
-        ])
-
-        # Self-join to get previous year's EPS
-        eps_yoy = eps_growth.join(
-            eps_growth.with_columns([
-                (pl.col("fiscal_year") + 1).alias("next_year"),
-                pl.col("eps_current").alias("eps_prev_year")
-            ]).select(["Code", "next_year", "fiscal_quarter", "eps_prev_year"]),
-            left_on=["Code", "fiscal_year", "fiscal_quarter"],
-            right_on=["Code", "next_year", "fiscal_quarter"],
-            how="left"
-        ).with_columns([
-            # Year-over-year EPS growth
-            ((pl.col("eps_current") - pl.col("eps_prev_year")) /
-             (pl.col("eps_prev_year").abs() + EPS)).alias("yoy_eps_growth")
-        ]).select(["Code", "Date", "yoy_eps_growth"])
-
-        eps_growth_features = ["yoy_eps_growth"]
+    published_ts_list: list[datetime | None]
+    if "PublishedDateTime" in df.columns:
+        published_ts_list = [_coerce_datetime(val) for val in df["PublishedDateTime"].to_list()]
+    elif "PublishedAt" in df.columns:
+        published_ts_list = [_coerce_datetime(val) for val in df["PublishedAt"].to_list()]
+    elif "published_at" in df.columns:
+        published_ts_list = [_coerce_datetime(val) for val in df["published_at"].to_list()]
+    elif "PublishedDate" in df.columns:
+        dates_raw = df["PublishedDate"].to_list()
+        times_raw = df["PublishedTime"].to_list() if "PublishedTime" in df.columns else [None] * len(dates_raw)
+        published_ts_list = []
+        for raw_date, raw_time in zip(dates_raw, times_raw):
+            parsed_date = _coerce_date(raw_date)
+            parsed_time = _coerce_time(raw_time)
+            if parsed_date is None:
+                published_ts_list.append(None)
+            else:
+                published_ts_list.append(datetime.combine(parsed_date, parsed_time))
     else:
-        eps_yoy = pl.DataFrame({"Code": [], "Date": [], "yoy_eps_growth": []}).cast({
-            "Code": pl.Utf8, "Date": pl.Date, "yoy_eps_growth": pl.Float64
-        })
+        published_ts_list = [None] * len(ann_dates)
 
-    # Join all earnings features back to quotes
-    result = quotes.join(
-        earnings_returns,
-        on=["Code", "Date"],
-        how="left"
+    ann_indices: list[int | None] = []
+    eff_indices: list[int] = []
+    eff_dates: list[date] = []
+    avail_ts: list[datetime] = []
+
+    refresh_cutoff = time(hour=SCHEDULE_REFRESH_HOUR, minute=0)
+    for d, published_ts in zip(ann_dates, published_ts_list):
+        idx = _announcement_day_index(d, bd_dates, date_to_idx)
+        ann_indices.append(idx)
+
+        prev_idx = _prev_business_day_index(d, bd_dates, date_to_idx)
+        fallback_date = bd_dates[prev_idx]
+        fallback_ts = datetime.combine(fallback_date, refresh_cutoff)
+
+        if published_ts is not None:
+            published_ts = published_ts.replace(microsecond=0)
+            available_ts = published_ts if published_ts > fallback_ts else fallback_ts
+        else:
+            available_ts = fallback_ts
+
+        eff_idx, eff_date = _resolve_effective_day_index(available_ts, bd_dates, asof_hour)
+        eff_indices.append(eff_idx)
+        eff_dates.append(eff_date)
+        avail_ts.append(available_ts)
+
+    snapshot = df.with_columns(
+        [
+            pl.Series("announcement_day_index", ann_indices, dtype=pl.Int32),
+            pl.Series("effective_day_index", eff_indices, dtype=pl.Int32),
+            pl.Series("effective_date", eff_dates, dtype=pl.Date),
+            pl.Series("available_ts", avail_ts, dtype=pl.Datetime("us")),
+        ]
     )
 
-    if eps_growth_features:
-        result = result.join(
-            eps_yoy,
-            on=["Code", "Date"],
-            how="left"
-        )
-    else:
-        result = result.with_columns([
-            pl.lit(None).cast(pl.Float64).alias("yoy_eps_growth")
-        ])
+    snapshot = snapshot.filter(pl.col("announcement_day_index").is_not_null())
+    if snapshot.is_empty():
+        return snapshot
 
-    return result
+    snapshot = snapshot.sort(["Code", "announcement_day_index", "available_ts"]).unique(
+        ["Code", "announcement_day_index"], keep="last"
+    )
+    return snapshot
 
 
-def add_pead_momentum_features(quotes: pl.DataFrame) -> pl.DataFrame:
-    """Add Post-Earnings Announcement Drift (PEAD) momentum features.
+def _join_asof_forward(
+    left: pl.DataFrame,
+    right: pl.DataFrame,
+    *,
+    by: str,
+    left_on: str,
+    right_on: str,
+    suffix: str,
+) -> pl.DataFrame:
+    """Emulate forward as-of join via sign inversion (Polars only exposes backward)."""
+    if left.is_empty() or right.is_empty():
+        return left
 
-    Features:
-    - earnings_momentum_5d: 5-day post-earnings momentum
-    - earnings_momentum_10d: 10-day post-earnings momentum
-    - earnings_momentum_20d: 20-day post-earnings momentum
-    - pead_strength: Cumulative post-earnings drift strength
-    """
-    if quotes.is_empty():
-        return quotes
+    right_columns = list(right.columns)
 
-    # Identify stocks with recent earnings announcements
-    pead_quotes = quotes.filter(
-        pl.col("earnings_recent_5d") == 1  # Stocks with recent earnings
+    left_augmented = (
+        left.with_row_count("_join_order")
+        .with_columns((-pl.col(left_on)).alias("_neg_idx_left"))
+        .sort([by, "_neg_idx_left", "_join_order"])
+    )
+    right_augmented = right.with_columns((-pl.col(right_on)).alias("_neg_idx_right")).sort([by, "_neg_idx_right"])
+
+    joined = left_augmented.join_asof(
+        right_augmented,
+        left_on="_neg_idx_left",
+        right_on="_neg_idx_right",
+        by=by,
+        strategy="backward",
     )
 
-    if pead_quotes.is_empty():
-        null_features = [
-            pl.lit(None).cast(pl.Float64).alias("earnings_momentum_5d"),
-            pl.lit(None).cast(pl.Float64).alias("earnings_momentum_10d"),
-            pl.lit(None).cast(pl.Float64).alias("earnings_momentum_20d"),
-            pl.lit(None).cast(pl.Float64).alias("pead_strength"),
-        ]
-        return quotes.with_columns(null_features)
+    joined = joined.drop(["_neg_idx_left", "_neg_idx_right"], strict=False)
 
-    # Calculate PEAD momentum for stocks with recent earnings
-    pead_features = quotes.with_columns([
-        # Only calculate for stocks with recent earnings events
-        pl.when(pl.col("earnings_recent_5d") == 1)
-        .then(
-            # 5-day forward momentum (post-announcement)
-            pl.col("returns_1d").rolling_sum(5).over("Code")
-        )
-        .otherwise(None)
-        .alias("earnings_momentum_5d"),
+    rename_map: dict[str, str] = {}
+    for col in right_columns:
+        if col == by:
+            continue
+        candidate = f"{col}{suffix}"
+        if candidate in joined.columns:
+            continue
+        if col in joined.columns:
+            rename_map[col] = candidate
+    if rename_map:
+        joined = joined.rename(rename_map)
 
-        pl.when(pl.col("earnings_recent_5d") == 1)
-        .then(
-            # 10-day forward momentum
-            pl.col("returns_1d").rolling_sum(10).over("Code")
-        )
-        .otherwise(None)
-        .alias("earnings_momentum_10d"),
-
-        pl.when(pl.col("earnings_recent_5d") == 1)
-        .then(
-            # 20-day forward momentum
-            pl.col("returns_1d").rolling_sum(20).over("Code")
-        )
-        .otherwise(None)
-        .alias("earnings_momentum_20d"),
-    ]).with_columns([
-        # PEAD strength (weighted momentum)
-        (pl.col("earnings_momentum_5d") * 0.5 +
-         pl.col("earnings_momentum_10d") * 0.3 +
-         pl.col("earnings_momentum_20d") * 0.2).alias("pead_strength")
-    ])
-
-    return pead_features
+    joined = joined.sort("_join_order").drop("_join_order")
+    return joined
 
 
-def add_earnings_volatility_features(quotes: pl.DataFrame) -> pl.DataFrame:
-    """Add earnings-period volatility features.
-
-    Features:
-    - earnings_event_volatility: Elevated volatility during earnings periods
-    - pre_earnings_volatility: Volatility in 5 days before earnings
-    - post_earnings_volatility: Volatility in 5 days after earnings
-    """
-    if quotes.is_empty():
-        return quotes
-
-    # Calculate baseline volatility (20-day rolling)
-    quotes_with_vol = quotes.with_columns([
-        # Baseline volatility
-        pl.col("returns_1d").rolling_std(20).over("Code").alias("baseline_volatility"),
-
-        # Current 5-day volatility
-        pl.col("returns_1d").rolling_std(5).over("Code").alias("current_volatility_5d"),
-    ])
-
-    # Earnings period volatility features
-    earnings_vol_features = quotes_with_vol.with_columns([
-        # Pre-earnings volatility (upcoming earnings flag)
-        pl.when(pl.col("earnings_upcoming_5d") == 1)
-        .then(pl.col("current_volatility_5d"))
-        .otherwise(None)
-        .alias("pre_earnings_volatility"),
-
-        # Post-earnings volatility (recent earnings flag)
-        pl.when(pl.col("earnings_recent_5d") == 1)
-        .then(pl.col("current_volatility_5d"))
-        .otherwise(None)
-        .alias("post_earnings_volatility"),
-
-        # Earnings event volatility (elevated during earnings periods)
-        pl.when((pl.col("earnings_upcoming_5d") == 1) | (pl.col("earnings_recent_5d") == 1))
-        .then(pl.col("current_volatility_5d") / (pl.col("baseline_volatility") + EPS))
-        .otherwise(1.0)
-        .alias("earnings_event_volatility"),
-    ])
-
-    return earnings_vol_features
+def _ensure_windows(windows: Sequence[int] | None) -> list[int]:
+    if not windows:
+        return list(DEFAULT_WINDOWS)
+    uniq = sorted(set(int(w) for w in windows if int(w) > 0))
+    if not uniq:
+        return list(DEFAULT_WINDOWS)
+    return uniq
 
 
-def add_earnings_event_block(
+def add_earnings_event_block(  # noqa: PLR0912
     quotes: pl.DataFrame,
     announcement_df: pl.DataFrame | None,
     statements_df: pl.DataFrame | None = None,
     *,
-    enable_pead: bool = True,
-    enable_volatility: bool = True,
+    business_days: Iterable[str] | None = None,
+    windows: Sequence[int] | None = None,
+    asof_hour: int = 15,
+    enable_pead: bool = False,  # retained for compatibility (no-op in P0)
+    enable_volatility: bool = False,  # retained for compatibility (no-op in P0)
 ) -> pl.DataFrame:
-    """Complete earnings event features integration pipeline.
+    """
+    Attach earnings proximity features to the quotes dataframe.
 
     Args:
-        quotes: Base daily quotes DataFrame
-        announcement_df: Earnings announcement schedule data
-        statements_df: Financial statements data (optional)
-        enable_pead: Whether to compute PEAD momentum features
-        enable_volatility: Whether to compute earnings volatility features
-
-    Returns:
-        DataFrame with earnings event features attached
+        quotes: Base panel (expects Code/Date columns).
+        announcement_df: Normalized earnings announcements.
+        statements_df: Unused in P0 (placeholder for forward compatibility).
+        business_days: Optional explicit business-day list (YYYY-MM-DD strings).
+        windows: Proximity windows (business days) e.g. [1, 3, 5].
+        asof_hour: Dataset as-of hour (JST, 0-23) for availability checks.
     """
+    _ = statements_df  # deliberately unused in P0
+
+    if asof_hour < 0 or asof_hour > 23:
+        raise ValueError("asof_hour must be between 0 and 23")
+
+    win = _ensure_windows(windows)
+
     if announcement_df is None or announcement_df.is_empty():
-        # Add null features for consistency
+        logger.info("Earnings announcements missing; injecting null proximity features")
         null_cols = [
-            "earnings_upcoming_5d", "earnings_recent_5d", "days_to_earnings",
-            "days_since_earnings", "earnings_day_return", "yoy_eps_growth",
-            "earnings_reaction_strength"
+            pl.lit(None).cast(pl.Int32).alias("e_days_to"),
+            pl.lit(None).cast(pl.Int32).alias("e_days_since"),
+            pl.lit(0).cast(pl.Int8).alias("e_is_E0"),
         ]
+        for w in win:
+            null_cols.append(pl.lit(0).cast(pl.Int8).alias(f"e_win_pre{w}"))
+            null_cols.append(pl.lit(0).cast(pl.Int8).alias(f"e_win_post{w}"))
+        return quotes.with_columns(null_cols)
 
-        if enable_pead:
-            null_cols.extend([
-                "earnings_momentum_5d", "earnings_momentum_10d", "earnings_momentum_20d",
-                "pead_strength"
-            ])
+    bd_dates, date_to_idx, calendar_df = _parse_business_days(quotes, business_days)
+    snapshot = _build_snapshot(
+        announcement_df,
+        bd_dates=bd_dates,
+        date_to_idx=date_to_idx,
+        asof_hour=asof_hour,
+    )
 
-        if enable_volatility:
-            null_cols.extend([
-                "earnings_event_volatility", "pre_earnings_volatility", "post_earnings_volatility"
-            ])
+    if snapshot.is_empty():
+        logger.info("No announcements within business-day range; features remain null")
+        return add_earnings_event_block(
+            quotes,
+            None,
+            business_days=business_days,
+            windows=win,
+            asof_hour=asof_hour,
+        )
 
-        null_exprs = [pl.lit(None).alias(c) for c in null_cols[2:]]  # Skip boolean flags
-        null_exprs.extend([
-            pl.lit(0).cast(pl.Int8).alias("earnings_upcoming_5d"),
-            pl.lit(0).cast(pl.Int8).alias("earnings_recent_5d"),
-        ])
+    base = quotes.with_row_count("_row_nr")
 
-        return quotes.with_columns(null_exprs)
+    working = base.join(calendar_df, on="Date", how="left").with_columns(
+        [
+            pl.col("day_index").cast(pl.Int32),
+            (pl.col("Date").cast(pl.Datetime("us")) + pl.duration(hours=asof_hour)).alias("_asof_ts"),
+        ]
+    )
 
-    # Step 1: Build earnings announcement schedule
-    earnings_schedule = build_earnings_schedule(announcement_df)
+    required = {"Code", "day_index"}
+    if not required.issubset(set(working.columns)):
+        missing = required - set(working.columns)
+        raise ValueError(f"Quotes dataframe missing required columns: {missing}")
 
-    # Step 2: Add proximity features (upcoming/recent flags, countdowns)
-    result = add_earnings_proximity_features(quotes, earnings_schedule)
+    working = working.sort(["Code", "day_index", "_row_nr"])
+    snapshot = snapshot.sort(["Code", "announcement_day_index"])
 
-    # Step 3: Add earnings surprise and reaction features
-    result = add_earnings_surprise_features(result, announcement_df, statements_df)
+    with_prev = working.join_asof(
+        snapshot,
+        left_on="day_index",
+        right_on="announcement_day_index",
+        by="Code",
+        strategy="backward",
+    )
+    prev_rename = {col: f"{col}_prev" for col in snapshot.columns if col not in {"Code"}}
+    with_prev = with_prev.rename(prev_rename)
+    with_prev_next = _join_asof_forward(
+        with_prev,
+        snapshot,
+        by="Code",
+        left_on="day_index",
+        right_on="announcement_day_index",
+        suffix="_next",
+    )
 
-    # Step 4: Add PEAD momentum features (optional)
-    if enable_pead:
-        result = add_pead_momentum_features(result)
+    conflict_cols = [col for col in with_prev_next.columns if col.endswith("_right")]
+    if conflict_cols:
+        with_prev_next = with_prev_next.drop(conflict_cols)
 
-    # Step 5: Add earnings volatility features (optional)
-    if enable_volatility:
-        result = add_earnings_volatility_features(result)
+    # Distance calculations (business-day indexes already aligned)
+    features = with_prev_next.with_columns(
+        [
+            pl.when(
+                (pl.col("announcement_day_index_next").is_not_null())
+                & (pl.col("effective_day_index_next").is_not_null())
+                & (pl.col("day_index") >= pl.col("effective_day_index_next"))
+            )
+            .then((pl.col("announcement_day_index_next") - pl.col("day_index")).cast(pl.Int32))
+            .otherwise(None)
+            .alias("e_days_to"),
+            pl.when(
+                (pl.col("announcement_day_index_prev").is_not_null())
+                & (pl.col("day_index") >= pl.col("effective_day_index_prev"))
+            )
+            .then((pl.col("day_index") - pl.col("announcement_day_index_prev")).cast(pl.Int32))
+            .otherwise(None)
+            .alias("e_days_since"),
+        ]
+    )
 
-    return result
+    # Event-day flag
+    features = features.with_columns(
+        [
+            pl.when((pl.col("e_days_to") == 0) | (pl.col("e_days_since") == 0))
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("e_is_E0")
+        ]
+    )
+
+    # Proximity flags
+    for w in win:
+        pre_cond = pl.col("e_days_to").is_not_null() & (pl.col("e_days_to") >= 1) & (pl.col("e_days_to") <= w)
+        post_cond = pl.col("e_days_since").is_not_null() & (pl.col("e_days_since") >= 1) & (pl.col("e_days_since") <= w)
+        if w == 1:
+            pre_cond = pl.col("e_days_to") == 1
+            post_cond = pl.col("e_days_since") == 1
+
+        features = features.with_columns(
+            [
+                pl.when(pre_cond).then(1).otherwise(0).cast(pl.Int8).alias(f"e_win_pre{w}"),
+                pl.when(post_cond).then(1).otherwise(0).cast(pl.Int8).alias(f"e_win_post{w}"),
+            ]
+        )
+
+    # Leak detection: future availability must never exceed as-of timestamp
+    leak_next = features.filter(
+        pl.col("e_days_to").is_not_null()
+        & pl.col("available_ts_next").is_not_null()
+        & (pl.col("available_ts_next") > pl.col("_asof_ts"))
+    ).height
+    leak_prev = features.filter(
+        pl.col("e_days_since").is_not_null()
+        & pl.col("available_ts_prev").is_not_null()
+        & (pl.col("available_ts_prev") > pl.col("_asof_ts"))
+    ).height
+    leak_count = leak_next + leak_prev
+    if leak_count > 0:
+        raise RuntimeError(f"Earnings feature leak detected: {leak_count} rows expose future data")
+
+    # Restore original order and drop helper columns
+    drop_cols = {
+        c
+        for c in features.columns
+        if c.endswith("_prev") or c.endswith("_next") or c in {"day_index", "_asof_ts", "available_ts"}
+    }
+    # Keep availability timestamps for diagnostics before drop-list filtering
+    diagnostic_cols = {
+        "available_ts_prev": "e_prev_available_ts",
+        "available_ts_next": "e_next_available_ts",
+    }
+    features = features.rename({k: v for k, v in diagnostic_cols.items() if k in features.columns})
+
+    # Prepare final column order
+    feature_cols = ["e_days_to", "e_days_since", "e_is_E0"]
+    for w in win:
+        feature_cols.extend([f"e_win_pre{w}", f"e_win_post{w}"])
+
+    features = features.sort("_row_nr")
+    retain_cols = [col for col in features.columns if col not in drop_cols]
+    features = features.select(retain_cols)
+
+    # Ensure diagnostic columns exist (may be absent if not joined)
+    for col in ("e_prev_available_ts", "e_next_available_ts"):
+        if col not in features.columns:
+            features = features.with_columns(pl.lit(None).alias(col))
+
+    base_cols = [c for c in base.columns if c != "_row_nr"]
+    ordered = features.sort("_row_nr").select(
+        base_cols + feature_cols + ["e_prev_available_ts", "e_next_available_ts", "_row_nr"]
+    )
+    ordered = ordered.drop("_row_nr")
+
+    return ordered

@@ -1,6 +1,7 @@
 """Dataset artifact management utilities."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ class DatasetArtifact:
     metadata_path: Path
     latest_symlink: Path
     tagged_symlink: Path
+    feature_index_path: Path
+    latest_feature_index_symlink: Path
     created_at: datetime
 
 
@@ -43,6 +46,7 @@ class DatasetArtifactWriter:
         *,
         start_date: str | None,
         end_date: str | None,
+        extra_metadata: dict | None = None,
     ) -> DatasetArtifact:
         """Persist dataframe and create metadata + symlinks."""
 
@@ -75,7 +79,30 @@ class DatasetArtifactWriter:
             )
 
         df.write_parquet(parquet_path, compression=self.settings.dataset_parquet_compression)
+
+        feature_index_payload = self._build_feature_index_payload(
+            df=df,
+            dataset_path=parquet_path,
+        )
+        feature_index_path = self._write_feature_index(
+            payload=feature_index_payload,
+            base_name=base_name,
+        )
+
         metadata = self._build_metadata(df)
+        feature_index_summary = {
+            "path": str(feature_index_path),
+            "column_hash": feature_index_payload["column_hash"],
+            "feature_hash": feature_index_payload.get("feature_hash"),
+            "target_hash": feature_index_payload.get("target_hash"),
+            "total_columns": len(feature_index_payload["columns"]),
+            "feature_columns": len(feature_index_payload["feature_columns"]),
+            "target_columns": len(feature_index_payload["target_columns"]),
+            "metadata_columns": len(feature_index_payload["metadata_columns"]),
+        }
+        metadata = self._merge_metadata(metadata, {"feature_index": feature_index_summary})
+        if extra_metadata:
+            metadata = self._merge_metadata(metadata, extra_metadata)
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
 
         # BATCH-2B Safety: Check if dataset should update 'latest' symlinks
@@ -98,6 +125,10 @@ class DatasetArtifactWriter:
                 link_name=f"ml_dataset_latest_{self.tag}_metadata.json",
                 target=metadata_path,
             )
+            latest_feature_index_symlink = self._update_symlink(
+                link_name=self.settings.latest_feature_index_symlink,
+                target=feature_index_path,
+            )
             LOGGER.info(
                 "✅ Updated 'latest' symlinks to %s (%d rows, %d cols)",
                 parquet_path.name,
@@ -108,9 +139,9 @@ class DatasetArtifactWriter:
             # Return paths to non-existent symlinks (not updated)
             latest_symlink = self.output_dir / self.settings.latest_dataset_symlink
             tagged_symlink = self.output_dir / f"ml_dataset_latest_{self.tag}.parquet"
+            latest_feature_index_symlink = self.output_dir / self.settings.latest_feature_index_symlink
             LOGGER.info(
-                "⚠️  Skipped 'latest' symlink update (safety gate). "
-                "Dataset saved to %s (%d rows, %d cols)",
+                "⚠️  Skipped 'latest' symlink update (safety gate). " "Dataset saved to %s (%d rows, %d cols)",
                 parquet_path.name,
                 df.height,
                 df.width,
@@ -124,6 +155,8 @@ class DatasetArtifactWriter:
             metadata_path=metadata_path,
             latest_symlink=latest_symlink,
             tagged_symlink=tagged_symlink,
+            feature_index_path=feature_index_path,
+            latest_feature_index_symlink=latest_feature_index_symlink,
             created_at=datetime.utcnow(),
         )
 
@@ -155,6 +188,150 @@ class DatasetArtifactWriter:
         return metadata_builder.create_metadata(prepared)
 
     @staticmethod
+    def _build_feature_index_payload(*, df: pl.DataFrame, dataset_path: Path) -> dict:
+        """Construct feature index payload capturing deterministic schema details."""
+
+        columns = list(df.columns)
+        schema = df.schema
+        numeric_types = {
+            pl.Float64,
+            pl.Float32,
+            pl.Int64,
+            pl.Int32,
+            pl.Int16,
+            pl.Int8,
+            pl.UInt64,
+            pl.UInt32,
+            pl.UInt16,
+            pl.UInt8,
+            pl.Boolean,
+        }
+        metadata_name_set = {
+            "code",
+            "date",
+            "sectorcode",
+            "marketcode",
+            "section",
+            "section_norm",
+            "row_idx",
+            "sectionid",
+            "section_name",
+            "sector17_code",
+            "sector17_name",
+            "sector17_id",
+            "sector33_code",
+            "sector33_name",
+            "sector33_id",
+            "shares_outstanding",
+        }
+        feature_columns: list[str] = []
+        target_columns: list[str] = []
+        metadata_columns: list[str] = []
+        column_details: list[dict[str, object]] = []
+        cs_normalized_columns: list[str] = []
+
+        for name in columns:
+            dtype = schema[name]
+            dtype_str = str(dtype)
+            role = DatasetArtifactWriter._infer_column_role(
+                name=name,
+                dtype=dtype,
+                metadata_name_set=metadata_name_set,
+            )
+            normalization = DatasetArtifactWriter._infer_normalization_tag(name)
+            dtype_category = "numeric" if dtype in numeric_types else "categorical"
+
+            if role == "feature" and dtype not in numeric_types:
+                # Promote unexpected non-numeric features to metadata to avoid loader crashes.
+                role = "metadata"
+
+            if role == "feature":
+                feature_columns.append(name)
+                if normalization == "cs_z":
+                    cs_normalized_columns.append(name)
+            elif role == "target":
+                target_columns.append(name)
+            else:
+                metadata_columns.append(name)
+
+            column_details.append(
+                {
+                    "name": name,
+                    "dtype": dtype_str,
+                    "role": role,
+                    "dtype_category": dtype_category,
+                    "normalization": normalization,
+                }
+            )
+
+        column_hash = hashlib.sha256("||".join(columns).encode("utf-8")).hexdigest()
+        feature_hash = hashlib.sha1("||".join(feature_columns).encode("utf-8")).hexdigest() if feature_columns else None
+        target_hash = hashlib.sha1("||".join(target_columns).encode("utf-8")).hexdigest() if target_columns else None
+
+        payload = {
+            "version": "1.0",
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "generator": "DatasetArtifactWriter",
+            "dataset": {
+                "path": str(dataset_path.name),
+            },
+            "columns": columns,
+            "column_details": column_details,
+            "feature_columns": feature_columns,
+            "target_columns": target_columns,
+            "metadata_columns": metadata_columns,
+            "cs_normalized_columns": cs_normalized_columns,
+            "column_hash": column_hash,
+            "feature_hash": feature_hash,
+            "target_hash": target_hash,
+            "strict": True,
+        }
+        return payload
+
+    def _write_feature_index(self, *, payload: dict, base_name: str) -> Path:
+        """Persist feature index payload to JSON."""
+
+        feature_index_path = self.output_dir / f"{base_name}_feature_index.json"
+        feature_index_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return feature_index_path
+
+    @staticmethod
+    def _infer_column_role(
+        *,
+        name: str,
+        dtype: pl.DataType,
+        metadata_name_set: set[str],
+    ) -> str:
+        """Infer semantic role for a column."""
+
+        lowered = name.lower()
+        if lowered in metadata_name_set:
+            return "metadata"
+        target_prefixes = ("target_", "ret_fwd_", "label_", "feat_ret_", "future_", "y_")
+        if any(lowered.startswith(prefix) for prefix in target_prefixes):
+            return "target"
+        if lowered.endswith("_binary") and lowered.startswith("target"):
+            return "target"
+        return "feature"
+
+    @staticmethod
+    def _infer_normalization_tag(name: str) -> str | None:
+        """Infer normalization tag from column name."""
+
+        lowered = name.lower()
+        if lowered.endswith("_cs_z"):
+            return "cs_z"
+        if lowered.endswith("_cs_rank"):
+            return "cs_rank"
+        if lowered.endswith("_zscore"):
+            return "zscore"
+        if lowered.endswith("_z") and not lowered.endswith("_cs_z"):
+            return "zscore"
+        if lowered.endswith("_pct") or lowered.endswith("_ratio") or lowered.endswith("_rate"):
+            return "relative"
+        return None
+
+    @staticmethod
     def _prepare_for_metadata(df: pl.DataFrame) -> pl.DataFrame:
         """Ensure metadata inspector sees legacy column names."""
         rename_map = {}
@@ -165,9 +342,31 @@ class DatasetArtifactWriter:
         for col in ("open", "high", "low", "close", "volume"):
             if col in df.columns and col.capitalize() not in df.columns:
                 rename_map[col] = col.capitalize()
+        # Provide canonical adjusted columns as legacy aliases for metadata tooling.
+        adjusted_pairs = {
+            "adjustmentclose": "Close",
+            "adjustmentopen": "Open",
+            "adjustmenthigh": "High",
+            "adjustmentlow": "Low",
+            "adjustmentvolume": "Volume",
+        }
+        for src, dst in adjusted_pairs.items():
+            if src in df.columns and dst not in rename_map and dst not in df.columns:
+                rename_map[src] = dst
         if rename_map:
             return df.rename(rename_map)
         return df
+
+    @staticmethod
+    def _merge_metadata(base: dict, extra: dict) -> dict:
+        """Shallow merge `extra` metadata into metadata builder output."""
+        merged = json.loads(json.dumps(base, default=str))
+        for key, value in extra.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = {**merged[key], **value}
+            else:
+                merged[key] = value
+        return merged
 
     def _should_update_latest(self, df: pl.DataFrame, metadata: dict) -> bool:
         """Determine if dataset should update 'latest' symlinks.

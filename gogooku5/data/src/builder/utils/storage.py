@@ -26,10 +26,22 @@ class StorageClient:
             self._writer = DatasetArtifactWriter(settings=self.settings)
         return self._writer
 
-    def write_dataset(self, df, *, start_date: str | None, end_date: str | None):
+    def write_dataset(
+        self,
+        df,
+        *,
+        start_date: str | None,
+        end_date: str | None,
+        extra_metadata: dict | None = None,
+    ):
         """Persist local artifacts using the shared writer."""
 
-        return self.writer.write(df, start_date=start_date, end_date=end_date)
+        return self.writer.write(
+            df,
+            start_date=start_date,
+            end_date=end_date,
+            extra_metadata=extra_metadata,
+        )
 
     def upload_file(self, path: Path, *, destination: Optional[str] = None) -> None:
         """Upload `path` to remote storage (currently a no-op).

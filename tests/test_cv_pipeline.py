@@ -10,21 +10,19 @@ Tests the complete ML pipeline with feature extensions:
 
 from __future__ import annotations
 
-import pytest
-import polars as pl
 import numpy as np
+import polars as pl
+import pytest
 import torch
-from pathlib import Path
-from typing import Dict, List, Any
 
-from gogooku3.features_ext.sector_loo import add_sector_loo
-from gogooku3.features_ext.scale_unify import add_ratio_adv_z
-from gogooku3.features_ext.outliers import winsorize
 from gogooku3.features_ext.interactions import add_interactions
+from gogooku3.features_ext.outliers import winsorize
+from gogooku3.features_ext.scale_unify import add_ratio_adv_z
+from gogooku3.features_ext.sector_loo import add_sector_loo
 from gogooku3.training.cv_purged import purged_kfold_indices
 from gogooku3.training.datamodule import PanelDataModule
-from gogooku3.training.model_multihead import MultiHeadRegressor
 from gogooku3.training.losses import HuberMultiHorizon
+from gogooku3.training.model_multihead import MultiHeadRegressor
 
 
 class TestPipelineIntegration:
@@ -43,6 +41,8 @@ class TestPipelineIntegration:
             "Code": [],
             "returns_1d": [],
             "returns_5d": [],
+            "ret_prev_1d": [],
+            "ret_prev_5d": [],
             "sector33_id": [],
             "volatility_20d": [],
             "dollar_volume_ma20": [],
@@ -50,15 +50,28 @@ class TestPipelineIntegration:
 
         # Technical indicators
         tech_cols = [
-            "ma_gap_5_20", "ema_12", "bb_upper", "rsi_14",
-            "volume_ratio_5", "z_close_20", "alpha_1d", "beta_stability_60d"
+            "ma_gap_5_20",
+            "ema_12",
+            "bb_upper",
+            "rsi_14",
+            "volume_ratio_5",
+            "z_close_20",
+            "alpha_1d",
+            "beta_stability_60d",
         ]
 
         # Market features
         mkt_cols = ["mkt_gap_5_20", "mkt_high_vol", "rel_to_sec_5d", "sec_mom_20", "rel_strength_5d"]
 
         # Flow/margin features
-        flow_cols = ["flow_foreign_net_value", "flow_smart_idx", "margin_long_tot", "dmi_long", "dmi_short_to_adv20", "dmi_credit_ratio"]
+        flow_cols = [
+            "flow_foreign_net_value",
+            "flow_smart_idx",
+            "margin_long_tot",
+            "dmi_long",
+            "dmi_short_to_adv20",
+            "dmi_credit_ratio",
+        ]
 
         # Statement features
         stmt_cols = ["stmt_rev_fore_op", "stmt_progress_op", "stmt_days_since_statement"]
@@ -68,8 +81,12 @@ class TestPipelineIntegration:
             for s in range(n_stocks):
                 data["Date"].append(date)
                 data["Code"].append(f"STOCK_{s:04d}")
-                data["returns_1d"].append(np.random.randn() * 0.02)
-                data["returns_5d"].append(np.random.randn() * 0.05)
+                ret1 = np.random.randn() * 0.02
+                ret5 = np.random.randn() * 0.05
+                data["returns_1d"].append(ret1)
+                data["ret_prev_1d"].append(ret1)
+                data["returns_5d"].append(ret5)
+                data["ret_prev_5d"].append(ret5)
                 data["sector33_id"].append(s // 5)  # 10 sectors
                 data["volatility_20d"].append(abs(np.random.randn()) * 0.1 + 0.01)
                 data["dollar_volume_ma20"].append(abs(np.random.randn()) * 1e6 + 1e5)
@@ -96,9 +113,7 @@ class TestPipelineIntegration:
                 df = df.with_columns(pl.Series(col, np.random.randn(len(df))))
 
         # Add target
-        df = df.with_columns(
-            (pl.col("returns_1d") + np.random.randn(len(df)) * 0.01).alias("target_1d")
-        )
+        df = df.with_columns((pl.col("returns_1d") + np.random.randn(len(df)) * 0.01).alias("target_1d"))
 
         return df
 
@@ -161,7 +176,7 @@ class TestPipelineIntegration:
             date_col="Date",
             by_cols=["sector33_id"],
             outlier_cols=["returns_1d", "returns_5d"],
-            vol_col="volatility_20d"
+            vol_col="volatility_20d",
         )
 
         # Setup first fold
@@ -186,12 +201,7 @@ class TestPipelineIntegration:
         # Prepare data
         feature_cols = [c for c in df.columns if c not in ["Date", "Code", "target_1d", "sector33_id"]]
 
-        dm = PanelDataModule(
-            df,
-            feature_cols=feature_cols,
-            target_col="target_1d",
-            date_col="Date"
-        )
+        dm = PanelDataModule(df, feature_cols=feature_cols, target_col="target_1d", date_col="Date")
 
         # Setup fold
         dates = df["Date"].to_numpy()
@@ -202,7 +212,7 @@ class TestPipelineIntegration:
         model = MultiHeadRegressor(
             in_dim=len(feature_cols),
             hidden=64,  # Small for testing
-            out_heads=(1, 1, 1, 1, 1)
+            out_heads=(1, 1, 1, 1, 1),
         )
 
         # Create loss and optimizer
@@ -256,10 +266,7 @@ class TestPipelineIntegration:
 
     def test_multi_horizon_loss(self) -> None:
         """Test multi-horizon loss calculation."""
-        criterion = HuberMultiHorizon(
-            deltas=(0.01, 0.015, 0.02, 0.025, 0.03),
-            horizon_w=(1.0, 0.9, 0.8, 0.7, 0.6)
-        )
+        criterion = HuberMultiHorizon(deltas=(0.01, 0.015, 0.02, 0.025, 0.03), horizon_w=(1.0, 0.9, 0.8, 0.7, 0.6))
 
         # Mock predictions and targets
         batch_size = 32
@@ -310,6 +317,7 @@ class TestMemoryAndPerformance:
     def test_pipeline_memory_usage(self, create_full_dataset: pl.DataFrame) -> None:
         """Test that pipeline doesn't exceed memory limits."""
         import psutil
+
         process = psutil.Process()
 
         initial_memory = process.memory_info().rss / 1024 / 1024  # MB

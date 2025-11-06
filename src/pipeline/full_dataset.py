@@ -19,9 +19,11 @@ import polars as pl
 from src.features.calendar_utils import build_next_bday_expr_from_dates
 from src.features.macro import (
     load_btc_history,
+    load_cross_market_history,
     load_fx_history,
     load_vix_history,
     prepare_btc_features,
+    prepare_cross_market_features,
     prepare_fx_features,
     prepare_vix_features,
     shift_to_next_business_day,
@@ -53,13 +55,40 @@ def _validate_code_type_consistency(df: pl.DataFrame, data_source: str) -> bool:
             # Polars 1.x: Use df.schema instead of df["Code"].dtype
             code_type = df.schema.get("Code")
             if code_type is not None and code_type != pl.Utf8:
-                logger.warning(
-                    f"{data_source}: Code dtype is {code_type}, expected Utf8"
-                )
+                logger.warning(f"{data_source}: Code dtype is {code_type}, expected Utf8")
                 return False
     except Exception:
         pass
     return True
+
+
+PRICE_CANONICAL_MAP: dict[str, str] = {
+    "Open": "adjustmentopen",
+    "High": "adjustmenthigh",
+    "Low": "adjustmentlow",
+    "Close": "adjustmentclose",
+    "Volume": "adjustmentvolume",
+}
+
+
+def _ensure_adjusted_ohlc_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Ensure canonical adjusted OHLCV columns exist alongside legacy aliases.
+
+    During the transition we retain the legacy columns so downstream feature
+    builders keep working. Usage sites should migrate to the canonical names;
+    once that is complete we can drop the back-compat aliases.
+    """
+    add_exprs: list[pl.Expr] = []
+    for legacy, canonical in PRICE_CANONICAL_MAP.items():
+        has_legacy = legacy in df.columns
+        has_canonical = canonical in df.columns
+        if has_legacy and not has_canonical:
+            add_exprs.append(pl.col(legacy).cast(pl.Float64).alias(canonical))
+        elif has_canonical and not has_legacy:
+            add_exprs.append(pl.col(canonical).cast(pl.Float64).alias(legacy))
+    if add_exprs:
+        df = df.with_columns(add_exprs)
+    return df
 
 
 def _get_retention_keep(env_var: str, default: int) -> int:
@@ -88,9 +117,7 @@ def _prune_dataset_history(directory: Path, tag: str) -> None:
                 [
                     path
                     for path in directory.glob(pattern)
-                    if path.is_file()
-                    and not path.is_symlink()
-                    and "latest" not in path.name
+                    if path.is_file() and not path.is_symlink() and "latest" not in path.name
                 ],
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
@@ -123,6 +150,9 @@ def save_with_symlinks(
 ) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Ensure canonical adjusted OHLCV columns are present before performing any checks
+    df = _ensure_adjusted_ohlc_columns(df)
+
     # Drop rows missing core OHLC/Volume values to avoid label NaNs downstream
     price_cols = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
     if price_cols:
@@ -133,21 +163,9 @@ def save_with_symlinks(
             logger.info("🧽 Dropped %d rows with missing OHLC/Volume values", dropped)
 
     # Fill target/forward-return NaNs with 0 (no movement) to prevent validation NaN
-    target_cols = [
-        col
-        for col in df.columns
-        if col.startswith("target_") or col.startswith("feat_ret_")
-    ]
+    target_cols = [col for col in df.columns if col.startswith("target_") or col.startswith("feat_ret_")]
     if target_cols:
-        df = df.with_columns(
-            [
-                pl.col(col)
-                .fill_null(0.0)
-                .fill_nan(0.0)
-                .alias(col)
-            ]
-            for col in target_cols
-        )
+        df = df.with_columns([pl.col(col).fill_null(0.0).fill_nan(0.0).alias(col)] for col in target_cols)
 
     # Normalize column names to align with docs/ml/dataset.md (non-breaking rename)
     try:
@@ -329,6 +347,8 @@ async def enrich_and_save(
     enable_earnings_events: bool = False,
     earnings_announcements_parquet: Path | None = None,
     enable_pead_features: bool = True,
+    earnings_windows: list[int] | None = None,
+    earnings_asof_hour: int = 15,
     # Sector short selling integration (optional)
     enable_sector_short_selling: bool = False,
     sector_short_selling_parquet: Path | None = None,
@@ -354,6 +374,9 @@ async def enrich_and_save(
     breakdown_parquet: Path | None = None,
     dividend_parquet: Path | None = None,
     fs_details_parquet: Path | None = None,
+    # Morning session features
+    enable_am_features: bool = True,
+    am_asof_policy: str = "T+1",
     # Nikkei225 index option market aggregates (optional)
     enable_option_market_features: bool = False,
     index_option_features_parquet: Path | None = None,
@@ -382,16 +405,12 @@ async def enrich_and_save(
 
     builder = MLDatasetBuilder(output_dir=output_dir)
 
-    def _fill_from_source(
-        frame: pl.DataFrame, target: str, source: str
-    ) -> pl.DataFrame:
+    def _fill_from_source(frame: pl.DataFrame, target: str, source: str) -> pl.DataFrame:
         """Fill nulls in ``target`` using ``source`` (creating the column if missing)."""
         if source not in frame.columns:
             return frame
         if target in frame.columns:
-            return frame.with_columns(
-                pl.col(target).fill_null(pl.col(source)).alias(target)
-            )
+            return frame.with_columns(pl.col(target).fill_null(pl.col(source)).alias(target))
         return frame.with_columns(pl.col(source).alias(target))
 
     def _load_optional_parquet(path: Path | None, label: str) -> pl.DataFrame:
@@ -416,6 +435,9 @@ async def enrich_and_save(
     result = _ensure_code_utf8(df_base, source="base_quotes")
     df_base = result if result is not None and not result.is_empty() else df_base
 
+    # Maintain canonical adjusted OHLCV columns for downstream stages
+    df_base = _ensure_adjusted_ohlc_columns(df_base)
+
     # TOPIX: prefer provided parquet, else API, else local, else fallback in builder
     topix_df = None
     if topix_parquet and Path(topix_parquet).exists():
@@ -439,9 +461,7 @@ async def enrich_and_save(
                 async with aiohttp.ClientSession() as session:
                     await fetcher.authenticate(session)
                     logger.info(f"Fetching TOPIX {start_date} → {end_date}")
-                    topix_df = await fetcher.fetch_topix_data(
-                        session, start_date, end_date
-                    )
+                    topix_df = await fetcher.fetch_topix_data(session, start_date, end_date)
         except Exception as e:
             logger.warning(f"TOPIX API fetch failed: {e}")
     if topix_df is None:
@@ -490,6 +510,7 @@ async def enrich_and_save(
 
     # VIX macro features (T+1 attach)
     vix_features = None
+    cross_market_features = None
     if enable_macro_vix:
         try:
             vix_start_dt = datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=400)
@@ -508,16 +529,44 @@ async def enrich_and_save(
             )
             if not vix_raw.is_empty():
                 vix_features = prepare_vix_features(vix_raw)
-                vix_features = shift_to_next_business_day(
-                    vix_features, business_days=business_days
-                )
+                vix_features = shift_to_next_business_day(vix_features, business_days=business_days)
             else:
-                logger.warning(
-                    "VIX features enabled but no data retrieved; skipping macro VIX enrichment"
-                )
+                logger.warning("VIX features enabled but no data retrieved; skipping macro VIX enrichment")
         except Exception as exc:
             logger.warning(f"Failed to prepare VIX features: {exc}")
             vix_features = None
+
+        try:
+            cross_cache_path = None
+            cross_start = vix_start_dt.strftime("%Y-%m-%d")
+            if vix_parquet is None:
+                cache_dir = Path("output") / "macro"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cross_cache_path = cache_dir / (
+                    f"cross_market_history_{vix_start_dt.strftime('%Y%m%d')}_{end_date.replace('-', '')}.parquet"
+                )
+            else:
+                # Align cache path alongside VIX cache for easier inspection
+                cache_dir = Path("output") / "macro"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cross_cache_path = cache_dir / (
+                    f"cross_market_history_{vix_start_dt.strftime('%Y%m%d')}_{end_date.replace('-', '')}.parquet"
+                )
+
+            cross_raw = load_cross_market_history(
+                cross_start,
+                end_date,
+                parquet_path=cross_cache_path,
+                force_refresh=vix_force_refresh,
+            )
+            if not cross_raw.is_empty():
+                cross_market_features = prepare_cross_market_features(cross_raw)
+                cross_market_features = shift_to_next_business_day(cross_market_features, business_days=business_days)
+            else:
+                logger.warning("Cross-market risk proxies retrieved no data; skipping macro cross-market enrichment")
+        except Exception as exc:
+            logger.warning(f"Failed to prepare cross-market features: {exc}")
+            cross_market_features = None
 
     if enable_macro_vix and vix_features is not None and not vix_features.is_empty():
         try:
@@ -532,19 +581,37 @@ async def enrich_and_save(
     elif enable_macro_vix:
         logger.info("VIX macro features requested but skipped (no usable data)")
 
-    if not am_quotes_df.is_empty():
+    if enable_macro_vix and cross_market_features is not None and not cross_market_features.is_empty():
         try:
-            df = builder.add_am_session_features(df, am_quotes_df)
+            df = builder.add_cross_market_features(
+                df,
+                cross_df=cross_market_features,
+                business_days=business_days,
+            )
+            logger.info("Cross-market macro features attached")
+        except Exception as exc:
+            logger.warning(f"Failed to attach cross-market macro features: {exc}")
+    elif enable_macro_vix:
+        logger.info("Cross-market macro features requested but skipped (no usable data)")
+
+    if enable_am_features and not am_quotes_df.is_empty():
+        try:
+            df = builder.add_am_session_features(
+                df,
+                am_quotes_df,
+                business_days=business_days,
+                asof_policy=am_asof_policy,
+            )
         except Exception as exc:
             logger.warning(f"Failed to attach AM session features: {exc}")
-    else:
+    elif enable_am_features:
         logger.info("AM session quotes not provided; skipping am_* features")
+    else:
+        logger.info("AM session features disabled via configuration; skipping")
 
     if not breakdown_df.is_empty():
         try:
-            df = builder.add_breakdown_features(
-                df, breakdown_df, business_days=business_days
-            )
+            df = builder.add_breakdown_features(df, breakdown_df, business_days=business_days)
         except Exception as exc:
             logger.warning(f"Failed to attach breakdown features: {exc}")
     else:
@@ -552,9 +619,7 @@ async def enrich_and_save(
 
     if not dividend_df.is_empty():
         try:
-            df = builder.add_dividend_features(
-                df, dividend_df, business_days=business_days
-            )
+            df = builder.add_dividend_features(df, dividend_df, business_days=business_days)
         except Exception as exc:
             logger.warning(f"Failed to attach dividend features: {exc}")
     else:
@@ -580,13 +645,9 @@ async def enrich_and_save(
             )
             if not fx_raw.is_empty():
                 fx_features = prepare_fx_features(fx_raw)
-                fx_features = shift_to_next_business_day(
-                    fx_features, business_days=business_days
-                )
+                fx_features = shift_to_next_business_day(fx_features, business_days=business_days)
             else:
-                logger.warning(
-                    "FX features enabled but no data retrieved; skipping macro FX enrichment"
-                )
+                logger.warning("FX features enabled but no data retrieved; skipping macro FX enrichment")
         except Exception as exc:
             logger.warning(f"Failed to prepare FX features: {exc}")
             fx_features = None
@@ -624,13 +685,9 @@ async def enrich_and_save(
             )
             if not btc_raw.is_empty():
                 btc_features = prepare_btc_features(btc_raw)
-                btc_features = shift_to_next_business_day(
-                    btc_features, business_days=business_days
-                )
+                btc_features = shift_to_next_business_day(btc_features, business_days=business_days)
             else:
-                logger.warning(
-                    "BTC features enabled but no data retrieved; skipping macro BTC enrichment"
-                )
+                logger.warning("BTC features enabled but no data retrieved; skipping macro BTC enrichment")
         except Exception as exc:
             logger.warning(f"Failed to prepare BTC features: {exc}")
             btc_features = None
@@ -652,9 +709,7 @@ async def enrich_and_save(
     # This fixes the missing supervised learning targets identified in the PDF diagnosis
     try:
         df = builder.create_technical_features(df)
-        logger.info(
-            "Forward return labels (feat_ret_1d, feat_ret_5d, feat_ret_10d, feat_ret_20d) added successfully"
-        )
+        logger.info("Forward return labels (feat_ret_1d, feat_ret_5d, feat_ret_10d, feat_ret_20d) added successfully")
 
         # QUALITY CHECK: Validate forward return labels per PDF requirements
         validation_results = builder.validate_forward_return_labels(df)
@@ -704,11 +759,7 @@ async def enrich_and_save(
             except Exception as e:
                 logger.warning(f"Failed to read indices parquet: {e}")
         # Try API if not present and jquants enabled
-        if (
-            indices_df is None
-            and jquants
-            and (indices_codes is not None and len(indices_codes) > 0)
-        ):
+        if indices_df is None and jquants and (indices_codes is not None and len(indices_codes) > 0):
             try:
                 import os
 
@@ -722,9 +773,7 @@ async def enrich_and_save(
                     fetcher_idx = JQuantsAsyncFetcher(email, password)
                     async with aiohttp.ClientSession() as session:
                         await fetcher_idx.authenticate(session)
-                        logger.info(
-                            f"Fetching indices OHLC {start_date} → {end_date} for {len(indices_codes)} codes"
-                        )
+                        logger.info(f"Fetching indices OHLC {start_date} → {end_date} for {len(indices_codes)} codes")
                         indices_df = await fetcher_idx.fetch_indices_ohlc(
                             session, start_date, end_date, codes=indices_codes
                         )
@@ -750,9 +799,7 @@ async def enrich_and_save(
                 start_int = int(start_date.replace("-", ""))
                 end_int = int(end_date.replace("-", ""))
                 for cand in sorted((Path("output")).glob("indices_history_*.parquet")):
-                    m = re.search(
-                        r"indices_history_(\d{8})_(\d{8})\.parquet$", cand.name
-                    )
+                    m = re.search(r"indices_history_(\d{8})_(\d{8})\.parquet$", cand.name)
                     if not m:
                         continue
                     s, e = int(m.group(1)), int(m.group(2))
@@ -770,17 +817,11 @@ async def enrich_and_save(
 
     # Statements attach (refresh when coverage missing)
     stmt_cols = [c for c in df.columns if c.startswith("stmt_")]
-    stmt_signal_cols = [
-        c
-        for c in stmt_cols
-        if c in {"stmt_revenue_growth", "stmt_profit_margin", "stmt_roe"}
-    ]
+    stmt_signal_cols = [c for c in stmt_cols if c in {"stmt_revenue_growth", "stmt_profit_margin", "stmt_roe"}]
     needs_stmt_refresh = True
     if stmt_signal_cols and len(df) > 0:
         try:
-            non_null_counts = df.select(
-                [pl.col(col).is_not_null().sum().alias(col) for col in stmt_signal_cols]
-            ).row(0)
+            non_null_counts = df.select([pl.col(col).is_not_null().sum().alias(col) for col in stmt_signal_cols]).row(0)
             needs_stmt_refresh = not any(count > 0 for count in non_null_counts)
         except Exception:
             needs_stmt_refresh = True
@@ -806,9 +847,7 @@ async def enrich_and_save(
 
     if not fs_details_df.is_empty():
         try:
-            df = builder.add_fs_quality_features(
-                df, fs_details_df, business_days=business_days
-            )
+            df = builder.add_fs_quality_features(df, fs_details_df, business_days=business_days)
         except Exception as exc:
             logger.warning(f"Failed to attach financial statement features: {exc}")
     else:
@@ -834,16 +873,12 @@ async def enrich_and_save(
                     logger.warning(f"Sector series attach failed for level {lvl}: {e}")
             # Sector encodings (one-hot for 17, daily freqs)
             try:
-                df = builder.add_sector_encodings(
-                    df, onehot_17=True, onehot_33=sector_onehot33, freq_daily=True
-                )
+                df = builder.add_sector_encodings(df, onehot_17=True, onehot_33=sector_onehot33, freq_daily=True)
             except Exception as e:
                 logger.warning(f"Sector encodings failed: {e}")
             # Relative-to-sector features (rel/alpha/z-in-sec)
             try:
-                df = builder.add_relative_to_sector(
-                    df, level="33", x_cols=("returns_5d", "ma_gap_5_20")
-                )
+                df = builder.add_relative_to_sector(df, level="33", x_cols=("returns_5d", "ma_gap_5_20"))
             except Exception as e:
                 logger.warning(f"Relative-to-sector features failed: {e}")
             # Sector target encoding with cross-fit + lag
@@ -861,9 +896,7 @@ async def enrich_and_save(
                             m=100.0,
                         )
                     except Exception as e:
-                        logger.warning(
-                            f"Sector target encoding failed for level {lvl}, target {tcol}: {e}"
-                        )
+                        logger.warning(f"Sector target encoding failed for level {lvl}, target {tcol}: {e}")
             # Back-compat: if only 33-level TE requested, alias te33_* → te_* for consumers
             if te_levels == ["33"]:
                 for tcol in te_targets:
@@ -878,9 +911,7 @@ async def enrich_and_save(
     # Attach indices aggregates if available
     try:
         if enable_indices and indices_df is not None and not indices_df.is_empty():
-            df = builder.add_index_features(
-                df, indices_df, mask_halt_day=(not disable_halt_mask)
-            )
+            df = builder.add_index_features(df, indices_df, mask_halt_day=(not disable_halt_mask))
             logger.info("Index day-level features attached (spreads, breadth)")
         elif enable_indices:
             logger.info("Indices enabled but no data found; skipping")
@@ -944,9 +975,7 @@ async def enrich_and_save(
 
         # Rename columns to have sec17_onehot prefix
         rename_map = {
-            c: c.replace("sector17_id_", "sec17_onehot_")
-            for c in onehot_df.columns
-            if c.startswith("sector17_id_")
+            c: c.replace("sector17_id_", "sec17_onehot_") for c in onehot_df.columns if c.startswith("sector17_id_")
         }
         if rename_map:
             onehot_df = onehot_df.rename(rename_map)
@@ -958,9 +987,7 @@ async def enrich_and_save(
             on=["Code", "Date"],
             how="left",
         )
-        logger.info(
-            f"✅ Sector One-Hot encoding attached: +{len(onehot_cols)} columns (sec17_onehot_*)"
-        )
+        logger.info(f"✅ Sector One-Hot encoding attached: +{len(onehot_cols)} columns (sec17_onehot_*)")
     else:
         logger.warning("sector17_id not found, skipping One-Hot encoding")
 
@@ -975,42 +1002,28 @@ async def enrich_and_save(
 
     # RSI2: requires at least 5 periods
     if "rsi_2" in df.columns or "rsi2" in df.columns:
-        validity_flags.append(
-            (pl.col("_row_idx") >= 5).cast(pl.Int8).alias("is_rsi2_valid")
-        )
+        validity_flags.append((pl.col("_row_idx") >= 5).cast(pl.Int8).alias("is_rsi2_valid"))
 
     # EMA validity flags
     if any(c in df.columns for c in ["ema_5", "ma_5", "ema5"]):
-        validity_flags.append(
-            (pl.col("_row_idx") >= 15).cast(pl.Int8).alias("is_ema5_valid")
-        )
+        validity_flags.append((pl.col("_row_idx") >= 15).cast(pl.Int8).alias("is_ema5_valid"))
 
     if any(c in df.columns for c in ["ema_10", "ma_10", "ema10"]):
-        validity_flags.append(
-            (pl.col("_row_idx") >= 30).cast(pl.Int8).alias("is_ema10_valid")
-        )
+        validity_flags.append((pl.col("_row_idx") >= 30).cast(pl.Int8).alias("is_ema10_valid"))
 
     if any(c in df.columns for c in ["ema_20", "ma_20", "ema20"]):
-        validity_flags.append(
-            (pl.col("_row_idx") >= 60).cast(pl.Int8).alias("is_ema20_valid")
-        )
+        validity_flags.append((pl.col("_row_idx") >= 60).cast(pl.Int8).alias("is_ema20_valid"))
 
     if any(c in df.columns for c in ["ema_200", "ma_200", "ema200"]):
-        validity_flags.append(
-            (pl.col("_row_idx") >= 200).cast(pl.Int8).alias("is_ema200_valid")
-        )
+        validity_flags.append((pl.col("_row_idx") >= 200).cast(pl.Int8).alias("is_ema200_valid"))
 
     # Market Z-score: requires 252 trading days (1 year)
     if any(c in df.columns for c in ["mkt_z_20d", "mkt_vol_20d_z"]):
-        validity_flags.append(
-            (pl.col("_row_idx") >= 252).cast(pl.Int8).alias("is_mkt_z_valid")
-        )
+        validity_flags.append((pl.col("_row_idx") >= 252).cast(pl.Int8).alias("is_mkt_z_valid"))
 
     # Sector validity: based on member count
     if "sec_member_cnt" in df.columns:
-        validity_flags.append(
-            (pl.col("sec_member_cnt") >= 3).cast(pl.Int8).alias("is_sec_valid")
-        )
+        validity_flags.append((pl.col("sec_member_cnt") >= 3).cast(pl.Int8).alias("is_sec_valid"))
 
     # General MA validity: at least 60 periods for stable moving averages
     validity_flags.append((pl.col("_row_idx") >= 60).cast(pl.Int8).alias("is_valid_ma"))
@@ -1018,9 +1031,7 @@ async def enrich_and_save(
     # Add all validity flags at once
     if validity_flags:
         df = df.with_columns(validity_flags)
-        logger.info(
-            f"✅ Window maturity validity flags attached: +{len(validity_flags)} columns (is_*_valid)"
-        )
+        logger.info(f"✅ Window maturity validity flags attached: +{len(validity_flags)} columns (is_*_valid)")
 
     # Clean up temporary row index column
     df = df.drop("_row_idx")
@@ -1034,123 +1045,79 @@ async def enrich_and_save(
         # Volume-price interactions
         if "volume_ratio_20d" in df.columns and "returns_1d" in df.columns:
             interaction_features.append(
-                (pl.col("volume_ratio_20d") * pl.col("returns_1d")).alias(
-                    "vol_ret_interaction"
-                )
+                (pl.col("volume_ratio_20d") * pl.col("returns_1d")).alias("vol_ret_interaction")
             )
 
         if "turnover_ratio_20d" in df.columns and "volatility_20d" in df.columns:
             interaction_features.append(
-                (pl.col("turnover_ratio_20d") * pl.col("volatility_20d")).alias(
-                    "turnover_vol_interaction"
-                )
+                (pl.col("turnover_ratio_20d") * pl.col("volatility_20d")).alias("turnover_vol_interaction")
             )
 
         # Momentum-volatility interactions
         if "returns_20d" in df.columns and "volatility_20d" in df.columns:
             interaction_features.append(
-                (pl.col("returns_20d") / (pl.col("volatility_20d") + 1e-12)).alias(
-                    "risk_adjusted_momentum_20d"
-                )
+                (pl.col("returns_20d") / (pl.col("volatility_20d") + 1e-12)).alias("risk_adjusted_momentum_20d")
             )
 
         if "returns_5d" in df.columns and "volatility_20d" in df.columns:
             interaction_features.append(
-                (pl.col("returns_5d") / (pl.col("volatility_20d") + 1e-12)).alias(
-                    "risk_adjusted_momentum_5d"
-                )
+                (pl.col("returns_5d") / (pl.col("volatility_20d") + 1e-12)).alias("risk_adjusted_momentum_5d")
             )
 
         # Market-relative interactions
         if "beta_60d" in df.columns and "volatility_20d" in df.columns:
-            interaction_features.append(
-                (pl.col("beta_60d") * pl.col("volatility_20d")).alias("systematic_risk")
-            )
+            interaction_features.append((pl.col("beta_60d") * pl.col("volatility_20d")).alias("systematic_risk"))
 
         if "alpha_1d" in df.columns and "volume_ratio_20d" in df.columns:
-            interaction_features.append(
-                (pl.col("alpha_1d") * pl.col("volume_ratio_20d")).alias(
-                    "alpha_volume_signal"
-                )
-            )
+            interaction_features.append((pl.col("alpha_1d") * pl.col("volume_ratio_20d")).alias("alpha_volume_signal"))
 
         # Sector-relative interactions
         if "rel_to_sec_5d" in df.columns and "sec_vol_20" in df.columns:
             interaction_features.append(
-                (pl.col("rel_to_sec_5d") / (pl.col("sec_vol_20") + 1e-12)).alias(
-                    "sec_risk_adjusted_rel_5d"
-                )
+                (pl.col("rel_to_sec_5d") / (pl.col("sec_vol_20") + 1e-12)).alias("sec_risk_adjusted_rel_5d")
             )
 
         if "beta_to_sec_60" in df.columns and "sec_mom_20" in df.columns:
-            interaction_features.append(
-                (pl.col("beta_to_sec_60") * pl.col("sec_mom_20")).alias(
-                    "sec_beta_momentum"
-                )
-            )
+            interaction_features.append((pl.col("beta_to_sec_60") * pl.col("sec_mom_20")).alias("sec_beta_momentum"))
 
         # Technical indicator combinations
         if "rsi_14" in df.columns and "returns_5d" in df.columns:
             interaction_features.append(
-                (pl.col("rsi_14") / 50.0 - 1.0)
-                * pl.col("returns_5d").alias("rsi_momentum_signal")
+                (pl.col("rsi_14") / 50.0 - 1.0) * pl.col("returns_5d").alias("rsi_momentum_signal")
             )
 
         if "ma_gap_5_20" in df.columns and "volatility_20d" in df.columns:
             interaction_features.append(
-                (pl.col("ma_gap_5_20") / (pl.col("volatility_20d") + 1e-12)).alias(
-                    "ma_gap_volatility_ratio"
-                )
+                (pl.col("ma_gap_5_20") / (pl.col("volatility_20d") + 1e-12)).alias("ma_gap_volatility_ratio")
             )
 
         # Liquidity-momentum interactions
         if "adv_ratio_1d_20d" in df.columns and "returns_5d" in df.columns:
             interaction_features.append(
-                (pl.col("adv_ratio_1d_20d") * pl.col("returns_5d")).alias(
-                    "liquidity_momentum_signal"
-                )
+                (pl.col("adv_ratio_1d_20d") * pl.col("returns_5d")).alias("liquidity_momentum_signal")
             )
 
         # Cross-sectional rank-based features
         if "returns_20d" in df.columns:
             interaction_features.append(
-                pl.col("returns_20d")
-                .rank(method="average")
-                .over("Date")
-                .alias("cs_rank_returns_20d")
+                pl.col("returns_20d").rank(method="average").over("Date").alias("cs_rank_returns_20d")
             )
 
         if "volume_ratio_20d" in df.columns:
             interaction_features.append(
-                pl.col("volume_ratio_20d")
-                .rank(method="average")
-                .over("Date")
-                .alias("cs_rank_volume_ratio")
+                pl.col("volume_ratio_20d").rank(method="average").over("Date").alias("cs_rank_volume_ratio")
             )
 
         if "volatility_20d" in df.columns:
             interaction_features.append(
-                pl.col("volatility_20d")
-                .rank(method="average")
-                .over("Date")
-                .alias("cs_rank_volatility")
+                pl.col("volatility_20d").rank(method="average").over("Date").alias("cs_rank_volatility")
             )
 
         # Price level indicators
         if "Close" in df.columns:
             # Distance from 52-week high/low
-            interaction_features.append(
-                pl.col("Close")
-                .rolling_max(window_size=252)
-                .over("Code")
-                .alias("high_252d")
-            )
-            interaction_features.append(
-                pl.col("Close")
-                .rolling_min(window_size=252)
-                .over("Code")
-                .alias("low_252d")
-            )
+            interaction_features.append(pl.col("Close").rolling_max(window_size=252).over("Code").alias("high_252d"))
+            interaction_features.append(pl.col("Close").rolling_min(window_size=252).over("Code").alias("low_252d"))
 
         if "Close" in df.columns and "high_252d" in [
             f.meta.output_name() for f in interaction_features if hasattr(f, "meta")
@@ -1164,25 +1131,18 @@ async def enrich_and_save(
 
             # Second pass: features that depend on first pass
             second_pass = []
-            if (
-                "high_252d" in df.columns
-                and "low_252d" in df.columns
-                and "Close" in df.columns
-            ):
+            if "high_252d" in df.columns and "low_252d" in df.columns and "Close" in df.columns:
                 second_pass.append(
-                    (
-                        (pl.col("Close") - pl.col("low_252d"))
-                        / (pl.col("high_252d") - pl.col("low_252d") + 1e-12)
-                    ).alias("pct_from_52w_range")
+                    ((pl.col("Close") - pl.col("low_252d")) / (pl.col("high_252d") - pl.col("low_252d") + 1e-12)).alias(
+                        "pct_from_52w_range"
+                    )
                 )
 
             if second_pass:
                 df = df.with_columns(second_pass)
                 interaction_features.extend(second_pass)
 
-            logger.info(
-                f"✅ Interaction and derived features attached: +{len(interaction_features)} columns"
-            )
+            logger.info(f"✅ Interaction and derived features attached: +{len(interaction_features)} columns")
     except Exception as e:
         logger.error(f"CRITICAL ERROR in interaction features: {e}")
         raise  # Stop pipeline to ensure root cause resolution
@@ -1196,40 +1156,17 @@ async def enrich_and_save(
         # Extended momentum features
         if "returns_1d" in df.columns:
             # 3-day and 10-day momentum
-            rolling_features.append(
-                pl.col("returns_1d")
-                .rolling_sum(window_size=3)
-                .over("Code")
-                .alias("returns_3d")
-            )
-            rolling_features.append(
-                pl.col("returns_1d")
-                .rolling_sum(window_size=10)
-                .over("Code")
-                .alias("returns_10d")
-            )
-            rolling_features.append(
-                pl.col("returns_1d")
-                .rolling_sum(window_size=60)
-                .over("Code")
-                .alias("returns_60d")
-            )
+            rolling_features.append(pl.col("returns_1d").rolling_sum(window_size=3).over("Code").alias("returns_3d"))
+            rolling_features.append(pl.col("returns_1d").rolling_sum(window_size=10).over("Code").alias("returns_10d"))
+            rolling_features.append(pl.col("returns_1d").rolling_sum(window_size=60).over("Code").alias("returns_60d"))
 
         # Extended volatility features
         if "returns_1d" in df.columns:
             rolling_features.append(
-                pl.col("returns_1d")
-                .rolling_std(window_size=5)
-                .over("Code")
-                .mul(252**0.5)
-                .alias("volatility_5d")
+                pl.col("returns_1d").rolling_std(window_size=5).over("Code").mul(252**0.5).alias("volatility_5d")
             )
             rolling_features.append(
-                pl.col("returns_1d")
-                .rolling_std(window_size=60)
-                .over("Code")
-                .mul(252**0.5)
-                .alias("volatility_60d")
+                pl.col("returns_1d").rolling_std(window_size=60).over("Code").mul(252**0.5).alias("volatility_60d")
             )
 
         # Rolling skewness and kurtosis indicators (simplified)
@@ -1252,24 +1189,9 @@ async def enrich_and_save(
 
         # Volume trend features
         if "Volume" in df.columns:
-            rolling_features.append(
-                pl.col("Volume")
-                .rolling_mean(window_size=5)
-                .over("Code")
-                .alias("volume_ma_5d")
-            )
-            rolling_features.append(
-                pl.col("Volume")
-                .rolling_mean(window_size=10)
-                .over("Code")
-                .alias("volume_ma_10d")
-            )
-            rolling_features.append(
-                pl.col("Volume")
-                .rolling_mean(window_size=60)
-                .over("Code")
-                .alias("volume_ma_60d")
-            )
+            rolling_features.append(pl.col("Volume").rolling_mean(window_size=5).over("Code").alias("volume_ma_5d"))
+            rolling_features.append(pl.col("Volume").rolling_mean(window_size=10).over("Code").alias("volume_ma_10d"))
+            rolling_features.append(pl.col("Volume").rolling_mean(window_size=60).over("Code").alias("volume_ma_60d"))
 
         # Volume acceleration (change in volume trend)
         if "Volume" in df.columns:
@@ -1313,18 +1235,15 @@ async def enrich_and_save(
             # Volume acceleration
             if "volume_ma_5d" in df.columns and "volume_ma_20d" in df.columns:
                 second_pass_rolling.append(
-                    (
-                        (pl.col("volume_ma_5d") - pl.col("volume_ma_20d"))
-                        / (pl.col("volume_ma_20d") + 1e-12)
-                    ).alias("volume_ma_acceleration")
+                    ((pl.col("volume_ma_5d") - pl.col("volume_ma_20d")) / (pl.col("volume_ma_20d") + 1e-12)).alias(
+                        "volume_ma_acceleration"
+                    )
                 )
 
             # Volatility ratio (recent vs longer-term)
             if "volatility_5d" in df.columns and "volatility_20d" in df.columns:
                 second_pass_rolling.append(
-                    (
-                        pl.col("volatility_5d") / (pl.col("volatility_20d") + 1e-12)
-                    ).alias("volatility_ratio_5_20")
+                    (pl.col("volatility_5d") / (pl.col("volatility_20d") + 1e-12)).alias("volatility_ratio_5_20")
                 )
 
             if second_pass_rolling:
@@ -1356,26 +1275,17 @@ async def enrich_and_save(
             )
 
             # Month-end effect (last 3 trading days approximation)
-            calendar_features.append(
-                (pl.col("Date").dt.day() >= 27).cast(pl.Int8).alias("is_month_end")
-            )
+            calendar_features.append((pl.col("Date").dt.day() >= 27).cast(pl.Int8).alias("is_month_end"))
 
             # Quarter-end effect
             calendar_features.append(
-                (
-                    pl.col("Date").dt.month().is_in([3, 6, 9, 12])
-                    & (pl.col("Date").dt.day() >= 27)
-                )
+                (pl.col("Date").dt.month().is_in([3, 6, 9, 12]) & (pl.col("Date").dt.day() >= 27))
                 .cast(pl.Int8)
                 .alias("is_quarter_end")
             )
 
             # Year-end effect (December)
-            calendar_features.append(
-                (pl.col("Date").dt.month() == 12)
-                .cast(pl.Int8)
-                .alias("is_year_end_month")
-            )
+            calendar_features.append((pl.col("Date").dt.month() == 12).cast(pl.Int8).alias("is_year_end_month"))
 
         # Gap features (open vs previous close)
         if "Open" in df.columns and "Close" in df.columns:
@@ -1388,62 +1298,44 @@ async def enrich_and_save(
 
             # Gap up/down flags
             calendar_features.append(
-                (pl.col("Open") > pl.col("Close").shift(1).over("Code"))
-                .cast(pl.Int8)
-                .alias("gap_up")
+                (pl.col("Open") > pl.col("Close").shift(1).over("Code")).cast(pl.Int8).alias("gap_up")
             )
 
         # Intraday range features
         if "High" in df.columns and "Low" in df.columns and "Close" in df.columns:
             calendar_features.append(
-                ((pl.col("High") - pl.col("Low")) / (pl.col("Close") + 1e-12)).alias(
-                    "intraday_range_pct"
-                )
+                ((pl.col("High") - pl.col("Low")) / (pl.col("Close") + 1e-12)).alias("intraday_range_pct")
             )
 
             # Close position within daily range
             calendar_features.append(
-                (
-                    (pl.col("Close") - pl.col("Low"))
-                    / (pl.col("High") - pl.col("Low") + 1e-12)
-                ).alias("close_position_in_range")
+                ((pl.col("Close") - pl.col("Low")) / (pl.col("High") - pl.col("Low") + 1e-12)).alias(
+                    "close_position_in_range"
+                )
             )
 
         # Regime indicators based on market environment
         if "mkt_ret_1d" in df.columns:
             # Bull/bear regime based on recent market performance
             calendar_features.append(
-                (pl.col("mkt_ret_1d").rolling_mean(window_size=20).over("Date") > 0)
-                .cast(pl.Int8)
-                .alias("mkt_bull_20d")
+                (pl.col("mkt_ret_1d").rolling_mean(window_size=20).over("Date") > 0).cast(pl.Int8).alias("mkt_bull_20d")
             )
 
             # High/low volatility regime
             if "mkt_vol_20d" in df.columns:
                 calendar_features.append(
-                    (
-                        pl.col("mkt_vol_20d")
-                        > pl.col("mkt_vol_20d")
-                        .rolling_mean(window_size=60)
-                        .over("Date")
-                    )
+                    (pl.col("mkt_vol_20d") > pl.col("mkt_vol_20d").rolling_mean(window_size=60).over("Date"))
                     .cast(pl.Int8)
                     .alias("mkt_high_vol_regime")
                 )
 
         # Consecutive up/down days
         if "returns_1d" in df.columns:
-            calendar_features.append(
-                (pl.col("returns_1d") > 0).cast(pl.Int8).alias("up_day")
-            )
+            calendar_features.append((pl.col("returns_1d") > 0).cast(pl.Int8).alias("up_day"))
 
             # Streak of positive/negative days (simplified)
             calendar_features.append(
-                (pl.col("returns_1d") > 0)
-                .cast(pl.Int8)
-                .rolling_sum(window_size=5)
-                .over("Code")
-                .alias("up_days_in_5d")
+                (pl.col("returns_1d") > 0).cast(pl.Int8).rolling_sum(window_size=5).over("Code").alias("up_days_in_5d")
             )
 
         # Price reversal indicators
@@ -1459,10 +1351,7 @@ async def enrich_and_save(
         if "Close" in df.columns:
             for window in [10, 50, 100]:
                 calendar_features.append(
-                    pl.col("Close")
-                    .rolling_mean(window_size=window)
-                    .over("Code")
-                    .alias(f"ma_{window}d")
+                    pl.col("Close").rolling_mean(window_size=window).over("Code").alias(f"ma_{window}d")
                 )
 
         # Add calendar features
@@ -1473,43 +1362,30 @@ async def enrich_and_save(
             second_pass_calendar = []
             if "ma_10d" in df.columns and "Close" in df.columns:
                 second_pass_calendar.append(
-                    (
-                        (pl.col("Close") - pl.col("ma_10d"))
-                        / (pl.col("ma_10d") + 1e-12)
-                    ).alias("ma_gap_10d")
+                    ((pl.col("Close") - pl.col("ma_10d")) / (pl.col("ma_10d") + 1e-12)).alias("ma_gap_10d")
                 )
 
             if "ma_50d" in df.columns and "Close" in df.columns:
                 second_pass_calendar.append(
-                    (
-                        (pl.col("Close") - pl.col("ma_50d"))
-                        / (pl.col("ma_50d") + 1e-12)
-                    ).alias("ma_gap_50d")
+                    ((pl.col("Close") - pl.col("ma_50d")) / (pl.col("ma_50d") + 1e-12)).alias("ma_gap_50d")
                 )
 
             if "ma_100d" in df.columns and "Close" in df.columns:
                 second_pass_calendar.append(
-                    (
-                        (pl.col("Close") - pl.col("ma_100d"))
-                        / (pl.col("ma_100d") + 1e-12)
-                    ).alias("ma_gap_100d")
+                    ((pl.col("Close") - pl.col("ma_100d")) / (pl.col("ma_100d") + 1e-12)).alias("ma_gap_100d")
                 )
 
             # Golden cross / death cross indicators
             if "ma_10d" in df.columns and "ma_50d" in df.columns:
                 second_pass_calendar.append(
-                    (pl.col("ma_10d") > pl.col("ma_50d"))
-                    .cast(pl.Int8)
-                    .alias("golden_cross_10_50")
+                    (pl.col("ma_10d") > pl.col("ma_50d")).cast(pl.Int8).alias("golden_cross_10_50")
                 )
 
             if second_pass_calendar:
                 df = df.with_columns(second_pass_calendar)
                 calendar_features.extend(second_pass_calendar)
 
-            logger.info(
-                f"✅ Calendar and regime features attached: +{len(calendar_features)} columns"
-            )
+            logger.info(f"✅ Calendar and regime features attached: +{len(calendar_features)} columns")
     except Exception as e:
         logger.error(f"CRITICAL ERROR in calendar and regime features: {e}")
         raise  # Stop pipeline to ensure root cause resolution
@@ -1528,9 +1404,7 @@ async def enrich_and_save(
                     )
 
                     use_gpu_graph = True
-                    logger.info(
-                        "✅ Using GPU-accelerated graph computation (CuPy detected)"
-                    )
+                    logger.info("✅ Using GPU-accelerated graph computation (CuPy detected)")
             except ImportError:
                 pass
 
@@ -1542,9 +1416,7 @@ async def enrich_and_save(
 
             df = add_graph_features(
                 df,
-                return_col="returns_1d"
-                if "returns_1d" in df.columns
-                else "feat_ret_1d",
+                return_col="returns_1d" if "returns_1d" in df.columns else "feat_ret_1d",
                 window=graph_window,
                 min_obs=max(20, min(graph_window // 2, graph_window - 5)),
                 threshold=graph_threshold,
@@ -1552,9 +1424,7 @@ async def enrich_and_save(
                 method="pearson",
                 cache_dir=graph_cache_dir,
             )
-            logger.info(
-                "Graph features attached (graph_degree, peer_corr_mean, peer_count)"
-            )
+            logger.info("Graph features attached (graph_degree, peer_corr_mean, peer_count)")
         else:
             logger.info("Graph features disabled; skipping")
     except Exception as e:
@@ -1590,12 +1460,8 @@ async def enrich_and_save(
                     fetcher2 = JQuantsAsyncFetcher(email, password)
                     async with aiohttp.ClientSession() as session:
                         await fetcher2.authenticate(session)
-                        logger.info(
-                            f"Fetching futures daily {start_date} → {end_date} for enrichment"
-                        )
-                        fut_df = await fetcher2.get_futures_daily(
-                            session, start_date, end_date
-                        )
+                        logger.info(f"Fetching futures daily {start_date} → {end_date} for enrichment")
+                        fut_df = await fetcher2.get_futures_daily(session, start_date, end_date)
                         if fut_df is not None and not fut_df.is_empty():
                             futures_df = fut_df
                             # Save for reuse
@@ -1643,11 +1509,7 @@ async def enrich_and_save(
                 return cands[-1] if cands else None
 
             if _nk is None:
-                _nk_path = (
-                    _auto_find_spot(["nikkei"])
-                    or _auto_find_spot(["nk225"])
-                    or _auto_find_spot(["nikkei225"])
-                )  # type: ignore[assignment]
+                _nk_path = _auto_find_spot(["nikkei"]) or _auto_find_spot(["nk225"]) or _auto_find_spot(["nikkei225"])  # type: ignore[assignment]
                 _nk = _load_spot(_nk_path)
             if _rt is None:
                 _rt_path = _auto_find_spot(["reit"])  # type: ignore[assignment]
@@ -1664,9 +1526,7 @@ async def enrich_and_save(
             df = builder.add_futures_block(
                 df,
                 futures_df=futures_df,
-                categories=(
-                    futures_categories or ["TOPIXF", "NK225F", "JN400F", "REITF"]
-                ),
+                categories=(futures_categories or ["TOPIXF", "NK225F", "JN400F", "REITF"]),
                 topix_df=topix_df,
                 spot_map=spot_map or None,
                 make_continuous_series=bool(futures_continuous),
@@ -1678,9 +1538,7 @@ async def enrich_and_save(
             logger.info("📊 Basis coverage by category:")
             for category in categories:
                 spot_available = category in (spot_map or {})
-                futures_cols = [
-                    c for c in df.columns if f"fut_{category.lower()}_" in c.lower()
-                ]
+                futures_cols = [c for c in df.columns if f"fut_{category.lower()}_" in c.lower()]
                 basis_cols = [c for c in futures_cols if "basis" in c.lower()]
 
                 logger.info(
@@ -1689,9 +1547,7 @@ async def enrich_and_save(
                 )
 
             continuous_enabled = "✅ ON" if futures_continuous else "❌ OFF"
-            logger.info(
-                f"📈 Continuous series (fut_whole_ret_cont_*): {continuous_enabled}"
-            )
+            logger.info(f"📈 Continuous series (fut_whole_ret_cont_*): {continuous_enabled}")
         except Exception as e:
             logger.warning(f"Futures enrichment skipped: {e}")
 
@@ -1700,9 +1556,7 @@ async def enrich_and_save(
         try:
             trades_spec_df = pl.read_parquet(trades_spec_path)
             # Pass listed_info_df (if available) for accurate Section mapping
-            df = builder.add_flow_features(
-                df, trades_spec_df, listed_info_df=listed_info_df
-            )
+            df = builder.add_flow_features(df, trades_spec_df, listed_info_df=listed_info_df)
         except Exception as e:
             logger.warning(f"Skipping flow enrichment due to error: {e}")
 
@@ -1737,9 +1591,7 @@ async def enrich_and_save(
                 )
                 logger.info(f"Margin weekly features attached from: {w_path}")
             else:
-                logger.info(
-                    "Margin weekly requested but no parquet provided/found; skipping"
-                )
+                logger.info("Margin weekly requested but no parquet provided/found; skipping")
         else:
             logger.info("Margin weekly not enabled and no parquet found; skipping")
     except Exception as e:
@@ -1793,16 +1645,10 @@ async def enrich_and_save(
                 df = _fill_from_source(df, "margin_d_short_wow", "dmi_d_short_1d")
                 df = _fill_from_source(df, "margin_d_net_wow", "dmi_d_net_1d")
                 df = _fill_from_source(df, "margin_d_ratio_wow", "dmi_d_ratio_1d")
-                df = _fill_from_source(
-                    df, "margin_d_long_to_adv20", "dmi_d_long_to_adv1d"
-                )
-                df = _fill_from_source(
-                    df, "margin_d_short_to_adv20", "dmi_d_short_to_adv1d"
-                )
+                df = _fill_from_source(df, "margin_d_long_to_adv20", "dmi_d_long_to_adv1d")
+                df = _fill_from_source(df, "margin_d_short_to_adv20", "dmi_d_short_to_adv1d")
                 df = _fill_from_source(df, "margin_long_to_adv20", "dmi_long_to_adv20")
-                df = _fill_from_source(
-                    df, "margin_short_to_adv20", "dmi_short_to_adv20"
-                )
+                df = _fill_from_source(df, "margin_short_to_adv20", "dmi_short_to_adv20")
                 df = _fill_from_source(df, "margin_gross_z52", "dmi_z26_total")
                 df = _fill_from_source(df, "ratio_z52", "dmi_z26_d_short_1d")
                 df = _fill_from_source(df, "long_z52", "dmi_z26_long")
@@ -1811,9 +1657,7 @@ async def enrich_and_save(
                 df = _fill_from_source(df, "margin_days_since", "dmi_days_since_pub")
                 df = _fill_from_source(df, "is_margin_valid", "is_dmi_valid")
             else:
-                logger.info(
-                    "Daily margin requested but no parquet provided/found; skipping"
-                )
+                logger.info("Daily margin requested but no parquet provided/found; skipping")
         else:
             logger.info("Daily margin not enabled and no parquet found; skipping")
     except Exception as e:
@@ -1878,9 +1722,7 @@ async def enrich_and_save(
                         fetcher3 = JQuantsAsyncFetcher(email, password)
                         async with aiohttp.ClientSession() as session:
                             await fetcher3.authenticate(session)
-                            logger.info(
-                                f"Fetching short selling data {start_date} → {end_date} for enrichment"
-                            )
+                            logger.info(f"Fetching short selling data {start_date} → {end_date} for enrichment")
 
                             # Fetch both ratio and positions data
                             ss_df = await fetcher3.get_short_selling(
@@ -1918,9 +1760,7 @@ async def enrich_and_save(
                                             / f"short_positions_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
                                         )
                                         pos_df.write_parquet(out)
-                                        logger.info(
-                                            f"Saved short positions parquet: {out}"
-                                        )
+                                        logger.info(f"Saved short positions parquet: {out}")
                                     except Exception:
                                         pass
                 except Exception as e:
@@ -1944,9 +1784,7 @@ async def enrich_and_save(
                             )
                             .drop_nulls(subset=["ADV20_shares"])
                         )
-                        logger.info(
-                            f"Computed ADV{adv_window_days} for short selling scaling"
-                        )
+                        logger.info(f"Computed ADV{adv_window_days} for short selling scaling")
                     except Exception as e:
                         logger.warning(f"ADV computation for short selling failed: {e}")
 
@@ -1967,9 +1805,7 @@ async def enrich_and_save(
 
                 logger.info("Short selling features attached successfully")
             else:
-                logger.info(
-                    "Short selling requested but no parquet provided/found; skipping"
-                )
+                logger.info("Short selling requested but no parquet provided/found; skipping")
         else:
             logger.info("Short selling not enabled and no parquet found; skipping")
     except Exception as e:
@@ -1981,10 +1817,7 @@ async def enrich_and_save(
     try:
         earnings_path = None
 
-        if (
-            earnings_announcements_parquet
-            and Path(earnings_announcements_parquet).exists()
-        ):
+        if earnings_announcements_parquet and Path(earnings_announcements_parquet).exists():
             earnings_path = earnings_announcements_parquet
         else:
             # Auto-discover recursively under output/
@@ -2016,14 +1849,10 @@ async def enrich_and_save(
                         fetcher4 = JQuantsAsyncFetcher(email, password)
                         async with aiohttp.ClientSession() as session:
                             await fetcher4.authenticate(session)
-                            logger.info(
-                                f"Fetching earnings announcements {start_date} → {end_date} for enrichment"
-                            )
+                            logger.info(f"Fetching earnings announcements {start_date} → {end_date} for enrichment")
 
                             # Fetch earnings announcement data
-                            ea_df = await fetcher4.get_earnings_announcements(
-                                session, start_date, end_date
-                            )
+                            ea_df = await fetcher4.get_earnings_announcements(session, start_date, end_date)
                             if ea_df is not None and not ea_df.is_empty():
                                 announcements_df = ea_df
                                 # Save for reuse
@@ -2033,9 +1862,7 @@ async def enrich_and_save(
                                         / f"earnings_announcements_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
                                     )
                                     ea_df.write_parquet(out)
-                                    logger.info(
-                                        f"Saved earnings announcements parquet: {out}"
-                                    )
+                                    logger.info(f"Saved earnings announcements parquet: {out}")
                                 except Exception:
                                     pass
                 except Exception as e:
@@ -2055,23 +1882,25 @@ async def enrich_and_save(
                         statements_df = pl.read_parquet(statements_parquet)
                         logger.info("Using statements data for EPS growth features")
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to load statements for earnings features: {e}"
-                        )
+                        logger.warning(f"Failed to load statements for earnings features: {e}")
 
                 df = add_earnings_event_block(
                     quotes=df,
                     announcement_df=announcements_df,
                     statements_df=statements_df,
+                    business_days=business_days,
+                    windows=earnings_windows,
+                    asof_hour=earnings_asof_hour,
                     enable_pead=enable_pead_features,
                     enable_volatility=True,
                 )
 
                 logger.info("Earnings event features attached successfully")
+                diag_cols = [col for col in ("e_prev_available_ts", "e_next_available_ts") if col in df.columns]
+                if diag_cols:
+                    df = df.drop(diag_cols)
             else:
-                logger.info(
-                    "Earnings events requested but no data available; adding null features"
-                )
+                logger.info("Earnings events requested but no data available; adding null features")
                 # Add null earnings features for consistency
                 from src.gogooku3.features.earnings_events import (
                     add_earnings_event_block,
@@ -2081,6 +1910,9 @@ async def enrich_and_save(
                     quotes=df,
                     announcement_df=None,
                     statements_df=None,
+                    business_days=business_days,
+                    windows=earnings_windows,
+                    asof_hour=earnings_asof_hour,
                     enable_pead=enable_pead_features,
                     enable_volatility=True,
                 )
@@ -2101,18 +1933,14 @@ async def enrich_and_save(
             # Auto-discover recursively under output/
             sector_short_path = _find_latest("sector_short_selling_*.parquet")
 
-        if enable_sector_short_selling or (
-            sector_short_path and sector_short_path.exists()
-        ):
+        if enable_sector_short_selling or (sector_short_path and sector_short_path.exists()):
             # Load sector short selling data
             sector_short_df = None
 
             if sector_short_path and sector_short_path.exists():
                 try:
                     sector_short_df = pl.read_parquet(sector_short_path)
-                    logger.info(
-                        f"Loaded sector short selling data from: {sector_short_path}"
-                    )
+                    logger.info(f"Loaded sector short selling data from: {sector_short_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load sector short selling data: {e}")
 
@@ -2131,9 +1959,7 @@ async def enrich_and_save(
                         fetcher5 = JQuantsAsyncFetcher(email, password)
                         async with aiohttp.ClientSession() as session:
                             await fetcher5.authenticate(session)
-                            logger.info(
-                                f"Fetching sector short selling data {start_date} → {end_date} for enrichment"
-                            )
+                            logger.info(f"Fetching sector short selling data {start_date} → {end_date} for enrichment")
 
                             # Fetch sector short selling data
                             ss_df = await fetcher5.get_sector_short_selling(
@@ -2151,9 +1977,7 @@ async def enrich_and_save(
                                         / f"sector_short_selling_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
                                     )
                                     ss_df.write_parquet(out)
-                                    logger.info(
-                                        f"Saved sector short selling parquet: {out}"
-                                    )
+                                    logger.info(f"Saved sector short selling parquet: {out}")
                                 except Exception:
                                     pass
                 except Exception as e:
@@ -2170,11 +1994,7 @@ async def enrich_and_save(
                 if business_days:
                     _next_bd_expr = build_next_bday_expr_from_dates(business_days)
                 else:
-                    _dates = (
-                        df.select("Date").unique().sort("Date")["Date"].to_list()
-                        if "Date" in df.columns
-                        else []
-                    )
+                    _dates = df.select("Date").unique().sort("Date")["Date"].to_list() if "Date" in df.columns else []
                     _next_bd_expr = build_next_bday_expr_from_dates(_dates)
 
                 df = add_sector_short_selling_block(
@@ -2188,9 +2008,7 @@ async def enrich_and_save(
 
                 logger.info("Sector short selling features attached successfully")
             else:
-                logger.info(
-                    "Sector short selling requested but no data available; adding null features"
-                )
+                logger.info("Sector short selling requested but no data available; adding null features")
                 # Add null sector short selling features for consistency
                 from src.gogooku3.features.short_selling_sector import (
                     add_sector_short_selling_block,
@@ -2199,11 +2017,7 @@ async def enrich_and_save(
                 if business_days:
                     _next_bd_expr = build_next_bday_expr_from_dates(business_days)
                 else:
-                    _dates = (
-                        df.select("Date").unique().sort("Date")["Date"].to_list()
-                        if "Date" in df.columns
-                        else []
-                    )
+                    _dates = df.select("Date").unique().sort("Date")["Date"].to_list() if "Date" in df.columns else []
                     _next_bd_expr = build_next_bday_expr_from_dates(_dates)
 
                 df = add_sector_short_selling_block(
@@ -2226,15 +2040,10 @@ async def enrich_and_save(
         if enable_option_market_features:
             opt_feats_df = None
             # 1) Prefer provided features parquet
-            if (
-                index_option_features_parquet
-                and Path(index_option_features_parquet).exists()
-            ):
+            if index_option_features_parquet and Path(index_option_features_parquet).exists():
                 try:
                     opt_feats_df = pl.read_parquet(index_option_features_parquet)
-                    logger.info(
-                        f"Loaded index option features from: {index_option_features_parquet}"
-                    )
+                    logger.info(f"Loaded index option features from: {index_option_features_parquet}")
                 except Exception as e:
                     logger.warning(f"Failed to load option features parquet: {e}")
 
@@ -2268,18 +2077,14 @@ async def enrich_and_save(
                 cache_files = []
                 for output_dir in search_dirs:
                     if output_dir.exists():
-                        cache_pattern = str(
-                            output_dir / "nk225_index_option_features_*.parquet"
-                        )
+                        cache_pattern = str(output_dir / "nk225_index_option_features_*.parquet")
                         cache_files.extend(glob.glob(cache_pattern))
 
                 if cache_files:
                     cache_files = sorted(cache_files, reverse=True)
                     try:
                         cached_option = Path(cache_files[0])
-                        logger.info(
-                            f"📦 Found cached index options: {cached_option.name}"
-                        )
+                        logger.info(f"📦 Found cached index options: {cached_option.name}")
 
                         # Check if cache covers requested date range
                         cache_name = cached_option.stem
@@ -2292,20 +2097,12 @@ async def enrich_and_save(
 
                             # Parse requested dates
                             start_dt = (
-                                datetime.strptime(start_date, "%Y-%m-%d")
-                                if isinstance(start_date, str)
-                                else start_date
+                                datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
                             )
-                            end_dt = (
-                                datetime.strptime(end_date, "%Y-%m-%d")
-                                if isinstance(end_date, str)
-                                else end_date
-                            )
+                            end_dt = datetime.strptime(end_date, "%Y-%m-%d") if isinstance(end_date, str) else end_date
 
                             # Check if cache covers our range (allow 1-day tolerance)
-                            if cache_start_dt <= start_dt and cache_end_dt >= (
-                                end_dt - timedelta(days=1)
-                            ):
+                            if cache_start_dt <= start_dt and cache_end_dt >= (end_dt - timedelta(days=1)):
                                 # Load cached raw data and build features
                                 raw = pl.read_parquet(cached_option)
                                 from src.gogooku3.features.index_option import (
@@ -2313,9 +2110,7 @@ async def enrich_and_save(
                                 )
 
                                 opt_feats_df = build_index_option_features(raw)
-                                logger.info(
-                                    "✅ CACHE HIT: Index Options (saved 15-30 min)"
-                                )
+                                logger.info("✅ CACHE HIT: Index Options (saved 15-30 min)")
                             else:
                                 logger.info(
                                     f"⚠️  Cache date range mismatch: cache={cache_start}→{cache_end}, requested={start_dt.strftime('%Y%m%d')}→{end_dt.strftime('%Y%m%d')}"
@@ -2338,12 +2133,8 @@ async def enrich_and_save(
                         fetcher = JQuantsAsyncFetcher(email, password)
                         async with aiohttp.ClientSession() as session:
                             await fetcher.authenticate(session)
-                            logger.info(
-                                f"Fetching index options {start_date} → {end_date} for market aggregates"
-                            )
-                            raw = await fetcher.get_index_option(
-                                session, start_date, end_date
-                            )
+                            logger.info(f"Fetching index options {start_date} → {end_date} for market aggregates")
+                            raw = await fetcher.get_index_option(session, start_date, end_date)
                             if raw is not None and not raw.is_empty():
                                 from src.gogooku3.features.index_option import (
                                     build_index_option_features,
@@ -2364,24 +2155,16 @@ async def enrich_and_save(
                         nb = build_next_bday_expr_from_dates(business_days)
                     else:
                         _dates = (
-                            df.select("Date").unique().sort("Date")["Date"].to_list()
-                            if "Date" in df.columns
-                            else []
+                            df.select("Date").unique().sort("Date")["Date"].to_list() if "Date" in df.columns else []
                         )
                         nb = build_next_bday_expr_from_dates(_dates)
-                    mkt = build_option_market_aggregates(
-                        opt_feats_df, next_bday_expr=nb
-                    )
+                    mkt = build_option_market_aggregates(opt_feats_df, next_bday_expr=nb)
                     df = attach_option_market_to_equity(df, mkt)
-                    logger.info(
-                        "Option market aggregates attached (opt_iv_cmat_*, opt_term_slope_30_60, flows)"
-                    )
+                    logger.info("Option market aggregates attached (opt_iv_cmat_*, opt_term_slope_30_60, flows)")
                 except Exception as e:
                     logger.warning(f"Failed to attach option market aggregates: {e}")
         else:
-            logger.info(
-                "Option market features requested but no data available; skipping attach"
-            )
+            logger.info("Option market features requested but no data available; skipping attach")
 
     except Exception as e:
         logger.warning(f"Index option market aggregates step skipped: {e}")
@@ -2394,9 +2177,7 @@ async def enrich_and_save(
     # Assurance: guarantee mkt_*
     if not any(c.startswith("mkt_") for c in df.columns):
         logger.warning("mkt_* missing; attempting offline attach (assurance)...")
-        topo = (
-            topix_parquet if topix_parquet else _find_latest("topix_history_*.parquet")
-        )
+        topo = topix_parquet if topix_parquet else _find_latest("topix_history_*.parquet")
         # Fetch and save a TOPIX parquet if still missing and jquants is enabled
         if (topo is None or not Path(topo).exists()) and jquants:
             try:
@@ -2412,9 +2193,7 @@ async def enrich_and_save(
                     fetcher = JQuantsAsyncFetcher(email, password)
                     async with aiohttp.ClientSession() as session:
                         await fetcher.authenticate(session)
-                        topo_df = await fetcher.fetch_topix_data(
-                            session, start_date, end_date
-                        )
+                        topo_df = await fetcher.fetch_topix_data(session, start_date, end_date)
                         if topo_df is not None and not topo_df.is_empty():
                             raw_dir = Path("output/raw/market")
                             raw_dir.mkdir(parents=True, exist_ok=True)
@@ -2564,6 +2343,16 @@ async def enrich_and_save(
             "stoch_k",
             "bb_width",
             "bb_position",
+            # 1.8 Morning session (AM)
+            "am_open",
+            "am_high",
+            "am_low",
+            "am_close",
+            "am_vol",
+            "am_turnover",
+            "am_gap_prev_close",
+            "am_range",
+            "am_to_full_range",
             # 2) TOPIX (26)
             "mkt_ret_1d",
             "mkt_ret_5d",
@@ -2626,13 +2415,13 @@ async def enrich_and_save(
             "x_dmi_impulse_dir",
             "x_breadth_rel",
             # 3.2) Sector cross-sectional (relative/rank/z within sector) - FIXED: T-N lagged (2025-10-25)
-            "ret_prev_1d_vs_sec",        # FIXED: T-1 lag (was ret_1d_vs_sec)
-            "ret_prev_1d_in_sec_z",      # FIXED: T-1 lag (was ret_1d_in_sec_z)
-            "ret_prev_1d_rank_in_sec",   # FIXED: T-1 lag (was ret_1d_rank_in_sec)
-            "ret_prev_5d_vs_sec",        # FIXED: T-5 lag (was ret_5d_vs_sec)
-            "ret_prev_5d_in_sec_z",      # FIXED: T-5 lag (was ret_5d_in_sec_z)
-            "ret_prev_10d_vs_sec",       # FIXED: T-10 lag (was ret_10d_vs_sec)
-            "ret_prev_10d_in_sec_z",     # FIXED: T-10 lag (was ret_10d_in_sec_z)
+            "ret_prev_1d_vs_sec",  # FIXED: T-1 lag (was ret_1d_vs_sec)
+            "ret_prev_1d_in_sec_z",  # FIXED: T-1 lag (was ret_1d_in_sec_z)
+            "ret_prev_1d_rank_in_sec",  # FIXED: T-1 lag (was ret_1d_rank_in_sec)
+            "ret_prev_5d_vs_sec",  # FIXED: T-5 lag (was ret_5d_vs_sec)
+            "ret_prev_5d_in_sec_z",  # FIXED: T-5 lag (was ret_5d_in_sec_z)
+            "ret_prev_10d_vs_sec",  # FIXED: T-10 lag (was ret_10d_vs_sec)
+            "ret_prev_10d_in_sec_z",  # FIXED: T-10 lag (was ret_10d_in_sec_z)
             "volume_in_sec_z",
             "volume_rank_in_sec",
             "rsi14_in_sec_z",
@@ -2671,7 +2460,17 @@ async def enrich_and_save(
             "flow_shock_flag",
             "flow_impulse",
             "flow_days_since",
-            # 5) Statements (17)
+            # 5) Earnings schedule (as-of)
+            "earnings_event_date",
+            "days_to_earnings",
+            "earnings_today",
+            "earnings_upcoming_1d",
+            "earnings_upcoming_3d",
+            "earnings_upcoming_5d",
+            "earnings_recent_1d",
+            "earnings_recent_3d",
+            "earnings_recent_5d",
+            # 6) Statements (17)
             "stmt_yoy_sales",
             "stmt_yoy_op",
             "stmt_yoy_np",
@@ -2689,7 +2488,7 @@ async def enrich_and_save(
             "stmt_nc_flag",
             "stmt_imp_statement",
             "stmt_days_since_statement",
-            # 6) Flags (+ special market day)
+            # 7) Flags (+ special market day)
             "is_rsi2_valid",
             "is_ema5_valid",
             "is_ema10_valid",
@@ -2699,7 +2498,7 @@ async def enrich_and_save(
             "is_flow_valid",
             "is_stmt_valid",
             "is_halt_20201001",
-            # 7) Optional: Margin weekly block (kept if present; not added as Nulls)
+            # 8) Optional: Margin weekly block (kept if present; not added as Nulls)
             "margin_long_tot",
             "margin_short_tot",
             "margin_total_gross",
@@ -2722,7 +2521,7 @@ async def enrich_and_save(
             "is_margin_valid",
             "margin_issue_type",
             "is_borrowable",
-            # 7) Targets (7)
+            # 9) Targets (7)
             "target_1d",
             "target_5d",
             "target_10d",
@@ -2730,7 +2529,7 @@ async def enrich_and_save(
             "target_1d_binary",
             "target_5d_binary",
             "target_10d_binary",
-            # 8) Forward Return Labels (4) - CRITICAL for supervised learning
+            # 10) Forward Return Labels (4) - CRITICAL for supervised learning
             "feat_ret_1d",
             "feat_ret_5d",
             "feat_ret_10d",
@@ -2813,17 +2612,11 @@ async def enrich_and_save(
             if _src in df.columns and _tgt in df.columns:
                 try:
                     df = df.drop(_src)
-                    logger.info(
-                        f"Dropped duplicate alias column '{_src}' (target '{_tgt}' already present)"
-                    )
+                    logger.info(f"Dropped duplicate alias column '{_src}' (target '{_tgt}' already present)")
                 except Exception:
                     pass
         # Apply renames only where target is not already present
-        to_rename = {
-            k: v
-            for k, v in rename_map.items()
-            if (k in df.columns) and (v not in df.columns)
-        }
+        to_rename = {k: v for k, v in rename_map.items() if (k in df.columns) and (v not in df.columns)}
         if to_rename:
             df = df.rename(to_rename)
             logger.info(f"Renamed columns to docs naming: {to_rename}")
@@ -2850,85 +2643,50 @@ async def enrich_and_save(
         # Extend returns if missing
         add_more_returns: list[pl.Expr] = []
         if "returns_10d" not in df.columns:
-            add_more_returns.append(
-                pl.col("Close").pct_change(10).over("Code").alias("returns_10d")
-            )
+            add_more_returns.append(pl.col("Close").pct_change(10).over("Code").alias("returns_10d"))
         if "returns_20d" not in df.columns:
-            add_more_returns.append(
-                pl.col("Close").pct_change(20).over("Code").alias("returns_20d")
-            )
+            add_more_returns.append(pl.col("Close").pct_change(20).over("Code").alias("returns_20d"))
         if "returns_60d" not in df.columns:
-            add_more_returns.append(
-                pl.col("Close").pct_change(60).over("Code").alias("returns_60d")
-            )
+            add_more_returns.append(pl.col("Close").pct_change(60).over("Code").alias("returns_60d"))
         if "returns_120d" not in df.columns:
-            add_more_returns.append(
-                pl.col("Close").pct_change(120).over("Code").alias("returns_120d")
-            )
+            add_more_returns.append(pl.col("Close").pct_change(120).over("Code").alias("returns_120d"))
         if "log_returns_1d" not in df.columns:
             add_more_returns.append(
-                (
-                    pl.col("Close").log() - pl.col("Close").log().shift(1).over("Code")
-                ).alias("log_returns_1d")
+                (pl.col("Close").log() - pl.col("Close").log().shift(1).over("Code")).alias("log_returns_1d")
             )
         if "log_returns_5d" not in df.columns:
             add_more_returns.append(
-                (
-                    pl.col("Close").log() - pl.col("Close").log().shift(5).over("Code")
-                ).alias("log_returns_5d")
+                (pl.col("Close").log() - pl.col("Close").log().shift(5).over("Code")).alias("log_returns_5d")
             )
         if "log_returns_10d" not in df.columns:
             add_more_returns.append(
-                (
-                    pl.col("Close").log() - pl.col("Close").log().shift(10).over("Code")
-                ).alias("log_returns_10d")
+                (pl.col("Close").log() - pl.col("Close").log().shift(10).over("Code")).alias("log_returns_10d")
             )
         if "log_returns_20d" not in df.columns:
             add_more_returns.append(
-                (
-                    pl.col("Close").log() - pl.col("Close").log().shift(20).over("Code")
-                ).alias("log_returns_20d")
+                (pl.col("Close").log() - pl.col("Close").log().shift(20).over("Code")).alias("log_returns_20d")
             )
         if add_more_returns:
             df = df.with_columns(add_more_returns)
 
         # EMAs and MA gaps
-        ema_needed = [
-            c
-            for c in ["ema_5", "ema_10", "ema_20", "ema_60", "ema_200"]
-            if c not in df.columns
-        ]
+        ema_needed = [c for c in ["ema_5", "ema_10", "ema_20", "ema_60", "ema_200"] if c not in df.columns]
         if ema_needed:
             df = df.with_columns(
                 [
-                    pl.col("Close")
-                    .ewm_mean(span=5, adjust=False, ignore_nulls=True)
-                    .over("Code")
-                    .alias("ema_5")
+                    pl.col("Close").ewm_mean(span=5, adjust=False, ignore_nulls=True).over("Code").alias("ema_5")
                     if "ema_5" in ema_needed
                     else pl.lit(0),
-                    pl.col("Close")
-                    .ewm_mean(span=10, adjust=False, ignore_nulls=True)
-                    .over("Code")
-                    .alias("ema_10")
+                    pl.col("Close").ewm_mean(span=10, adjust=False, ignore_nulls=True).over("Code").alias("ema_10")
                     if "ema_10" in ema_needed
                     else pl.lit(0),
-                    pl.col("Close")
-                    .ewm_mean(span=20, adjust=False, ignore_nulls=True)
-                    .over("Code")
-                    .alias("ema_20")
+                    pl.col("Close").ewm_mean(span=20, adjust=False, ignore_nulls=True).over("Code").alias("ema_20")
                     if "ema_20" in ema_needed
                     else pl.lit(0),
-                    pl.col("Close")
-                    .ewm_mean(span=60, adjust=False, ignore_nulls=True)
-                    .over("Code")
-                    .alias("ema_60")
+                    pl.col("Close").ewm_mean(span=60, adjust=False, ignore_nulls=True).over("Code").alias("ema_60")
                     if "ema_60" in ema_needed
                     else pl.lit(0),
-                    pl.col("Close")
-                    .ewm_mean(span=200, adjust=False, ignore_nulls=True)
-                    .over("Code")
-                    .alias("ema_200")
+                    pl.col("Close").ewm_mean(span=200, adjust=False, ignore_nulls=True).over("Code").alias("ema_200")
                     if "ema_200" in ema_needed
                     else pl.lit(0),
                 ]
@@ -2938,21 +2696,11 @@ async def enrich_and_save(
                 if col.startswith("literal"):
                     df = df.drop(col)
 
-        if "ma_gap_5_20" not in df.columns and all(
-            c in df.columns for c in ["ema_5", "ema_20"]
-        ):
+        if "ma_gap_5_20" not in df.columns and all(c in df.columns for c in ["ema_5", "ema_20"]):
+            df = df.with_columns(((pl.col("ema_5") - pl.col("ema_20")) / (pl.col("ema_20") + eps)).alias("ma_gap_5_20"))
+        if "ma_gap_20_60" not in df.columns and all(c in df.columns for c in ["ema_20", "ema_60"]):
             df = df.with_columns(
-                ((pl.col("ema_5") - pl.col("ema_20")) / (pl.col("ema_20") + eps)).alias(
-                    "ma_gap_5_20"
-                )
-            )
-        if "ma_gap_20_60" not in df.columns and all(
-            c in df.columns for c in ["ema_20", "ema_60"]
-        ):
-            df = df.with_columns(
-                (
-                    (pl.col("ema_20") - pl.col("ema_60")) / (pl.col("ema_60") + eps)
-                ).alias("ma_gap_20_60")
+                ((pl.col("ema_20") - pl.col("ema_60")) / (pl.col("ema_60") + eps)).alias("ma_gap_20_60")
             )
 
         # SMAs and price positions
@@ -2961,80 +2709,41 @@ async def enrich_and_save(
         for w in sma_spans:
             name = f"sma_{w}"
             if name not in df.columns:
-                sma_exprs.append(
-                    pl.col("Close")
-                    .rolling_mean(window_size=w, min_periods=w)
-                    .over("Code")
-                    .alias(name)
-                )
+                sma_exprs.append(pl.col("Close").rolling_mean(window_size=w, min_periods=w).over("Code").alias(name))
         if sma_exprs:
             df = df.with_columns(sma_exprs)
         if "price_to_sma5" not in df.columns and "sma_5" in df.columns:
-            df = df.with_columns(
-                (pl.col("Close") / (pl.col("sma_5") + eps)).alias("price_to_sma5")
-            )
+            df = df.with_columns((pl.col("Close") / (pl.col("sma_5") + eps)).alias("price_to_sma5"))
         if "price_to_sma20" not in df.columns and "sma_20" in df.columns:
-            df = df.with_columns(
-                (pl.col("Close") / (pl.col("sma_20") + eps)).alias("price_to_sma20")
-            )
+            df = df.with_columns((pl.col("Close") / (pl.col("sma_20") + eps)).alias("price_to_sma20"))
         if "price_to_sma60" not in df.columns and "sma_60" in df.columns:
-            df = df.with_columns(
-                (pl.col("Close") / (pl.col("sma_60") + eps)).alias("price_to_sma60")
-            )
+            df = df.with_columns((pl.col("Close") / (pl.col("sma_60") + eps)).alias("price_to_sma60"))
 
         # Range/position metrics
-        if "high_low_ratio" not in df.columns and all(
-            c in df.columns for c in ["High", "Low"]
-        ):
+        if "high_low_ratio" not in df.columns and all(c in df.columns for c in ["High", "Low"]):
+            df = df.with_columns((pl.col("High") / (pl.col("Low") + eps)).alias("high_low_ratio"))
+        if "close_to_high" not in df.columns and all(c in df.columns for c in ["High", "Low", "Close"]):
             df = df.with_columns(
-                (pl.col("High") / (pl.col("Low") + eps)).alias("high_low_ratio")
+                ((pl.col("High") - pl.col("Close")) / ((pl.col("High") - pl.col("Low")) + eps)).alias("close_to_high")
             )
-        if "close_to_high" not in df.columns and all(
-            c in df.columns for c in ["High", "Low", "Close"]
-        ):
+        if "close_to_low" not in df.columns and all(c in df.columns for c in ["High", "Low", "Close"]):
             df = df.with_columns(
-                (
-                    (pl.col("High") - pl.col("Close"))
-                    / ((pl.col("High") - pl.col("Low")) + eps)
-                ).alias("close_to_high")
-            )
-        if "close_to_low" not in df.columns and all(
-            c in df.columns for c in ["High", "Low", "Close"]
-        ):
-            df = df.with_columns(
-                (
-                    (pl.col("Close") - pl.col("Low"))
-                    / ((pl.col("High") - pl.col("Low")) + eps)
-                ).alias("close_to_low")
+                ((pl.col("Close") - pl.col("Low")) / ((pl.col("High") - pl.col("Low")) + eps)).alias("close_to_low")
             )
 
         # Volume moving averages and ratios
         if "volume_ma_5" not in df.columns:
             df = df.with_columns(
-                pl.col("Volume")
-                .rolling_mean(window_size=5, min_periods=5)
-                .over("Code")
-                .alias("volume_ma_5")
+                pl.col("Volume").rolling_mean(window_size=5, min_periods=5).over("Code").alias("volume_ma_5")
             )
         if "volume_ma_20" not in df.columns:
             df = df.with_columns(
-                pl.col("Volume")
-                .rolling_mean(window_size=20, min_periods=20)
-                .over("Code")
-                .alias("volume_ma_20")
+                pl.col("Volume").rolling_mean(window_size=20, min_periods=20).over("Code").alias("volume_ma_20")
             )
         if "volume_ratio_5" not in df.columns and "volume_ma_5" in df.columns:
-            df = df.with_columns(
-                (pl.col("Volume") / (pl.col("volume_ma_5") + eps)).alias(
-                    "volume_ratio_5"
-                )
-            )
+            df = df.with_columns((pl.col("Volume") / (pl.col("volume_ma_5") + eps)).alias("volume_ratio_5"))
         if "volume_ratio_20" not in df.columns and "volume_ma_20" in df.columns:
-            df = df.with_columns(
-                (pl.col("Volume") / (pl.col("volume_ma_20") + eps)).alias(
-                    "volume_ratio_20"
-                )
-            )
+            df = df.with_columns((pl.col("Volume") / (pl.col("volume_ma_20") + eps)).alias("volume_ratio_20"))
 
         # Turnover rate requires shares outstanding; ensure column exists
         if "turnover_rate" not in df.columns:
@@ -3046,9 +2755,7 @@ async def enrich_and_save(
                     .alias("turnover_rate")
                 )
             else:
-                df = df.with_columns(
-                    pl.lit(None).cast(pl.Float64).alias("turnover_rate")
-                )
+                df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("turnover_rate"))
 
         # Validity flags for technical indicators (align with dataset spec)
         flag_sources: dict[str, str] = {
@@ -3063,9 +2770,7 @@ async def enrich_and_save(
         for flag_name, source_col in flag_sources.items():
             if flag_name not in df.columns:
                 if source_col in df.columns:
-                    flag_exprs.append(
-                        pl.col(source_col).is_not_null().cast(pl.Int8).alias(flag_name)
-                    )
+                    flag_exprs.append(pl.col(source_col).is_not_null().cast(pl.Int8).alias(flag_name))
                 else:
                     flag_exprs.append(pl.lit(None).cast(pl.Int8).alias(flag_name))
         if flag_exprs:
@@ -3114,9 +2819,7 @@ async def enrich_and_save(
 
         # Dollar volume
         if "dollar_volume" not in df.columns:
-            df = df.with_columns(
-                (pl.col("Close") * pl.col("Volume")).alias("dollar_volume")
-            )
+            df = df.with_columns((pl.col("Close") * pl.col("Volume")).alias("dollar_volume"))
 
         # Volatilities
         if "volatility_5d" not in df.columns and "returns_1d" in df.columns:
@@ -3145,17 +2848,11 @@ async def enrich_and_save(
             )
 
         # Reconstruct MACD line if signal+histogram exist
-        if "macd" not in df.columns and all(
-            c in df.columns for c in ["macd_signal", "macd_histogram"]
-        ):
-            df = df.with_columns(
-                (pl.col("macd_signal") + pl.col("macd_histogram")).alias("macd")
-            )
+        if "macd" not in df.columns and all(c in df.columns for c in ["macd_signal", "macd_histogram"]):
+            df = df.with_columns((pl.col("macd_signal") + pl.col("macd_histogram")).alias("macd"))
 
         # ATR(14) and Stochastic %K (14)
-        if "atr_14" not in df.columns and all(
-            c in df.columns for c in ["High", "Low", "Close"]
-        ):
+        if "atr_14" not in df.columns and all(c in df.columns for c in ["High", "Low", "Close"]):
             tr = pl.max_horizontal(
                 [
                     pl.col("High") - pl.col("Low"),
@@ -3165,40 +2862,19 @@ async def enrich_and_save(
             )
             df = df.with_columns(tr.alias("_tr"))
             df = df.with_columns(
-                pl.col("_tr")
-                .ewm_mean(span=14, adjust=False, ignore_nulls=True)
-                .over("Code")
-                .alias("atr_14")
+                pl.col("_tr").ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code").alias("atr_14")
             ).drop("_tr")
-        if "stoch_k" not in df.columns and all(
-            c in df.columns for c in ["High", "Low", "Close"]
-        ):
+        if "stoch_k" not in df.columns and all(c in df.columns for c in ["High", "Low", "Close"]):
             ll = pl.col("Low").rolling_min(window_size=14, min_periods=14).over("Code")
             hh = pl.col("High").rolling_max(window_size=14, min_periods=14).over("Code")
-            df = df.with_columns(
-                ((pl.col("Close") - ll) / ((hh - ll) + eps) * 100.0).alias("stoch_k")
-            )
+            df = df.with_columns(((pl.col("Close") - ll) / ((hh - ll) + eps) * 100.0).alias("stoch_k"))
 
         # ADX(14) (simplified Wilder smoothing using EWM span)
-        if "adx_14" not in df.columns and all(
-            c in df.columns for c in ["High", "Low", "Close"]
-        ):
-            up_move = (pl.col("High") - pl.col("High").shift(1).over("Code")).clip(
-                lower_bound=0
-            )
-            down_move = (pl.col("Low").shift(1).over("Code") - pl.col("Low")).clip(
-                lower_bound=0
-            )
-            plus_dm = (
-                pl.when((up_move > down_move) & (up_move > 0))
-                .then(up_move)
-                .otherwise(0.0)
-            )
-            minus_dm = (
-                pl.when((down_move > up_move) & (down_move > 0))
-                .then(down_move)
-                .otherwise(0.0)
-            )
+        if "adx_14" not in df.columns and all(c in df.columns for c in ["High", "Low", "Close"]):
+            up_move = (pl.col("High") - pl.col("High").shift(1).over("Code")).clip(lower_bound=0)
+            down_move = (pl.col("Low").shift(1).over("Code") - pl.col("Low")).clip(lower_bound=0)
+            plus_dm = pl.when((up_move > down_move) & (up_move > 0)).then(up_move).otherwise(0.0)
+            minus_dm = pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
             tr2 = pl.max_horizontal(
                 [
                     pl.col("High") - pl.col("Low"),
@@ -3207,13 +2883,9 @@ async def enrich_and_save(
                 ]
             )
             atr14 = tr2.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code")
-            plus_di = (
-                plus_dm.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code")
-                / (atr14 + eps)
-            ) * 100.0
+            plus_di = (plus_dm.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code") / (atr14 + eps)) * 100.0
             minus_di = (
-                minus_dm.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code")
-                / (atr14 + eps)
+                minus_dm.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code") / (atr14 + eps)
             ) * 100.0
             dx = ((plus_di - minus_di).abs() / ((plus_di + minus_di) + eps)) * 100.0
             adx14 = dx.ewm_mean(span=14, adjust=False, ignore_nulls=True).over("Code")
@@ -3236,10 +2908,7 @@ async def enrich_and_save(
                 if range_cols:
                     df = df.with_columns(
                         [
-                            pl.when(pl.col("Date") == mask_date)
-                            .then(None)
-                            .otherwise(pl.col(c))
-                            .alias(c)
+                            pl.when(pl.col("Date") == mask_date).then(None).otherwise(pl.col(c)).alias(c)
                             for c in range_cols
                         ]
                     )
@@ -3253,23 +2922,12 @@ async def enrich_and_save(
         # Validity flags fallback
         if "row_idx" in df.columns:
             if "is_rsi2_valid" not in df.columns:
-                df = df.with_columns(
-                    (pl.col("row_idx") >= 5).cast(pl.Int8).alias("is_rsi2_valid")
-                )
+                df = df.with_columns((pl.col("row_idx") >= 5).cast(pl.Int8).alias("is_rsi2_valid"))
             if "is_valid_ma" not in df.columns:
-                df = df.with_columns(
-                    (pl.col("row_idx") >= 60).cast(pl.Int8).alias("is_valid_ma")
-                )
+                df = df.with_columns((pl.col("row_idx") >= 60).cast(pl.Int8).alias("is_valid_ma"))
         # Statement validity fallback
-        if (
-            "is_stmt_valid" not in df.columns
-            and "stmt_days_since_statement" in df.columns
-        ):
-            df = df.with_columns(
-                (pl.col("stmt_days_since_statement") >= 0)
-                .cast(pl.Int8)
-                .alias("is_stmt_valid")
-            )
+        if "is_stmt_valid" not in df.columns and "stmt_days_since_statement" in df.columns:
+            df = df.with_columns((pl.col("stmt_days_since_statement") >= 0).cast(pl.Int8).alias("is_stmt_valid"))
 
         # Add any missing spec columns as nulls (safe defaults)
         # docs/ml/dataset.md の完全仕様に合わせ、margin_ も含めて
@@ -3277,14 +2935,9 @@ async def enrich_and_save(
         existing = set(df.columns)
         to_add_nulls = [c for c in DOC_COLUMNS if c not in existing]
         if to_add_nulls:
-            logger.info(
-                "Adding null fillers for missing spec columns: %s", to_add_nulls[:10]
-            )
+            logger.info("Adding null fillers for missing spec columns: %s", to_add_nulls[:10])
             df = df.with_columns(
-                [
-                    pl.lit(None).cast(null_dtype_overrides.get(c, pl.Float64)).alias(c)
-                    for c in to_add_nulls
-                ]
+                [pl.lit(None).cast(null_dtype_overrides.get(c, pl.Float64)).alias(c) for c in to_add_nulls]
             )
 
         # Fill conservative defaults for statement flags when statements are absent
@@ -3304,15 +2957,9 @@ async def enrich_and_save(
             df = df.with_columns(fill_zero_flags)
 
         # Cast common boolean/int flags to Int8 for stable schema
-        flag_like = [
-            c for c in df.columns if c.startswith("is_") or c.endswith("_impulse")
-        ]
+        flag_like = [c for c in df.columns if c.startswith("is_") or c.endswith("_impulse")]
         if flag_like:
-            cast_exprs = [
-                pl.col(c).cast(pl.Int8, strict=False).alias(c)
-                for c in flag_like
-                if c in df.columns
-            ]
+            cast_exprs = [pl.col(c).cast(pl.Int8, strict=False).alias(c) for c in flag_like if c in df.columns]
             if cast_exprs:
                 df = df.with_columns(cast_exprs)
 
@@ -3329,6 +2976,7 @@ async def enrich_and_save(
             "x_",
             "mkt_",
             "stmt_",
+            "earnings_",
             "sec17_onehot_",
             "sect_",
             "pk_",
@@ -3336,6 +2984,7 @@ async def enrich_and_save(
             "yz_",
             "vov_",
             "amihud_",
+            "am_",
             "ss_",
             "opt_",
             "macro_",
@@ -3346,6 +2995,21 @@ async def enrich_and_save(
             "breadth_pos",
             # Sector frequency helper
             "sec33_daily_freq",
+            # Adjusted OHLC canonical columns (pending full migration)
+            "adjustmentopen",
+            "adjustmenthigh",
+            "adjustmentlow",
+            "adjustmentclose",
+            "adjustmentvolume",
+            # New return families
+            "ret_prev_1d",
+            "ret_prev_5d",
+            "ret_prev_10d",
+            "ret_prev_20d",
+            "ret_prev_60d",
+            "ret_prev_120d",
+            "ret_overnight",
+            "ret_intraday",
         }
         deny_prefixes = ("_",)  # internal temporaries
         deny_suffixes = ("_right",)  # join helpers
@@ -3412,7 +3076,5 @@ async def enrich_and_save(
     except Exception:
         pass
 
-    pq_path, meta_path = save_with_symlinks(
-        df, output_dir, tag="full", start_date=start_date, end_date=end_date
-    )
+    pq_path, meta_path = save_with_symlinks(df, output_dir, tag="full", start_date=start_date, end_date=end_date)
     return pq_path, meta_path

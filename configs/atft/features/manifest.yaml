@@ -1,6 +1,8 @@
 # P0-2: Feature Manifest Configuration
-# 306列の固定マニフェスト（Feature ABI）を強制
+# 524列の固定マニフェスト（Feature ABI）を強制
 
 features:
+  feature_index_path: output/feature_index_latest.json
   manifest_path: output/reports/feature_manifest_306.yaml
   strict: true   # true: 必須列が無ければ即エラー / false: ある分だけで進む（デバッグ）
+  enforce_manifest: true

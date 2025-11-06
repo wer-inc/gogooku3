@@ -22,6 +22,7 @@ def print_header(title: str):
     print(f"  {title}")
     print("=" * 80)
 
+
 def analyze_dataset(path: str) -> dict:
     """Analyze a single parquet dataset."""
     p = Path(path)
@@ -34,13 +35,11 @@ def analyze_dataset(path: str) -> dict:
         cols = df.columns
 
         # Identify column types
-        metadata_cols = ["Code", "Date", "Section", "MarketCode", "LocalCode",
-                        "section_norm", "row_idx"]
+        metadata_cols = ["Code", "Date", "Section", "MarketCode", "LocalCode", "section_norm", "row_idx"]
         target_cols = [c for c in cols if c.startswith("target_")]
         cs_z_cols = [c for c in cols if c.endswith("_cs_z")]
 
-        feature_cols = [c for c in cols
-                       if c not in metadata_cols and c not in target_cols]
+        feature_cols = [c for c in cols if c not in metadata_cols and c not in target_cols]
 
         return {
             "path": path,
@@ -54,11 +53,8 @@ def analyze_dataset(path: str) -> dict:
             "sample_features": feature_cols[:10],
         }
     except Exception as e:
-        return {
-            "path": path,
-            "exists": True,
-            "error": str(e)
-        }
+        return {"path": path, "exists": True, "error": str(e)}
+
 
 def analyze_config() -> dict:
     """Analyze ATFT config expectations."""
@@ -76,9 +72,11 @@ def analyze_config() -> dict:
             "expected_features": OmegaConf.select(cfg, "model.expected_features"),
             "data_path": OmegaConf.select(cfg, "data.path"),
             "manifest_path": OmegaConf.select(cfg, "features.manifest_path"),
+            "feature_index_path": OmegaConf.select(cfg, "features.feature_index_path"),
         }
     except Exception as e:
         return {"error": str(e)}
+
 
 def analyze_training_logs() -> list:
     """Extract feature mismatch errors from training logs."""
@@ -92,15 +90,18 @@ def analyze_training_logs() -> list:
         with open(log_path) as f:
             for line in f:
                 line_lower = line.lower()
-                if ("expected" in line_lower and "got" in line_lower) or \
-                   ("dimension mismatch" in line_lower) or \
-                   ("unable to find column" in line_lower and "cs_z" in line_lower):
+                if (
+                    ("expected" in line_lower and "got" in line_lower)
+                    or ("dimension mismatch" in line_lower)
+                    or ("unable to find column" in line_lower and "cs_z" in line_lower)
+                ):
                     errors.append(line.strip())
     except Exception as e:
         errors.append(f"Error reading log: {e}")
 
     # Return last 10 errors only
     return errors[-10:] if errors else []
+
 
 def main():
     print_header("ATFT P0 DIAGNOSTIC REPORT")
@@ -133,7 +134,7 @@ def main():
                 print(f"   Features: {result['feature_columns']}")
                 print(f"   CS-Z features: {result['cs_z_columns']}")
 
-                if result['cs_z_columns'] > 0:
+                if result["cs_z_columns"] > 0:
                     print(f"   ✅ CS-Z present: {result['sample_cs_z']}")
                 else:
                     print("   ⚠️  CS-Z absent (no *_cs_z columns)")
@@ -175,8 +176,7 @@ def main():
     datasets_with_data = [d for d in found_datasets if "feature_columns" in d]
     if datasets_with_data:
         max_features = max(d["feature_columns"] for d in datasets_with_data)
-        primary_dataset = [d for d in datasets_with_data
-                          if d["feature_columns"] == max_features][0]
+        primary_dataset = [d for d in datasets_with_data if d["feature_columns"] == max_features][0]
 
         print("\n📌 Primary Dataset (most features):")
         print(f"   Path: {primary_dataset['path']}")
@@ -195,7 +195,7 @@ def main():
                 print(f"   Difference: {actual_features - config_features:+d}")
 
                 print("\n🔧 Recommended Fix:")
-                if primary_dataset['cs_z_columns'] > 0:
+                if primary_dataset["cs_z_columns"] > 0:
                     print(f"   P0-2: Update config to {actual_features} features")
                     print("   P0-3: CS-Z present, no generation needed")
                 else:
@@ -207,6 +207,7 @@ def main():
     print("\n" + "=" * 80)
     print("Diagnostic complete. Save this output to P0_DIAGNOSTIC_REPORT.txt")
     print("=" * 80 + "\n")
+
 
 if __name__ == "__main__":
     main()

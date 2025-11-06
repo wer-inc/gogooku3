@@ -3,9 +3,8 @@ from __future__ import annotations
 from datetime import date
 
 import polars as pl
-from polars.testing import assert_frame_equal
-
 from builder.features.core.advanced import AdvancedFeatureEngineer
+from polars.testing import assert_frame_equal
 
 
 def test_advanced_feature_engineer_add_features() -> None:
@@ -32,6 +31,7 @@ def test_advanced_feature_engineer_add_features() -> None:
     out = engineer.add_features(df)
 
     assert "rsi_14" in out.columns
+    assert "rsi_2" in out.columns  # Multi-period RSI support
     assert "macd_hist_slope" in out.columns
 
 
@@ -59,10 +59,6 @@ def test_advanced_features_unsorted_input_matches_sorted() -> None:
     sorted_result = engineer.add_features(base.sort(["code", "date"]))
     unsorted_result = engineer.add_features(base)
 
-    joined = (
-        unsorted_result
-        .sort(["code", "date"])
-        .select(sorted_result.columns)
-    )
+    joined = unsorted_result.sort(["code", "date"]).select(sorted_result.columns)
 
     assert_frame_equal(sorted_result.sort(["code", "date"]), joined, check_dtypes=True)

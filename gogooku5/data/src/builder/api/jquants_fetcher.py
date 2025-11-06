@@ -21,6 +21,10 @@ BACKOFF_CAP_SECONDS = 60.0
 MAX_PAGINATION_PAGES = 1000
 
 
+class RateLimitDetected(RuntimeError):
+    """Raised when the J-Quants API reports rate limiting."""
+
+
 @dataclass
 class JQuantsFetcher(APIClient):
     """J-Quants API client with minimal pagination helpers."""
@@ -148,6 +152,25 @@ class JQuantsFetcher(APIClient):
             data_key="weekly_margin_interest",
         )
         return payload
+
+    def check_rate_limit(self, *, code: str, date: str) -> None:
+        """Probe the quotes endpoint to detect rate limiting before bulk fetches."""
+
+        params: Dict[str, Any] = {"code": code, "from": date, "to": date}
+        for attempt in range(2):
+            token = self._ensure_token()
+            headers = {"Authorization": f"Bearer {token}"}
+            try:
+                self.request("GET", DAILY_QUOTES_ENDPOINT, params=params, headers=headers)
+                return
+            except HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 401 and attempt == 0:
+                    self.refresh()
+                    continue
+                if status == 429:
+                    raise RateLimitDetected("J-Quants API responded with HTTP 429 (rate limit).") from exc
+                raise
 
     # ------------------------------------------------------------------
     # Pagination helpers

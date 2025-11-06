@@ -1144,11 +1144,19 @@ df = df.sort(['Code','Date']).join_asof(
 
 ### 6) 前場四本値（/prices/prices_am）
 
-`am_open/high/low/close/volume/turnover` と派生指標 `am_ret`, `am_range`, `am_pos`, `am_gap_prev_close`, `am_vol_ratio_20`, `am_tvr_ratio_20`, `am_spread_proxy`, `am_overhang`, `is_am_valid`。
+T+1 as-of で前営業日の AM 情報を取り込み、以下の軽量指標のみを出力：
+
+- `am_gap_prev_close`: 前日終値に対するAMクローズのギャップ
+- `am_body`: AMセッションの方向（クローズ÷オープン−1）
+- `am_range`: AM高値/安値レンジ（倍数−1）
+- `am_vol_ratio_20`: AM出来高の20日平均比
+- `am_pos_in_am_range`: AM終値のレンジ内ポジション（0〜1）
+- `am_to_full_range_prev`: 前日のAMレンジ ÷ 終日レンジ
+- `is_am_valid`: AMデータが存在する場合は1
 
 ### 7) 売買内訳（/markets/breakdown）
 
-`bd_total_buy`, `bd_total_sell`, `bd_total`, `bd_net_value`, `bd_net_ratio`, `bd_credit_new_net`, `bd_credit_close_net`, `bd_short_intensity`, `bd_net_z_52`, `bd_activity_ratio`, `is_bd_valid`。T+1 で結合。
+`bd_total_value`, `bd_net_value`, `bd_net_ratio`, `bd_short_share`, `bd_activity_ratio`, `bd_net_ratio_chg_1d`, `bd_short_share_chg_1d`, `bd_net_z20`, `bd_net_z260`, `bd_short_z260`, `bd_credit_new_net`, `bd_credit_close_net`, `bd_net_ratio_local_max`, `bd_net_ratio_local_min`, `bd_turn_up`, `bd_net_adv60`, `bd_net_mc`, `is_bd_valid`。T+1 で結合。
 
 ### 8) 配当イベント（/fins/dividend）
 
@@ -1156,7 +1164,7 @@ df = df.sort(['Code','Date']).join_asof(
 
 ### 9) 財務諸表（/fins/fs_details）
 
-`fs_revenue`, `fs_op`, `fs_np`, `fs_assets`, `fs_equity`, `fs_cfo`, `fs_capex`, `fs_cash`, `fs_debt` に加え、`fs_cfo_margin`, `fs_cfo_to_np`, `fs_equity_ratio`, `fs_net_cash_to_assets`, `fs_yoy_{sales,op,np}`, `fs_opm`, `fs_npm`, `fs_progress_{op,np}`, `fs_roe`, `fs_roa`, `is_fs_valid`。15:00 カットで as-of backward。
+`fs_revenue_ttm`, `fs_op_profit_ttm`, `fs_net_income_ttm`, `fs_cfo_ttm`, `fs_capex_ttm`, `fs_fcf_ttm`, `fs_sales_yoy`, `fs_op_margin`, `fs_net_margin`, `fs_roe_ttm`, `fs_roa_ttm`, `fs_accruals_ttm`, `fs_cfo_to_ni`, `fs_observation_count`, `fs_lag_days`, `is_fs_valid`。15:00 カットで as-of backward。
 
 ### 10) マクロ（VIX / USDJPY / BTC）
 

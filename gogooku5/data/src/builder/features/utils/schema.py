@@ -2,49 +2,145 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any, MutableMapping
 
 import polars as pl
 
+CANONICAL_FAMILY = (
+    "adjustmentclose",
+    "adjustmentopen",
+    "adjustmenthigh",
+    "adjustmentlow",
+    "adjustmentvolume",
+)
 
-def canonicalize_ohlc(df: pl.DataFrame) -> pl.DataFrame:
-    """Normalize OHLC columns using priority-based coalesce.
+_ALIAS_SANITIZE = {
+    "adjclose": "adjclose_yf",
+    "adj_close": "adjclose_yf",
+    "adjcloseyf": "adjclose_yf",
+    "adjcloseytm": "adjclose_yf",
+    "adjcloseyf": "adjclose_yf",
+    "adjcloseyfraw": "adjclose_yf",
+    "adj close": "adjclose_yf",
+    "close": "close_raw",
+    "closeprice": "close_raw",
+    "endprice": "close_raw",
+    "open": "open_raw",
+    "openprice": "open_raw",
+    "startprice": "open_raw",
+    "high": "high_raw",
+    "highprice": "high_raw",
+    "low": "low_raw",
+    "lowprice": "low_raw",
+    "volume": "volume_raw",
+    "tradingvolume": "volume_raw",
+}
 
-    Handles case variations (Close/close/EndPrice) by coalescing
-    them into a single canonical column and dropping duplicates.
+_BANNED_EXACT = {
+    "Close",
+    "Open",
+    "High",
+    "Low",
+    "Volume",
+    "Adj Close",
+    "AdjClose",
+    "adjclose",
+    "adj_close",
+    "close",
+    "open",
+    "high",
+    "low",
+    "volume",
+}
 
-    Args:
-        df: DataFrame with potentially duplicate OHLC columns
+_BANNED_PREFIXES = (
+    "Close_",
+    "Open_",
+    "High_",
+    "Low_",
+    "Volume_",
+    "Adj Close_",
+    "AdjClose_",
+)
 
-    Returns:
-        DataFrame with single canonical OHLC columns
+
+def _normalize_alias(name: str) -> str:
+    return name.replace(" ", "").replace("-", "").lower()
+
+
+def canonicalize_ohlc(
+    df: pl.DataFrame,
+    *,
+    meta: MutableMapping[str, Any] | None = None,
+) -> pl.DataFrame:
+    """Enforce a single canonical OHLCV family (`adjustment*` columns).
+
+    Drops raw OHLC variants (Close/Open/...) and yfinance-style Adj Close,
+    records provenance into `meta`, and fail-fast if canonical columns are
+    missing. The canonical family is kept in lowercase form so that downstream
+    renames can normalize as needed.
     """
-    # Column candidates in priority order (first has highest priority)
-    candidates = {
-        "Close": ["Close", "close", "EndPrice", "AdjClose", "Close_adj"],
-        "Open": ["Open", "open", "StartPrice", "OpenPrice"],
-        "High": ["High", "high", "HighPrice"],
-        "Low": ["Low", "low", "LowPrice"],
-        "Volume": ["Volume", "volume", "TradingVolume"],
-    }
+    alias_map: dict[str, str] = {}
+    rename_plan: dict[str, str] = {}
+    existing = set(df.columns)
 
-    exprs = []
-    drops = []
+    # 1) sanitize aliases to collision-free temporary names
+    for column in list(df.columns):
+        normalized = _normalize_alias(column)
+        target_base = _ALIAS_SANITIZE.get(normalized)
+        if target_base is None:
+            continue
+        alias_map[column] = target_base
+        candidate = target_base
+        suffix = 1
+        while candidate in existing or candidate in rename_plan.values():
+            suffix += 1
+            candidate = f"{target_base}__{suffix}"
+        rename_plan[column] = candidate
+        existing.add(candidate)
 
-    for target, alts in candidates.items():
-        # Find which candidates actually exist
-        present = [c for c in alts if c in df.columns]
-        if present:
-            # Coalesce: take first non-null value in priority order
-            exprs.append(pl.coalesce([pl.col(c) for c in present]).alias(target))
-            # Drop all variants except the target itself
-            drops += [c for c in present if c != target]
+    if rename_plan:
+        df = df.rename(rename_plan)
 
-    if exprs:
-        df = df.with_columns(exprs)
+    canonical_missing = [col for col in CANONICAL_FAMILY if col not in df.columns]
+    if canonical_missing:
+        raise RuntimeError(f"[canon] missing canonical OHLCV columns: {canonical_missing}")
 
-    if drops:
-        # Remove all OHLC variants, keeping only canonical names
-        df = df.drop([c for c in drops if c in df.columns])
+    # 2) drop alias columns that were sanitized and other banned variants
+    dropped: set[str] = set()
+
+    sanitized_aliases = set(rename_plan.values())
+    drop_candidates = list(sanitized_aliases)
+
+    for column in df.columns:
+        if column in CANONICAL_FAMILY:
+            continue
+        if column in {"turnovervalue", "adjustmentfactor"}:
+            continue
+        if column in sanitized_aliases:
+            continue  # already queued
+        if column in _BANNED_EXACT:
+            drop_candidates.append(column)
+            continue
+        if any(column.startswith(prefix) for prefix in _BANNED_PREFIXES):
+            drop_candidates.append(column)
+
+    if drop_candidates:
+        unique_candidates = [c for c in dict.fromkeys(drop_candidates) if c in df.columns]
+        df = df.drop(unique_candidates)
+        dropped.update(unique_candidates)
+
+    # 3) ensure no banned columns remain
+    banned_present = [col for col in _BANNED_EXACT if col in df.columns]
+    if banned_present:
+        raise RuntimeError(f"[canon] non-canonical OHLCV columns survived drop: {banned_present}")
+
+    if meta is not None:
+        schema_meta = meta.setdefault("schema_governance", {})
+        schema_meta["alias_map"] = {k: alias_map[k] for k in sorted(alias_map)}
+        schema_meta["dropped"] = sorted(dropped)
+        schema_meta["canonical_family"] = list(CANONICAL_FAMILY)
+        schema_meta.setdefault("policy", "canonical_adjusted_only_split_no_yf_adj")
 
     return df
 
@@ -61,7 +157,7 @@ def enforce_unique_columns(df: pl.DataFrame, prefer: list[str] | None = None) ->
     Returns:
         DataFrame with unique column names
     """
-    prefer = prefer or ["Close", "Open", "High", "Low", "Volume"]
+    prefer = prefer or list(CANONICAL_FAMILY)
 
     cnt = Counter(df.columns)
     dups = [name for name, k in cnt.items() if k > 1]

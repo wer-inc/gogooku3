@@ -120,9 +120,7 @@ def _force_finite_in_structure(obj, name="root"):
             obj[idx] = _force_finite_in_structure(v, f"{name}[{idx}]")
         return obj
     if isinstance(obj, tuple):
-        return tuple(
-            _force_finite_in_structure(v, f"{name}[{idx}]") for idx, v in enumerate(obj)
-        )
+        return tuple(_force_finite_in_structure(v, f"{name}[{idx}]") for idx, v in enumerate(obj))
     return obj
 
 
@@ -251,9 +249,7 @@ class GradientMonitor:
         self.log_every = max(1, int(log_every))
         self.warn_threshold = max(0.0, float(warn_threshold))
         self.logger = logger or logging.getLogger(__name__)
-        self._bindings: dict[str, list[tuple[str, nn.Parameter]]] = {
-            label: [] for label in self.groups
-        }
+        self._bindings: dict[str, list[tuple[str, nn.Parameter]]] = {label: [] for label in self.groups}
         self._model_id: int | None = None
         self._last_logged_step: int | None = None
         self._warned_missing: set[str] = set()
@@ -293,9 +289,7 @@ class GradientMonitor:
             if ":" not in chunk:
                 continue
             label, pattern_str = chunk.split(":", 1)
-            patterns = tuple(
-                pat.strip() for pat in pattern_str.split("|") if pat.strip()
-            )
+            patterns = tuple(pat.strip() for pat in pattern_str.split("|") if pat.strip())
             if label.strip() and patterns:
                 groups[label.strip()] = patterns
 
@@ -331,8 +325,7 @@ class GradientMonitor:
         tracked = sum(len(params) for params in self._bindings.values())
         if not self._bound_logged:
             self.logger.info(
-                "[GradMonitor] Tracking %d parameter tensors across %d groups "
-                "(log_every=%d, warn_threshold=%.2e)",
+                "[GradMonitor] Tracking %d parameter tensors across %d groups " "(log_every=%d, warn_threshold=%.2e)",
                 tracked,
                 len(self._bindings),
                 self.log_every,
@@ -360,9 +353,7 @@ class GradientMonitor:
         if self._model_id != id(model):
             self.bind_model(model)
 
-        step_index = self._compute_step_index(
-            global_step=global_step, epoch=epoch, batch_idx=batch_idx
-        )
+        step_index = self._compute_step_index(global_step=global_step, epoch=epoch, batch_idx=batch_idx)
         if step_index is None:
             return
         if self._last_logged_step == step_index:
@@ -409,14 +400,9 @@ class GradientMonitor:
             )
 
             if stats["with_grad"] == 0:
-                warnings.append(
-                    f"{label}: no gradients (tracked={stats['tracked']}, "
-                    f"none={stats['no_grad']})"
-                )
+                warnings.append(f"{label}: no gradients (tracked={stats['tracked']}, " f"none={stats['no_grad']})")
             elif total_norm < self.warn_threshold:
-                warnings.append(
-                    f"{label}: total norm {total_norm:.2e} < {self.warn_threshold:.2e}"
-                )
+                warnings.append(f"{label}: total norm {total_norm:.2e} < {self.warn_threshold:.2e}")
 
         if not parts:
             return
@@ -533,9 +519,7 @@ def _parse_label_clip_map(env_val: str | None):
     return m
 
 
-def _clip_targets_by_horizon(
-    targets: dict[str, torch.Tensor], clip_map: dict[int, float]
-) -> dict[str, torch.Tensor]:
+def _clip_targets_by_horizon(targets: dict[str, torch.Tensor], clip_map: dict[int, float]) -> dict[str, torch.Tensor]:
     if not clip_map:
         return targets
     out = {}
@@ -586,9 +570,7 @@ def _parse_phase_loss_schedule(env_val: str | None) -> dict[int, dict[str, float
     return sched
 
 
-def _apply_phase_loss_weights(
-    criterion, phase_idx: int, sched: dict[int, dict[str, float]]
-):
+def _apply_phase_loss_weights(criterion, phase_idx: int, sched: dict[int, dict[str, float]]):
     """Apply phase-specific loss weights/toggles to criterion if attributes exist."""
     weights = sched.get(phase_idx, {})
     if not weights:
@@ -823,7 +805,7 @@ def now_jst_iso() -> str:
 IC_EMA_H1 = None  # type: ignore
 
 # Use optimized loader if available
-use_optimized = os.getenv("USE_OPTIMIZED_LOADER", "1") == "1"
+use_optimized = os.getenv("USE_OPTIMIZED_LOADER", "0") == "1"
 if use_optimized:
     try:
         from src.data.loaders.production_loader_v2 import (  # noqa: E402
@@ -850,9 +832,7 @@ else:
     except Exception as e:
         ProductionDataModuleV2 = None  # type: ignore
         ProductionDatasetV2 = None  # type: ignore
-        print(
-            f"Standard loader not available ({e}); will use smoke fallback if enabled"
-        )
+        print(f"Standard loader not available ({e}); will use smoke fallback if enabled")
 from src.data.samplers.day_batch_sampler import DayBatchSampler  # noqa: E402
 
 # DayBatchSamplerFixed is not needed, using DayBatchSampler instead
@@ -892,9 +872,7 @@ if ProductionDataModuleV2 is None:  # type: ignore
     try:
 
         class _SmokeDataset(torch.utils.data.Dataset):
-            def __init__(
-                self, n_samples: int = 512, seq_len: int = 20, n_features: int = 8
-            ):
+            def __init__(self, n_samples: int = 512, seq_len: int = 20, n_features: int = 8):
                 self.n = n_samples
                 self.T = seq_len
                 self.F = n_features
@@ -932,14 +910,10 @@ if ProductionDataModuleV2 is None:  # type: ignore
                 self.val_ds = _SmokeDataset(256, self.seq_len)
 
             def train_dataloader(self):
-                return torch.utils.data.DataLoader(
-                    self.train_ds, batch_size=self.bs, shuffle=True, num_workers=self.nw
-                )
+                return torch.utils.data.DataLoader(self.train_ds, batch_size=self.bs, shuffle=True, num_workers=self.nw)
 
             def val_dataloader(self):
-                return torch.utils.data.DataLoader(
-                    self.val_ds, batch_size=self.bs, shuffle=False, num_workers=self.nw
-                )
+                return torch.utils.data.DataLoader(self.val_ds, batch_size=self.bs, shuffle=False, num_workers=self.nw)
 
         print("[SmokeFallback] Using internal smoke DataModule (random data)")
     except Exception as _e_fb:
@@ -959,9 +933,7 @@ try:
     _has_same = False
     for _h in list(_root.handlers):
         try:
-            if isinstance(_h, _logging.FileHandler) and _h.baseFilename == str(
-                _log_file
-            ):
+            if isinstance(_h, _logging.FileHandler) and _h.baseFilename == str(_log_file):
                 _has_same = True
                 break
         except Exception:
@@ -1083,9 +1055,7 @@ def write_failure_report(exc=None):
         "timestamp": now_jst_iso(),
         "tz": str(JST.key) if hasattr(JST, "key") else "Asia/Tokyo",
     }
-    (RUN_DIR / "failure_report.json").write_text(
-        json.dumps(rep, ensure_ascii=False, indent=2)
-    )
+    (RUN_DIR / "failure_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2))
 
 
 @atexit.register
@@ -1117,31 +1087,21 @@ def collate_day(items):
         # Fallback: build empty dict to avoid crash; upstream will handle
         y = {}
     else:
-        y = {
-            k: _torch.stack([it["targets"][k] for it in items], dim=0) for k in tgt_keys
-        }
+        y = {k: _torch.stack([it["targets"][k] for it in items], dim=0) for k in tgt_keys}
     # valid masks (optional)
     vm = None
     if "valid_mask" in items[0] and isinstance(items[0]["valid_mask"], dict):
         mkeys = list(items[0]["valid_mask"].keys())
-        vm = {
-            k: _torch.stack([it["valid_mask"][k] for it in items], dim=0) for k in mkeys
-        }
+        vm = {k: _torch.stack([it["valid_mask"][k] for it in items], dim=0) for k in mkeys}
     # codes/date
     codes = [str(it.get("code")) for it in items]
     markets = None
     sectors = None
     try:
         if all(("market" in it) for it in items):
-            markets = [
-                None if it.get("market") in (None, "nan") else str(it.get("market"))
-                for it in items
-            ]
+            markets = [None if it.get("market") in (None, "nan") else str(it.get("market")) for it in items]
         if all(("sector" in it) for it in items):
-            sectors = [
-                None if it.get("sector") in (None, "nan") else str(it.get("sector"))
-                for it in items
-            ]
+            sectors = [None if it.get("sector") in (None, "nan") else str(it.get("sector")) for it in items]
     except Exception:
         markets = None
         sectors = None
@@ -1194,9 +1154,7 @@ def _resolve_dl_params(final_config: DictConfig) -> dict:
     pf_env = int(os.getenv("PREFETCH_FACTOR", "2"))
     pm_env = os.getenv("PIN_MEMORY", "0").lower() in ("1", "true", "yes")
     pw_env = os.getenv("PERSISTENT_WORKERS", "0").lower() in ("1", "true", "yes")
-    mp_ctx_env = os.getenv(
-        "MULTIPROCESSING_CONTEXT", "spawn"
-    )  # Default to spawn for safety
+    mp_ctx_env = os.getenv("MULTIPROCESSING_CONTEXT", "spawn")  # Default to spawn for safety
 
     params = {
         "num_workers": int(nw_cfg) if nw_cfg is not None else nw_env,
@@ -1230,9 +1188,7 @@ def _enforce_safe_dataloader_config(cfg: DictConfig) -> None:
     aborts observed in production runs.
     """
 
-    loader_mode = (
-        (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
-    )
+    loader_mode = (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto").strip().lower()
     if loader_mode in ("", "auto", "1", "true", "yes", "multi"):
         return
     # Any other value (0/false/safe) enforces single-process mode
@@ -1323,9 +1279,7 @@ def _apply_thread_caps(num_workers: int) -> None:
 
 
 # ===== NaN/Inf guard utilities =====
-def _finite_or_nan_fix_tensor(
-    t: torch.Tensor, name: str, clamp: float | None = None
-) -> torch.Tensor:
+def _finite_or_nan_fix_tensor(t: torch.Tensor, name: str, clamp: float | None = None) -> torch.Tensor:
     try:
         if not torch.isfinite(t).all():
             bad = (~torch.isfinite(t)).sum().item()
@@ -1439,9 +1393,7 @@ class MultiHorizonLoss(nn.Module):
         self.listnet_topk = int(listnet_topk) if listnet_topk is not None else None
         self.use_t_nll = use_t_nll
         self.nll_weight = float(nll_weight)
-        self.use_crps = (
-            self.use_pinball
-        )  # CRPS ~ 分位損失の積分近似（ここではPinball和をCRPS近似とする）
+        self.use_crps = self.use_pinball  # CRPS ~ 分位損失の積分近似（ここではPinball和をCRPS近似とする）
         # Robust/weighting options
         self.use_huber = bool(use_huber)
         self.huber_delta = float(huber_delta)
@@ -1477,10 +1429,7 @@ class MultiHorizonLoss(nn.Module):
             # 正規化して保持（合計1）
             try:
                 s = float(sum(float(v) for v in horizon_weights.values()))
-                self._preset_weights = {
-                    int(k): float(v) / (s if s > 0 else 1.0)
-                    for k, v in horizon_weights.items()
-                }
+                self._preset_weights = {int(k): float(v) / (s if s > 0 else 1.0) for k, v in horizon_weights.items()}
             except Exception:
                 self._preset_weights = None
         self.use_dynamic_weighting = bool(use_dynamic_weighting)
@@ -1492,11 +1441,7 @@ class MultiHorizonLoss(nn.Module):
         self._current_epoch: int | None = None
         # Aux heads
         self.direction_aux_weight = float(direction_aux_weight)
-        self._bce = (
-            nn.BCEWithLogitsLoss(reduction="mean")
-            if self.direction_aux_weight > 0
-            else None
-        )
+        self._bce = nn.BCEWithLogitsLoss(reduction="mean") if self.direction_aux_weight > 0 else None
         self.sigma_weighting_lambda = float(sigma_weighting_lambda)
         # 予測分散ペナルティ
         self.pred_var_min = float(pred_var_min)
@@ -1504,9 +1449,7 @@ class MultiHorizonLoss(nn.Module):
         self._warned_empty = False
 
     @staticmethod
-    def _masked_mean(
-        x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-8
-    ) -> torch.Tensor:
+    def _masked_mean(x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
         """Compute masked mean, excluding invalid values"""
         if mask is None:
             return torch.mean(x)
@@ -1517,18 +1460,14 @@ class MultiHorizonLoss(nn.Module):
             return torch.zeros((), dtype=x.dtype, device=x.device, requires_grad=True)
         return (x * mask).sum() / (s + eps)
 
-    def _pinball_loss(
-        self, yhat: torch.Tensor, y: torch.Tensor, mask: torch.Tensor = None
-    ) -> torch.Tensor:
+    def _pinball_loss(self, yhat: torch.Tensor, y: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         losses = []
         for q in self.quantiles:
             e = y - yhat
             losses.append(torch.maximum(q * e, (q - 1) * e))
         return self._masked_mean(torch.stack(losses, dim=0), mask)
 
-    def _coerce_point_prediction(
-        self, yhat: torch.Tensor, target: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def _coerce_point_prediction(self, yhat: torch.Tensor, target: torch.Tensor | None = None) -> torch.Tensor:
         """Ensure prediction tensor matches target shape for point losses."""
         if not torch.is_tensor(yhat):
             return yhat
@@ -1541,15 +1480,11 @@ class MultiHorizonLoss(nn.Module):
         if result.dim() >= 1:
             last_dim = result.shape[-1]
             if target_last_dim == 1 and last_dim != 1:
-                if self._median_quantile_index is not None and last_dim == len(
-                    self.quantiles
-                ):
+                if self._median_quantile_index is not None and last_dim == len(self.quantiles):
                     result = result[..., self._median_quantile_index]
                 else:
                     result = result.mean(dim=-1)
-            elif self._median_quantile_index is not None and last_dim == len(
-                self.quantiles
-            ):
+            elif self._median_quantile_index is not None and last_dim == len(self.quantiles):
                 result = result[..., self._median_quantile_index]
 
             if result.dim() >= 1 and result.shape[-1] == 1:
@@ -1558,11 +1493,7 @@ class MultiHorizonLoss(nn.Module):
         if target is not None and torch.is_tensor(target):
             while target.dim() > result.dim():
                 result = result.unsqueeze(-1)
-            if (
-                target.dim() == result.dim()
-                and target_last_dim == 1
-                and (result.shape[-1] != 1)
-            ):
+            if target.dim() == result.dim() and target_last_dim == 1 and (result.shape[-1] != 1):
                 result = result.unsqueeze(-1)
 
         return result
@@ -1678,16 +1609,12 @@ class MultiHorizonLoss(nn.Module):
             sel = g == gid
             if sel.sum() < 2:
                 continue
-            penalties.append(
-                self._sharpe_penalty_single_group(preds[sel], targets[sel])
-            )
+            penalties.append(self._sharpe_penalty_single_group(preds[sel], targets[sel]))
         if not penalties:
             return yhat.new_zeros(())
         return torch.stack(penalties).mean()
 
-    def _sharpe_penalty_single_group(
-        self, preds: torch.Tensor, targets: torch.Tensor
-    ) -> torch.Tensor:
+    def _sharpe_penalty_single_group(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Compute Sharpe-style penalty for a single cross-sectional slice."""
         eps = self.sharpe_eps
         preds = preds.float()
@@ -1707,9 +1634,7 @@ class MultiHorizonLoss(nn.Module):
         return -sharpe
 
     @staticmethod
-    def _build_valid_index(
-        yhat: torch.Tensor, y: torch.Tensor, mask: torch.Tensor | None
-    ) -> torch.Tensor:
+    def _build_valid_index(yhat: torch.Tensor, y: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
         base = torch.isfinite(yhat) & torch.isfinite(y)
         if mask is not None and torch.is_tensor(mask):
             m = mask
@@ -1751,17 +1676,13 @@ class MultiHorizonLoss(nn.Module):
             sel = g == gid
             if sel.sum() < 3:
                 continue
-            losses.append(
-                self._pairwise_rank_loss_single(preds[sel], targets[sel], sample_ratio)
-            )
+            losses.append(self._pairwise_rank_loss_single(preds[sel], targets[sel], sample_ratio))
         if not losses:
             return yhat.new_zeros(())
         return torch.stack(losses).mean()
 
     @staticmethod
-    def _pairwise_rank_loss_single(
-        yhat: torch.Tensor, y: torch.Tensor, sample_ratio: float = 0.25
-    ) -> torch.Tensor:
+    def _pairwise_rank_loss_single(yhat: torch.Tensor, y: torch.Tensor, sample_ratio: float = 0.25) -> torch.Tensor:
         """RankNet 型のペアワイズロス（日次クロスセクション内）
 
         損失: softplus(-s * (yhat_i - yhat_j)) の平均。
@@ -1783,9 +1704,7 @@ class MultiHorizonLoss(nn.Module):
         i_idx = perm[:m]
         j_idx = perm[m : 2 * m]
         if j_idx.numel() < i_idx.numel():
-            extra = torch.randint(
-                0, n, (i_idx.numel() - j_idx.numel(),), device=y.device
-            )
+            extra = torch.randint(0, n, (i_idx.numel() - j_idx.numel(),), device=y.device)
             j_idx = torch.cat([j_idx, extra], dim=0)
 
         yi = y[i_idx]
@@ -1857,17 +1776,13 @@ class MultiHorizonLoss(nn.Module):
             sel = g == gid
             if sel.sum() < 2:
                 continue
-            losses.append(
-                self._listnet_loss_single(preds[sel], targets[sel], tau, topk)
-            )
+            losses.append(self._listnet_loss_single(preds[sel], targets[sel], tau, topk))
         if not losses:
             return yhat.new_zeros(())
         return torch.stack(losses).mean()
 
     @staticmethod
-    def _listnet_loss_single(
-        scores: torch.Tensor, labels: torch.Tensor, tau: float, topk: int | None
-    ) -> torch.Tensor:
+    def _listnet_loss_single(scores: torch.Tensor, labels: torch.Tensor, tau: float, topk: int | None) -> torch.Tensor:
         """ListNet式のクロスセクション損失（softmax重み付きクロスエントロピー）"""
         scores = scores.view(-1).float()
         labels = labels.view(-1).float()
@@ -1980,9 +1895,7 @@ class MultiHorizonLoss(nn.Module):
         rank = 1.0 + P.sum(dim=1)  # [N]
         return rank
 
-    def _spearman_loss_per_group(
-        self, yhat: torch.Tensor, y: torch.Tensor
-    ) -> torch.Tensor:
+    def _spearman_loss_per_group(self, yhat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """グループ（日）ごとのSpearman相関損失"""
         n = yhat.size(0)
         if n < 10:  # 小サンプルスキップ
@@ -2011,9 +1924,7 @@ class MultiHorizonLoss(nn.Module):
         rho = (sr * yr).mean()
         return 1.0 - rho  # maximize ρ → minimize 1-ρ
 
-    def _r2_penalty(
-        self, yhat: torch.Tensor, X: torch.Tensor, lambda_reg: float = None
-    ) -> torch.Tensor:
+    def _r2_penalty(self, yhat: torch.Tensor, X: torch.Tensor, lambda_reg: float = None) -> torch.Tensor:
         """R²型露出ペナルティ（Ridge回帰ベース）"""
         if lambda_reg is None:
             lambda_reg = self.exposure_lambda_reg
@@ -2038,9 +1949,7 @@ class MultiHorizonLoss(nn.Module):
         r2 = (y_pred**2).sum() / ((yhat**2).sum() + 1e-8)
         return r2  # minimize R²
 
-    def _turnover_penalty(
-        self, preds: torch.Tensor, sids: torch.Tensor, horizon: int
-    ) -> torch.Tensor:
+    def _turnover_penalty(self, preds: torch.Tensor, sids: torch.Tensor, horizon: int) -> torch.Tensor:
         """回転率ペナルティ（勾配修正版）"""
         losses = []
         em = self._ema_state[horizon]
@@ -2055,9 +1964,7 @@ class MultiHorizonLoss(nn.Module):
                 prev = p.detach()  # 初回のみdetach
 
             # EMA更新（ここでdetach）
-            em[sid_key] = (
-                self.turnover_alpha * prev + (1 - self.turnover_alpha) * p.detach()
-            )
+            em[sid_key] = self.turnover_alpha * prev + (1 - self.turnover_alpha) * p.detach()
 
         if len(losses) == 0:
             return preds.new_tensor(0.0)
@@ -2123,9 +2030,7 @@ class MultiHorizonLoss(nn.Module):
         """
         # Unwrap nested structure if caller passed the model's full output dict
         try:
-            if isinstance(predictions, dict) and isinstance(
-                predictions.get("predictions"), dict
-            ):
+            if isinstance(predictions, dict) and isinstance(predictions.get("predictions"), dict):
                 predictions = predictions["predictions"]
         except Exception:
             pass
@@ -2160,17 +2065,13 @@ class MultiHorizonLoss(nn.Module):
                     if torch.is_tensor(group_val):
                         group_tensor = group_val.to(device=device, non_blocking=True)
                     else:
-                        group_tensor = torch.as_tensor(
-                            group_val, device=device, dtype=torch.long
-                        )
+                        group_tensor = torch.as_tensor(group_val, device=device, dtype=torch.long)
             except Exception:
                 group_tensor = None
             if group_tensor is None:
                 date_val = batch_metadata.get("date")
                 try:
-                    if date_val is not None and not isinstance(
-                        date_val, (list, tuple, torch.Tensor)
-                    ):
+                    if date_val is not None and not isinstance(date_val, (list, tuple, torch.Tensor)):
                         logger.debug(
                             "[TRAIN-DIAG] raw date_val type=%s value=%s",
                             type(date_val),
@@ -2211,9 +2112,7 @@ class MultiHorizonLoss(nn.Module):
                             self._diag_next_group = gid + 1
                         group_ids.append(gid)
                     if group_ids:
-                        group_tensor = torch.tensor(
-                            group_ids, device=device, dtype=torch.long
-                        )
+                        group_tensor = torch.tensor(group_ids, device=device, dtype=torch.long)
                         logger.info(
                             "[TRAIN-DIAG] derived group ids from date (len=%d device=%s)",
                             len(group_ids),
@@ -2225,22 +2124,16 @@ class MultiHorizonLoss(nn.Module):
                     if torch.is_tensor(sid_val):
                         sid_tensor = sid_val.to(device=device, non_blocking=True)
                     else:
-                        sid_tensor = torch.as_tensor(
-                            sid_val, device=device, dtype=torch.long
-                        )
+                        sid_tensor = torch.as_tensor(sid_val, device=device, dtype=torch.long)
             except Exception:
                 sid_tensor = None
             try:
                 exp_val = batch_metadata.get("exposures")
                 if exp_val is not None:
                     if torch.is_tensor(exp_val):
-                        exposure_tensor = exp_val.to(
-                            device=device, dtype=torch.float32, non_blocking=True
-                        )
+                        exposure_tensor = exp_val.to(device=device, dtype=torch.float32, non_blocking=True)
                     else:
-                        exposure_tensor = torch.as_tensor(
-                            exp_val, device=device, dtype=torch.float32
-                        )
+                        exposure_tensor = torch.as_tensor(exp_val, device=device, dtype=torch.float32)
             except Exception:
                 exposure_tensor = None
         total_loss = torch.zeros(1, device=device, dtype=dtype).requires_grad_()
@@ -2262,15 +2155,11 @@ class MultiHorizonLoss(nn.Module):
         )
         if diag_enabled:
             try:
-                diag_max_batches = max(
-                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2"))
-                )
+                diag_max_batches = max(0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2")))
             except Exception:
                 diag_max_batches = 2
             try:
-                diag_max_epochs = max(
-                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1"))
-                )
+                diag_max_epochs = max(0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1")))
             except Exception:
                 diag_max_epochs = 1
             try:
@@ -2282,9 +2171,7 @@ class MultiHorizonLoss(nn.Module):
             diag_max_epochs = 0
             diag_warn_std = 0.0
         diag_mode = "train" if self.training else "eval"
-        diag_counter_attr = (
-            "_diag_count_train" if diag_mode == "train" else "_diag_count_eval"
-        )
+        diag_counter_attr = "_diag_count_train" if diag_mode == "train" else "_diag_count_eval"
         if not hasattr(self, diag_counter_attr):
             setattr(self, diag_counter_attr, 0)
         current_epoch = getattr(self, "_current_epoch", 0)
@@ -2353,9 +2240,7 @@ class MultiHorizonLoss(nn.Module):
                 group_vec,
                 exposure_vec,
                 sid_vec,
-            ) = self._prepare_group_vectors(
-                yhat, y, mask, group_tensor, exposure_tensor, sid_tensor
-            )
+            ) = self._prepare_group_vectors(yhat, y, mask, group_tensor, exposure_tensor, sid_tensor)
             if (
                 diag_enabled
                 and diag_max_batches > 0
@@ -2373,21 +2258,9 @@ class MultiHorizonLoss(nn.Module):
                             diag_counter,
                             diag_max_batches,
                         )
-                        yhat_cpu = (
-                            yhat_vec.detach()
-                            .to("cpu", non_blocking=True)
-                            .float()
-                            .view(-1)
-                        )
-                        y_cpu = (
-                            y_vec.detach().to("cpu", non_blocking=True).float().view(-1)
-                        )
-                        group_cpu = (
-                            group_vec.detach()
-                            .to("cpu", non_blocking=True)
-                            .view(-1)
-                            .to(torch.long)
-                        )
+                        yhat_cpu = yhat_vec.detach().to("cpu", non_blocking=True).float().view(-1)
+                        y_cpu = y_vec.detach().to("cpu", non_blocking=True).float().view(-1)
+                        group_cpu = group_vec.detach().to("cpu", non_blocking=True).view(-1).to(torch.long)
                         if mask_vec is not None and torch.is_tensor(mask_vec):
                             mask_cpu = mask_vec.detach().to("cpu", non_blocking=True)
                             if mask_cpu.dtype != torch.bool:
@@ -2400,11 +2273,7 @@ class MultiHorizonLoss(nn.Module):
                         yhat_np = yhat_cpu.numpy()
                         y_np = y_cpu.numpy()
                         group_np = group_cpu.numpy()
-                        if (
-                            yhat_np.size > 0
-                            and y_np.size == yhat_np.size
-                            and group_np.size == yhat_np.size
-                        ):
+                        if yhat_np.size > 0 and y_np.size == yhat_np.size and group_np.size == yhat_np.size:
                             logger.info(
                                 "[TRAIN-DIAG] debug sizes mode=%s h=%s yhat=%d groups=%d",
                                 diag_mode,
@@ -2422,12 +2291,8 @@ class MultiHorizonLoss(nn.Module):
                                 if cnt <= 1:
                                     continue
                                 mask_sel = group_np == g
-                                per_pred_std.append(
-                                    float(np.std(yhat_np[mask_sel]) + 1e-12)
-                                )
-                                per_targ_std.append(
-                                    float(np.std(y_np[mask_sel]) + 1e-12)
-                                )
+                                per_pred_std.append(float(np.std(yhat_np[mask_sel]) + 1e-12))
+                                per_targ_std.append(float(np.std(y_np[mask_sel]) + 1e-12))
                             if per_pred_std:
                                 pred_mean = float(np.mean(per_pred_std))
                                 pred_min = float(np.min(per_pred_std))
@@ -2474,9 +2339,7 @@ class MultiHorizonLoss(nn.Module):
                             )
                         setattr(self, diag_counter_attr, diag_counter + 1)
                     except Exception as _diag_exc:
-                        logger.warning(
-                            "[TRAIN-DIAG] logging skipped due to error: %s", _diag_exc
-                        )
+                        logger.warning("[TRAIN-DIAG] logging skipped due to error: %s", _diag_exc)
                 else:
                     logger.info(
                         "[TRAIN-DIAG] mode=%s horizon=%s reached diag limit (%d)",
@@ -2503,9 +2366,7 @@ class MultiHorizonLoss(nn.Module):
                     pass
             # Huber mix（外れ値ロバスト化）
             if self.use_huber and self.huber_weight > 0.0:
-                hub = torch.nn.functional.smooth_l1_loss(
-                    yhat, y, beta=self.huber_delta, reduction="mean"
-                )
+                hub = torch.nn.functional.smooth_l1_loss(yhat, y, beta=self.huber_delta, reduction="mean")
                 loss = (1.0 - self.huber_weight) * loss + self.huber_weight * hub
             # Pinball（任意）
             if self.use_pinball and self.pinball_weight > 0:
@@ -2516,27 +2377,21 @@ class MultiHorizonLoss(nn.Module):
                 q_out = predictions[q_key]
                 if q_out.dim() == yhat.dim() + 1:
                     # 非交差は学習で担保できないため、単調化を後段で行う前提の簡易近似
-                    quantiles = torch.sigmoid(
-                        torch.linspace(0.05, 0.95, q_out.shape[-1], device=q_out.device)
-                    )
+                    quantiles = torch.sigmoid(torch.linspace(0.05, 0.95, q_out.shape[-1], device=q_out.device))
                     y_expand = y.unsqueeze(-1)
                     e = y_expand - q_out
                     pinball = torch.maximum(quantiles * e, (quantiles - 1) * e)
                     loss = loss + self.pinball_weight * torch.mean(pinball)
             if self.use_sharpe and self.sharpe_weight > 0.0:
                 try:
-                    sharpe_pen = self._sharpe_penalty(
-                        yhat_vec, y_vec, mask_vec, group_vec
-                    )
+                    sharpe_pen = self._sharpe_penalty(yhat_vec, y_vec, mask_vec, group_vec)
                     if torch.isfinite(sharpe_pen):
                         loss = loss + self.sharpe_weight * sharpe_pen
                 except Exception:
                     pass
             # RankIC（任意）
             if self.use_rankic and self.rankic_weight > 0:
-                loss = loss + self.rankic_weight * self._rankic_penalty_grouped(
-                    yhat_vec, y_vec, mask_vec, group_vec
-                )
+                loss = loss + self.rankic_weight * self._rankic_penalty_grouped(yhat_vec, y_vec, mask_vec, group_vec)
             # 追加: ペアワイズ順位ロス（任意）
             if self.use_pairwise_rank and self.pairwise_rank_weight > 0.0:
                 try:
@@ -2567,14 +2422,8 @@ class MultiHorizonLoss(nn.Module):
                     pass
             # CS-IC 補助ロス（順位整合/相関強化）
             if self.use_cs_ic and self.cs_ic_weight > 0:
-                loss = loss + self.cs_ic_weight * self._cs_ic_loss_grouped(
-                    yhat_vec, y_vec, group_vec, mask_vec
-                )
-            if (
-                self.use_exposure_neutral
-                and self.exposure_weight > 0.0
-                and exposure_vec is not None
-            ):
+                loss = loss + self.cs_ic_weight * self._cs_ic_loss_grouped(yhat_vec, y_vec, group_vec, mask_vec)
+            if self.use_exposure_neutral and self.exposure_weight > 0.0 and exposure_vec is not None:
                 try:
                     exp_yhat = yhat_vec
                     exp_X = exposure_vec
@@ -2590,11 +2439,7 @@ class MultiHorizonLoss(nn.Module):
                         loss = loss + self.exposure_weight * exp_pen
                 except Exception:
                     pass
-            if (
-                self.use_turnover_penalty
-                and self.turnover_weight > 0.0
-                and sid_vec is not None
-            ):
+            if self.use_turnover_penalty and self.turnover_weight > 0.0 and sid_vec is not None:
                 try:
                     turn_pen = self._turnover_penalty(yhat_vec, sid_vec, horizon)
                     if torch.isfinite(turn_pen):
@@ -2609,23 +2454,16 @@ class MultiHorizonLoss(nn.Module):
                     mu_t = t_params[..., 0].squeeze(-1)
                     sigma_raw = t_params[..., 1].squeeze(-1)
                     nu_raw = t_params[..., 2].squeeze(-1)
-                    loss = loss + self.nll_weight * self._student_t_nll(
-                        mu_t, sigma_raw, nu_raw, y
-                    )
+                    loss = loss + self.nll_weight * self._student_t_nll(mu_t, sigma_raw, nu_raw, y)
             # σによる誤差重み（オプション）: λ * E[|e| / σ]
             if self.sigma_weighting_lambda > 0.0 and t_key in predictions:
                 t_params = predictions[t_key]
                 if t_params.shape[-1] >= 2:
-                    sigma = (
-                        torch.nn.functional.softplus(t_params[..., 1].squeeze(-1))
-                        + 1e-6
-                    )
+                    sigma = torch.nn.functional.softplus(t_params[..., 1].squeeze(-1)) + 1e-6
                     # Avoid under/overflow in bf16/amp
                     sigma = torch.clamp(sigma, 1e-4, 1e3)
                     abs_err = torch.abs(yhat - y)
-                    loss = loss + self.sigma_weighting_lambda * torch.mean(
-                        abs_err / sigma
-                    )
+                    loss = loss + self.sigma_weighting_lambda * torch.mean(abs_err / sigma)
             # 方向分類の補助損失（BCE with logits）
             if self.direction_aux_weight > 0.0 and self._bce is not None:
                 dir_key = f"direction_horizon_{horizon}"
@@ -2645,23 +2483,15 @@ class MultiHorizonLoss(nn.Module):
                 # Analysis showed these horizons are most important for performance
                 # Can be overridden with env vars: HORIZON_WEIGHT_1D, HORIZON_WEIGHT_5D, etc.
                 if int(horizon) == 1:
-                    weight = float(
-                        os.getenv("HORIZON_WEIGHT_1D", "1.0")
-                    )  # Maximum weight for 1-day
+                    weight = float(os.getenv("HORIZON_WEIGHT_1D", "1.0"))  # Maximum weight for 1-day
                     if self.h1_loss_mult != 1.0:
                         weight = weight * self.h1_loss_mult
                 elif int(horizon) == 5:
-                    weight = float(
-                        os.getenv("HORIZON_WEIGHT_5D", "0.6")
-                    )  # High weight for 5-day (was ~0.45)
+                    weight = float(os.getenv("HORIZON_WEIGHT_5D", "0.6"))  # High weight for 5-day (was ~0.45)
                 elif int(horizon) == 10:
-                    weight = float(
-                        os.getenv("HORIZON_WEIGHT_10D", "0.3")
-                    )  # Moderate weight for 10-day (was ~0.32)
+                    weight = float(os.getenv("HORIZON_WEIGHT_10D", "0.3"))  # Moderate weight for 10-day (was ~0.32)
                 elif int(horizon) == 20:
-                    weight = float(
-                        os.getenv("HORIZON_WEIGHT_20D", "0.2")
-                    )  # Lower weight for 20-day (was ~0.22)
+                    weight = float(os.getenv("HORIZON_WEIGHT_20D", "0.2"))  # Lower weight for 20-day (was ~0.22)
                 else:
                     # Fallback for other horizons
                     weight = 1.0 / np.sqrt(horizon)
@@ -2695,15 +2525,11 @@ class MultiHorizonLoss(nn.Module):
                             data_ts = torch.tensor(0.0)
 
                         # 鮮度を日数で計算
-                        staleness_days = (batch_ts - data_ts).item() / (
-                            24 * 3600
-                        )  # 秒から日数に変換
+                        staleness_days = (batch_ts - data_ts).item() / (24 * 3600)  # 秒から日数に変換
                         self._staleness_days_list.append(staleness_days)
 
                         # 鮮度の統計情報をログ出力
-                        if (
-                            len(self._staleness_days_list) % 100 == 0
-                        ):  # 100バッチごとにログ
+                        if len(self._staleness_days_list) % 100 == 0:  # 100バッチごとにログ
                             avg_staleness = np.mean(self._staleness_days_list[-100:])
                             max_staleness = np.max(self._staleness_days_list[-100:])
                             logger.info(
@@ -2715,9 +2541,7 @@ class MultiHorizonLoss(nn.Module):
                         logger.warning(f"Failed to calculate data staleness: {e}")
                         self._staleness_days_list.append(0.0)
 
-                    rmse = (
-                        torch.sqrt(torch.mean((yhat - y) ** 2)).detach().float().item()
-                    )
+                    rmse = torch.sqrt(torch.mean((yhat - y) ** 2)).detach().float().item()
                     prev = self._ema_rmse.get(int(horizon), None)
                     if prev is None:
                         self._ema_rmse[int(horizon)] = rmse
@@ -2732,9 +2556,7 @@ class MultiHorizonLoss(nn.Module):
             self._warned_empty = False
         else:
             if not self._warned_empty:
-                logger.error(
-                    "[loss] No matching horizons found in predictions/targets; returning zero loss."
-                )
+                logger.error("[loss] No matching horizons found in predictions/targets; returning zero loss.")
                 self._warned_empty = True
 
         # Ensure scalar output
@@ -2773,9 +2595,7 @@ class MultiHorizonLoss(nn.Module):
             return sharpe.item()
 
     @staticmethod
-    def compute_ic(
-        predictions: torch.Tensor, targets: torch.Tensor, debug_prefix=""
-    ) -> float:
+    def compute_ic(predictions: torch.Tensor, targets: torch.Tensor, debug_prefix="") -> float:
         """Compute Information Coefficient (IC)"""
         with torch.no_grad():
             # Flatten tensors
@@ -2802,12 +2622,8 @@ class MultiHorizonLoss(nn.Module):
                     logger.warning(
                         f"[IC-WARN] {debug_prefix} - Insufficient valid samples: {valid_count}/{total_count}"
                     )
-                    logger.warning(
-                        f"[IC-WARN] {debug_prefix} - pred NaN: {pred_has_nan}, pred Inf: {pred_has_inf}"
-                    )
-                    logger.warning(
-                        f"[IC-WARN] {debug_prefix} - targ NaN: {targ_has_nan}, targ Inf: {targ_has_inf}"
-                    )
+                    logger.warning(f"[IC-WARN] {debug_prefix} - pred NaN: {pred_has_nan}, pred Inf: {pred_has_inf}")
+                    logger.warning(f"[IC-WARN] {debug_prefix} - targ NaN: {targ_has_nan}, targ Inf: {targ_has_inf}")
                     if total_count > 0:
                         logger.warning(
                             f"[IC-WARN] {debug_prefix} - pred range: [{pred_flat.min().item():.6f}, {pred_flat.max().item():.6f}]"
@@ -2926,9 +2742,7 @@ class MultiHorizonLoss(nn.Module):
             return
         try:
             s = float(sum(float(v) for v in weights.values()))
-            self._preset_weights = {
-                int(k): float(v) / (s if s > 0 else 1.0) for k, v in weights.items()
-            }
+            self._preset_weights = {int(k): float(v) / (s if s > 0 else 1.0) for k, v in weights.items()}
         except Exception:
             self._preset_weights = None
 
@@ -2940,9 +2754,7 @@ class MultiHorizonLoss(nn.Module):
         """データのタイムスタンプを設定（データ鮮度計算用）"""
         self.current_batch_timestamp = torch.tensor(batch_timestamp)
         self.data_last_updated = torch.tensor(data_last_updated)
-        logger.info(
-            f"Data timestamps set: batch={batch_timestamp}, last_updated={data_last_updated}"
-        )
+        logger.info(f"Data timestamps set: batch={batch_timestamp}, last_updated={data_last_updated}")
 
     def get_staleness_stats(self) -> dict:
         """データ鮮度の統計情報を取得"""
@@ -2970,12 +2782,8 @@ class SimpleLSTM(nn.Module):
         # 可変入力次元を吸収する投影（features[..., F] -> input_size）
         self.lstm_in_dim = int(input_size)
         self.input_proj = nn.LazyLinear(self.lstm_in_dim, bias=False)
-        self.lstm = nn.LSTM(
-            self.lstm_in_dim, hidden_size, num_layers, batch_first=True, dropout=0.1
-        )
-        self.fc_dict = nn.ModuleDict(
-            {f"horizon_{h}": nn.Linear(hidden_size, 1) for h in [1, 5, 10, 20]}
-        )
+        self.lstm = nn.LSTM(self.lstm_in_dim, hidden_size, num_layers, batch_first=True, dropout=0.1)
+        self.fc_dict = nn.ModuleDict({f"horizon_{h}": nn.Linear(hidden_size, 1) for h in [1, 5, 10, 20]})
 
     def forward(self, x):
         # x: [B,T,F]（Fは可変）→ 射影
@@ -2984,9 +2792,7 @@ class SimpleLSTM(nn.Module):
         last_hidden = lstm_out[:, -1, :]
         outputs = {}
         for horizon in [1, 5, 10, 20]:
-            outputs[f"horizon_{horizon}"] = self.fc_dict[f"horizon_{horizon}"](
-                last_hidden
-            ).squeeze(-1)
+            outputs[f"horizon_{horizon}"] = self.fc_dict[f"horizon_{horizon}"](last_hidden).squeeze(-1)
         return outputs
 
 
@@ -3000,9 +2806,7 @@ def _set_requires_grad(module: nn.Module | None, requires_grad: bool) -> None:
         pass
 
 
-def _maybe_apply_temporal_encoder_freeze(
-    model: torch.nn.Module, epoch: int | float
-) -> None:
+def _maybe_apply_temporal_encoder_freeze(model: torch.nn.Module, epoch: int | float) -> None:
     freeze_flag = os.getenv("FREEZE_TEMPORAL_ENCODER", "0") == "1"
     if not freeze_flag or not hasattr(model, "tft"):
         return
@@ -3087,9 +2891,7 @@ def train_epoch(
         else torch.float16
     )
     # Autocast device type: avoid CUDA context on CPU-only runs
-    _amp_device = (
-        "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
-    )
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
 
     # Noise warmup (to prevent early constant collapse)
     try:
@@ -3125,9 +2927,7 @@ def train_epoch(
 
                 # Debug logging for first batch
                 if batch_idx == 0 and epoch == 0:
-                    logger.info(
-                        f"[feature-norm] Applied Z-score normalization with clip={clip_value}"
-                    )
+                    logger.info(f"[feature-norm] Applied Z-score normalization with clip={clip_value}")
                     logger.info(
                         f"[feature-norm] Feature stats after norm: mean={features.mean():.4f}, std={features.std():.4f}"
                     )
@@ -3148,15 +2948,11 @@ def train_epoch(
                 raw_keys = list(raw_targets.keys())
             except Exception:
                 raw_keys = []
-            logger.warning(
-                f"[train-phase] no canonical targets found; raw target keys={raw_keys}"
-            )
+            logger.warning(f"[train-phase] no canonical targets found; raw target keys={raw_keys}")
         # 有効マスク（任意）
         valid_masks = batch.get("valid_mask", None)
         if isinstance(valid_masks, dict):
-            valid_masks = {
-                k: v.to(device, non_blocking=True) for k, v in valid_masks.items()
-            }
+            valid_masks = {k: v.to(device, non_blocking=True) for k, v in valid_masks.items()}
         else:
             valid_masks = None
 
@@ -3168,9 +2964,7 @@ def train_epoch(
                     dates = batch["date"]
                     if torch.is_tensor(dates):
                         # Convert tensor dates to readable format if possible
-                        logger.info(
-                            f"[DEBUG] Date range in batch: {dates.min().item():.0f} - {dates.max().item():.0f}"
-                        )
+                        logger.info(f"[DEBUG] Date range in batch: {dates.min().item():.0f} - {dates.max().item():.0f}")
                     else:
                         logger.info(f"[DEBUG] Date info: {type(dates)}")
                 except:
@@ -3179,18 +2973,12 @@ def train_epoch(
         # （旧train_epoch経路）GAT融合α下限の設定はrun_training側で実施
 
         # Mixed Precision Training (最適化設定)
-        with torch.amp.autocast(
-            _amp_device, dtype=amp_dtype, enabled=use_amp, cache_enabled=False
-        ):
+        with torch.amp.autocast(_amp_device, dtype=amp_dtype, enabled=use_amp, cache_enabled=False):
             # Forward pass (no channels_last: 3D tensor)
             features = features.contiguous()
 
             # Optional: add small Gaussian noise to features for warmup
-            if (
-                feature_noise_std > 0.0
-                and epoch <= noise_warmup_epochs
-                and model.training
-            ):
+            if feature_noise_std > 0.0 and epoch <= noise_warmup_epochs and model.training:
                 try:
                     features = features + torch.randn_like(features) * feature_noise_std
                 except Exception:
@@ -3200,17 +2988,11 @@ def train_epoch(
             if batch_idx == 0 and epoch <= 2:
                 feat_mean = features.mean().item()
                 feat_std = features.std().item()
-                logger.debug(
-                    f"Input features: mean={feat_mean:.4f}, std={feat_std:.4f}"
-                )
+                logger.debug(f"Input features: mean={feat_mean:.4f}, std={feat_std:.4f}")
 
             try:
                 # 時系列Mixup（一定確率）
-                if (
-                    use_mixup
-                    and np.random.rand() < mixup_prob
-                    and features.shape[0] >= 2
-                ):
+                if use_mixup and np.random.rand() < mixup_prob and features.shape[0] >= 2:
                     lam = np.random.beta(mixup_alpha, mixup_alpha)
                     # シャッフルインデックス
                     idx = torch.randperm(features.size(0), device=features.device)
@@ -3235,22 +3017,11 @@ def train_epoch(
                 outputs = _reshape_to_batch_only(predictions_dict)
 
                 # Optional: add small Gaussian noise to outputs for warmup (point heads only)
-                if (
-                    output_noise_std > 0.0
-                    and epoch <= noise_warmup_epochs
-                    and model.training
-                ):
+                if output_noise_std > 0.0 and epoch <= noise_warmup_epochs and model.training:
                     try:
-                        for k in list(
-                            outputs.keys() if isinstance(outputs, dict) else []
-                        ):
-                            if k.startswith("point_horizon_") and torch.is_tensor(
-                                outputs[k]
-                            ):
-                                outputs[k] = (
-                                    outputs[k]
-                                    + torch.randn_like(outputs[k]) * output_noise_std
-                                )
+                        for k in list(outputs.keys() if isinstance(outputs, dict) else []):
+                            if k.startswith("point_horizon_") and torch.is_tensor(outputs[k]):
+                                outputs[k] = outputs[k] + torch.randn_like(outputs[k]) * output_noise_std
                     except Exception:
                         pass
             except torch.cuda.OutOfMemoryError:
@@ -3270,19 +3041,14 @@ def train_epoch(
                 _reshape_to_batch_only(
                     {
                         k: (v.float() if torch.is_tensor(v) else v)
-                        for k, v in (
-                            preds_raw.items() if isinstance(preds_raw, dict) else {}
-                        )
+                        for k, v in (preds_raw.items() if isinstance(preds_raw, dict) else {})
                     }
                 )
                 if isinstance(preds_raw, dict)
                 else preds_raw
             )
             targets_fp32 = _reshape_to_batch_only(
-                {
-                    k: (v.float() if torch.is_tensor(v) else v)
-                    for k, v in targets.items()
-                }
+                {k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()}
             )
 
             predictions_canon = _canonicalize_horizon_dict(
@@ -3291,9 +3057,7 @@ def train_epoch(
             targets_canon = _canonicalize_horizon_dict(targets_fp32)
 
             # Debug: Check for zero/invalid targets more frequently
-            if (
-                batch_idx < 100 and batch_idx % 10 == 0
-            ):  # Check every 10th batch for first 100 batches
+            if batch_idx < 100 and batch_idx % 10 == 0:  # Check every 10th batch for first 100 batches
                 logger.info(f"[DEBUG-BATCH-{batch_idx}] Checking target values:")
                 all_zeros = True
                 for k, v in targets_fp32.items():
@@ -3343,17 +3107,11 @@ def train_epoch(
                     total_values += v.numel()
 
             if batch_idx < 100 and total_nonzero == 0:
-                logger.warning(
-                    f"[ZERO-TARGET-BATCH-{batch_idx}] All {total_values} target values are zero!"
-                )
+                logger.warning(f"[ZERO-TARGET-BATCH-{batch_idx}] All {total_values} target values are zero!")
                 # Try to understand why
                 if "date" in batch:
                     logger.info(f"  Date: {batch.get('date', 'unknown')}")
-                if (
-                    "codes" in batch
-                    and isinstance(batch["codes"], list)
-                    and len(batch["codes"]) > 0
-                ):
+                if "codes" in batch and isinstance(batch["codes"], list) and len(batch["codes"]) > 0:
                     logger.info(f"  Sample codes: {batch['codes'][:5]}")
 
             loss_result = criterion(
@@ -3378,22 +3136,14 @@ def train_epoch(
                     sorted(predictions_fp32.keys())
                     if isinstance(predictions_fp32, dict)
                     else type(predictions_fp32).__name__,
-                    sorted(targets_fp32.keys())
-                    if isinstance(targets_fp32, dict)
-                    else type(targets_fp32).__name__,
+                    sorted(targets_fp32.keys()) if isinstance(targets_fp32, dict) else type(targets_fp32).__name__,
                 )
 
             # 追加: 各ホライゾンのvalid比率を低頻度でログ
             if (batch_idx % 200 == 0) and isinstance(valid_masks, dict):
                 try:
-                    ratios = {
-                        k: float(v.float().mean().item())
-                        for k, v in valid_masks.items()
-                        if torch.is_tensor(v)
-                    }
-                    logger.info(
-                        f"[valid-ratio] { {k: f'{r:.2%}' for k,r in ratios.items()} }"
-                    )
+                    ratios = {k: float(v.float().mean().item()) for k, v in valid_masks.items() if torch.is_tensor(v)}
+                    logger.info(f"[valid-ratio] { {k: f'{r:.2%}' for k,r in ratios.items()} }")
                 except Exception:
                     pass
 
@@ -3425,9 +3175,7 @@ def train_epoch(
                         pred = pred_dict[key].detach()
                         pred_mean = pred.mean().item()
                         pred_std = pred.std().item()
-                        logger.debug(
-                            f"Predictions h={h}: mean={pred_mean:.4f}, std={pred_std:.6f}"
-                        )
+                        logger.debug(f"Predictions h={h}: mean={pred_mean:.4f}, std={pred_std:.6f}")
 
         # 1バッチ目のみデバッグ（形状と平均損失） - 整形・安定化済み
         if batch_idx == 0 and epoch == 1:
@@ -3441,10 +3189,7 @@ def train_epoch(
                 for h in criterion.horizons:
                     pred_key = (
                         f"point_horizon_{h}"
-                        if any(
-                            k.startswith("point_horizon_")
-                            for k in stable_outputs.keys()
-                        )
+                        if any(k.startswith("point_horizon_") for k in stable_outputs.keys())
                         else f"horizon_{h}"
                     )
                     targ_key = f"horizon_{h}"
@@ -3462,9 +3207,7 @@ def train_epoch(
                         pred_t = _finite_or_nan_fix_tensor(pred_t)
                         targ_t = _finite_or_nan_fix_tensor(targ_t)
 
-                        mse_h = torch.nn.functional.mse_loss(
-                            pred_t, targ_t, reduction="mean"
-                        ).detach()
+                        mse_h = torch.nn.functional.mse_loss(pred_t, targ_t, reduction="mean").detach()
                         logger.info(
                             f"h={h} pred_shape={tuple(pred_t.shape)} targ_shape={tuple(targ_t.shape)} mse={mse_h.item():.6f}"
                         )
@@ -3517,9 +3260,7 @@ def train_epoch(
                     if p.grad is not None:
                         gat_norm_step += float(p.grad.data.norm().item())
                 last_gat_grad_norm = gat_norm_step
-                logger.info(
-                    f"[GAT-PARAM-GRAD] grad_norm(gat_params)={gat_norm_step:.6f}"
-                )
+                logger.info(f"[GAT-PARAM-GRAD] grad_norm(gat_params)={gat_norm_step:.6f}")
 
             optimizer.zero_grad(set_to_none=True)  # メモリ効率向上
             optimizer_steps += 1
@@ -3587,19 +3328,11 @@ def first_batch_probe(model, dataloader, device, n=3):
     # AMP local config
     use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
     amp_dtype = (
-        torch.bfloat16
-        if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
-        else torch.float16
+        torch.bfloat16 if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed") else torch.float16
     )
-    _amp_device = (
-        "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
-    )
-    _amp_device = (
-        "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
-    )
-    _amp_device = (
-        "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
-    )
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
 
     with torch.no_grad():
         for i, batch in enumerate(probe_loader):
@@ -3624,27 +3357,21 @@ def first_batch_probe(model, dataloader, device, n=3):
                     # Clip extreme values
                     clip_value = float(os.environ.get("FEATURE_CLIP_VALUE", "10.0"))
                     if clip_value > 0:
-                        features = torch.clamp(
-                            features, min=-clip_value, max=clip_value
-                        )
+                        features = torch.clamp(features, min=-clip_value, max=clip_value)
 
             logger.info(
                 f"Batch {i}: features shape={features.shape}, dtype={features.dtype}, mean={features.mean():.4f}, std={features.std():.4f}"
             )
 
             try:
-                with torch.amp.autocast(
-                    "cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False
-                ):
+                with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False):
                     outputs = model(features.contiguous())
 
                 # Sanitize and check outputs
                 if isinstance(outputs, dict):
                     for k, v in list(outputs.items()):
                         if torch.is_tensor(v):
-                            v = _finite_or_nan_fix_tensor(
-                                v, f"outputs[probe][{k}]", clamp=50.0
-                            )
+                            v = _finite_or_nan_fix_tensor(v, f"outputs[probe][{k}]", clamp=50.0)
                             # If sequence-shaped, take the last step
                             if v.dim() >= 2 and v.shape[-1] != 1:
                                 v = v[..., -1]
@@ -3652,13 +3379,9 @@ def first_batch_probe(model, dataloader, device, n=3):
                                 v = v.squeeze(-1)
                             outputs[k] = v
                             assert torch.isfinite(v).all(), f"Non-finite output in {k}"
-                            logger.info(
-                                f"  Output {k}: shape={tuple(v.shape)}, dtype={v.dtype}"
-                            )
+                            logger.info(f"  Output {k}: shape={tuple(v.shape)}, dtype={v.dtype}")
                 else:
-                    outputs = _finite_or_nan_fix_tensor(
-                        outputs, "outputs[probe]", clamp=50.0
-                    )
+                    outputs = _finite_or_nan_fix_tensor(outputs, "outputs[probe]", clamp=50.0)
                     if outputs.dim() >= 2 and outputs.shape[-1] != 1:
                         outputs = outputs[..., -1]
                     elif outputs.dim() >= 2 and outputs.shape[-1] == 1:
@@ -3694,11 +3417,7 @@ def first_batch_probe(model, dataloader, device, n=3):
                                 "min": output.min().item(),
                                 "max": output.max().item(),
                             }
-                        elif (
-                            isinstance(output, tuple)
-                            and len(output) > 0
-                            and isinstance(output[0], torch.Tensor)
-                        ):
+                        elif isinstance(output, tuple) and len(output) > 0 and isinstance(output[0], torch.Tensor):
                             intermediate_outputs[name] = {
                                 "mean": output[0].mean().item(),
                                 "std": output[0].std().item(),
@@ -3716,11 +3435,7 @@ def first_batch_probe(model, dataloader, device, n=3):
                 if hasattr(model, "tft"):
                     hooks.append(model.tft.register_forward_hook(get_hook("after_tft")))
                 if hasattr(model, "prediction_mlp"):
-                    hooks.append(
-                        model.prediction_mlp.register_forward_hook(
-                            get_hook("after_mlp")
-                        )
-                    )
+                    hooks.append(model.prediction_mlp.register_forward_hook(get_hook("after_mlp")))
 
                 outputs = model(features)
 
@@ -3776,16 +3491,12 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
     n_batches = 0
     total_samples = 0
     # Collect simple diagnostics
-    yhat_std_lists: dict[int, list[float]] = {
-        int(h): [] for h in getattr(criterion, "horizons", [])
-    }
+    yhat_std_lists: dict[int, list[float]] = {int(h): [] for h in getattr(criterion, "horizons", [])}
 
     # AMP local config（validate と揃える）
     use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
     amp_dtype = (
-        torch.bfloat16
-        if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
-        else torch.float16
+        torch.bfloat16 if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed") else torch.float16
     )
 
     try:
@@ -3799,14 +3510,10 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
                 valid_masks = batch.get("valid_mask", None)
 
                 # 数値安定化（validate 相当）
-                features = _finite_or_nan_fix_tensor(
-                    features, "features[quick]", clamp=50.0
-                )
+                features = _finite_or_nan_fix_tensor(features, "features[quick]", clamp=50.0)
 
                 # Check for valid data ratio in evaluation
-                eval_min_valid = float(
-                    os.getenv("EVAL_MIN_VALID_RATIO", "0.5")
-                )  # Lower threshold for quick eval
+                eval_min_valid = float(os.getenv("EVAL_MIN_VALID_RATIO", "0.5"))  # Lower threshold for quick eval
                 skip_batch = False
 
                 if isinstance(targets, dict):
@@ -3824,18 +3531,13 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
                         valid_ratio = valid_mask.float().mean().item()
                         valid_ratios.append(valid_ratio)
                         if valid_ratio < eval_min_valid:
-                            logger.warning(
-                                f"[quick-skip] {k}: valid={valid_ratio:.2%} < {eval_min_valid:.2%}"
-                            )
+                            logger.warning(f"[quick-skip] {k}: valid={valid_ratio:.2%} < {eval_min_valid:.2%}")
 
                         # Replace NaN/Inf with 0 (will be masked in loss)
                         tmp[k] = torch.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
                     targets = tmp
                     # Skip batch if average valid ratio is too low
-                    if (
-                        valid_ratios
-                        and sum(valid_ratios) / len(valid_ratios) < eval_min_valid
-                    ):
+                    if valid_ratios and sum(valid_ratios) / len(valid_ratios) < eval_min_valid:
                         skip_batch = True
                 elif targets is not None:
                     targets = torch.nan_to_num(
@@ -3848,16 +3550,12 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
                 if skip_batch:
                     continue
 
-                with torch.amp.autocast(
-                    "cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False
-                ):
+                with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_amp, cache_enabled=False):
                     outputs = model(features.contiguous())
                     if isinstance(outputs, dict):
                         for k, v in outputs.items():
                             if torch.is_tensor(v):
-                                outputs[k] = _finite_or_nan_fix_tensor(
-                                    v, f"outputs[quick][{k}]", clamp=50.0
-                                )
+                                outputs[k] = _finite_or_nan_fix_tensor(v, f"outputs[quick][{k}]", clamp=50.0)
                     # Quick diagnostics: collect per-horizon std of predictions
                     # Always use point predictions for std calculation, never t-params
                     try:
@@ -3873,29 +3571,21 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
                                 hk = int(h)
                                 pred_key = (
                                     f"point_horizon_{hk}"
-                                    if any(
-                                        k.startswith("point_horizon_")
-                                        for k in outputs.keys()
-                                    )
+                                    if any(k.startswith("point_horizon_") for k in outputs.keys())
                                     else f"horizon_{hk}"
                                 )
                                 if isinstance(outputs, dict) and pred_key in outputs:
                                     yhat = outputs[pred_key].detach().float().view(-1)
                                     std_val = float(yhat.std(unbiased=False).item())
                                     if (
-                                        std_val == std_val
-                                        and std_val >= 0
-                                        and std_val < 1e6
+                                        std_val == std_val and std_val >= 0 and std_val < 1e6
                                     ):  # finite and non-negative check
                                         yhat_std_lists[hk].append(std_val)
                     except Exception:
                         pass
                     # Ensure valid masks are on the same device
                     if isinstance(valid_masks, dict):
-                        valid_masks_device = {
-                            mk: mv.to(device, non_blocking=True)
-                            for mk, mv in valid_masks.items()
-                        }
+                        valid_masks_device = {mk: mv.to(device, non_blocking=True) for mk, mv in valid_masks.items()}
                     else:
                         valid_masks_device = None
                     preds_for_loss = _unwrap_predictions(outputs)
@@ -3909,9 +3599,7 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
 
                 # Sample-weighted accumulation to avoid batch-size bias
                 bs = int(features.size(0)) if hasattr(features, "size") else 1
-                total_loss += bs * float(
-                    loss.item() if hasattr(loss, "item") else float(loss)
-                )
+                total_loss += bs * float(loss.item() if hasattr(loss, "item") else float(loss))
                 n_batches += 1
                 total_samples += bs
     finally:
@@ -3925,14 +3613,10 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
 
     # Log reason if no valid batches or unusually high loss
     if n_batches == 0:
-        logger.warning(
-            "[quick-eval] No valid batches processed (all skipped due to low valid ratio)"
-        )
+        logger.warning("[quick-eval] No valid batches processed (all skipped due to low valid ratio)")
         avg_loss = 100.0  # Sentinel value
     elif avg_loss > 50.0:
-        logger.warning(
-            f"[quick-eval] Unusually high loss: {avg_loss:.2f} (possible numerical issue)"
-        )
+        logger.warning(f"[quick-eval] Unusually high loss: {avg_loss:.2f} (possible numerical issue)")
 
     # Summarize diagnostics
     diag = {"val_loss": avg_loss, "n_batches": n_batches}
@@ -3945,9 +3629,7 @@ def evaluate_quick(model, dataloader, criterion, device, max_batches=50):
     return diag
 
 
-def evaluate_model_metrics(
-    model, val_loader, criterion, device, target_scalers=None, max_batches=None
-):
+def evaluate_model_metrics(model, val_loader, criterion, device, target_scalers=None, max_batches=None):
     """モデルの詳細メトリクスを評価する関数"""
     model.eval()
     total_loss = 0.0
@@ -3978,9 +3660,7 @@ def evaluate_model_metrics(
                     # Clip extreme values
                     clip_value = float(os.environ.get("FEATURE_CLIP_VALUE", "10.0"))
                     if clip_value > 0:
-                        features = torch.clamp(
-                            features, min=-clip_value, max=clip_value
-                        )
+                        features = torch.clamp(features, min=-clip_value, max=clip_value)
 
             # Normalize and reshape targets for validation
             raw_targets = batch.get("targets", {})
@@ -3994,9 +3674,7 @@ def evaluate_model_metrics(
             targets = _reshape_to_batch_only(targets)
 
             if not targets:
-                logger.warning(
-                    f"[val-phase] no canonical targets found; raw target keys={list(raw_targets.keys())}"
-                )
+                logger.warning(f"[val-phase] no canonical targets found; raw target keys={list(raw_targets.keys())}")
                 continue
 
             outputs = model(features)
@@ -4017,31 +3695,21 @@ def evaluate_model_metrics(
                         )
 
                 if not point_preds:
-                    logger.info(
-                        "[quantile-agg] evaluate_model_metrics: falling back to manual mean aggregation"
-                    )
+                    logger.info("[quantile-agg] evaluate_model_metrics: falling back to manual mean aggregation")
                     for key, tensor in preds.items():
-                        if (
-                            torch.is_tensor(tensor)
-                            and tensor.dim() >= 2
-                            and tensor.size(-1) > 1
-                        ):
+                        if torch.is_tensor(tensor) and tensor.dim() >= 2 and tensor.size(-1) > 1:
                             point_tensor = tensor.mean(dim=-1)
                             point_preds[f"point_{key}"] = point_tensor
                             match = re.match(r"horizon_(\d+)(d)?$", key, re.IGNORECASE)
                             if match:
                                 horizon_int = match.group(1)
-                                point_preds[
-                                    f"point_horizon_{horizon_int}"
-                                ] = point_tensor
+                                point_preds[f"point_horizon_{horizon_int}"] = point_tensor
 
                 if point_preds:
                     preds.update(point_preds)
                     if isinstance(outputs, dict):
                         outputs.update(point_preds)
-                        if "predictions" in outputs and isinstance(
-                            outputs["predictions"], dict
-                        ):
+                        if "predictions" in outputs and isinstance(outputs["predictions"], dict):
                             outputs["predictions"].update(point_preds)
 
             # Ensure FP32 and proper shaping for loss computation
@@ -4056,10 +3724,7 @@ def evaluate_model_metrics(
                 else preds
             )
             targets_fp32 = _reshape_to_batch_only(
-                {
-                    k: (v.float() if torch.is_tensor(v) else v)
-                    for k, v in targets.items()
-                }
+                {k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()}
             )
 
             loss_result = criterion(outputs_fp32, targets_fp32, batch_metadata=batch)
@@ -4071,18 +3736,14 @@ def evaluate_model_metrics(
                 loss = loss_result
 
             try:
-                total_loss += float(
-                    loss.item() if hasattr(loss, "item") else float(loss)
-                )
+                total_loss += float(loss.item() if hasattr(loss, "item") else float(loss))
             except Exception:
                 pass
             n_batches += 1
 
             # 🔧 FIX (2025-10-30): Use outputs_fp32 (which has point predictions) for metrics
             # Previously used 'outputs' which was raw model output without point predictions
-            outputs_for_metrics = (
-                outputs_fp32 if isinstance(outputs_fp32, dict) else outputs
-            )
+            outputs_for_metrics = outputs_fp32 if isinstance(outputs_fp32, dict) else outputs
 
             # 予測とターゲットを保存
             for horizon in criterion.horizons:
@@ -4090,10 +3751,7 @@ def evaluate_model_metrics(
                 # Similar to validate() function logic (line 3485-3491)
                 pred_key = (
                     f"point_horizon_{horizon}"
-                    if any(
-                        k.startswith("point_horizon_")
-                        for k in outputs_for_metrics.keys()
-                    )
+                    if any(k.startswith("point_horizon_") for k in outputs_for_metrics.keys())
                     else f"horizon_{horizon}"
                 )
                 targ_key = f"horizon_{horizon}"
@@ -4107,15 +3765,11 @@ def evaluate_model_metrics(
                     pred = outputs_for_metrics[pred_key].detach().float()
                     if pred.dim() > 1:
                         # If still multi-dimensional (e.g., quantiles [B, Q]), aggregate
-                        logger.warning(
-                            f"Horizon {horizon}: Prediction shape {pred.shape} - aggregating quantiles"
-                        )
+                        logger.warning(f"Horizon {horizon}: Prediction shape {pred.shape} - aggregating quantiles")
                         pred = pred.mean(dim=-1)  # Average across quantiles
 
                     all_predictions[horizon].append(pred.cpu())
-                    all_targets[horizon].append(
-                        targets[targ_key].detach().float().cpu()
-                    )
+                    all_targets[horizon].append(targets[targ_key].detach().float().cpu())
 
     avg_loss = total_loss / n_batches if n_batches > 0 else 0.0
 
@@ -4135,9 +3789,7 @@ def evaluate_model_metrics(
         valid_mask = np.isfinite(pred) & np.isfinite(target)
         if not np.any(valid_mask):
             # 全てNaN/infの場合はスキップ
-            logger.warning(
-                f"Horizon {horizon}: All values are NaN/inf, skipping metrics"
-            )
+            logger.warning(f"Horizon {horizon}: All values are NaN/inf, skipping metrics")
             metrics["horizon_metrics"][horizon] = {
                 "mse": float("nan"),
                 "rmse": float("nan"),
@@ -4170,17 +3822,13 @@ def evaluate_model_metrics(
 
         # 相関係数（予測値の分散がゼロの場合は計算不可）
         if len(pred_valid) > 1 and pred_std > 1e-8 and target_std > 1e-8:
-            correlation = np.corrcoef(pred_valid.flatten(), target_valid.flatten())[
-                0, 1
-            ]
+            correlation = np.corrcoef(pred_valid.flatten(), target_valid.flatten())[0, 1]
             if np.isnan(correlation):
                 correlation = 0.0
         else:
             correlation = 0.0
             if pred_std <= 1e-8:
-                logger.warning(
-                    f"Horizon {horizon}: Cannot compute correlation - zero prediction variance"
-                )
+                logger.warning(f"Horizon {horizon}: Cannot compute correlation - zero prediction variance")
 
         # R²スコア
         ss_res = np.sum((target_valid - pred_valid) ** 2)
@@ -4214,10 +3862,7 @@ def evaluate_model_metrics(
     avg_metrics = {}
     metric_names = ["mse", "rmse", "mae", "correlation", "r2", "sharpe_ratio"]
     for metric in metric_names:
-        values = [
-            metrics["horizon_metrics"][h][metric]
-            for h in metrics["horizon_metrics"].keys()
-        ]
+        values = [metrics["horizon_metrics"][h][metric] for h in metrics["horizon_metrics"].keys()]
         values = [v for v in values if np.isfinite(v)]
         if values:
             avg_metrics[f"avg_{metric}"] = float(np.nanmean(values))
@@ -4231,19 +3876,13 @@ def evaluate_model_metrics(
     rmse_val = avg_metrics.get("avg_rmse", float("nan"))
     r2_val = avg_metrics.get("avg_r2", float("nan"))
     sharpe_val = avg_metrics.get("avg_sharpe_ratio", float("nan"))
-    logger.info(
-        f"  Average RMSE: {rmse_val if np.isfinite(rmse_val) else float('nan'):.4f}"
-    )
+    logger.info(f"  Average RMSE: {rmse_val if np.isfinite(rmse_val) else float('nan'):.4f}")
     logger.info(f"  Average R²: {r2_val if np.isfinite(r2_val) else float('nan'):.4f}")
-    logger.info(
-        f"  Average Sharpe Ratio: {sharpe_val if np.isfinite(sharpe_val) else float('nan'):.4f}"
-    )
+    logger.info(f"  Average Sharpe Ratio: {sharpe_val if np.isfinite(sharpe_val) else float('nan'):.4f}")
     # Parser-friendly single-line Sharpe for external pipelines
     try:
         sharpe_val = avg_metrics.get("avg_sharpe_ratio", float("nan"))
-        sharpe_line = (
-            f"Sharpe: {sharpe_val:.4f}" if np.isfinite(sharpe_val) else "Sharpe: nan"
-        )
+        sharpe_line = f"Sharpe: {sharpe_val:.4f}" if np.isfinite(sharpe_val) else "Sharpe: nan"
         logger.info(sharpe_line)
     except Exception:
         pass
@@ -4259,27 +3898,32 @@ def validate(model, dataloader, criterion, device):
     n_batches = 0
     nan_batches = 0
     # 追加指標（tパラメータ/分位も収集）
-    metrics = {
-        h: {"y": [], "yhat": [], "t_params": [], "quantiles": [], "groups": []}
-        for h in criterion.horizons
-    }
+    metrics = {h: {"y": [], "yhat": [], "t_params": [], "quantiles": [], "groups": []} for h in criterion.horizons}
     # 保存用: 線形校正係数（z空間）
     linear_calibration = {h: {"a": 0.0, "b": 1.0} for h in criterion.horizons}
 
     # AMP local config
     use_amp = (os.getenv("USE_AMP", "1") == "1") and device.type == "cuda"
     amp_dtype = (
-        torch.bfloat16
-        if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
-        else torch.float16
+        torch.bfloat16 if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed") else torch.float16
     )
-    _amp_device = (
-        "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
-    )
+    _amp_device = "cuda" if (torch.cuda.is_available() and device.type == "cuda") else "cpu"
+
+    # Validation Early-stop control (Patch L)
+    _max_val = int(os.getenv("MAX_VAL_STEPS", "0") or "0")
+    if _max_val > 0:
+        logger.info(f"[VAL-GUARD] MAX_VAL_STEPS={_max_val} enabled")
 
     with torch.no_grad():
         low_var_warns_h1 = 0
-        for batch in tqdm(dataloader, desc="Validation"):
+        for val_batch_idx, batch in enumerate(tqdm(dataloader, desc="Validation"), start=1):
+            # ---- Validation Early-stop guard (Patch L) ----
+            if _max_val > 0 and val_batch_idx > _max_val:
+                logger.info(
+                    f"[VAL-EARLYSTOP] reached val_step={val_batch_idx-1}/{_max_val}; stopping validation early."
+                )
+                break
+            # -----------------------------------------------
             features = batch["features"].to(device, non_blocking=True)
             # Canonicalize validation targets as well
             targets = {}
@@ -4290,20 +3934,14 @@ def validate(model, dataloader, criterion, device):
             # Move valid masks to correct device if present
             valid_masks = batch.get("valid_mask", None)
             if isinstance(valid_masks, dict):
-                valid_masks = {
-                    k: v.to(device, non_blocking=True) for k, v in valid_masks.items()
-                }
+                valid_masks = {k: v.to(device, non_blocking=True) for k, v in valid_masks.items()}
             else:
                 valid_masks = None
             features = _finite_or_nan_fix_tensor(features, "features[val]", clamp=50.0)
             for k in list(targets.keys()):
-                targets[k] = _finite_or_nan_fix_tensor(
-                    targets[k], f"targets[val][{k}]", clamp=50.0
-                )
+                targets[k] = _finite_or_nan_fix_tensor(targets[k], f"targets[val][{k}]", clamp=50.0)
 
-            with torch.amp.autocast(
-                _amp_device, dtype=amp_dtype, enabled=use_amp, cache_enabled=False
-            ):
+            with torch.amp.autocast(_amp_device, dtype=amp_dtype, enabled=use_amp, cache_enabled=False):
                 features = features.contiguous()
                 try:
                     outputs = model(features)
@@ -4315,15 +3953,11 @@ def validate(model, dataloader, criterion, device):
                     gc.collect()
                     torch.cuda.empty_cache()
                     raise
-                outputs = _force_finite_in_structure(
-                    outputs, "validation.forward.outputs"
-                )
+                outputs = _force_finite_in_structure(outputs, "validation.forward.outputs")
                 if isinstance(outputs, dict):
                     for k, v in outputs.items():
                         if torch.is_tensor(v):
-                            outputs[k] = _finite_or_nan_fix_tensor(
-                                v, f"outputs[val][{k}]", clamp=50.0
-                            )
+                            outputs[k] = _finite_or_nan_fix_tensor(v, f"outputs[val][{k}]", clamp=50.0)
 
                 # Aggregate quantile predictions BEFORE reshape so loss/metrics operate on point forecasts
                 preds_raw = _unwrap_predictions(outputs)
@@ -4332,9 +3966,7 @@ def validate(model, dataloader, criterion, device):
 
                     if hasattr(model, "get_point_predictions"):
                         try:
-                            point_preds = model.get_point_predictions(
-                                preds_raw, method="mean"
-                            )
+                            point_preds = model.get_point_predictions(preds_raw, method="mean")
                         except Exception as agg_exc:
                             logger.warning(
                                 "[quantile-agg] model.get_point_predictions failed (%s); falling back to mean",
@@ -4344,29 +3976,19 @@ def validate(model, dataloader, criterion, device):
                     if not point_preds:
                         # Manual mean aggregation fallback if checkpoint lacks helper method
                         for key, tensor in preds_raw.items():
-                            if (
-                                torch.is_tensor(tensor)
-                                and tensor.dim() >= 2
-                                and tensor.size(-1) > 1
-                            ):
+                            if torch.is_tensor(tensor) and tensor.dim() >= 2 and tensor.size(-1) > 1:
                                 point_tensor = tensor.mean(dim=-1)
                                 point_preds[f"point_{key}"] = point_tensor
-                                match = re.match(
-                                    r"horizon_(\d+)(d)?$", key, re.IGNORECASE
-                                )
+                                match = re.match(r"horizon_(\d+)(d)?$", key, re.IGNORECASE)
                                 if match:
                                     horizon_int = match.group(1)
-                                    point_preds[
-                                        f"point_horizon_{horizon_int}"
-                                    ] = point_tensor
+                                    point_preds[f"point_horizon_{horizon_int}"] = point_tensor
 
                     if point_preds:
                         preds_raw.update(point_preds)
                         if isinstance(outputs, dict):
                             outputs.update(point_preds)
-                            if "predictions" in outputs and isinstance(
-                                outputs["predictions"], dict
-                            ):
+                            if "predictions" in outputs and isinstance(outputs["predictions"], dict):
                                 outputs["predictions"].update(point_preds)
                         if logger.isEnabledFor(logging.DEBUG):
                             logger.debug(
@@ -4381,19 +4003,14 @@ def validate(model, dataloader, criterion, device):
                     _reshape_to_batch_only(
                         {
                             k: (v.float() if torch.is_tensor(v) else v)
-                            for k, v in (
-                                preds_raw.items() if isinstance(preds_raw, dict) else {}
-                            )
+                            for k, v in (preds_raw.items() if isinstance(preds_raw, dict) else {})
                         }
                     )
                     if isinstance(preds_raw, dict)
                     else preds_raw
                 )
                 targets = _reshape_to_batch_only(
-                    {
-                        k: (v.float() if torch.is_tensor(v) else v)
-                        for k, v in targets.items()
-                    }
+                    {k: (v.float() if torch.is_tensor(v) else v) for k, v in targets.items()}
                 )
 
                 if isinstance(outputs, dict):
@@ -4414,9 +4031,7 @@ def validate(model, dataloader, criterion, device):
                     canonical_targets.update(targets)
                     targets = canonical_targets
 
-                loss_result = criterion(
-                    outputs, targets, valid_masks=valid_masks, batch_metadata=batch
-                )
+                loss_result = criterion(outputs, targets, valid_masks=valid_masks, batch_metadata=batch)
 
                 # Handle both single value and tuple return
                 if isinstance(loss_result, tuple):
@@ -4428,9 +4043,7 @@ def validate(model, dataloader, criterion, device):
             # 🔍 NaN DEBUGGING: Instrument validation loss computation
             loss_value = loss.item()
             if not torch.isfinite(loss):
-                logger.error(
-                    f"[NaN-DEBUG] Non-finite validation loss detected: {loss_value}"
-                )
+                logger.error(f"[NaN-DEBUG] Non-finite validation loss detected: {loss_value}")
                 logger.error(f"[NaN-DEBUG] Batch {n_batches}: Predictions NaN count:")
                 for k, v in outputs.items():
                     if torch.is_tensor(v):
@@ -4464,9 +4077,7 @@ def validate(model, dataloader, criterion, device):
 
             # 追加指標収集（CPUへ）
             if collect_metrics_from_outputs is not None:
-                batch_metrics = collect_metrics_from_outputs(
-                    outputs, targets, criterion.horizons, batch
-                )
+                batch_metrics = collect_metrics_from_outputs(outputs, targets, criterion.horizons, batch)
                 for h in criterion.horizons:
                     for key in ["y", "yhat", "t_params", "quantiles"]:
                         if batch_metrics[h][key]:
@@ -4475,9 +4086,7 @@ def validate(model, dataloader, criterion, device):
                 # Fallback to inline collection
                 # DEBUG: Log available keys in outputs
                 if n_batches == 0:  # Only log first batch to avoid spam
-                    logger.info(
-                        f"[DEBUG-METRICS] Available keys in outputs: {list(outputs.keys())}"
-                    )
+                    logger.info(f"[DEBUG-METRICS] Available keys in outputs: {list(outputs.keys())}")
 
                 for h in criterion.horizons:
                     pred_key = (
@@ -4489,9 +4098,7 @@ def validate(model, dataloader, criterion, device):
 
                     # DEBUG: Log which key is being used
                     if n_batches == 0:  # Only log first batch
-                        logger.info(
-                            f"[DEBUG-METRICS] Horizon {h}: Using pred_key='{pred_key}'"
-                        )
+                        logger.info(f"[DEBUG-METRICS] Horizon {h}: Using pred_key='{pred_key}'")
                         if pred_key in outputs:
                             pred_tensor = outputs[pred_key]
                             logger.info(
@@ -4504,12 +4111,8 @@ def validate(model, dataloader, criterion, device):
 
                         # DEBUG: Log shapes after view(-1)
                         if n_batches == 0:
-                            logger.info(
-                                f"[DEBUG-METRICS]   After view(-1): yhat.shape={yhat.shape}, y.shape={y.shape}"
-                            )
-                            logger.info(
-                                f"[DEBUG-METRICS]   yhat stats: mean={yhat.mean():.6f}, std={yhat.std():.6f}"
-                            )
+                            logger.info(f"[DEBUG-METRICS]   After view(-1): yhat.shape={yhat.shape}, y.shape={y.shape}")
+                            logger.info(f"[DEBUG-METRICS]   yhat stats: mean={yhat.mean():.6f}, std={yhat.std():.6f}")
 
                         metrics[h]["yhat"].append(yhat)
                         metrics[h]["y"].append(y)
@@ -4518,23 +4121,16 @@ def validate(model, dataloader, criterion, device):
                             group_tensor = batch["group_day"]
                             if torch.is_tensor(group_tensor):
                                 group_arr = group_tensor.detach().view(-1).cpu().numpy()
-                        if (
-                            group_arr is not None
-                            and group_arr.shape[0] == yhat.shape[0]
-                        ):
+                        if group_arr is not None and group_arr.shape[0] == yhat.shape[0]:
                             metrics[h]["groups"].append(group_arr)
                     # t-params 収集
                     t_key = f"t_params_horizon_{h}"
                     if t_key in outputs:
-                        metrics[h]["t_params"].append(
-                            outputs[t_key].detach().float().cpu().numpy()
-                        )
+                        metrics[h]["t_params"].append(outputs[t_key].detach().float().cpu().numpy())
                     # quantiles 収集
                     q_key = f"quantile_horizon_{h}"
                     if q_key in outputs:
-                        metrics[h]["quantiles"].append(
-                            outputs[q_key].detach().float().cpu().numpy()
-                        )
+                        metrics[h]["quantiles"].append(outputs[q_key].detach().float().cpu().numpy())
 
     # Check for empty validation set
     if n_batches == 0:
@@ -4547,9 +4143,7 @@ def validate(model, dataloader, criterion, device):
         )
 
     if nan_batches > 0:
-        logger.warning(
-            f"[NaN-DEBUG] Skipped {nan_batches} validation batches with non-finite loss."
-        )
+        logger.warning(f"[NaN-DEBUG] Skipped {nan_batches} validation batches with non-finite loss.")
 
     avg_loss = total_loss / n_batches
     avg_horizon_losses = {k: v / n_batches for k, v in horizon_losses.items()}
@@ -4560,9 +4154,7 @@ def validate(model, dataloader, criterion, device):
 
         eval_space = _os.getenv("EVAL_SPACE", "z").lower()  # 'z' | 'raw' | 'both'
         # dataloader -> dataset -> target_scalers（学習fit済みのものを再利用）
-        scalers = (
-            getattr(getattr(dataloader, "dataset", None), "target_scalers", {}) or {}
-        )
+        scalers = getattr(getattr(dataloader, "dataset", None), "target_scalers", {}) or {}
         for h in criterion.horizons:
             if metrics[h]["y"]:
                 import numpy as np
@@ -4637,11 +4229,7 @@ def validate(model, dataloader, criterion, device):
 
                 ranks_yhat = rank_simple(yhat)
                 ranks_y = rank_simple(y)
-                ic = (
-                    float(np.corrcoef(ranks_yhat, ranks_y)[0, 1])
-                    if len(y) > 1
-                    else float("nan")
-                )
+                ic = float(np.corrcoef(ranks_yhat, ranks_y)[0, 1]) if len(y) > 1 else float("nan")
                 # Log IC@h1 and EMA to MLflow if available
                 if h == 1 and np.isfinite(ic):
                     try:
@@ -4658,9 +4246,7 @@ def validate(model, dataloader, criterion, device):
                         # Regime-tagged IC metric (if regime name provided)
                         reg = os.getenv("CURRENT_REGIME_NAME", "").strip()
                         if reg:
-                            safe = "".join(
-                                ch if ch.isalnum() or ch in "-_" else "_" for ch in reg
-                            )
+                            safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in reg)
                             _mlf.log_metric(f"val/IC_h1_regime_{safe}", float(ic))
                     except Exception:
                         pass
@@ -4677,11 +4263,7 @@ def validate(model, dataloader, criterion, device):
                         sigma = np.log1p(np.exp(sigma_raw)) + 1e-6
                         nu = 3.0 + np.log1p(np.exp(nu_raw))
                         z = (y - mu) / sigma
-                        logp = (
-                            -0.5 * np.log(nu * np.pi)
-                            - np.log(sigma)
-                            - 0.5 * (nu + 1.0) * np.log1p((z * z) / nu)
-                        )
+                        logp = -0.5 * np.log(nu * np.pi) - np.log(sigma) - 0.5 * (nu + 1.0) * np.log1p((z * z) / nu)
                         nll = float(-np.mean(logp))
                         extra += f" NLL_t={nll:.4f}"
                         # Variance floor hits (if PRED_STD_MIN is set)
@@ -4693,9 +4275,7 @@ def validate(model, dataloader, criterion, device):
                                     try:
                                         import mlflow as _mlf  # type: ignore
 
-                                        _mlf.log_metric(
-                                            "val/variance_floor_hits_h1", hits
-                                        )
+                                        _mlf.log_metric("val/variance_floor_hits_h1", hits)
                                     except Exception:
                                         pass
                         except Exception:
@@ -4742,9 +4322,7 @@ def validate(model, dataloader, criterion, device):
                         rmse_c = float(np.sqrt(np.mean((yhat_cal - y) ** 2)))
                         r2_c = float(1.0 - np.var(y - yhat_cal) / var)
                         yhat_std_c = float(np.std(yhat_cal) + 1e-12)
-                        scale_ratio_c = (
-                            float(yhat_std_c / y_std) if y_std > 0 else float("nan")
-                        )
+                        scale_ratio_c = float(yhat_std_c / y_std) if y_std > 0 else float("nan")
                         logging.info(
                             f"Val metrics (z, CAL) h={h}: MAE={mae_c:.4f} RMSE={rmse_c:.4f} R2={r2_c:.4f} SCALE_CAL={scale_ratio_c:.2f}"
                         )
@@ -4796,7 +4374,14 @@ def run_phase_training(model, train_loader, val_loader, config, device):
 
     # Phase定義
     phase_epochs_override = int(os.getenv("PHASE_MAX_EPOCHS", "0"))
-    max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "100"))
+    # Patch M4: Read MAX_STEPS_PER_EPOCH (set by RUNCTRL Bridge) with fallback to PHASE_MAX_BATCHES
+    max_steps_env = os.getenv("MAX_STEPS_PER_EPOCH", "")
+    if max_steps_env and max_steps_env != "0":
+        max_batches_per_epoch = int(max_steps_env)
+        logger.info(f"[RUNCTRL-APPLY] Using MAX_STEPS_PER_EPOCH={max_batches_per_epoch}")
+    else:
+        max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "100"))
+        logger.info(f"[RUNCTRL-APPLY] Using PHASE_MAX_BATCHES={max_batches_per_epoch} (fallback)")
 
     def _phase_epochs(default: int, env_key: str) -> int:
         if phase_epochs_override:
@@ -4916,9 +4501,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             f"[Scheduler] Using CosineAnnealingWarmRestarts (T_0={T_0}, T_mult={T_mult}, eta_min={eta_min:.1e})"
         )
     else:
-        logger.info(
-            f"[Scheduler] Using Warmup+Cosine (warmup_epochs={warmup_epochs_phase})"
-        )
+        logger.info(f"[Scheduler] Using Warmup+Cosine (warmup_epochs={warmup_epochs_phase})")
 
     # Loss初期化 - 環境変数ベース（P0 Fix）
     # 環境変数から損失重みを読み込み
@@ -4970,10 +4553,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         "true",
         "yes",
     )
-    if (
-        early_stop_metric in ("val_sharpe", "val_rankic", "val_hit_rate")
-        and os.getenv("EARLY_STOP_MAXIMIZE", "") == ""
-    ):
+    if early_stop_metric in ("val_sharpe", "val_rankic", "val_hit_rate") and os.getenv("EARLY_STOP_MAXIMIZE", "") == "":
         early_stop_maximize = True
 
     def _is_better(curr: float, best: float, maximize: bool, delta: float) -> bool:
@@ -5015,9 +4595,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 prog = (e_idx - warm_e) / max(1, total_e - warm_e)
                 return 0.5 * (1.0 + np.cos(np.pi * prog))
 
-            phase_scheduler = optim.lr_scheduler.LambdaLR(
-                optimizer, lr_lambda=_lr_lambda
-            )
+            phase_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
         # Build phase scheduler if Warmup+Cosine is selected
         if sched_choice != "plateau":
             total_e = int(phase["epochs"]) if int(phase["epochs"]) > 0 else 1
@@ -5029,9 +4607,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 prog = (e_idx - warm_e) / max(1, total_e - warm_e)
                 return 0.5 * (1.0 + np.cos(np.pi * prog))
 
-            phase_scheduler = optim.lr_scheduler.LambdaLR(
-                optimizer, lr_lambda=_lr_lambda
-            )
+            phase_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
 
         # 損失重み更新（実装に応じて安全に適用）
         try:
@@ -5051,9 +4627,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 # 最後の手段として後方互換（将来的に削除予定）
                 criterion.horizon_weights = w
             # Phase-aware loss schedule (env: PHASE_LOSS_WEIGHTS)
-            _phase_loss_sched = _parse_phase_loss_schedule(
-                os.getenv("PHASE_LOSS_WEIGHTS", "")
-            )
+            _phase_loss_sched = _parse_phase_loss_schedule(os.getenv("PHASE_LOSS_WEIGHTS", ""))
             _apply_phase_loss_weights(criterion, phase_idx, _phase_loss_sched)
         except Exception:
             pass
@@ -5087,15 +4661,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
         )
         if train_cx_diag_enabled:
             try:
-                train_cx_diag_max_epochs = max(
-                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1"))
-                )
+                train_cx_diag_max_epochs = max(0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1")))
             except Exception:
                 train_cx_diag_max_epochs = 1
             try:
-                train_cx_diag_max_batches = max(
-                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2"))
-                )
+                train_cx_diag_max_batches = max(0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2")))
             except Exception:
                 train_cx_diag_max_batches = 2
             try:
@@ -5134,9 +4704,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 optimizer.zero_grad()
 
                 # Forward pass
-                model_inputs = {
-                    "features": batch["features"].to(device, non_blocking=True)
-                }
+                model_inputs = {"features": batch["features"].to(device, non_blocking=True)}
                 for opt_key in (
                     "static_features",
                     "edge_index",
@@ -5150,9 +4718,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         model_inputs[opt_key] = opt_value.to(device, non_blocking=True)
                     elif isinstance(opt_value, dict):
                         model_inputs[opt_key] = {
-                            k: v.to(device, non_blocking=True)
-                            if torch.is_tensor(v)
-                            else v
+                            k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v
                             for k, v in opt_value.items()
                         }
                     else:
@@ -5172,17 +4738,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 for k, target_tensor in batch.get("targets", {}).items():
                     canon = _canonicalize_target_key(k)
                     if canon is not None:
-                        targets_dict[canon] = target_tensor.to(
-                            device, non_blocking=True
-                        )
+                        targets_dict[canon] = target_tensor.to(device, non_blocking=True)
 
                 # 数値安定化＆形状を[B]へ揃える
                 try:
                     if isinstance(predictions, dict):
                         predictions = {
-                            pk: _finite_or_nan_fix_tensor(
-                                pv, f"pred[train-phase][{pk}]", clamp=50.0
-                            )
+                            pk: _finite_or_nan_fix_tensor(pv, f"pred[train-phase][{pk}]", clamp=50.0)
                             for pk, pv in predictions.items()
                             if torch.is_tensor(pv)
                         }
@@ -5191,9 +4753,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     pass
                 try:
                     targets_dict = {
-                        tk: _finite_or_nan_fix_tensor(
-                            tv, f"targ[train-phase][{tk}]", clamp=50.0
-                        )
+                        tk: _finite_or_nan_fix_tensor(tv, f"targ[train-phase][{tk}]", clamp=50.0)
                         for tk, tv in targets_dict.items()
                     }
                     targets_dict = _reshape_to_batch_only(targets_dict)
@@ -5201,9 +4761,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     pass
                 # Optional: label clipping by horizon (bps) for stability
                 try:
-                    clip_map = _parse_label_clip_map(
-                        os.getenv("LABEL_CLIP_BPS_MAP", "")
-                    )
+                    clip_map = _parse_label_clip_map(os.getenv("LABEL_CLIP_BPS_MAP", ""))
                     if clip_map:
                         targets_dict = _clip_targets_by_horizon(targets_dict, clip_map)
                 except Exception:
@@ -5212,21 +4770,12 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                 try:
                     output_noise_std = float(os.getenv("OUTPUT_NOISE_STD", "0.0"))
                     noise_warmup_epochs = int(os.getenv("NOISE_WARMUP_EPOCHS", "2"))
-                    if (
-                        output_noise_std > 0.0
-                        and (epoch < noise_warmup_epochs)
-                        and isinstance(predictions, dict)
-                    ):
+                    if output_noise_std > 0.0 and (epoch < noise_warmup_epochs) and isinstance(predictions, dict):
                         for k in list(predictions.keys()):
                             if isinstance(predictions[k], torch.Tensor) and (
-                                k.startswith("point_horizon_")
-                                or k.startswith("horizon_")
+                                k.startswith("point_horizon_") or k.startswith("horizon_")
                             ):
-                                predictions[k] = (
-                                    predictions[k]
-                                    + torch.randn_like(predictions[k])
-                                    * output_noise_std
-                                )
+                                predictions[k] = predictions[k] + torch.randn_like(predictions[k]) * output_noise_std
                 except Exception:
                     pass
 
@@ -5250,9 +4799,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                             if group_vec.device.type != "cpu":
                                 group_vec = group_vec.to("cpu")
                         elif group_tensor is not None:
-                            group_vec = torch.as_tensor(
-                                group_tensor, dtype=torch.long
-                            ).view(-1)
+                            group_vec = torch.as_tensor(group_tensor, dtype=torch.long).view(-1)
                         else:
                             group_vec = None
                     except Exception:
@@ -5262,9 +4809,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         date_values = batch.get("date")
                         try:
                             if isinstance(date_values, torch.Tensor):
-                                date_list = [
-                                    str(x) for x in date_values.view(-1).tolist()
-                                ]
+                                date_list = [str(x) for x in date_values.view(-1).tolist()]
                             elif isinstance(date_values, (list, tuple)):
                                 date_list = [str(x) for x in date_values]
                             elif date_values is None:
@@ -5319,9 +4864,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                     continue
                                 pred_tensor = predictions[pred_key]
                                 targ_tensor = targets_dict[targ_key]
-                                if not torch.is_tensor(
-                                    pred_tensor
-                                ) or not torch.is_tensor(targ_tensor):
+                                if not torch.is_tensor(pred_tensor) or not torch.is_tensor(targ_tensor):
                                     continue
                                 pred_vec = pred_tensor.detach().view(-1).to("cpu")
                                 targ_vec = targ_tensor.detach().view(-1).to("cpu")
@@ -5344,12 +4887,8 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                     group_sizes.append(group_size)
                                     if group_size <= 1:
                                         continue
-                                    per_group_pred_std.append(
-                                        float(np.std(pred_np[mask]) + 1e-12)
-                                    )
-                                    per_group_targ_std.append(
-                                        float(np.std(targ_np[mask]) + 1e-12)
-                                    )
+                                    per_group_pred_std.append(float(np.std(pred_np[mask]) + 1e-12))
+                                    per_group_targ_std.append(float(np.std(targ_np[mask]) + 1e-12))
                                 if per_group_pred_std:
                                     pred_mean = float(np.mean(per_group_pred_std))
                                     pred_min = float(np.min(per_group_pred_std))
@@ -5366,10 +4905,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                         targ_min,
                                         len(per_group_pred_std),
                                     )
-                                    if (
-                                        train_cx_diag_warn > 0.0
-                                        and pred_mean < train_cx_diag_warn
-                                    ):
+                                    if train_cx_diag_warn > 0.0 and pred_mean < train_cx_diag_warn:
                                         logger.warning(
                                             "[TRAIN-DIAG] ep=%d b=%d h=%s low per-day pred std: mean=%.6f (< %.4f)",
                                             epoch,
@@ -5389,15 +4925,11 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                         max_size,
                                     )
                     else:
-                        logger.debug(
-                            "[TRAIN-DIAG] Skipped cross-sectional diagnostics (missing group_day tensor)"
-                        )
+                        logger.debug("[TRAIN-DIAG] Skipped cross-sectional diagnostics (missing group_day tensor)")
 
                 # Alpha warmup within GAT-enabled phases (epoch-scoped)
                 try:
-                    if getattr(model, "use_gat", False) and hasattr(
-                        model, "alpha_graph_min"
-                    ):
+                    if getattr(model, "use_gat", False) and hasattr(model, "alpha_graph_min"):
                         if epoch < alpha_warm_epochs:
                             model.alpha_graph_min = max(base_alpha_min, alpha_warm_min)
                         else:
@@ -5418,9 +4950,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     if hasattr(loss, "requires_grad") and loss.requires_grad:
                         loss.backward()
                     else:
-                        logger.warning(
-                            "[train-phase] loss has no grad; skipping backward"
-                        )
+                        logger.warning("[train-phase] loss has no grad; skipping backward")
                 except Exception as _be:
                     logger.warning(f"[train-phase] backward skipped due to: {_be}")
                 torch.nn.utils.clip_grad_norm_(model.parameters(), phase["grad_clip"])
@@ -5453,14 +4983,10 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     logger.debug(f"[DEBUG] Target keys: {list(targets_dict.keys())}")
 
                 try:
-                    loss_value = float(
-                        loss.item() if hasattr(loss, "item") else float(loss)
-                    )
+                    loss_value = float(loss.item() if hasattr(loss, "item") else float(loss))
                     train_loss += loss_value
                 except Exception as e:
-                    logger.warning(
-                        f"[train-phase] Failed to add loss: {e}, loss type: {type(loss)}"
-                    )
+                    logger.warning(f"[train-phase] Failed to add loss: {e}, loss type: {type(loss)}")
                     logger.debug(f"[train-phase] loss value: {loss}")
                 train_batches += 1
 
@@ -5480,9 +5006,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         ),
                     ):
                         module.eval()
-                logger.info(
-                    "[MC-DROPOUT] Validation with dropout enabled (BatchNorm in eval mode)"
-                )
+                logger.info("[MC-DROPOUT] Validation with dropout enabled (BatchNorm in eval mode)")
             else:
                 model.eval()  # Standard eval mode (all dropout disabled)
 
@@ -5501,9 +5025,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     if batch_idx >= 50:  # 最初の50バッチで評価
                         break
 
-                    model_inputs = {
-                        "features": batch["features"].to(device, non_blocking=True)
-                    }
+                    model_inputs = {"features": batch["features"].to(device, non_blocking=True)}
                     for opt_key in (
                         "static_features",
                         "edge_index",
@@ -5514,14 +5036,10 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         if opt_value is None:
                             continue
                         if torch.is_tensor(opt_value):
-                            model_inputs[opt_key] = opt_value.to(
-                                device, non_blocking=True
-                            )
+                            model_inputs[opt_key] = opt_value.to(device, non_blocking=True)
                         elif isinstance(opt_value, dict):
                             model_inputs[opt_key] = {
-                                k: v.to(device, non_blocking=True)
-                                if torch.is_tensor(v)
-                                else v
+                                k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v
                                 for k, v in opt_value.items()
                             }
                         else:
@@ -5532,18 +5050,13 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         model_outputs = model(model_inputs["features"])
 
                     predictions = model_outputs
-                    if (
-                        isinstance(model_outputs, dict)
-                        and "predictions" in model_outputs
-                    ):
+                    if isinstance(model_outputs, dict) and "predictions" in model_outputs:
                         predictions = model_outputs["predictions"]
                     # Sanitize & reshape predictions
                     try:
                         if isinstance(predictions, dict):
                             predictions = {
-                                pk: _finite_or_nan_fix_tensor(
-                                    pv, f"pred[val-phase][{pk}]", clamp=50.0
-                                )
+                                pk: _finite_or_nan_fix_tensor(pv, f"pred[val-phase][{pk}]", clamp=50.0)
                                 for pk, pv in predictions.items()
                                 if torch.is_tensor(pv)
                             }
@@ -5559,9 +5072,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                             tdict[canon] = v.to(device)
                     try:
                         tdict = {
-                            tk: _finite_or_nan_fix_tensor(
-                                tv, f"targ[val-phase][{tk}]", clamp=50.0
-                            )
+                            tk: _finite_or_nan_fix_tensor(tv, f"targ[val-phase][{tk}]", clamp=50.0)
                             for tk, tv in tdict.items()
                         }
                         tdict = _reshape_to_batch_only(tdict)
@@ -5569,9 +5080,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         pass
                     # Optional: label clipping in validation
                     try:
-                        clip_map = _parse_label_clip_map(
-                            os.getenv("LABEL_CLIP_BPS_MAP", "")
-                        )
+                        clip_map = _parse_label_clip_map(os.getenv("LABEL_CLIP_BPS_MAP", ""))
                         if clip_map:
                             tdict = _clip_targets_by_horizon(tdict, clip_map)
                     except Exception:
@@ -5595,7 +5104,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                 # If no quantile forecast, synthesize from multi-horizon
                                 if y_q is None and len(predictions) > 0:
                                     # Stack all horizons as pseudo-quantiles [B, H, num_horizons]
-                                    horizon_preds = [predictions[h] for h in sorted(predictions.keys()) if isinstance(h, int)]
+                                    horizon_preds = [
+                                        predictions[h] for h in sorted(predictions.keys()) if isinstance(h, int)
+                                    ]
                                     if len(horizon_preds) > 0:
                                         y_q = torch.stack(horizon_preds, dim=-1)
                             else:
@@ -5627,7 +5138,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                     y_point=y_point,
                                     y_q=y_q,
                                     y_true=y_true,
-                                    epoch=epoch
+                                    epoch=epoch,
                                 )
                         except Exception as e:
                             logger.warning(f"[RFI-5/6] Logging failed: {e}")
@@ -5665,15 +5176,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
 
                     # DEBUG: Log first batch details
                     if batch_idx == 0:
-                        logger.info(
-                            f"[VAL-DEBUG] First val batch - Prediction keys: {list(predictions.keys())}"
-                        )
-                        logger.info(
-                            f"[VAL-DEBUG] First val batch - Target keys: {list(tdict.keys())}"
-                        )
-                        logger.info(
-                            f"[VAL-DEBUG] pred_key_found: {pred_key_found}, targ_key_found: {targ_key_found}"
-                        )
+                        logger.info(f"[VAL-DEBUG] First val batch - Prediction keys: {list(predictions.keys())}")
+                        logger.info(f"[VAL-DEBUG] First val batch - Target keys: {list(tdict.keys())}")
+                        logger.info(f"[VAL-DEBUG] pred_key_found: {pred_key_found}, targ_key_found: {targ_key_found}")
                         if pred_1d is not None:
                             logger.info(
                                 f"[VAL-DEBUG] pred_1d - shape: {pred_1d.shape}, mean: {pred_1d.mean().item():.6f}, std: {pred_1d.std().item():.6f}"
@@ -5681,9 +5186,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                             logger.info(
                                 f"[VAL-DEBUG] pred_1d - min: {pred_1d.min().item():.6f}, max: {pred_1d.max().item():.6f}"
                             )
-                            logger.info(
-                                f"[VAL-DEBUG] pred_1d - first 10 values: {pred_1d.flatten()[:10].tolist()}"
-                            )
+                            logger.info(f"[VAL-DEBUG] pred_1d - first 10 values: {pred_1d.flatten()[:10].tolist()}")
                         if targ_1d is not None:
                             logger.info(
                                 f"[VAL-DEBUG] targ_1d - shape: {targ_1d.shape}, mean: {targ_1d.mean().item():.6f}, std: {targ_1d.std().item():.6f}"
@@ -5691,20 +5194,14 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                             logger.info(
                                 f"[VAL-DEBUG] targ_1d - min: {targ_1d.min().item():.6f}, max: {targ_1d.max().item():.6f}"
                             )
-                            logger.info(
-                                f"[VAL-DEBUG] targ_1d - first 10 values: {targ_1d.flatten()[:10].tolist()}"
-                            )
+                            logger.info(f"[VAL-DEBUG] targ_1d - first 10 values: {targ_1d.flatten()[:10].tolist()}")
 
                     if pred_1d is not None and targ_1d is not None:
                         # Compute metrics (IC will log details for first epoch only)
                         sharpe = MultiHorizonLoss.compute_sharpe_ratio(pred_1d, targ_1d)
                         # Log IC details for all batches in first epoch only (to avoid log spam)
-                        debug_prefix = (
-                            f"VAL-E{epoch}-B{batch_idx}" if epoch == 1 else ""
-                        )
-                        ic = MultiHorizonLoss.compute_ic(
-                            pred_1d, targ_1d, debug_prefix=debug_prefix
-                        )
+                        debug_prefix = f"VAL-E{epoch}-B{batch_idx}" if epoch == 1 else ""
+                        ic = MultiHorizonLoss.compute_ic(pred_1d, targ_1d, debug_prefix=debug_prefix)
                         rank_ic = MultiHorizonLoss.compute_rank_ic(pred_1d, targ_1d)
 
                         # DEBUG: Log computed metrics
@@ -5717,12 +5214,8 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         val_metrics["rank_ic"].append(rank_ic)
                         # Accumulate for hit rate across validation
                         try:
-                            _val_preds_h1_all.append(
-                                pred_1d.view(-1).detach().float().cpu()
-                            )
-                            _val_targs_h1_all.append(
-                                targ_1d.view(-1).detach().float().cpu()
-                            )
+                            _val_preds_h1_all.append(pred_1d.view(-1).detach().float().cpu())
+                            _val_targs_h1_all.append(targ_1d.view(-1).detach().float().cpu())
                         except Exception:
                             pass
                     else:
@@ -5730,12 +5223,8 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         logger.warning(
                             f"[VAL-DEBUG] Key mismatch - pred_1d: {pred_1d is not None}, targ_1d: {targ_1d is not None}"
                         )
-                        logger.warning(
-                            f"[VAL-DEBUG] Available prediction keys: {list(predictions.keys())}"
-                        )
-                        logger.warning(
-                            f"[VAL-DEBUG] Available target keys: {list(tdict.keys())}"
-                        )
+                        logger.warning(f"[VAL-DEBUG] Available prediction keys: {list(predictions.keys())}")
+                        logger.warning(f"[VAL-DEBUG] Available target keys: {list(tdict.keys())}")
 
                     # Store for Sharpe computation
                     try:
@@ -5750,12 +5239,8 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                                 else:
                                     continue
                                 if (pk in predictions) and (hk in tdict):
-                                    _val_preds[h].append(
-                                        predictions[pk].detach().float().view(-1).cpu()
-                                    )
-                                    _val_targs[h].append(
-                                        tdict[hk].detach().float().view(-1).cpu()
-                                    )
+                                    _val_preds[h].append(predictions[pk].detach().float().view(-1).cpu())
+                                    _val_targs[h].append(tdict[hk].detach().float().view(-1).cpu())
                     except Exception:
                         pass
 
@@ -5769,20 +5254,14 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     tv = torch.cat(_val_targs_h1_all, dim=0)
                     mask = (pv != 0) & (tv != 0)
                     if mask.any():
-                        val_hit_rate = float(
-                            ((pv[mask] * tv[mask]) > 0).float().mean().item()
-                        )
+                        val_hit_rate = float(((pv[mask] * tv[mask]) > 0).float().mean().item())
             except Exception:
                 val_hit_rate = 0.0
 
             # Compute average metrics
-            avg_train_sharpe = (
-                np.mean(train_metrics["sharpe"]) if train_metrics["sharpe"] else 0.0
-            )
+            avg_train_sharpe = np.mean(train_metrics["sharpe"]) if train_metrics["sharpe"] else 0.0
             avg_train_ic = np.mean(train_metrics["ic"]) if train_metrics["ic"] else 0.0
-            avg_train_rank_ic = (
-                np.mean(train_metrics["rank_ic"]) if train_metrics["rank_ic"] else 0.0
-            )
+            avg_train_rank_ic = np.mean(train_metrics["rank_ic"]) if train_metrics["rank_ic"] else 0.0
 
             # DEBUG: Log validation metrics list lengths
             logger.info(
@@ -5793,13 +5272,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     f"[VAL-DEBUG] val_metrics samples - sharpe[0:3]: {val_metrics['sharpe'][:3]}, ic[0:3]: {val_metrics['ic'][:3]}, rank_ic[0:3]: {val_metrics['rank_ic'][:3]}"
                 )
 
-            avg_val_sharpe = (
-                np.mean(val_metrics["sharpe"]) if val_metrics["sharpe"] else 0.0
-            )
+            avg_val_sharpe = np.mean(val_metrics["sharpe"]) if val_metrics["sharpe"] else 0.0
             avg_val_ic = np.mean(val_metrics["ic"]) if val_metrics["ic"] else 0.0
-            avg_val_rank_ic = (
-                np.mean(val_metrics["rank_ic"]) if val_metrics["rank_ic"] else 0.0
-            )
+            avg_val_rank_ic = np.mean(val_metrics["rank_ic"]) if val_metrics["rank_ic"] else 0.0
 
             logger.info(
                 f"Epoch {epoch+1}/{phase['epochs']}: "
@@ -5815,17 +5290,9 @@ def run_phase_training(model, train_loader, val_loader, config, device):
             # Log fusion alpha if available
             try:
                 if hasattr(model, "alpha_logit"):
-                    alpha_min_now = float(
-                        getattr(model, "alpha_graph_min", base_alpha_min)
-                    )
-                    alpha_val = (
-                        alpha_min_now
-                        + (1 - alpha_min_now)
-                        * torch.sigmoid(model.alpha_logit).mean().item()
-                    )
-                    logger.info(
-                        f"  Fusion alpha (mean): {alpha_val:.4f} (alpha_min={alpha_min_now:.2f})"
-                    )
+                    alpha_min_now = float(getattr(model, "alpha_graph_min", base_alpha_min))
+                    alpha_val = alpha_min_now + (1 - alpha_min_now) * torch.sigmoid(model.alpha_logit).mean().item()
+                    logger.info(f"  Fusion alpha (mean): {alpha_val:.4f} (alpha_min={alpha_min_now:.2f})")
             except Exception:
                 pass
             # Persist epoch metrics to JSONL (per phase)
@@ -5885,9 +5352,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                             "time": time.time(),
                             "timestamp": now_jst_iso(),
                         }
-                        (RUN_DIR / "metrics_summary.json").write_text(
-                            json.dumps(summary, ensure_ascii=False, indent=2)
-                        )
+                        (RUN_DIR / "metrics_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
                     except Exception as _swe:
                         logger.debug(f"metrics_summary.json write skipped: {_swe}")
                     # Write latest metrics JSON for downstream parsers
@@ -5922,9 +5387,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                         "time": time.time(),
                         "timestamp": now_jst_iso(),
                     }
-                    summary_path.write_text(
-                        json.dumps(_summary, ensure_ascii=False, indent=2)
-                    )
+                    summary_path.write_text(json.dumps(_summary, ensure_ascii=False, indent=2))
             except Exception as _swe2:
                 logger.debug(f"metrics_summary.json fallback write skipped: {_swe2}")
 
@@ -5959,12 +5422,8 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     "early_stop_value": chosen_curr,
                     "config": phase,
                 }
-                torch.save(
-                    checkpoint, checkpoint_path / f"best_model_phase{phase_idx}.pth"
-                )
-                logger.info(
-                    f"✅ Saved best model ({early_stop_metric}={chosen_curr:.4f}, val_loss={avg_val_loss:.4f})"
-                )
+                torch.save(checkpoint, checkpoint_path / f"best_model_phase{phase_idx}.pth")
+                logger.info(f"✅ Saved best model ({early_stop_metric}={chosen_curr:.4f}, val_loss={avg_val_loss:.4f})")
 
             # Track global best val loss for summary metrics and HPO hooks
             if np.isfinite(avg_val_loss) and avg_val_loss < best_val_loss:
@@ -5982,9 +5441,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
 
             # Early stopping (phase scoped)
             curr_for_es = chosen_curr
-            if _is_better(
-                curr_for_es, _phase_best, early_stop_maximize, early_stop_min_delta
-            ):
+            if _is_better(curr_for_es, _phase_best, early_stop_maximize, early_stop_min_delta):
                 _phase_best = curr_for_es
                 _no_improve = 0
             else:
@@ -5996,9 +5453,7 @@ def run_phase_training(model, train_loader, val_loader, config, device):
                     break
 
     logger.info("=" * 80)
-    logger.info(
-        f"Phase Training Complete. Best Val Loss: {best_val_loss:.4f}; EarlyStop Metric: {early_stop_metric}"
-    )
+    logger.info(f"Phase Training Complete. Best Val Loss: {best_val_loss:.4f}; EarlyStop Metric: {early_stop_metric}")
     logger.info("=" * 80)
 
     return model
@@ -6025,14 +5480,8 @@ def run_mini_training(
         torch.cuda.empty_cache()
         gc.collect()
         logger.info("✓ Cleared GPU cache before mini training")
-    train_loader = (
-        data_module.train_dataloader()
-        if hasattr(data_module, "train_dataloader")
-        else None
-    )
-    val_loader = (
-        data_module.val_dataloader() if hasattr(data_module, "val_dataloader") else None
-    )
+    train_loader = data_module.train_dataloader() if hasattr(data_module, "train_dataloader") else None
+    val_loader = data_module.val_dataloader() if hasattr(data_module, "val_dataloader") else None
     if train_loader is None or val_loader is None:
         logger.error("Mini training requires both train and val loaders.")
         raise RuntimeError("Mini training missing data loaders")
@@ -6047,16 +5496,10 @@ def run_mini_training(
 
     # Criterion (point loss by default; env toggles for extras)
     try:
-        horizons = list(
-            getattr(
-                final_config.data.time_series, "prediction_horizons", [1, 5, 10, 20]
-            )
-        )
+        horizons = list(getattr(final_config.data.time_series, "prediction_horizons", [1, 5, 10, 20]))
     except Exception:
         horizons = [1, 5, 10, 20]
-    use_pinball = os.getenv(
-        "USE_PINBALL", os.getenv("ENABLE_QUANTILES", "0")
-    ).lower() in ("1", "true", "yes")
+    use_pinball = os.getenv("USE_PINBALL", os.getenv("ENABLE_QUANTILES", "0")).lower() in ("1", "true", "yes")
     pinball_weight = float(os.getenv("PINBALL_WEIGHT", "0.1")) if use_pinball else 0.0
     use_t_nll = os.getenv("USE_T_NLL", os.getenv("ENABLE_STUDENT_T", "0")).lower() in (
         "1",
@@ -6065,9 +5508,7 @@ def run_mini_training(
     )
     nll_weight = float(os.getenv("NLL_WEIGHT", "0.1")) if use_t_nll else 0.0
     dir_aux_enabled = os.getenv("USE_DIR_AUX", "0").lower() in ("1", "true", "yes")
-    dir_aux_weight = (
-        float(os.getenv("DIR_AUX_WEIGHT", "0.1")) if dir_aux_enabled else 0.0
-    )
+    dir_aux_weight = float(os.getenv("DIR_AUX_WEIGHT", "0.1")) if dir_aux_enabled else 0.0
     use_rankic = _env_flag("USE_RANKIC", True)
     rankic_weight = float(os.getenv("RANKIC_WEIGHT", "0.3"))
     if not use_rankic:
@@ -6106,10 +5547,7 @@ def run_mini_training(
     # Early-stop metric setup (same options as phase training)
     es_metric = os.getenv("EARLY_STOP_METRIC", "val_loss").lower()
     es_max = os.getenv("EARLY_STOP_MAXIMIZE", "0").lower() in ("1", "true", "yes")
-    if (
-        es_metric in ("val_sharpe", "val_rankic", "val_hit_rate")
-        and os.getenv("EARLY_STOP_MAXIMIZE", "") == ""
-    ):
+    if es_metric in ("val_sharpe", "val_rankic", "val_hit_rate") and os.getenv("EARLY_STOP_MAXIMIZE", "") == "":
         es_max = True
     es_patience = int(os.getenv("EARLY_STOP_PATIENCE", "9"))
     es_delta = float(os.getenv("EARLY_STOP_MIN_DELTA", "1e-4"))
@@ -6123,9 +5561,7 @@ def run_mini_training(
             return False
 
     try:
-        grad_accum_steps = int(
-            getattr(final_config.train.batch, "gradient_accumulation_steps", 1)
-        )
+        grad_accum_steps = int(getattr(final_config.train.batch, "gradient_accumulation_steps", 1))
     except Exception:
         grad_accum_steps = 1
     try:
@@ -6135,11 +5571,7 @@ def run_mini_training(
 
     last_gat_grad_norm: float | None = None
     for epoch in range(1, int(max_epochs) + 1):
-        step_offset = (
-            (epoch - 1) * steps_per_epoch
-            if steps_per_epoch > 0
-            else (epoch - 1) * 1_000
-        )
+        step_offset = (epoch - 1) * steps_per_epoch if steps_per_epoch > 0 else (epoch - 1) * 1_000
         avg_train_loss, _, last_gat_grad_norm = train_epoch(
             model,
             train_loader,
@@ -6157,9 +5589,7 @@ def run_mini_training(
         val_loss, _, _ = validate(model, val_loader, criterion, device)
 
         # Compute simple Hit Rate(h1) over a few batches (up to 50) for mini path
-        def _mini_val_hit_rate(
-            _model, _loader, _device, max_batches: int = 50
-        ) -> float:
+        def _mini_val_hit_rate(_model, _loader, _device, max_batches: int = 50) -> float:
             _model.eval()
             preds_all, targs_all = [], []
             with torch.no_grad():
@@ -6175,9 +5605,7 @@ def run_mini_training(
                         continue
                     # normalize and take horizon_1
                     pk = (
-                        "point_horizon_1"
-                        if "point_horizon_1" in out
-                        else ("horizon_1" if "horizon_1" in out else None)
+                        "point_horizon_1" if "point_horizon_1" in out else ("horizon_1" if "horizon_1" in out else None)
                     )
                     tk = None
                     for k in b.get("targets", {}).keys():
@@ -6208,9 +5636,7 @@ def run_mini_training(
             return 0.0
 
         val_hit_rate = _mini_val_hit_rate(model, val_loader, device)
-        logger.info(
-            f"[mini] Val loss @epoch{epoch}: {val_loss:.4f}, HitRate(h1)={val_hit_rate:.4f}"
-        )
+        logger.info(f"[mini] Val loss @epoch{epoch}: {val_loss:.4f}, HitRate(h1)={val_hit_rate:.4f}")
 
         # Choose metric for early stopping
         chosen = val_loss
@@ -6241,9 +5667,7 @@ def run_mini_training(
         else:
             no_improve += 1
             if no_improve >= es_patience:
-                logger.info(
-                    f"[mini] Early stopping at epoch {epoch} (best {es_metric}={best_metric:.4f})"
-                )
+                logger.info(f"[mini] Early stopping at epoch {epoch} (best {es_metric}={best_metric:.4f})")
                 break
 
     save_path = Path("models/checkpoints/atft_gat_fan_best_mini.pt")
@@ -6270,9 +5694,7 @@ def _apply_env_overrides(cfg):
         if "prediction_head" in cfg.model and "output" in cfg.model.prediction_head:
             if "quantile_prediction" in cfg.model.prediction_head.output:
                 cfg.model.prediction_head.output.quantile_prediction.enabled = enabled
-                logger.info(
-                    f"[EnvOverride] model.prediction_head.output.quantile_prediction.enabled = {enabled}"
-                )
+                logger.info(f"[EnvOverride] model.prediction_head.output.quantile_prediction.enabled = {enabled}")
             else:
                 logger.warning("[EnvOverride] quantile_prediction not found in config")
         else:
@@ -6285,9 +5707,7 @@ def _apply_env_overrides(cfg):
         if "prediction_head" in cfg.model and "output" in cfg.model.prediction_head:
             # Set the student_t field - use environment variable to override config
             cfg.model.prediction_head.output.student_t = enabled
-            logger.info(
-                f"[EnvOverride] model.prediction_head.output.student_t = {enabled}"
-            )
+            logger.info(f"[EnvOverride] model.prediction_head.output.student_t = {enabled}")
         else:
             logger.warning("[EnvOverride] prediction_head.output not found in config")
 
@@ -6299,9 +5719,7 @@ def _apply_env_overrides(cfg):
         if "trainer" in cfg.train and "precision" in cfg.train.trainer:
             # Set precision based on USE_AMP
             cfg.train.trainer.precision = "bf16-mixed" if enabled else 32
-            logger.info(
-                f"[EnvOverride] train.trainer.precision = {cfg.train.trainer.precision}"
-            )
+            logger.info(f"[EnvOverride] train.trainer.precision = {cfg.train.trainer.precision}")
         else:
             logger.warning("[EnvOverride] train.trainer.precision not found in config")
 
@@ -6326,9 +5744,7 @@ def _apply_env_overrides(cfg):
         var_min = float(os.environ["PRED_VAR_MIN"])
         std_min = var_min**0.5
         os.environ["PRED_STD_MIN"] = str(std_min)
-        logger.info(
-            f"[EnvOverride] PRED_STD_MIN = {std_min} (from PRED_VAR_MIN={var_min}, via environment)"
-        )
+        logger.info(f"[EnvOverride] PRED_STD_MIN = {std_min} (from PRED_VAR_MIN={var_min}, via environment)")
 
     if "PRED_VAR_WEIGHT" in os.environ:
         val = float(os.environ["PRED_VAR_WEIGHT"])
@@ -6373,6 +5789,39 @@ def train(config: DictConfig) -> None:
     """メイン学習関数"""
     logger.info("Starting production training...")
 
+    # ============================================================================
+    # 🔧 Patch M1: RUNCTRL_BRIDGE - Hydra → env conversion layer
+    # ============================================================================
+    def _cfg_get(cfg, key, default=None):
+        """Safely get nested config value"""
+        try:
+            node = cfg
+            for k in key.split("."):
+                node = node[k]
+            return node
+        except Exception:
+            return default
+
+    # Bridge Hydra config values to environment variables (overrides existing)
+    val_interval = _cfg_get(config, "train.trainer.val_interval_steps", None)
+    max_steps_per_epoch = _cfg_get(config, "train.trainer.max_steps_per_epoch", None)
+    max_val_steps = _cfg_get(config, "train.trainer.max_val_steps", None)
+
+    if val_interval is not None:
+        os.environ["VAL_INTERVAL_STEPS"] = str(val_interval)
+    if max_steps_per_epoch is not None:
+        os.environ["MAX_STEPS_PER_EPOCH"] = str(max_steps_per_epoch)
+    if max_val_steps is not None:
+        os.environ["MAX_VAL_STEPS"] = str(max_val_steps)
+
+    logger.info(
+        "[RUNCTRL] val_interval=%s max_steps_per_epoch=%s max_val_steps=%s",
+        os.getenv("VAL_INTERVAL_STEPS", "-"),
+        os.getenv("MAX_STEPS_PER_EPOCH", "-"),
+        os.getenv("MAX_VAL_STEPS", "-"),
+    )
+    # ============================================================================
+
     # Default to auto multi-worker mode unless explicitly overridden
     if "ALLOW_UNSAFE_DATALOADER" not in os.environ:
         os.environ["ALLOW_UNSAFE_DATALOADER"] = "auto"
@@ -6402,11 +5851,7 @@ def train(config: DictConfig) -> None:
         try:
             import mlflow  # type: ignore
 
-            mlflow.set_tracking_uri(
-                os.getenv(
-                    "MLFLOW_TRACKING_URI", str((project_root / "mlruns").resolve())
-                )
-            )
+            mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", str((project_root / "mlruns").resolve())))
             mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT", "ATFT-GAT-FAN"))
             run_name = os.getenv(
                 "MLFLOW_RUN_NAME",
@@ -6436,9 +5881,7 @@ def train(config: DictConfig) -> None:
     )
     if force_single_process:
         if os.environ.get("USE_DAY_BATCH", "1") not in ("0", "false", "False"):
-            logger.info(
-                "Disabling day-batch sampler and multi-worker loaders for single-process run."
-            )
+            logger.info("Disabling day-batch sampler and multi-worker loaders for single-process run.")
         os.environ["USE_DAY_BATCH"] = "false"
         os.environ.setdefault("NUM_WORKERS", "0")
         os.environ.setdefault("PERSISTENT_WORKERS", "0")
@@ -6480,9 +5923,7 @@ def train(config: DictConfig) -> None:
     # AMP 設定（環境変数で制御）
     use_amp_env = os.getenv("USE_AMP", "1") == "1"
     amp_dtype = (
-        torch.bfloat16
-        if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed")
-        else torch.float16
+        torch.bfloat16 if os.getenv("AMP_DTYPE", "").lower() in ("bf16", "bfloat16", "bf16-mixed") else torch.float16
     )
 
     # 警告を抑制
@@ -6502,12 +5943,8 @@ def train(config: DictConfig) -> None:
             try:
                 if dev_env.startswith("cuda") and not torch.cuda.is_available():
                     if require_gpu:
-                        raise RuntimeError(
-                            "GPU required but not available (CUDA not initialized)"
-                        )
-                    logger.warning(
-                        "CUDA not available; falling back to CPU despite DEVICE=cuda"
-                    )
+                        raise RuntimeError("GPU required but not available (CUDA not initialized)")
+                    logger.warning("CUDA not available; falling back to CPU despite DEVICE=cuda")
                     return torch.device("cpu")
                 return torch.device(dev_env)
             except Exception:
@@ -6516,9 +5953,7 @@ def train(config: DictConfig) -> None:
         if force_gpu or acc_env in ("gpu", "cuda"):
             if not torch.cuda.is_available():
                 if require_gpu:
-                    raise RuntimeError(
-                        "GPU required but not available (torch.cuda.is_available=False)"
-                    )
+                    raise RuntimeError("GPU required but not available (torch.cuda.is_available=False)")
                 logger.warning("GPU hint given but CUDA unavailable; using CPU")
                 return torch.device("cpu")
             return torch.device("cuda")
@@ -6532,27 +5967,17 @@ def train(config: DictConfig) -> None:
 
     if device.type == "cuda":
         logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
-        logger.info(
-            f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB"
-        )
+        logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
 
     # 設定を作成（Hydraから渡される設定を使用）
     final_config = OmegaConf.create(
         {
             "data": {
-                "source": {
-                    "data_dir": getattr(
-                        config.data.source, "data_dir", "data/raw/large_scale"
-                    )
-                },
+                "source": {"data_dir": getattr(config.data.source, "data_dir", "data/raw/large_scale")},
                 "time_series": {
                     # ユーザ指定を優先（固定60を強制しない）
-                    "sequence_length": getattr(
-                        config.data.time_series, "sequence_length", 20
-                    ),
-                    "prediction_horizons": getattr(
-                        config.data.time_series, "prediction_horizons", [1, 5, 10, 20]
-                    ),
+                    "sequence_length": getattr(config.data.time_series, "sequence_length", 20),
+                    "prediction_horizons": getattr(config.data.time_series, "prediction_horizons", [1, 5, 10, 20]),
                 },
                 "features": {
                     "numeric": {
@@ -6575,24 +6000,18 @@ def train(config: DictConfig) -> None:
                 # 主要ブロックのドロップアウトを個別設定（存在すれば使用）
                 "input_projection": {
                     "use_layer_norm": True,
-                    "dropout": float(
-                        os.getenv("INPUT_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))
-                    ),
+                    "dropout": float(os.getenv("INPUT_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))),
                 },
                 "tft": {
                     "variable_selection": {
-                        "dropout": float(
-                            os.getenv("VSN_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))
-                        ),
+                        "dropout": float(os.getenv("VSN_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))),
                         "use_sigmoid": True,
                         "sparsity_coefficient": 0.0,
                     },
                     "attention": {"heads": 4},
                     "lstm": {
                         "layers": 1,
-                        "dropout": float(
-                            os.getenv("LSTM_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))
-                        ),
+                        "dropout": float(os.getenv("LSTM_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))),
                     },
                     "temporal": {
                         "use_positional_encoding": True,
@@ -6602,9 +6021,7 @@ def train(config: DictConfig) -> None:
                 "prediction_head": {
                     "architecture": {
                         "hidden_layers": [],
-                        "dropout": float(
-                            os.getenv("HEAD_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))
-                        ),
+                        "dropout": float(os.getenv("HEAD_DROPOUT", os.getenv("MODEL_DROPOUT", "0.1"))),
                     },
                     "output": {
                         "point_prediction": True,
@@ -6622,12 +6039,8 @@ def train(config: DictConfig) -> None:
             "train": {
                 "batch": {
                     # 安全なデフォルト（OOM回避）。実効バッチは勾配蓄積で調整
-                    "train_batch_size": getattr(
-                        getattr(config.train, "batch", {}), "train_batch_size", 256
-                    ),
-                    "val_batch_size": getattr(
-                        getattr(config.train, "batch", {}), "val_batch_size", 512
-                    ),
+                    "train_batch_size": getattr(getattr(config.train, "batch", {}), "train_batch_size", 256),
+                    "val_batch_size": getattr(getattr(config.train, "batch", {}), "val_batch_size", 512),
                     "gradient_accumulation_steps": getattr(
                         getattr(config.train, "batch", {}),
                         "gradient_accumulation_steps",
@@ -6639,15 +6052,11 @@ def train(config: DictConfig) -> None:
                         getattr(getattr(config.train, "optimizer", {}), "lr", 0.001),
                         5e-4,
                     ),
-                    "weight_decay": getattr(
-                        getattr(config.train, "optimizer", {}), "weight_decay", 0.01
-                    ),
+                    "weight_decay": getattr(getattr(config.train, "optimizer", {}), "weight_decay", 0.01),
                 },
                 "scheduler": {
                     "warmup_epochs": 2,
-                    "total_epochs": getattr(
-                        getattr(config.train, "trainer", {}), "max_epochs", 30
-                    ),
+                    "total_epochs": getattr(getattr(config.train, "trainer", {}), "max_epochs", 30),
                 },
             },
         }
@@ -6655,9 +6064,7 @@ def train(config: DictConfig) -> None:
 
     if force_single_process:
         try:
-            OmegaConf.update(
-                final_config, "data.use_day_batch_sampler", False, merge=True
-            )
+            OmegaConf.update(final_config, "data.use_day_batch_sampler", False, merge=True)
         except Exception:
             pass
         for path, value in (
@@ -6672,9 +6079,7 @@ def train(config: DictConfig) -> None:
     try:
         final_config = OmegaConf.merge(config, final_config)
     except Exception as _merge_err:
-        logger.warning(
-            f"[Hydra-Struct] merge with original config failed: {_merge_err}"
-        )
+        logger.warning(f"[Hydra-Struct] merge with original config failed: {_merge_err}")
 
     # Ensure auxiliary data sections (schema, normalization, etc.) are retained
     try:
@@ -6692,17 +6097,13 @@ def train(config: DictConfig) -> None:
         if isinstance(cfg_batch_container, dict):
             for key, value in cfg_batch_container.items():
                 if OmegaConf.select(final_config, f"train.batch.{key}") is None:
-                    OmegaConf.update(
-                        final_config, f"train.batch.{key}", value, merge=True
-                    )
+                    OmegaConf.update(final_config, f"train.batch.{key}", value, merge=True)
     except Exception as _batch_merge_err:
         logger.warning(f"[Hydra-Struct] train.batch merge failed: {_batch_merge_err}")
 
     try:
         if hasattr(config, "normalization") and config.normalization is not None:
-            OmegaConf.update(
-                final_config, "normalization", config.normalization, merge=True
-            )
+            OmegaConf.update(final_config, "normalization", config.normalization, merge=True)
     except Exception as _norm_merge_err:
         logger.warning(f"[Hydra-Struct] normalization merge failed: {_norm_merge_err}")
 
@@ -6723,9 +6124,7 @@ def train(config: DictConfig) -> None:
                     merge=True,
                 )
     except Exception as _norm_fallback_err:
-        logger.warning(
-            f"[Hydra-Struct] normalization fallback failed: {_norm_fallback_err}"
-        )
+        logger.warning(f"[Hydra-Struct] normalization fallback failed: {_norm_fallback_err}")
     # ---- Optional W&B setup (env-flagged) ----
     wb_logger = None
     try:
@@ -6745,9 +6144,7 @@ def train(config: DictConfig) -> None:
         except Exception:
             pass
         if use_wandb and WBLogger is not None:
-            run_name = os.getenv(
-                "WANDB_RUN_NAME", f"train_{datetime.now(JST).strftime('%Y%m%d_%H%M%S')}"
-            )
+            run_name = os.getenv("WANDB_RUN_NAME", f"train_{datetime.now(JST).strftime('%Y%m%d_%H%M%S')}")
             wb_logger = WBLogger(
                 config=final_config,
                 experiment_name=run_name,
@@ -6759,11 +6156,7 @@ def train(config: DictConfig) -> None:
             try:
                 wb_logger.log_hyperparameters(
                     {
-                        "optimizer/lr": float(
-                            getattr(
-                                getattr(final_config.train, "optimizer", {}), "lr", 0.0
-                            )
-                        ),
+                        "optimizer/lr": float(getattr(getattr(final_config.train, "optimizer", {}), "lr", 0.0)),
                         "optimizer/wd": float(
                             getattr(
                                 getattr(final_config.train, "optimizer", {}),
@@ -6771,15 +6164,9 @@ def train(config: DictConfig) -> None:
                                 0.0,
                             )
                         ),
-                        "batch/train": int(
-                            getattr(final_config.train.batch, "train_batch_size", 0)
-                        ),
-                        "batch/val": int(
-                            getattr(final_config.train.batch, "val_batch_size", 0)
-                        ),
-                        "epochs": int(
-                            getattr(final_config.train.scheduler, "total_epochs", 0)
-                        ),
+                        "batch/train": int(getattr(final_config.train.batch, "train_batch_size", 0)),
+                        "batch/val": int(getattr(final_config.train.batch, "val_batch_size", 0)),
+                        "epochs": int(getattr(final_config.train.scheduler, "total_epochs", 0)),
                         "amp": os.getenv("USE_AMP", "1"),
                         "amp_dtype": os.getenv("AMP_DTYPE", ""),
                     }
@@ -6791,12 +6178,8 @@ def train(config: DictConfig) -> None:
     # Log core hyperparameters to MLflow
     if mlf is not None:
         try:
-            lr_logged = getattr(
-                getattr(final_config.train, "optimizer", {}), "lr", None
-            )
-            bs_logged = getattr(
-                getattr(final_config.train, "batch", {}), "train_batch_size", None
-            )
+            lr_logged = getattr(getattr(final_config.train, "optimizer", {}), "lr", None)
+            bs_logged = getattr(getattr(final_config.train, "batch", {}), "train_batch_size", None)
             ga_logged = getattr(
                 getattr(final_config.train, "batch", {}),
                 "gradient_accumulation_steps",
@@ -6811,15 +6194,9 @@ def train(config: DictConfig) -> None:
             mlf.log_params(
                 {
                     "train.lr": float(lr_logged) if lr_logged is not None else None,
-                    "batch.train_batch_size": int(bs_logged)
-                    if bs_logged is not None
-                    else None,
-                    "batch.grad_accum": int(ga_logged)
-                    if ga_logged is not None
-                    else None,
-                    "model.gat.alpha_min": float(alpha_min_cfg)
-                    if alpha_min_cfg is not None
-                    else None,
+                    "batch.train_batch_size": int(bs_logged) if bs_logged is not None else None,
+                    "batch.grad_accum": int(ga_logged) if ga_logged is not None else None,
+                    "model.gat.alpha_min": float(alpha_min_cfg) if alpha_min_cfg is not None else None,
                 }
             )
         except Exception as _e:
@@ -6895,25 +6272,19 @@ def train(config: DictConfig) -> None:
         k_data = getattr(final_config.data.graph_builder, "k", None)
         k_model = getattr(final_config.model.gat, "knn_k", None)
         if k_data and k_model and int(k_data) != int(k_model):
-            logger.warning(
-                f"[ModelCheck] data.graph_builder.k({k_data}) != model.gat.knn_k({k_model})"
-            )
+            logger.warning(f"[ModelCheck] data.graph_builder.k({k_data}) != model.gat.knn_k({k_model})")
     except Exception:
         pass
 
     # PositionalEncoding 長の自動整合: データ系列長に合わせて上書き
     try:
         seq_len_cfg = int(getattr(final_config.data.time_series, "sequence_length", 20))
-        tft_temporal = getattr(
-            getattr(final_config.model, "tft", object()), "temporal", None
-        )
+        tft_temporal = getattr(getattr(final_config.model, "tft", object()), "temporal", None)
         if tft_temporal is not None:
             cur_max = getattr(tft_temporal, "max_sequence_length", None)
             if cur_max is None or int(cur_max) < int(seq_len_cfg):
                 tft_temporal.max_sequence_length = int(seq_len_cfg)
-                logger.info(
-                    f"[PE] Set model.tft.temporal.max_sequence_length={seq_len_cfg}"
-                )
+                logger.info(f"[PE] Set model.tft.temporal.max_sequence_length={seq_len_cfg}")
     except Exception as _e:
         logger.warning(f"[PE] auto-align skipped: {_e}")
 
@@ -6936,9 +6307,7 @@ def train(config: DictConfig) -> None:
             OmegaConf.update(final_config, f"{gb_path}.k", gb_default_k, merge=True)
         if gb_env_k:
             try:
-                OmegaConf.update(
-                    final_config, f"{gb_path}.k", int(gb_env_k), merge=True
-                )
+                OmegaConf.update(final_config, f"{gb_path}.k", int(gb_env_k), merge=True)
             except Exception as _ge:
                 logger.warning(f"[Graph] invalid GRAPH_K value '{gb_env_k}': {_ge}")
 
@@ -6951,21 +6320,15 @@ def train(config: DictConfig) -> None:
             try:
                 gat_knn = OmegaConf.select(final_config, "model.gat.knn_k")
                 if gat_knn is None or int(gat_knn) != gb_k_val:
-                    OmegaConf.update(
-                        final_config, "model.gat.knn_k", gb_k_val, merge=True
-                    )
+                    OmegaConf.update(final_config, "model.gat.knn_k", gb_k_val, merge=True)
             except Exception as _knn_err:
-                logger.warning(
-                    f"[Graph] unable to sync model.gat.knn_k with k={gb_k_val}: {_knn_err}"
-                )
+                logger.warning(f"[Graph] unable to sync model.gat.knn_k with k={gb_k_val}: {_knn_err}")
     except Exception as _gb_err:
         logger.warning(f"[Graph] Unable to apply graph_builder overrides: {_gb_err}")
 
     _enforce_safe_dataloader_config(final_config)
     try:
-        _effective_workers = int(
-            OmegaConf.select(final_config, "train.batch.num_workers") or 0
-        )
+        _effective_workers = int(OmegaConf.select(final_config, "train.batch.num_workers") or 0)
     except Exception:
         _effective_workers = 0
     _apply_thread_caps(_effective_workers)
@@ -6986,11 +6349,7 @@ def train(config: DictConfig) -> None:
     except Exception:
         _bs_env = 0
     try:
-        _bs_cfg = int(
-            getattr(
-                getattr(final_config.train, "batch", object()), "train_batch_size", 64
-            )
-        )
+        _bs_cfg = int(getattr(getattr(final_config.train, "batch", object()), "train_batch_size", 64))
     except Exception:
         _bs_cfg = 64
     _batch_size = _bs_env if _bs_env > 0 else _bs_cfg
@@ -7015,9 +6374,7 @@ def train(config: DictConfig) -> None:
         try:
             schema_cfg = OmegaConf.select(final_config, "data.schema")
             if schema_cfg is None:
-                logger.warning(
-                    "[Hydra-Struct] data.schema missing prior to DataModule setup"
-                )
+                logger.warning("[Hydra-Struct] data.schema missing prior to DataModule setup")
             else:
                 try:
                     logger.info(
@@ -7027,17 +6384,13 @@ def train(config: DictConfig) -> None:
                 except Exception:
                     logger.info("[Hydra-Struct] data.schema detected (non-mapping)")
         except Exception as _schema_log_err:
-            logger.warning(
-                f"[Hydra-Struct] schema inspection failed: {_schema_log_err}"
-            )
+            logger.warning(f"[Hydra-Struct] schema inspection failed: {_schema_log_err}")
 
         try:
             data_keys = list(final_config.data.keys())  # type: ignore[call-arg]
             logger.info(f"[Hydra-Struct] data group keys: {data_keys}")
         except Exception as _data_keys_err:
-            logger.info(
-                f"[Hydra-Struct] data group type: {type(final_config.data)} ({_data_keys_err})"
-            )
+            logger.info(f"[Hydra-Struct] data group type: {type(final_config.data)} ({_data_keys_err})")
 
         data_module = ProductionDataModuleV2(
             final_config,
@@ -7048,9 +6401,7 @@ def train(config: DictConfig) -> None:
         try:
             schema_cfg = OmegaConf.select(final_config, "data.schema")
             if schema_cfg is None:
-                logger.warning(
-                    "[Hydra-Struct] data.schema missing prior to DataModule setup"
-                )
+                logger.warning("[Hydra-Struct] data.schema missing prior to DataModule setup")
             else:
                 try:
                     logger.info(
@@ -7060,17 +6411,13 @@ def train(config: DictConfig) -> None:
                 except Exception:
                     logger.info("[Hydra-Struct] data.schema detected (non-mapping)")
         except Exception as _schema_log_err:
-            logger.warning(
-                f"[Hydra-Struct] schema inspection failed: {_schema_log_err}"
-            )
+            logger.warning(f"[Hydra-Struct] schema inspection failed: {_schema_log_err}")
 
         try:
             data_keys = list(final_config.data.keys())  # type: ignore[call-arg]
             logger.info(f"[Hydra-Struct] data group keys: {data_keys}")
         except Exception as _data_keys_err:
-            logger.info(
-                f"[Hydra-Struct] data group type: {type(final_config.data)} ({_data_keys_err})"
-            )
+            logger.info(f"[Hydra-Struct] data group type: {type(final_config.data)} ({_data_keys_err})")
 
         data_module = ProductionDataModuleV2(final_config)
     data_module.setup()
@@ -7086,19 +6433,13 @@ def train(config: DictConfig) -> None:
             if hasattr(data_module, "val_files") and data_module.val_files:
                 data_module.val_files = data_module.val_files[:_smoke_max]
             os.environ.setdefault("MINIMAL_COLUMNS", "1")
-            logger.info(
-                f"[SMOKE] Limiting data files to {_smoke_max} and enabling MINIMAL_COLUMNS"
-            )
+            logger.info(f"[SMOKE] Limiting data files to {_smoke_max} and enabling MINIMAL_COLUMNS")
         except Exception as _e:
             logger.warning(f"[SMOKE] could not limit files: {_e}")
 
     # Purged K-Fold（実装）: 環境変数 CV_FOLDS>=2 で活性化
     cv_folds = int(os.getenv("CV_FOLDS", "1"))
-    embargo_days = int(
-        os.getenv(
-            "EMBARGO_DAYS", str(max(final_config.data.time_series.prediction_horizons))
-        )
-    )
+    embargo_days = int(os.getenv("EMBARGO_DAYS", str(max(final_config.data.time_series.prediction_horizons))))
     if cv_folds >= 2:
         logger.info(f"Using Purged K-Fold: k={cv_folds}, embargo={embargo_days}d")
         # 全データから日付リストを作成（DATA_PATHがあれば単一ファイル優先）
@@ -7106,9 +6447,7 @@ def train(config: DictConfig) -> None:
         if data_path_env:
             all_files = [Path(data_path_env)]
         else:
-            all_files = sorted(
-                Path(final_config.data.source.data_dir).glob("*.parquet")
-            )
+            all_files = sorted(Path(final_config.data.source.data_dir).glob("*.parquet"))
         df_dates = []
         for p in all_files:
             try:
@@ -7120,13 +6459,9 @@ def train(config: DictConfig) -> None:
                 continue
         if df_dates:
             date_series = pd.concat(df_dates).dropna().sort_values("date")["date"]
-            unique_dates = (
-                pd.Series(date_series.unique()).sort_values().reset_index(drop=True)
-            )
+            unique_dates = pd.Series(date_series.unique()).sort_values().reset_index(drop=True)
             n = len(unique_dates)
-            fold_sizes = [
-                n // cv_folds + (1 if i < n % cv_folds else 0) for i in range(cv_folds)
-            ]
+            fold_sizes = [n // cv_folds + (1 if i < n % cv_folds else 0) for i in range(cv_folds)]
             idx = 0
             # Regime-aware CV: use fixed boundaries if REGIME_CV=1
             fold_ranges = []
@@ -7146,40 +6481,30 @@ def train(config: DictConfig) -> None:
                     regs = []
                 if regs:
                     fold_ranges = regs
-                    logger.info(
-                        f"[RegimeCV] Using fixed boundaries: {[(s.date(),e.date()) for s,e in fold_ranges]}"
-                    )
+                    logger.info(f"[RegimeCV] Using fixed boundaries: {[(s.date(),e.date()) for s,e in fold_ranges]}")
                 else:
                     # fallback to equal split
                     for fs in fold_sizes:
                         start = idx
                         end = idx + fs
-                        fold_ranges.append(
-                            (unique_dates.iloc[start], unique_dates.iloc[end - 1])
-                        )
+                        fold_ranges.append((unique_dates.iloc[start], unique_dates.iloc[end - 1]))
                         idx = end
             else:
                 for fs in fold_sizes:
                     start = idx
                     end = idx + fs
-                    fold_ranges.append(
-                        (unique_dates.iloc[start], unique_dates.iloc[end - 1])
-                    )
+                    fold_ranges.append((unique_dates.iloc[start], unique_dates.iloc[end - 1]))
                     idx = end
         else:
             fold_ranges = []
-            logger.warning(
-                "Failed to build date ranges for CV; falling back to single split."
-            )
+            logger.warning("Failed to build date ranges for CV; falling back to single split.")
             cv_folds = 1
 
     # Apply minimum date filter for all data to ensure valid targets
     min_date_filter = os.getenv("MIN_TRAINING_DATE", "2016-01-01")
     if min_date_filter:
         logger.info(f"[data-filter] Global minimum date filter: {min_date_filter}")
-        logger.info(
-            "[data-filter] This ensures sufficient history for computing forward-looking returns"
-        )
+        logger.info("[data-filter] This ensures sufficient history for computing forward-looking returns")
 
     # データローダー作成（単一学習 or 第1foldのみ実行）
     logger.info("Creating data loaders...")
@@ -7194,18 +6519,14 @@ def train(config: DictConfig) -> None:
             selected_idx = None
             for i, (vs, _ve) in enumerate(fold_ranges):
                 train_end_eff_i = pd.Timestamp(vs) - embargo
-                if train_end_eff_i >= (
-                    pd.Timestamp(min_date) + pd.Timedelta(days=margin_days)
-                ):
+                if train_end_eff_i >= (pd.Timestamp(min_date) + pd.Timedelta(days=margin_days)):
                     selected_idx = i
                     break
             if selected_idx is None:
                 # それでもダメなら2番目のfold（存在すれば）を使用
                 if len(fold_ranges) >= 2:
                     selected_idx = 1
-                    logger.warning(
-                        "No fold satisfied warmup margin; falling back to fold #2"
-                    )
+                    logger.warning("No fold satisfied warmup margin; falling back to fold #2")
                 else:
                     selected_idx = 0
                     logger.warning(
@@ -7234,7 +6555,9 @@ def train(config: DictConfig) -> None:
                     if 0 <= selected_idx < len(names):
                         regime_name = names[selected_idx]
                 if not regime_name:
-                    regime_name = f"{pd.Timestamp(val_start).strftime('%Y%m%d')}_{pd.Timestamp(val_end).strftime('%Y%m%d')}"
+                    regime_name = (
+                        f"{pd.Timestamp(val_start).strftime('%Y%m%d')}_{pd.Timestamp(val_end).strftime('%Y%m%d')}"
+                    )
             except Exception:
                 regime_name = None
             if regime_name:
@@ -7247,26 +6570,20 @@ def train(config: DictConfig) -> None:
                 except Exception:
                     pass
         except Exception as e:
-            logger.warning(
-                f"Fold selection failed: {e}. Falling back to single-split mode."
-            )
+            logger.warning(f"Fold selection failed: {e}. Falling back to single-split mode.")
             cv_folds = 1
 
         if cv_folds >= 2:
             # Apply minimum date filter to ensure valid targets (forward-looking returns need history)
             min_date_filter = os.getenv("MIN_TRAINING_DATE", "2016-01-01")
             if min_date_filter:
-                logger.info(
-                    f"[data-filter] Filtering training data to dates >= {min_date_filter}"
-                )
+                logger.info(f"[data-filter] Filtering training data to dates >= {min_date_filter}")
                 start_date_filter = pd.to_datetime(min_date_filter)
             else:
                 start_date_filter = None
 
             train_ds = ProductionDatasetV2(
-                data_module.train_files
-                if hasattr(data_module, "train_files")
-                else all_files,
+                data_module.train_files if hasattr(data_module, "train_files") else all_files,
                 final_config,
                 mode="train",
                 target_scalers=None,
@@ -7274,9 +6591,7 @@ def train(config: DictConfig) -> None:
                 end_date=train_end_eff,
             )
             if len(train_ds) == 0:
-                logger.warning(
-                    "Train dataset is empty after CV filtering; disabling CV and using default split."
-                )
+                logger.warning("Train dataset is empty after CV filtering; disabling CV and using default split.")
                 cv_folds = 1
             else:
                 # 学習スケーラfit（学習/検証の両方に適用）
@@ -7285,9 +6600,7 @@ def train(config: DictConfig) -> None:
                     arr = np.array(train_ds.targets[h], dtype=np.float64)
                     if not np.isfinite(arr).all():
                         bad = np.size(arr) - np.isfinite(arr).sum()
-                        logger.warning(
-                            f"[target-normalize] horizon={h}: replacing {bad} non-finite values"
-                        )
+                        logger.warning(f"[target-normalize] horizon={h}: replacing {bad} non-finite values")
                     arr = np.nan_to_num(arr, nan=0.0, posinf=1e6, neginf=-1e6)
                     arr = np.clip(arr, -1e6, 1e6)
                     if arr.size > 0:
@@ -7296,9 +6609,7 @@ def train(config: DictConfig) -> None:
                         scalers[h] = {"mean": m, "std": s}
                 if scalers:
                     train_ds.target_scalers = scalers
-                    logger.info(
-                        "Applied target z-score normalization to train_ds (CV mode)"
-                    )
+                    logger.info("Applied target z-score normalization to train_ds (CV mode)")
 
                 # データモジュール側で検証ローダーを提供するため、
                 # ここでの検証データセット再構築は行わない
@@ -7311,9 +6622,7 @@ def train(config: DictConfig) -> None:
                     except Exception:
                         n = 0
                     if n == 0:
-                        logger.warning(
-                            "[loader] dataset is empty; returning None (skip)"
-                        )
+                        logger.warning("[loader] dataset is empty; returning None (skip)")
                         return None
                     # Reproducible DataLoader: worker_init_fn + generator
                     try:
@@ -7321,9 +6630,7 @@ def train(config: DictConfig) -> None:
                         g = torch.Generator()
                         g.manual_seed(base_seed)
                         worker_init = partial(_seed_worker, base_seed=base_seed)
-                        return DataLoader(
-                            ds, worker_init_fn=worker_init, generator=g, **kwargs
-                        )
+                        return DataLoader(ds, worker_init_fn=worker_init, generator=g, **kwargs)
                     except Exception:
                         return DataLoader(ds, **kwargs)
 
@@ -7331,9 +6638,7 @@ def train(config: DictConfig) -> None:
                 eval_only = os.getenv("CV_EVAL_ONLY", "1") == "1"
                 if eval_only or len(train_ds) == 0:
                     train_loader = None
-                    logger.info(
-                        "[loader] train_loader is disabled (eval_only or empty train set)."
-                    )
+                    logger.info("[loader] train_loader is disabled (eval_only or empty train set).")
                 else:
                     # CRITICAL FIX (2025-10-04): Add multiprocessing_context for Polars/Rust safety
                     train_loader_kwargs = {
@@ -7347,9 +6652,7 @@ def train(config: DictConfig) -> None:
                         "collate_fn": collate_day,
                     }
                     if dlp["multiprocessing_context"] is not None:
-                        train_loader_kwargs["multiprocessing_context"] = dlp[
-                            "multiprocessing_context"
-                        ]
+                        train_loader_kwargs["multiprocessing_context"] = dlp["multiprocessing_context"]
 
                     train_loader = _safe_loader(train_ds, **train_loader_kwargs)
 
@@ -7363,13 +6666,9 @@ def train(config: DictConfig) -> None:
     # Optional: Day-batch sampler (1 day = 1 batch)
     try:
         use_day_batch = os.getenv("USE_DAY_BATCH", "1") == "1"
-        use_fixed_sampler = (
-            os.getenv("USE_FIXED_SAMPLER", "1") == "1"
-        )  # Use fixed version by default
+        use_fixed_sampler = os.getenv("USE_FIXED_SAMPLER", "1") == "1"  # Use fixed version by default
         min_nodes = int(os.getenv("MIN_NODES_PER_DAY", "20"))
-        max_batch_size = int(
-            os.getenv("MAX_BATCH_SIZE", "2048")
-        )  # Enforce batch size limit
+        max_batch_size = int(os.getenv("MAX_BATCH_SIZE", "2048"))  # Enforce batch size limit
 
         def _build_day_loader(ds, drop_undersized: bool):
             dates = getattr(ds, "sequence_dates", None)
@@ -7431,9 +6730,7 @@ def train(config: DictConfig) -> None:
                 "batch_size": final_config.train.batch.val_batch_size,
                 "shuffle": False,
                 "num_workers": v_nw,
-                "pin_memory": bool(
-                    os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")
-                ),
+                "pin_memory": bool(os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")),
                 "collate_fn": collate_day,
                 "worker_init_fn": worker_init_val,
                 "generator": _g2,
@@ -7465,9 +6762,7 @@ def train(config: DictConfig) -> None:
                 "batch_size": final_config.train.batch.train_batch_size,
                 "shuffle": True,
                 "num_workers": t_nw,
-                "pin_memory": bool(
-                    os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")
-                ),
+                "pin_memory": bool(os.getenv("PIN_MEMORY", "0") in ("1", "true", "True")),
                 "drop_last": True,
                 "collate_fn": collate_day,
                 "worker_init_fn": worker_init_train,
@@ -7492,11 +6787,7 @@ def train(config: DictConfig) -> None:
         try:
             it = iter(dl)
             batch = next(it)
-            x = (
-                batch["features"]
-                if isinstance(batch, dict) and "features" in batch
-                else None
-            )
+            x = batch["features"] if isinstance(batch, dict) and "features" in batch else None
             if x is not None and hasattr(x, "shape") and len(x.shape) >= 3:
                 return int(x.shape[-1])
         except StopIteration:
@@ -7506,9 +6797,7 @@ def train(config: DictConfig) -> None:
             return None
         return None
 
-    inferred_feature_dim = _infer_feature_dim_from_loader(
-        val_loader
-    ) or _infer_feature_dim_from_loader(train_loader)
+    inferred_feature_dim = _infer_feature_dim_from_loader(val_loader) or _infer_feature_dim_from_loader(train_loader)
     try:
         if inferred_feature_dim is not None and inferred_feature_dim > 0:
             try:
@@ -7517,9 +6806,7 @@ def train(config: DictConfig) -> None:
                 prev_dim = None
             final_config.data.features.input_dim = int(inferred_feature_dim)
             final_config.data.features.num_features = int(inferred_feature_dim)
-            logger.info(
-                f"[input_dim] detected from data: F={inferred_feature_dim} (was: {prev_dim})"
-            )
+            logger.info(f"[input_dim] detected from data: F={inferred_feature_dim} (was: {prev_dim})")
         else:
             logger.warning(
                 f"[input_dim] could not be inferred from data; using configured value: {getattr(final_config.data.features, 'input_dim', 'unknown')}"
@@ -7544,16 +6831,10 @@ def train(config: DictConfig) -> None:
 
     if train_loader is None:
         logger.error("❌ CRITICAL ERROR: Train loader is None!")
-        logger.error(
-            "This usually means the data directory or split structure is incorrect."
-        )
+        logger.error("This usually means the data directory or split structure is incorrect.")
         logger.error("Expected structure: <data_dir>/{train,val,test}/")
-        logger.error(
-            "Check data.source.data_dir configuration and ensure splits exist."
-        )
-        logger.error(
-            "Exiting immediately to avoid wasting time on empty training loops."
-        )
+        logger.error("Check data.source.data_dir configuration and ensure splits exist.")
+        logger.error("Exiting immediately to avoid wasting time on empty training loops.")
         sys.exit(1)
     else:
         try:
@@ -7568,9 +6849,7 @@ def train(config: DictConfig) -> None:
             val_batches = len(val_loader)
             logger.info(f"✅ Val batches: {val_batches}")
             if val_batches == 0:
-                logger.warning(
-                    "Validation loader has 0 batches! Check data split configuration."
-                )
+                logger.warning("Validation loader has 0 batches! Check data split configuration.")
         except Exception:
             logger.info("Val batches: unknown")
 
@@ -7608,9 +6887,7 @@ def train(config: DictConfig) -> None:
                         # Log statistics
                         mean = data_cpu.mean().item()
                         std = data_cpu.std().item()
-                        logger.info(
-                            f"Target {horizon_key}: mean={mean:.6f}, std={std:.6f}"
-                        )
+                        logger.info(f"Target {horizon_key}: mean={mean:.6f}, std={std:.6f}")
 
                         # Validate if it should be z-score normalized
                         if abs(mean) > 10 or std > 100:
@@ -7623,9 +6900,7 @@ def train(config: DictConfig) -> None:
 
     # ---- Fail-Fast: 空trainローダ検出（eval-onlyは除外） ----
     try:
-        eval_only_flag = (os.getenv("EVAL_ONLY", "0") == "1") or (
-            os.getenv("CV_EVAL_ONLY", "0") == "1"
-        )
+        eval_only_flag = (os.getenv("EVAL_ONLY", "0") == "1") or (os.getenv("CV_EVAL_ONLY", "0") == "1")
         if (not eval_only_flag) and (train_loader is not None):
             try:
                 n_train_batches = len(train_loader)
@@ -7642,19 +6917,11 @@ def train(config: DictConfig) -> None:
                         and data_module.available_dates is not None
                         and len(data_module.available_dates) > 0
                     ):
-                        data_min = pd.Timestamp(
-                            data_module.available_dates[0]
-                        ).normalize()
-                        data_max = pd.Timestamp(
-                            data_module.available_dates[-1]
-                        ).normalize()
+                        data_min = pd.Timestamp(data_module.available_dates[0]).normalize()
+                        data_max = pd.Timestamp(data_module.available_dates[-1]).normalize()
                         seq_len = int(final_config.data.time_series.sequence_length)
-                        max_h = int(
-                            max(final_config.data.time_series.prediction_horizons)
-                        )
-                        eff_start = data_min + pd.tseries.offsets.BDay(
-                            seq_len - 1 + max_h
-                        )
+                        max_h = int(max(final_config.data.time_series.prediction_horizons))
+                        eff_start = data_min + pd.tseries.offsets.BDay(seq_len - 1 + max_h)
                 except Exception:
                     pass
                 # 学習レンジ（可能なら）
@@ -7679,9 +6946,7 @@ def train(config: DictConfig) -> None:
             "on",
         )
         if train_loader is not None and skip_nan_scan:
-            logger.info(
-                "[nan-scan] SKIP_PRETRAIN_NAN_SCAN=1 → skipping first-batch scan"
-            )
+            logger.info("[nan-scan] SKIP_PRETRAIN_NAN_SCAN=1 → skipping first-batch scan")
         if train_loader is not None and not skip_nan_scan:
             it_scan = iter(train_loader)
             first_batch = next(it_scan)
@@ -7697,29 +6962,17 @@ def train(config: DictConfig) -> None:
                 pass
             import torch as _torch
 
-            xb = (
-                first_batch.get("features", None)
-                if isinstance(first_batch, dict)
-                else None
-            )
-            yb = (
-                first_batch.get("targets", None)
-                if isinstance(first_batch, dict)
-                else None
-            )
+            xb = first_batch.get("features", None) if isinstance(first_batch, dict) else None
+            yb = first_batch.get("targets", None) if isinstance(first_batch, dict) else None
             if _torch.is_tensor(xb):
                 if not _torch.isfinite(xb).all():
                     bad = (~_torch.isfinite(xb)).sum().item()
-                    raise ValueError(
-                        f"Non-finite values in first batch features: {bad} elements"
-                    )
+                    raise ValueError(f"Non-finite values in first batch features: {bad} elements")
             if isinstance(yb, dict):
                 for k, v in yb.items():
                     if _torch.is_tensor(v) and (not _torch.isfinite(v).all()):
                         bad = (~_torch.isfinite(v)).sum().item()
-                        raise ValueError(
-                            f"Non-finite values in first batch targets[{k}]: {bad} elements"
-                        )
+                        raise ValueError(f"Non-finite values in first batch targets[{k}]: {bad} elements")
     except StopIteration:
         # すでにlen==0でFail-Fastしているため通常は到達しない
         pass
@@ -7730,9 +6983,7 @@ def train(config: DictConfig) -> None:
     # ランマニフェスト（再現用メタ）を作成
     def _get_git_commit() -> str:
         try:
-            return (
-                subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
-            )
+            return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
         except Exception:
             return "unknown"
 
@@ -7774,12 +7025,7 @@ def train(config: DictConfig) -> None:
             if k in os.environ:
                 out[k] = os.environ.get(k)
         for k, v in os.environ.items():
-            if (
-                k.startswith(
-                    ("USE_", "DYN_", "MODEL_", "INPUT_", "VSN_", "LSTM_", "HEAD_")
-                )
-                and k not in out
-            ):
+            if k.startswith(("USE_", "DYN_", "MODEL_", "INPUT_", "VSN_", "LSTM_", "HEAD_")) and k not in out:
                 out[k] = v
         return out
 
@@ -7819,11 +7065,7 @@ def train(config: DictConfig) -> None:
             return
 
         def _resolve(value: str) -> str:
-            if (
-                isinstance(value, str)
-                and value.startswith("${")
-                and value.endswith("}")
-            ):
+            if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
                 interp_key = value[2:-1]
                 resolved = OmegaConf.select(cfg, interp_key)
                 if resolved is not None:
@@ -7878,21 +7120,16 @@ def train(config: DictConfig) -> None:
         "val_files": _file_manifest(getattr(data_module, "val_files", [])),
         "test_files": _file_manifest(getattr(data_module, "test_files", [])),
         # 追加: 使用した特徴列の保存（再現性）
-        "feature_cols": (
-            getattr(getattr(train_loader, "dataset", None), "feature_cols", None) or []
-        ),
+        "feature_cols": (getattr(getattr(train_loader, "dataset", None), "feature_cols", None) or []),
     }
     try:
         Path("logs/manifests").mkdir(parents=True, exist_ok=True)
         Path("models/manifests").mkdir(parents=True, exist_ok=True)
         mpath = (
-            Path("logs/manifests")
-            / f"train_manifest_{datetime.now(ZoneInfo('UTC')).strftime('%Y%m%d_%H%M%S')}.json"
+            Path("logs/manifests") / f"train_manifest_{datetime.now(ZoneInfo('UTC')).strftime('%Y%m%d_%H%M%S')}.json"
         )
         mpath.write_text(json.dumps(run_manifest, ensure_ascii=False))
-        Path("models/manifests/latest_train_manifest.json").write_text(
-            json.dumps(run_manifest, ensure_ascii=False)
-        )
+        Path("models/manifests/latest_train_manifest.json").write_text(json.dumps(run_manifest, ensure_ascii=False))
     except Exception:
         pass
 
@@ -7903,9 +7140,7 @@ def train(config: DictConfig) -> None:
             super().__init__()
             # 入力次元と出力次元を設定から取得
             input_dim = int(getattr(config.data.features, "input_dim", 13))
-            sequence_length = int(
-                getattr(config.data.time_series, "sequence_length", 20)
-            )
+            sequence_length = int(getattr(config.data.time_series, "sequence_length", 20))
             horizons = int(getattr(config.data.time_series, "horizons", 10))
 
             # 単純な線形層：(batch, seq_len, features) -> (batch, 4 horizons, 1)
@@ -7952,11 +7187,7 @@ def train(config: DictConfig) -> None:
 
             # 🔧 FIX: GAT/FAN勾配ゼロ問題対策 - backbone_projection初期化調整
             # GAT特徴がbackbone_projection通過後も保持されるよう、GAT部分の重みを強化
-            if (
-                hasattr(model, "gat")
-                and model.gat is not None
-                and hasattr(model, "backbone_projection")
-            ):
+            if hasattr(model, "gat") and model.gat is not None and hasattr(model, "backbone_projection"):
                 with torch.no_grad():
                     # backbone_projection: [combined_dim, hidden_size]
                     # combined_dim = hidden_size + gat_output_dim
@@ -7964,19 +7195,13 @@ def train(config: DictConfig) -> None:
                     gat_scale = float(os.getenv("GAT_INIT_SCALE", "2.0"))
 
                     # GAT部分の重みをスケーリング（勾配フロー保証）
-                    model.backbone_projection.weight.data[
-                        :, gat_start_idx:
-                    ] *= gat_scale
+                    model.backbone_projection.weight.data[:, gat_start_idx:] *= gat_scale
 
-                    logger.info(
-                        f"✅ [GAT-FIX] backbone_projection GAT部分の重みを{gat_scale}倍にスケーリング"
-                    )
+                    logger.info(f"✅ [GAT-FIX] backbone_projection GAT部分の重みを{gat_scale}倍にスケーリング")
 
             # Sanity: ensure PE length >= sequence_length if model exposes config
             try:
-                seq_len = int(
-                    getattr(final_config.data.time_series, "sequence_length", 20)
-                )
+                seq_len = int(getattr(final_config.data.time_series, "sequence_length", 20))
                 # If model has positional encoding module, attempt a dummy call with seq_len to pre-warm
                 with torch.no_grad():
                     dummy = torch.zeros(
@@ -7991,29 +7216,42 @@ def train(config: DictConfig) -> None:
 
             # P0-2: Feature ABI fingerprint check
             try:
-                import hashlib
+                import json
                 from pathlib import Path as _P
 
-                import yaml
-                manifest_path = _P(
-                    OmegaConf.select(final_config, "features.manifest_path") or
-                    "output/reports/feature_manifest_306.yaml"
+                feature_index_path = _P(
+                    OmegaConf.select(final_config, "features.feature_index_path")
+                    or os.getenv("FEATURE_INDEX_PATH", "output/feature_index_latest.json")
                 )
-                if manifest_path.exists():
-                    man = yaml.safe_load(manifest_path.read_text())
-                    abi = man.get("meta", {}).get("abi_sha1")
-                    feat_list = man["features"]
-                    cur_abi = hashlib.sha1(",".join(feat_list).encode()).hexdigest()
-                    if abi and abi != cur_abi:
-                        logger.warning(
-                            f"[FeatureABI] Mismatch: manifest={abi}, computed={cur_abi}"
-                        )
-                    else:
-                        logger.info(
-                            f"[FeatureABI] n={len(feat_list)} sha1={cur_abi}"
-                        )
+                if feature_index_path.exists():
+                    spec = json.loads(feature_index_path.read_text())
+                    col_hash = spec.get("column_hash")
+                    feat_hash = spec.get("feature_hash")
+                    logger.info(
+                        "[FeatureIndex] columns=%d features=%d column_hash=%s feature_hash=%s",
+                        len(spec.get("columns", [])),
+                        len(spec.get("feature_columns", [])),
+                        col_hash,
+                        feat_hash,
+                    )
                 else:
-                    logger.warning(f"[FeatureABI] Manifest not found: {manifest_path}")
+                    import yaml
+
+                    manifest_path = _P(
+                        OmegaConf.select(final_config, "features.manifest_path")
+                        or "output/reports/feature_manifest_306.yaml"
+                    )
+                    if manifest_path.exists():
+                        man = yaml.safe_load(manifest_path.read_text())
+                        abi = man.get("meta", {}).get("abi_sha1")
+                        feat_list = man["features"]
+                        cur_abi = hashlib.sha1(",".join(feat_list).encode()).hexdigest()
+                        if abi and abi != cur_abi:
+                            logger.warning(f"[FeatureABI] Mismatch: manifest={abi}, computed={cur_abi}")
+                        else:
+                            logger.info(f"[FeatureABI] n={len(feat_list)} sha1={cur_abi}")
+                    else:
+                        logger.warning(f"[FeatureABI] Manifest not found: {manifest_path}")
             except Exception as e:
                 logger.warning(f"[FeatureABI] Check failed: {e}")
 
@@ -8035,11 +7273,7 @@ def train(config: DictConfig) -> None:
 
             # Enable gradient checkpointing through model config if set
             try:
-                if bool(
-                    getattr(
-                        final_config.model.optimization, "gradient_checkpointing", False
-                    )
-                ):
+                if bool(getattr(final_config.model.optimization, "gradient_checkpointing", False)):
                     for m in model.modules():
                         if hasattr(m, "gradient_checkpointing"):
                             m.gradient_checkpointing = True
@@ -8070,10 +7304,7 @@ def train(config: DictConfig) -> None:
                         logger.info("✅ torch.compile applied to TFT module")
 
                     # Compile prediction head (static graph)
-                    if (
-                        hasattr(model, "prediction_head")
-                        and model.prediction_head is not None
-                    ):
+                    if hasattr(model, "prediction_head") and model.prediction_head is not None:
                         model.prediction_head = torch.compile(
                             model.prediction_head,
                             mode=compile_mode,
@@ -8089,23 +7320,13 @@ def train(config: DictConfig) -> None:
                     logger.info("✅ Selective torch.compile completed successfully")
             except Exception as e:
                 logger.warning(f"⚠️ torch.compile failed: {e}")
-            logger.info(
-                f"ATFT-GAT-FAN model parameters: {sum(p.numel() for p in model.parameters()):,}"
-            )
+            logger.info(f"ATFT-GAT-FAN model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
             # 🔧 DEBUG (2025-10-06): Log GAT configuration values
-            logger.info(
-                f"[CONFIG-DEBUG] model.gat_entropy_weight={getattr(model, 'gat_entropy_weight', 'N/A')}"
-            )
-            logger.info(
-                f"[CONFIG-DEBUG] model.gat_edge_weight={getattr(model, 'gat_edge_weight', 'N/A')}"
-            )
-            logger.info(
-                f"[CONFIG-DEBUG] model.gat is None: {getattr(model, 'gat', None) is None}"
-            )
-            logger.info(
-                f"[CONFIG-DEBUG] model.gat_output_dim={getattr(model, 'gat_output_dim', 'N/A')}"
-            )
+            logger.info(f"[CONFIG-DEBUG] model.gat_entropy_weight={getattr(model, 'gat_entropy_weight', 'N/A')}")
+            logger.info(f"[CONFIG-DEBUG] model.gat_edge_weight={getattr(model, 'gat_edge_weight', 'N/A')}")
+            logger.info(f"[CONFIG-DEBUG] model.gat is None: {getattr(model, 'gat', None) is None}")
+            logger.info(f"[CONFIG-DEBUG] model.gat_output_dim={getattr(model, 'gat_output_dim', 'N/A')}")
 
             # Apply runtime guards
             try:
@@ -8128,9 +7349,7 @@ def train(config: DictConfig) -> None:
                                 if param.requires_grad:
                                     noise = torch.randn_like(param) * head_noise_std
                                     param.add_(noise)
-                            logger.info(
-                                f"Added initial noise (std={head_noise_std}) to {name}"
-                            )
+                            logger.info(f"Added initial noise (std={head_noise_std}) to {name}")
         else:
             raise ImportError("ATFT_GAT_FAN not available")
     except Exception as e:
@@ -8152,9 +7371,7 @@ def train(config: DictConfig) -> None:
         # bf16ではスケーリング無効化（再現性・安定性向上）
         enabled=scaler_enabled,
     )
-    logger.info(
-        f"[AMP] GradScaler initialized: enabled={scaler_enabled}, amp_dtype={amp_dtype}"
-    )
+    logger.info(f"[AMP] GradScaler initialized: enabled={scaler_enabled}, amp_dtype={amp_dtype}")
 
     grad_monitor = GradientMonitor.from_environment(model=model, logger=logger)
     if grad_monitor is None:
@@ -8164,9 +7381,7 @@ def train(config: DictConfig) -> None:
             "yes",
             "on",
         ):
-            logger.warning(
-                "[GradMonitor] ENABLE_GRAD_MONITOR=1 but monitor initialization returned None"
-            )
+            logger.warning("[GradMonitor] ENABLE_GRAD_MONITOR=1 but monitor initialization returned None")
     else:
         logger.info(
             "[GradMonitor] Monitoring enabled "
@@ -8188,9 +7403,7 @@ def train(config: DictConfig) -> None:
     sharpe_center_env = os.getenv("SHARPE_CENTER", "z").strip().lower() or "z"
     # 追加: ペアワイズ順位ロスの制御
     use_pairwise_rank = os.getenv("USE_PAIRWISE_RANK", "0") == "1"
-    pairwise_rank_w = (
-        float(os.getenv("PAIRWISE_RANK_WEIGHT", "0.0")) if use_pairwise_rank else 0.0
-    )
+    pairwise_rank_w = float(os.getenv("PAIRWISE_RANK_WEIGHT", "0.0")) if use_pairwise_rank else 0.0
     pairwise_sample_ratio = float(os.getenv("PAIRWISE_SAMPLE_RATIO", "0.25"))
     use_listnet = os.getenv("USE_LISTNET_LOSS", "0") == "1"
     listnet_weight = float(os.getenv("LISTNET_WEIGHT", "0.0")) if use_listnet else 0.0
@@ -8205,33 +7418,23 @@ def train(config: DictConfig) -> None:
 
     # 追加: SoftRank Spearman
     use_soft_spearman = os.getenv("USE_SOFT_SPEARMAN", "0") == "1"
-    spearman_weight = (
-        float(os.getenv("SPEARMAN_WEIGHT", "0.0")) if use_soft_spearman else 0.0
-    )
+    spearman_weight = float(os.getenv("SPEARMAN_WEIGHT", "0.0")) if use_soft_spearman else 0.0
     spearman_tau_base = float(os.getenv("SPEARMAN_TAU_BASE", "0.5"))
     spearman_sample_ratio = float(os.getenv("SPEARMAN_SAMPLE_RATIO", "0.5"))
 
     # 追加: 露出中立ペナルティ
     use_exposure_neutral = os.getenv("USE_EXPOSURE_NEUTRAL", "0") == "1"
-    exposure_weight = (
-        float(os.getenv("EXPOSURE_WEIGHT", "0.0")) if use_exposure_neutral else 0.0
-    )
+    exposure_weight = float(os.getenv("EXPOSURE_WEIGHT", "0.0")) if use_exposure_neutral else 0.0
     exposure_lambda_reg = float(os.getenv("EXPOSURE_LAMBDA_REG", "1e-4"))
 
     # 追加: 回転率ペナルティ
     use_turnover_penalty = os.getenv("USE_TURNOVER_PENALTY", "0") == "1"
-    turnover_weight = (
-        float(os.getenv("TURNOVER_WEIGHT", "0.0")) if use_turnover_penalty else 0.0
-    )
+    turnover_weight = float(os.getenv("TURNOVER_WEIGHT", "0.0")) if use_turnover_penalty else 0.0
     turnover_alpha = float(os.getenv("TURNOVER_EMA_ALPHA", "0.9"))
 
     # 追加: ホライズン整合性
     use_horizon_consistency = os.getenv("USE_HORIZON_CONSISTENCY", "0") == "1"
-    consistency_weight = (
-        float(os.getenv("CONSISTENCY_WEIGHT", "0.0"))
-        if use_horizon_consistency
-        else 0.0
-    )
+    consistency_weight = float(os.getenv("CONSISTENCY_WEIGHT", "0.0")) if use_horizon_consistency else 0.0
     pinball_w = float(os.getenv("PINBALL_WEIGHT", "0.3")) if use_pinball else 0.0
     # モデルconfigの分位を損失側へ反映
     q_list = None
@@ -8272,14 +7475,10 @@ def train(config: DictConfig) -> None:
         cs_ic_weight_env = 0.0
 
     # Horizon resolution and consistency (auto-fix by default)
-    data_h_list = list(
-        getattr(final_config.data.time_series, "prediction_horizons", [1, 5, 10, 20])
-    )
+    data_h_list = list(getattr(final_config.data.time_series, "prediction_horizons", [1, 5, 10, 20]))
     data_h_set = {int(h) for h in data_h_list}
 
-    def _normalize_weights_map(
-        wmap: dict[int, float] | None
-    ) -> dict[int, float] | None:
+    def _normalize_weights_map(wmap: dict[int, float] | None) -> dict[int, float] | None:
         if not wmap:
             return None
         try:
@@ -8303,17 +7502,13 @@ def train(config: DictConfig) -> None:
                     return nw
             # list alignment case (train.loss.horizon_weights or prediction.horizon_weights)
             if isinstance(cfg_map, list) and len(cfg_map) == len(data_h_list):
-                parsed = {
-                    int(h): float(w) for h, w in zip(data_h_list, cfg_map, strict=False)
-                }
+                parsed = {int(h): float(w) for h, w in zip(data_h_list, cfg_map, strict=False)}
                 nw = _normalize_weights_map(parsed)
                 if nw:
                     return nw
             pred_hw = OmegaConf.select(final_config, "prediction.horizon_weights")
             if isinstance(pred_hw, list) and len(pred_hw) == len(data_h_list):
-                parsed = {
-                    int(h): float(w) for h, w in zip(data_h_list, pred_hw, strict=False)
-                }
+                parsed = {int(h): float(w) for h, w in zip(data_h_list, pred_hw, strict=False)}
                 nw = _normalize_weights_map(parsed)
                 if nw:
                     return nw
@@ -8323,9 +7518,7 @@ def train(config: DictConfig) -> None:
         import math as _m
 
         base = {int(h): 1.0 / _m.sqrt(float(h)) for h in data_h_list}
-        return _normalize_weights_map(base) or {
-            int(h): 1.0 / len(data_h_list) for h in data_h_list
-        }
+        return _normalize_weights_map(base) or {int(h): 1.0 / len(data_h_list) for h in data_h_list}
 
     if preset_w is None:
         preset_w = _from_cfg_or_default()
@@ -8334,12 +7527,8 @@ def train(config: DictConfig) -> None:
         weight_h_set = {int(k) for k in preset_w.keys()}
         if weight_h_set != data_h_set:
             if os.getenv("STRICT_HWEIGHTS", "0") == "1":
-                logger.error(
-                    f"Horizon mismatch: data={data_h_set}, weights={weight_h_set}"
-                )
-                raise ValueError(
-                    f"Horizon weights must match data horizons: {data_h_set}"
-                )
+                logger.error(f"Horizon mismatch: data={data_h_set}, weights={weight_h_set}")
+                raise ValueError(f"Horizon weights must match data horizons: {data_h_set}")
             # Auto-correct: drop extras, fill missing with sqrt-inv, then normalize
             import math as _m
 
@@ -8348,9 +7537,7 @@ def train(config: DictConfig) -> None:
                 if int(h) not in fixed:
                     fixed[int(h)] = 1.0 / _m.sqrt(float(h))
             preset_w = _normalize_weights_map(fixed)
-            logger.warning(
-                f"[HWEIGHTS] Auto-corrected weights to match horizons {sorted(data_h_list)}"
-            )
+            logger.warning(f"[HWEIGHTS] Auto-corrected weights to match horizons {sorted(data_h_list)}")
 
     criterion = MultiHorizonLoss(
         horizons=final_config.data.time_series.prediction_horizons,
@@ -8368,9 +7555,7 @@ def train(config: DictConfig) -> None:
         use_sharpe=use_sharpe_env,
         sharpe_weight=sharpe_weight_env,
         sharpe_clip=sharpe_clip_env,
-        sharpe_center="z"
-        if sharpe_center_env not in ("raw", "z")
-        else sharpe_center_env,
+        sharpe_center="z" if sharpe_center_env not in ("raw", "z") else sharpe_center_env,
         # 新規追加パラメータ
         use_soft_spearman=use_soft_spearman,
         spearman_weight=spearman_weight,
@@ -8388,9 +7573,7 @@ def train(config: DictConfig) -> None:
         quantiles=tuple(q_list) if q_list else (0.2, 0.5, 0.8),
         pinball_weight=pinball_w,
         use_t_nll=(os.getenv("USE_T_NLL", "0") == "1"),
-        nll_weight=float(os.getenv("NLL_WEIGHT", "0.7"))
-        if os.getenv("USE_T_NLL", "0") == "1"
-        else 0.0,
+        nll_weight=float(os.getenv("NLL_WEIGHT", "0.7")) if os.getenv("USE_T_NLL", "0") == "1" else 0.0,
         use_huber=(os.getenv("USE_HUBER", "1") == "1"),
         huber_delta=float(os.getenv("HUBER_DELTA", "1.0")),
         huber_weight=float(os.getenv("HUBER_WEIGHT", "0.3")),
@@ -8399,9 +7582,7 @@ def train(config: DictConfig) -> None:
         use_dynamic_weighting=(os.getenv("DYN_WEIGHT", "1") == "1"),
         dynamic_alpha=float(os.getenv("DYN_ALPHA", "0.01")),
         dynamic_freeze_frac=float(os.getenv("DYN_FREEZE_FRAC", "0.6")),
-        direction_aux_weight=float(os.getenv("DIR_AUX_WEIGHT", "0.1"))
-        if os.getenv("USE_DIR_AUX", "1") == "1"
-        else 0.0,
+        direction_aux_weight=float(os.getenv("DIR_AUX_WEIGHT", "0.1")) if os.getenv("USE_DIR_AUX", "1") == "1" else 0.0,
         sigma_weighting_lambda=float(os.getenv("SIGMA_WEIGHT_LAMBDA", "0.0")),
         # Strengthened variance penalty to combat constant prediction collapse
         pred_var_min=float(os.getenv("PRED_VAR_MIN", "0.01")),  # 0.005 → 0.01
@@ -8443,26 +7624,16 @@ def train(config: DictConfig) -> None:
 
     # Optimizer param_groups audit (fail-fast for empty/missing params)
     try:
-        total_trainable = sum(
-            int(p.requires_grad) * p.numel() for p in model.parameters()
-        )
-        opt_params = sum(
-            p.numel() for g in optimizer.param_groups for p in g.get("params", [])
-        )
+        total_trainable = sum(int(p.requires_grad) * p.numel() for p in model.parameters())
+        opt_params = sum(p.numel() for g in optimizer.param_groups for p in g.get("params", []))
         assert len(optimizer.param_groups) > 0, "Optimizer has no param_groups"
         assert all(
             len(g.get("params", [])) > 0 for g in optimizer.param_groups
         ), "Empty param_group detected in optimizer; check requires_grad and grouping"
         # If optimizer covers suspiciously few params, raise to catch mis-wiring
-        if opt_params == 0 or (
-            total_trainable > 0 and opt_params < max(1, int(0.5 * total_trainable))
-        ):
-            raise AssertionError(
-                f"OPT-AUDIT: optimizer params {opt_params} << trainable {total_trainable}"
-            )
-        logger.info(
-            f"[OPT-AUDIT] ✓ Optimizer covers {opt_params}/{total_trainable} trainable params"
-        )
+        if opt_params == 0 or (total_trainable > 0 and opt_params < max(1, int(0.5 * total_trainable))):
+            raise AssertionError(f"OPT-AUDIT: optimizer params {opt_params} << trainable {total_trainable}")
+        logger.info(f"[OPT-AUDIT] ✓ Optimizer covers {opt_params}/{total_trainable} trainable params")
     except Exception as _e:
         logger.error(f"[OPT-AUDIT][FAIL] {_e}")
         raise
@@ -8478,13 +7649,9 @@ def train(config: DictConfig) -> None:
         if resume_path.exists():
             try:
                 checkpoint = torch.load(resume_path, map_location=device)
-                state_dict = checkpoint.get("model_state_dict") or checkpoint.get(
-                    "state_dict"
-                )
+                state_dict = checkpoint.get("model_state_dict") or checkpoint.get("state_dict")
                 if state_dict:
-                    missing, unexpected = model.load_state_dict(
-                        state_dict, strict=False
-                    )
+                    missing, unexpected = model.load_state_dict(state_dict, strict=False)
                     if missing:
                         logger.warning(
                             "[resume] Missing keys during load: %s",
@@ -8500,25 +7667,17 @@ def train(config: DictConfig) -> None:
                     try:
                         optimizer.load_state_dict(optim_state)
                     except Exception as _opt_e:
-                        logger.warning(
-                            "[resume] Optimizer state load skipped: %s", _opt_e
-                        )
+                        logger.warning("[resume] Optimizer state load skipped: %s", _opt_e)
                 elif optim_state and phase_reset_optimizer:
-                    logger.info(
-                        "[phase-reset] Skipping optimizer state load for phase transition"
-                    )
+                    logger.info("[phase-reset] Skipping optimizer state load for phase transition")
                 scaler_state = checkpoint.get("scaler_state_dict")
                 if scaler_state and not phase_reset_optimizer:
                     try:
                         scaler.load_state_dict(scaler_state)
                     except Exception as _scaler_e:
-                        logger.warning(
-                            "[resume] GradScaler state load skipped: %s", _scaler_e
-                        )
+                        logger.warning("[resume] GradScaler state load skipped: %s", _scaler_e)
                 elif scaler_state and phase_reset_optimizer:
-                    logger.info(
-                        "[phase-reset] Skipping GradScaler state load for phase transition"
-                    )
+                    logger.info("[phase-reset] Skipping GradScaler state load for phase transition")
                 resume_epoch = int(checkpoint.get("epoch", 0))
                 resume_global_step = int(checkpoint.get("global_step", 0))
                 logger.info(
@@ -8530,9 +7689,7 @@ def train(config: DictConfig) -> None:
                 if phase_training_active and phase_reset_epoch:
                     resume_epoch = 0
                     resume_global_step = 0
-                    logger.info(
-                        "[phase-reset] Resetting epoch/global_step to 0 for new phase training"
-                    )
+                    logger.info("[phase-reset] Resetting epoch/global_step to 0 for new phase training")
             except Exception as _resume_err:
                 logger.error(
                     "[resume] Failed to load checkpoint %s: %s",
@@ -8586,11 +7743,7 @@ def train(config: DictConfig) -> None:
 
     def _set_gat_edge_dropout(model, p: float):
         try:
-            if (
-                hasattr(model, "gat")
-                and model.gat is not None
-                and hasattr(model.gat, "layers")
-            ):
+            if hasattr(model, "gat") and model.gat is not None and hasattr(model.gat, "layers"):
                 for lyr in model.gat.layers:
                     if hasattr(lyr, "edge_dropout"):
                         lyr.edge_dropout = float(p)
@@ -8616,12 +7769,23 @@ def train(config: DictConfig) -> None:
         eval_every_steps = int(os.getenv("VAL_INTERVAL_STEPS", os.getenv("EVAL_EVERY_STEPS", "100")))
         heartbeat_interval = int(os.getenv("HEARTBEAT_INTERVAL", "30"))  # seconds
 
-        # Training batch cap: PHASE_MAX_BATCHES
+        # Training batch cap: MAX_STEPS_PER_EPOCH (from RUNCTRL) or PHASE_MAX_BATCHES (legacy)
         # 0 or negative → no cap; positive → stop epoch after N batches
-        try:
-            max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "0"))
-        except Exception:
-            max_batches_per_epoch = 0
+        # Patch M4: Check MAX_STEPS_PER_EPOCH first (set by RUNCTRL Bridge)
+        max_steps_env = os.getenv("MAX_STEPS_PER_EPOCH", "")
+        if max_steps_env and max_steps_env != "0":
+            try:
+                max_batches_per_epoch = int(max_steps_env)
+                logger.info(f"[RUNCTRL-APPLY] Using MAX_STEPS_PER_EPOCH={max_batches_per_epoch}")
+            except Exception:
+                max_batches_per_epoch = 0
+        else:
+            try:
+                max_batches_per_epoch = int(os.getenv("PHASE_MAX_BATCHES", "0"))
+                if max_batches_per_epoch > 0:
+                    logger.info(f"[RUNCTRL-APPLY] Using PHASE_MAX_BATCHES={max_batches_per_epoch} (fallback)")
+            except Exception:
+                max_batches_per_epoch = 0
 
         # Optional: rebuild graph every N batches (N=1 → every batch)
         try:
@@ -8656,9 +7820,7 @@ def train(config: DictConfig) -> None:
             disable_graph_builder = True
 
         if disable_graph_builder:
-            logger.info(
-                "[GraphBuilder] disabled (DISABLE_GRAPH_BUILDER=1 or BYPASS_GAT_COMPLETELY=1)"
-            )
+            logger.info("[GraphBuilder] disabled (DISABLE_GRAPH_BUILDER=1 or BYPASS_GAT_COMPLETELY=1)")
         else:
             gb_cfg = None
             try:
@@ -8667,15 +7829,11 @@ def train(config: DictConfig) -> None:
                 gb_cfg = None
 
             if gb_cfg is None:
-                logger.info(
-                    "[GraphBuilder] configuration not provided; skipping graph construction"
-                )
+                logger.info("[GraphBuilder] configuration not provided; skipping graph construction")
             else:
                 try:
                     gbc = GBConfig(
-                        source_glob=str(
-                            getattr(gb_cfg, "source_glob", "data/ml/*.parquet")
-                        ),
+                        source_glob=str(getattr(gb_cfg, "source_glob", "data/ml/*.parquet")),
                         lookback=int(getattr(gb_cfg, "lookback", 60)),
                         k=int(getattr(gb_cfg, "k", 15)),
                         ewm_halflife=int(getattr(gb_cfg, "ewm_halflife", 20)),
@@ -8696,9 +7854,7 @@ def train(config: DictConfig) -> None:
                             )
                         ),
                         sector_col=str(getattr(gb_cfg, "sector_col", "sector")),
-                        log_mktcap_col=str(
-                            getattr(gb_cfg, "log_mktcap_col", "log_mktcap")
-                        ),
+                        log_mktcap_col=str(getattr(gb_cfg, "log_mktcap_col", "log_mktcap")),
                         method=str(getattr(gb_cfg, "method", "ewm_demean")),
                         symmetric=bool(getattr(gb_cfg, "symmetric", True)),
                     )
@@ -8732,13 +7888,9 @@ def train(config: DictConfig) -> None:
                                     method=gbc.method,
                                     symmetric=gbc.symmetric,
                                 )
-                                logger.info(
-                                    "[GraphBuilder] return_cols extended to %s", current
-                                )
+                                logger.info("[GraphBuilder] return_cols extended to %s", current)
                     except Exception as _e:
-                        logger.warning(
-                            "[GraphBuilder] return_cols fallback check skipped: %s", _e
-                        )
+                        logger.warning("[GraphBuilder] return_cols fallback check skipped: %s", _e)
 
                     gb = GraphBuilder(gbc)
                     logger.info(
@@ -8752,9 +7904,7 @@ def train(config: DictConfig) -> None:
                     )
                     if not use_adv_train:
                         try:
-                            use_adv_train = bool(
-                                getattr(gb_cfg, "use_in_training", False)
-                            )
+                            use_adv_train = bool(getattr(gb_cfg, "use_in_training", False))
                         except Exception:
                             use_adv_train = False
 
@@ -8790,9 +7940,7 @@ def train(config: DictConfig) -> None:
                             logger.warning(f"[AdvGraph] init failed: {_e}")
                             gb_adv = None
                 except Exception as _e:
-                    logger.warning(
-                        f"[GraphBuilder] unavailable; fallback to dynamic KNN. reason={_e}"
-                    )
+                    logger.warning(f"[GraphBuilder] unavailable; fallback to dynamic KNN. reason={_e}")
                     gb = None
                     gb_adv = None
         snapshot_ens = os.getenv("SNAPSHOT_ENS", "0") == "1"
@@ -8813,9 +7961,7 @@ def train(config: DictConfig) -> None:
                 from torch.optim.swa_utils import SWALR, AveragedModel, update_bn
 
                 swa_model = AveragedModel(model)
-                swa_scheduler = SWALR(
-                    optimizer, swa_lr=final_config.train.optimizer.lr * swa_lr_factor
-                )
+                swa_scheduler = SWALR(optimizer, swa_lr=final_config.train.optimizer.lr * swa_lr_factor)
                 logger.info(
                     f"SWA enabled: averaging parameters after {swa_start_frac:.2f} of epochs (lr_factor={swa_lr_factor:.2f})"
                 )
@@ -8836,8 +7982,7 @@ def train(config: DictConfig) -> None:
                     actual_batch_size = len(first_batch["features"])
                     configured_batch_size = final_config.train.batch.train_batch_size
                     logger.info(
-                        f"[SamplerCheck] first_batch_size={actual_batch_size} "
-                        f"(configured={configured_batch_size})"
+                        f"[SamplerCheck] first_batch_size={actual_batch_size} " f"(configured={configured_batch_size})"
                     )
                     if actual_batch_size > configured_batch_size * 1.5:
                         logger.warning(
@@ -8880,15 +8025,11 @@ def train(config: DictConfig) -> None:
         )
         if train_diag_enabled:
             try:
-                train_diag_max_epochs = max(
-                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1"))
-                )
+                train_diag_max_epochs = max(0, int(os.getenv("TRAIN_CX_DIAG_MAX_EPOCHS", "1")))
             except Exception:
                 train_diag_max_epochs = 1
             try:
-                train_diag_max_batches = max(
-                    0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2"))
-                )
+                train_diag_max_batches = max(0, int(os.getenv("TRAIN_CX_DIAG_MAX_BATCHES", "2")))
             except Exception:
                 train_diag_max_batches = 2
             try:
@@ -8928,20 +8069,12 @@ def train(config: DictConfig) -> None:
             # カリキュラム重み（前半強化）: 環境変数が無ければ推奨値
             try:
                 if epoch == 2:
-                    w2 = _parse_weight_map(
-                        os.getenv(
-                            "WEIGHTS_EPOCH2", "1:0.45,2:0.15,3:0.10,5:0.20,10:0.10"
-                        )
-                    )
+                    w2 = _parse_weight_map(os.getenv("WEIGHTS_EPOCH2", "1:0.45,2:0.15,3:0.10,5:0.20,10:0.10"))
                     if w2:
                         criterion.set_preset_weights(w2)
                         logger.info(f"Applied curriculum weights@epoch2: {w2}")
                 elif epoch == 3:
-                    w3 = _parse_weight_map(
-                        os.getenv(
-                            "WEIGHTS_EPOCH3", "1:0.35,2:0.15,3:0.15,5:0.20,10:0.15"
-                        )
-                    )
+                    w3 = _parse_weight_map(os.getenv("WEIGHTS_EPOCH3", "1:0.35,2:0.15,3:0.15,5:0.20,10:0.15"))
                     if w3:
                         criterion.set_preset_weights(w3)
                         logger.info(f"Applied preset weights@epoch3: {w3}")
@@ -8963,9 +8096,7 @@ def train(config: DictConfig) -> None:
                 p2 = float(os.getenv("EDGE_DROPOUT2", "0.05"))
                 edge_dp = float(_three_phase_schedule(epoch, n_epochs, p0, p1, p2))
                 _set_gat_edge_dropout(model, edge_dp)
-                logger.info(
-                    f"[sched] epoch={epoch} knn_k={knn_k} edge_dropout={edge_dp:.2f}"
-                )
+                logger.info(f"[sched] epoch={epoch} knn_k={knn_k} edge_dropout={edge_dp:.2f}")
             except Exception as _e:
                 logger.warning(f"K/edge_dropout schedule skipped: {_e}")
             if train_loader is not None:
@@ -8982,9 +8113,7 @@ def train(config: DictConfig) -> None:
                 _max_steps_per_epoch = int(os.getenv("MAX_STEPS_PER_EPOCH", "0"))
 
                 micro_bs = int(os.getenv("MICRO_BATCH_SIZE", "2048"))
-                grad_accum = int(
-                    getattr(final_config.train.batch, "gradient_accumulation_steps", 1)
-                )
+                grad_accum = int(getattr(final_config.train.batch, "gradient_accumulation_steps", 1))
                 if hasattr(train_loader, "__len__"):
                     try:
                         steps_per_epoch = max(1, len(train_loader))
@@ -8993,9 +8122,7 @@ def train(config: DictConfig) -> None:
                 else:
                     steps_per_epoch = 0
                 if steps_per_epoch:
-                    effective_steps_per_epoch = max(
-                        1, math.ceil(steps_per_epoch / max(1, grad_accum))
-                    )
+                    effective_steps_per_epoch = max(1, math.ceil(steps_per_epoch / max(1, grad_accum)))
                 else:
                     effective_steps_per_epoch = max(1, grad_accum)
 
@@ -9004,9 +8131,7 @@ def train(config: DictConfig) -> None:
                         if hasattr(mdl, "gat") and mdl.gat is not None:
                             return True
                         sig = inspect.signature(mdl.forward)
-                        return ("edge_index" in sig.parameters) or (
-                            "edge_attr" in sig.parameters
-                        )
+                        return ("edge_index" in sig.parameters) or ("edge_attr" in sig.parameters)
                     except Exception:
                         return False
 
@@ -9015,9 +8140,7 @@ def train(config: DictConfig) -> None:
                     if torch.is_tensor(feats):
                         batch = {"features": feats}
                     else:
-                        batch = (
-                            feats if isinstance(feats, dict) else {"features": feats}
-                        )
+                        batch = feats if isinstance(feats, dict) else {"features": feats}
 
                     # 🔧 FIX (2025-10-06): Pass edge_index even if edge_attr is None
                     # GAT can work without edge attributes
@@ -9035,9 +8158,7 @@ def train(config: DictConfig) -> None:
                     elapsed = current_time - start_time
                     if elapsed > time_budget_seconds:
                         time_exceeded = True
-                        logger.info(
-                            f"Time budget exceeded at epoch {epoch}, batch {batch_idx}"
-                        )
+                        logger.info(f"Time budget exceeded at epoch {epoch}, batch {batch_idx}")
                         break
 
                     # Enforce PHASE_MAX_BATCHES if set (>0) - count day-batches, not micro-batches
@@ -9058,22 +8179,15 @@ def train(config: DictConfig) -> None:
                             "elapsed_hours": elapsed / 3600,
                             "timestamp": now_jst_iso(),
                             "tz": str(JST.key) if hasattr(JST, "key") else "Asia/Tokyo",
-                            "pred_std_ema": {
-                                h: deg_ema.get(f"h{h}", float("nan"))
-                                for h in criterion.horizons
-                            },
-                            "deg_bad_consec": {
-                                h: deg_bad.get(f"h{h}", 0) for h in criterion.horizons
-                            },
+                            "pred_std_ema": {h: deg_ema.get(f"h{h}", float("nan")) for h in criterion.horizons},
+                            "deg_bad_consec": {h: deg_bad.get(f"h{h}", 0) for h in criterion.horizons},
                         }
                         (RUN_DIR / "heartbeat.json").write_text(
                             json.dumps(heartbeat_info, ensure_ascii=False, indent=2)
                         )
                     feats_full = batch["features"]
                     targs_full = (
-                        batch["targets"]
-                        if isinstance(batch.get("targets"), dict)
-                        else {"horizon_1": batch["targets"]}
+                        batch["targets"] if isinstance(batch.get("targets"), dict) else {"horizon_1": batch["targets"]}
                     )
                     # Get valid masks from batch if available
                     valid_masks_full = batch.get("valid_mask", None)
@@ -9091,9 +8205,7 @@ def train(config: DictConfig) -> None:
                             if torch.is_tensor(group_tensor):
                                 group_full = group_tensor.detach().view(-1)
                             elif group_tensor is not None:
-                                group_full = torch.as_tensor(
-                                    group_tensor, dtype=torch.long
-                                ).view(-1)
+                                group_full = torch.as_tensor(group_tensor, dtype=torch.long).view(-1)
                             else:
                                 group_full = None
                         except Exception:
@@ -9102,9 +8214,7 @@ def train(config: DictConfig) -> None:
                             date_values = batch.get("date")
                             try:
                                 if isinstance(date_values, torch.Tensor):
-                                    date_list = [
-                                        str(x) for x in date_values.view(-1).tolist()
-                                    ]
+                                    date_list = [str(x) for x in date_values.view(-1).tolist()]
                                 elif isinstance(date_values, (list, tuple)):
                                     date_list = [str(x) for x in date_values]
                                 elif date_values is None:
@@ -9124,9 +8234,7 @@ def train(config: DictConfig) -> None:
                                         train_diag_next_group_id += 1
                                     group_ids.append(gid)
                                 if group_ids:
-                                    group_full = torch.tensor(
-                                        group_ids, dtype=torch.long
-                                    )
+                                    group_full = torch.tensor(group_ids, dtype=torch.long)
                         if group_full is not None:
                             try:
                                 diag_group_np = group_full.detach().cpu().numpy()
@@ -9134,8 +8242,7 @@ def train(config: DictConfig) -> None:
                                 diag_group_np = None
                         if diag_group_np is not None and diag_group_np.size == n_items:
                             diag_store = {
-                                str(h): {"yhat": [], "y": [], "group": []}
-                                for h in getattr(criterion, "horizons", [])
+                                str(h): {"yhat": [], "y": [], "group": []} for h in getattr(criterion, "horizons", [])
                             }
                             logger.info(
                                 "[TRAIN-DIAG] ep=%d batch=%d collecting cross-sectional diagnostics (n_items=%d)",
@@ -9156,11 +8263,7 @@ def train(config: DictConfig) -> None:
                         and getattr(final_config.model.gat, "edge_features", None)
                     ):
                         try:
-                            codes = (
-                                batch.get("codes")
-                                if "codes" in batch
-                                else batch.get("code")
-                            )
+                            codes = batch.get("codes") if "codes" in batch else batch.get("code")
                             date = batch.get("date", None)
                             if isinstance(date, (list, tuple)) and len(date) > 0:
                                 date = date[0]
@@ -9176,16 +8279,14 @@ def train(config: DictConfig) -> None:
                                     try:
                                         df_pd = None
                                         try:
-                                            if hasattr(
-                                                train_loader, "dataset"
-                                            ) and hasattr(train_loader.dataset, "data"):
+                                            if hasattr(train_loader, "dataset") and hasattr(
+                                                train_loader.dataset, "data"
+                                            ):
                                                 df_pd = train_loader.dataset.data
                                         except Exception:
                                             df_pd = None
                                         if df_pd is not None:
-                                            res = gb_adv.build_graph(
-                                                df_pd, codes, date_end=str(date)
-                                            )
+                                            res = gb_adv.build_graph(df_pd, codes, date_end=str(date))
                                             ei, ea = (
                                                 res.get("edge_index"),
                                                 res.get("edge_attr"),
@@ -9202,24 +8303,18 @@ def train(config: DictConfig) -> None:
                                     import pandas as _pd
 
                                     batch_ts = _pd.Timestamp(date).normalize()
-                                    asof_ts = getattr(
-                                        gb, "last_asof_ts", lambda: None
-                                    )()
+                                    asof_ts = getattr(gb, "last_asof_ts", lambda: None)()
                                     if asof_ts is None:
                                         asof_ts = batch_ts - _pd.Timedelta(days=1)
                                     staleness_days = int((batch_ts - asof_ts).days)
-                                    max_stale = int(
-                                        os.getenv("EDGE_STALENESS_MAX_DAYS", "7")
-                                    )
+                                    max_stale = int(os.getenv("EDGE_STALENESS_MAX_DAYS", "7"))
                                     if staleness_days > max_stale:
                                         logger.warning(
                                             f"[EDGE-TS] Staleness {staleness_days}d exceeds max {max_stale}d; dropping edges"
                                         )
                                         ei, ea = None, None
                                     else:
-                                        logger.info(
-                                            f"[EDGE-TS] asof={asof_ts.date()} staleness_days={staleness_days}"
-                                        )
+                                        logger.info(f"[EDGE-TS] asof={asof_ts.date()} staleness_days={staleness_days}")
                                         # Log to MLflow if available
                                         try:
                                             import mlflow as _mlf  # type: ignore
@@ -9262,28 +8357,16 @@ def train(config: DictConfig) -> None:
                                 except Exception:
                                     cur_date = None
 
-                                last_ei = getattr(
-                                    sys.modules[__name__], "_graph_last_ei", None
-                                )
-                                last_ea = getattr(
-                                    sys.modules[__name__], "_graph_last_ea", None
-                                )
-                                last_n = getattr(
-                                    sys.modules[__name__], "_graph_last_n", None
-                                )
-                                last_date = getattr(
-                                    sys.modules[__name__], "_graph_last_date", None
-                                )
+                                last_ei = getattr(sys.modules[__name__], "_graph_last_ei", None)
+                                last_ea = getattr(sys.modules[__name__], "_graph_last_ea", None)
+                                last_n = getattr(sys.modules[__name__], "_graph_last_n", None)
+                                last_date = getattr(sys.modules[__name__], "_graph_last_date", None)
 
                                 if (
                                     (batch_idx % graph_rebuild_interval) != 0
                                     and isinstance(last_ei, torch.Tensor)
                                     and feats_full.size(0) == int(last_n or -1)
-                                    and (
-                                        (cur_date is None)
-                                        or (last_date is None)
-                                        or (cur_date == last_date)
-                                    )
+                                    and ((cur_date is None) or (last_date is None) or (cur_date == last_date))
                                 ):
                                     edge_index = last_ei.to(device, non_blocking=True)
                                     edge_attr = (
@@ -9301,25 +8384,17 @@ def train(config: DictConfig) -> None:
                             if _graph_mode in ("off", "stub", "identity"):
                                 _n = feats_full.size(0)
                                 if _n > 0:
-                                    _ei = torch.arange(
-                                        _n, device=device, dtype=torch.long
-                                    )
+                                    _ei = torch.arange(_n, device=device, dtype=torch.long)
                                     edge_index = torch.stack([_ei, _ei], dim=0)
                                     edge_attr = None
-                                    logger.info(
-                                        f"[edges-stub] using identity edges: N={_n}, E={_n}"
-                                    )
+                                    logger.info(f"[edges-stub] using identity edges: N={_n}, E={_n}")
                                 else:
                                     edge_index, edge_attr = None, None
                             else:
                                 # Resolve per-sample codes (full day-batch) for enrichment
                                 codes_list = None
                                 try:
-                                    codes_list = (
-                                        batch.get("codes")
-                                        if "codes" in batch
-                                        else batch.get("code")
-                                    )
+                                    codes_list = batch.get("codes") if "codes" in batch else batch.get("code")
                                     if hasattr(codes_list, "tolist"):
                                         codes_list = codes_list.tolist()
                                     if codes_list is not None:
@@ -9335,41 +8410,27 @@ def train(config: DictConfig) -> None:
                                     markets_list = markets_list.tolist()
                                 if hasattr(sectors_list, "tolist"):
                                     sectors_list = sectors_list.tolist()
-                                if markets_list is not None and len(
-                                    markets_list
-                                ) != feats_full.size(0):
+                                if markets_list is not None and len(markets_list) != feats_full.size(0):
                                     markets_list = None
-                                if sectors_list is not None and len(
-                                    sectors_list
-                                ) != feats_full.size(0):
+                                if sectors_list is not None and len(sectors_list) != feats_full.size(0):
                                     sectors_list = None
                             except Exception:
                                 pass
                             # Determine parameters
                             try:
-                                k_try = int(
-                                    getattr(final_config.model.gat, "knn_k", 10)
-                                )
+                                k_try = int(getattr(final_config.model.gat, "knn_k", 10))
                             except Exception:
                                 k_try = 10
                             # Threshold: prefer graph_builder.edge_threshold, then data.graph.edge_threshold, else env/default
                             try:
                                 thr = None
                                 try:
-                                    thr = float(
-                                        getattr(
-                                            final_config.data, "graph_builder", {}
-                                        ).edge_threshold
-                                    )
+                                    thr = float(getattr(final_config.data, "graph_builder", {}).edge_threshold)
                                 except Exception:
                                     pass
                                 if thr is None:
                                     try:
-                                        thr = float(
-                                            getattr(
-                                                final_config.data, "graph", {}
-                                            ).edge_threshold
-                                        )
+                                        thr = float(getattr(final_config.data, "graph", {}).edge_threshold)
                                     except Exception:
                                         thr = None
                                 if thr is None:
@@ -9382,37 +8443,23 @@ def train(config: DictConfig) -> None:
                             from src.graph.graph_builder import GraphBuilder as _GBL
 
                             # Use module-level cache to avoid reference errors
-                            if not hasattr(
-                                sys.modules[__name__], "_graph_builder_cache"
-                            ):
+                            if not hasattr(sys.modules[__name__], "_graph_builder_cache"):
                                 sys.modules[__name__]._graph_builder_cache = {}
 
                             cache_key = f"{feats_full.size(0)}_{thr}"
-                            if (
-                                cache_key
-                                not in sys.modules[__name__]._graph_builder_cache
-                            ):
+                            if cache_key not in sys.modules[__name__]._graph_builder_cache:
                                 _gb_local = _GBL(
                                     _GBC(
                                         max_nodes=int(feats_full.size(0)),
                                         edge_threshold=float(thr),
                                         min_k=int(os.getenv("GRAPH_MIN_K", "5")),
-                                        add_self_loops=os.getenv(
-                                            "GRAPH_ADD_SELF_LOOPS", "1"
-                                        )
-                                        == "1",
-                                        min_edges=int(
-                                            os.getenv("GRAPH_MIN_EDGES", "0")
-                                        ),
+                                        add_self_loops=os.getenv("GRAPH_ADD_SELF_LOOPS", "1") == "1",
+                                        min_edges=int(os.getenv("GRAPH_MIN_EDGES", "0")),
                                     )
                                 )
-                                sys.modules[__name__]._graph_builder_cache[
-                                    cache_key
-                                ] = _gb_local
+                                sys.modules[__name__]._graph_builder_cache[cache_key] = _gb_local
                             else:
-                                _gb_local = sys.modules[__name__]._graph_builder_cache[
-                                    cache_key
-                                ]
+                                _gb_local = sys.modules[__name__]._graph_builder_cache[cache_key]
 
                             win = int(min(feats_full.size(1), 20))
 
@@ -9431,22 +8478,14 @@ def train(config: DictConfig) -> None:
                                     graph_cache_key = None
 
                             # Check graph results cache
-                            if not hasattr(
-                                sys.modules[__name__], "_graph_results_cache"
-                            ):
+                            if not hasattr(sys.modules[__name__], "_graph_results_cache"):
                                 sys.modules[__name__]._graph_results_cache = {}
                                 sys.modules[__name__]._graph_cache_hits = 0
                                 sys.modules[__name__]._graph_cache_misses = 0
 
-                            if (
-                                graph_cache_key
-                                and graph_cache_key
-                                in sys.modules[__name__]._graph_results_cache
-                            ):
+                            if graph_cache_key and graph_cache_key in sys.modules[__name__]._graph_results_cache:
                                 # Use cached graph
-                                ei, ea = sys.modules[__name__]._graph_results_cache[
-                                    graph_cache_key
-                                ]
+                                ei, ea = sys.modules[__name__]._graph_results_cache[graph_cache_key]
                                 sys.modules[__name__]._graph_cache_hits += 1
                                 if sys.modules[__name__]._graph_cache_hits % 100 == 0:
                                     logger.debug(
@@ -9466,28 +8505,13 @@ def train(config: DictConfig) -> None:
                                 # Cache the result if we have a valid key
                                 if graph_cache_key and isinstance(ei, torch.Tensor):
                                     # Keep cache size reasonable (e.g., last 100 graphs)
-                                    if (
-                                        len(sys.modules[__name__]._graph_results_cache)
-                                        > 100
-                                    ):
+                                    if len(sys.modules[__name__]._graph_results_cache) > 100:
                                         # Remove oldest entries
-                                        keys_to_remove = list(
-                                            sys.modules[
-                                                __name__
-                                            ]._graph_results_cache.keys()
-                                        )[:20]
+                                        keys_to_remove = list(sys.modules[__name__]._graph_results_cache.keys())[:20]
                                         for k in keys_to_remove:
-                                            del sys.modules[
-                                                __name__
-                                            ]._graph_results_cache[k]
-                                    sys.modules[__name__]._graph_results_cache[
-                                        graph_cache_key
-                                    ] = (ei, ea)
-                            if (
-                                edge_index is None
-                                and isinstance(ei, torch.Tensor)
-                                and ei.numel() > 0
-                            ):
+                                            del sys.modules[__name__]._graph_results_cache[k]
+                                    sys.modules[__name__]._graph_results_cache[graph_cache_key] = (ei, ea)
+                            if edge_index is None and isinstance(ei, torch.Tensor) and ei.numel() > 0:
                                 edge_index = ei.to(device, non_blocking=True)
                                 # Enrich with market/sector similarity if available
                                 edge_attr = (
@@ -9512,17 +8536,11 @@ def train(config: DictConfig) -> None:
                                 # Persist for interval-based reuse
                                 if graph_rebuild_interval > 1:
                                     try:
-                                        sys.modules[
-                                            __name__
-                                        ]._graph_last_ei = edge_index.clone()
+                                        sys.modules[__name__]._graph_last_ei = edge_index.clone()
                                         sys.modules[__name__]._graph_last_ea = (
-                                            edge_attr.clone()
-                                            if isinstance(edge_attr, torch.Tensor)
-                                            else None
+                                            edge_attr.clone() if isinstance(edge_attr, torch.Tensor) else None
                                         )
-                                        sys.modules[__name__]._graph_last_n = int(
-                                            feats_full.size(0)
-                                        )
+                                        sys.modules[__name__]._graph_last_n = int(feats_full.size(0))
                                         # store date if available
                                         try:
                                             _d = None
@@ -9537,18 +8555,10 @@ def train(config: DictConfig) -> None:
                                     except Exception:
                                         pass
                         except Exception as _e:
-                            logger.warning(
-                                f"[edges-fallback] failed to build correlation edges: {_e}"
-                            )
+                            logger.warning(f"[edges-fallback] failed to build correlation edges: {_e}")
                     # Validate edge index (if built) and clamp to available nodes
-                    if (
-                        edge_index is not None
-                        and isinstance(edge_index, torch.Tensor)
-                        and edge_index.numel() > 0
-                    ):
-                        valid_mask = ((edge_index >= 0) & (edge_index < n_items)).all(
-                            dim=0
-                        )
+                    if edge_index is not None and isinstance(edge_index, torch.Tensor) and edge_index.numel() > 0:
+                        valid_mask = ((edge_index >= 0) & (edge_index < n_items)).all(dim=0)
                         if not torch.all(valid_mask):
                             dropped = int((~valid_mask).sum().item())
                             logger.debug(
@@ -9562,46 +8572,33 @@ def train(config: DictConfig) -> None:
                         if edge_index.numel() > 0:
                             max_edge = int(edge_index.max().item())
                             if max_edge >= n_items:
-                                raise RuntimeError(
-                                    f"GAT edge_index max {max_edge} exceeds batch nodes {n_items}"
-                                )
+                                raise RuntimeError(f"GAT edge_index max {max_edge} exceeds batch nodes {n_items}")
 
                     # Iterate micro-batches (disable slicing when GAT is active)
                     micro_bs_effective = micro_bs
-                    if edge_index is not None and getattr(
-                        final_config.model.gat, "enabled", False
-                    ):
+                    if edge_index is not None and getattr(final_config.model.gat, "enabled", False):
                         micro_bs_effective = n_items
 
                     mb_start = 0
                     while mb_start < n_items:
                         mb_end = min(n_items, mb_start + micro_bs_effective)
-                        features = feats_full[mb_start:mb_end].to(
-                            device, non_blocking=True
-                        )
+                        features = feats_full[mb_start:mb_end].to(device, non_blocking=True)
                         if isinstance(targs_full, dict):
                             targets = {
-                                k: v[mb_start:mb_end].to(device, non_blocking=True)
-                                for k, v in targs_full.items()
+                                k: v[mb_start:mb_end].to(device, non_blocking=True) for k, v in targs_full.items()
                             }
                         else:
-                            targets = targs_full[mb_start:mb_end].to(
-                                device, non_blocking=True
-                            )
+                            targets = targs_full[mb_start:mb_end].to(device, non_blocking=True)
 
                         # Get valid masks from batch if available, otherwise compute them
                         if valid_masks_full is not None:
                             if isinstance(valid_masks_full, dict):
                                 valid_masks = {
-                                    k: v[mb_start:mb_end].to(device, non_blocking=True)
-                                    if v is not None
-                                    else None
+                                    k: v[mb_start:mb_end].to(device, non_blocking=True) if v is not None else None
                                     for k, v in valid_masks_full.items()
                                 }
                             else:
-                                valid_masks = valid_masks_full[mb_start:mb_end].to(
-                                    device, non_blocking=True
-                                )
+                                valid_masks = valid_masks_full[mb_start:mb_end].to(device, non_blocking=True)
                         else:
                             # Fallback: compute masks from targets
                             def _compute_masks(_t):
@@ -9614,9 +8611,7 @@ def train(config: DictConfig) -> None:
                                             bad = (~valid_mask).sum().item()
                                             if bad > 0:
                                                 total = _v.numel()
-                                                valid_ratio = (total - bad) / max(
-                                                    1, total
-                                                )
+                                                valid_ratio = (total - bad) / max(1, total)
                                                 logger.warning(
                                                     f"[nan-guard] targets[{_k}]: non-finite={bad}/{total} (valid={valid_ratio:.2%})"
                                                 )
@@ -9650,9 +8645,7 @@ def train(config: DictConfig) -> None:
                                             bad = (~valid_mask).sum().item()
                                             if bad > 0:
                                                 total = _v.numel()
-                                                valid_ratio = (total - bad) / max(
-                                                    1, total
-                                                )
+                                                valid_ratio = (total - bad) / max(1, total)
                                                 logger.warning(
                                                     f"[nan-guard] targets[{_k}]: non-finite={bad}/{total} (valid={valid_ratio:.2%})"
                                                 )
@@ -9675,9 +8668,7 @@ def train(config: DictConfig) -> None:
 
                             valid_masks = _compute_masks(targets)
 
-                        features = _finite_or_nan_fix_tensor(
-                            features, "features", clamp=50.0
-                        )
+                        features = _finite_or_nan_fix_tensor(features, "features", clamp=50.0)
 
                         # GAT融合αのウォームアップ下限（早期退行の防止）
                         try:
@@ -9687,16 +8678,10 @@ def train(config: DictConfig) -> None:
                                     if hasattr(final_config, "model")
                                     else getattr(model, "alpha_graph_min", 0.1)
                                 )
-                                warm_alpha_min = float(
-                                    os.getenv("GAT_ALPHA_WARMUP_MIN", "0.30")
-                                )
-                                warmup_steps_alpha = int(
-                                    os.getenv("GAT_WARMUP_STEPS", "50")
-                                )
+                                warm_alpha_min = float(os.getenv("GAT_ALPHA_WARMUP_MIN", "0.30"))
+                                warmup_steps_alpha = int(os.getenv("GAT_WARMUP_STEPS", "50"))
                                 if global_step < warmup_steps_alpha:
-                                    model.alpha_graph_min = max(
-                                        base_alpha_min, warm_alpha_min
-                                    )
+                                    model.alpha_graph_min = max(base_alpha_min, warm_alpha_min)
                                 else:
                                     model.alpha_graph_min = base_alpha_min
                         except Exception:
@@ -9706,14 +8691,10 @@ def train(config: DictConfig) -> None:
                         if isinstance(targets, dict):
                             for k in targets.keys():
                                 if torch.is_tensor(targets[k]):
-                                    targets[k] = torch.nan_to_num(
-                                        targets[k], nan=0.0, posinf=0.0, neginf=0.0
-                                    )
+                                    targets[k] = torch.nan_to_num(targets[k], nan=0.0, posinf=0.0, neginf=0.0)
                         else:
                             if torch.is_tensor(targets):
-                                targets = torch.nan_to_num(
-                                    targets, nan=0.0, posinf=0.0, neginf=0.0
-                                )
+                                targets = torch.nan_to_num(targets, nan=0.0, posinf=0.0, neginf=0.0)
 
                         # Check if batch has enough valid data (relaxed: horizon-wise loss masking preferred)
                         min_valid_ratio = float(os.getenv("MIN_VALID_RATIO", "0.0"))
@@ -9735,20 +8716,12 @@ def train(config: DictConfig) -> None:
                         # Use SafeAMPWrapper for mixed precision
                         if use_amp and os.getenv("USE_SAFE_AMP", "1") == "1":
                             # Safe forward with automatic FP32 conversion
-                            with torch.amp.autocast(
-                                "cuda", dtype=amp_dtype, enabled=use_amp
-                            ):
-                                outputs = _forward_with_optional_graph(
-                                    model, features, edge_index, edge_attr
-                                )
+                            with torch.amp.autocast("cuda", dtype=amp_dtype, enabled=use_amp):
+                                outputs = _forward_with_optional_graph(model, features, edge_index, edge_attr)
 
                             # 🔧 DEBUG (2025-10-06): Check if edge_index is being passed
                             if global_step <= 5:
-                                edge_index_str = (
-                                    "None"
-                                    if edge_index is None
-                                    else f"shape={edge_index.shape}"
-                                )
+                                edge_index_str = "None" if edge_index is None else f"shape={edge_index.shape}"
                                 edge_attr_str = (
                                     "None"
                                     if edge_attr is None
@@ -9764,44 +8737,30 @@ def train(config: DictConfig) -> None:
 
                             # Debug logging to track key transformation
                             if global_step == 0:
-                                logger.info(
-                                    f"[DEBUG-KEYS] Raw model output type: {type(outputs)}"
-                                )
+                                logger.info(f"[DEBUG-KEYS] Raw model output type: {type(outputs)}")
                                 if isinstance(outputs, dict):
-                                    logger.info(
-                                        f"[DEBUG-KEYS] Raw output top-level keys: {list(outputs.keys())}"
-                                    )
+                                    logger.info(f"[DEBUG-KEYS] Raw output top-level keys: {list(outputs.keys())}")
                                     if "predictions" in outputs:
-                                        logger.info(
-                                            f"[DEBUG-KEYS] predictions type: {type(outputs['predictions'])}"
-                                        )
+                                        logger.info(f"[DEBUG-KEYS] predictions type: {type(outputs['predictions'])}")
                                         if isinstance(outputs["predictions"], dict):
                                             logger.info(
                                                 f"[DEBUG-KEYS] predictions keys: {list(outputs['predictions'].keys())}"
                                             )
-                                logger.info(
-                                    f"[DEBUG-KEYS] Target type: {type(targets)}"
-                                )
+                                logger.info(f"[DEBUG-KEYS] Target type: {type(targets)}")
                                 if isinstance(targets, dict):
-                                    logger.info(
-                                        f"[DEBUG-KEYS] Target keys: {list(targets.keys())}"
-                                    )
+                                    logger.info(f"[DEBUG-KEYS] Target keys: {list(targets.keys())}")
 
                             # Normalize output keys: point_horizon_X -> horizon_Xd
                             # Handle both nested {"predictions": {...}} and flat structures
                             if isinstance(outputs, dict):
                                 # Check if we have nested predictions dict
-                                if "predictions" in outputs and isinstance(
-                                    outputs["predictions"], dict
-                                ):
+                                if "predictions" in outputs and isinstance(outputs["predictions"], dict):
                                     # Normalize keys within the predictions dict
                                     normalized_predictions = {}
                                     for k, v in outputs["predictions"].items():
                                         if k.startswith("point_horizon_"):
                                             # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
-                                            horizon_num = k.replace(
-                                                "point_horizon_", ""
-                                            )
+                                            horizon_num = k.replace("point_horizon_", "")
                                             new_key = f"horizon_{horizon_num}d"
                                             normalized_predictions[new_key] = v
                                         else:
@@ -9814,9 +8773,7 @@ def train(config: DictConfig) -> None:
                                     for k, v in outputs.items():
                                         if k.startswith("point_horizon_"):
                                             # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
-                                            horizon_num = k.replace(
-                                                "point_horizon_", ""
-                                            )
+                                            horizon_num = k.replace("point_horizon_", "")
                                             new_key = f"horizon_{horizon_num}d"
                                             normalized_outputs[new_key] = v
                                         else:
@@ -9837,42 +8794,25 @@ def train(config: DictConfig) -> None:
                                 targets = normalized_targets
 
                             # Force ALL outputs to FP32 for loss calculation
-                            outputs = {
-                                k: v.float() if torch.is_tensor(v) else v
-                                for k, v in outputs.items()
-                            }
+                            outputs = {k: v.float() if torch.is_tensor(v) else v for k, v in outputs.items()}
 
                             # Force targets to FP32 as well
                             if isinstance(targets, dict):
-                                targets = {
-                                    k: v.float() if torch.is_tensor(v) else v
-                                    for k, v in targets.items()
-                                }
+                                targets = {k: v.float() if torch.is_tensor(v) else v for k, v in targets.items()}
                             else:
-                                targets = (
-                                    targets.float()
-                                    if torch.is_tensor(targets)
-                                    else targets
-                                )
+                                targets = targets.float() if torch.is_tensor(targets) else targets
                             # Calculate loss in FP32 with valid masks
                             with torch.amp.autocast("cuda", enabled=False):
                                 preds_for_loss = _unwrap_predictions(outputs)
                                 if isinstance(preds_for_loss, dict):
                                     preds_for_loss = {
-                                        k: (v.float() if torch.is_tensor(v) else v)
-                                        for k, v in preds_for_loss.items()
+                                        k: (v.float() if torch.is_tensor(v) else v) for k, v in preds_for_loss.items()
                                     }
-                                loss, losses = criterion(
-                                    preds_for_loss, targets, valid_masks
-                                )
+                                loss, losses = criterion(preds_for_loss, targets, valid_masks)
                                 if diag_store is not None and diag_group_np is not None:
                                     group_slice = diag_group_np[mb_start:mb_end]
-                                    if group_slice is not None and group_slice.size == (
-                                        mb_end - mb_start
-                                    ):
-                                        for horizon in getattr(
-                                            criterion, "horizons", []
-                                        ):
+                                    if group_slice is not None and group_slice.size == (mb_end - mb_start):
+                                        for horizon in getattr(criterion, "horizons", []):
                                             diag_key = str(horizon)
                                             if diag_key not in diag_store:
                                                 diag_store[diag_key] = {
@@ -9897,8 +8837,7 @@ def train(config: DictConfig) -> None:
                                                 (
                                                     k
                                                     for k in pred_candidates
-                                                    if isinstance(preds_for_loss, dict)
-                                                    and k in preds_for_loss
+                                                    if isinstance(preds_for_loss, dict) and k in preds_for_loss
                                                 ),
                                                 None,
                                             )
@@ -9906,8 +8845,7 @@ def train(config: DictConfig) -> None:
                                                 (
                                                     k
                                                     for k in targ_candidates
-                                                    if isinstance(targets, dict)
-                                                    and k in targets
+                                                    if isinstance(targets, dict) and k in targets
                                                 ),
                                                 None,
                                             )
@@ -9915,48 +8853,22 @@ def train(config: DictConfig) -> None:
                                                 continue
                                             pred_tensor = preds_for_loss[pred_key]
                                             targ_tensor = targets[targ_key]
-                                            if not torch.is_tensor(
-                                                pred_tensor
-                                            ) or not torch.is_tensor(targ_tensor):
+                                            if not torch.is_tensor(pred_tensor) or not torch.is_tensor(targ_tensor):
                                                 continue
-                                            pred_np = (
-                                                pred_tensor.detach()
-                                                .view(-1)
-                                                .to("cpu")
-                                                .float()
-                                                .numpy()
-                                            )
-                                            targ_np = (
-                                                targ_tensor.detach()
-                                                .view(-1)
-                                                .to("cpu")
-                                                .float()
-                                                .numpy()
-                                            )
+                                            pred_np = pred_tensor.detach().view(-1).to("cpu").float().numpy()
+                                            targ_np = targ_tensor.detach().view(-1).to("cpu").float().numpy()
                                             if pred_np.shape[0] != group_slice.shape[0]:
                                                 continue
                                             diag_store[diag_key]["yhat"].append(pred_np)
                                             diag_store[diag_key]["y"].append(targ_np)
-                                            diag_store[diag_key]["group"].append(
-                                                group_slice.copy()
-                                            )
+                                            diag_store[diag_key]["group"].append(group_slice.copy())
                                 # Debug: Check loss type
                                 if not isinstance(loss, torch.Tensor):
-                                    logger.error(
-                                        f"Loss is not a tensor: type={type(loss)}, value={loss}"
-                                    )
-                                    raise TypeError(
-                                        f"Expected loss to be a Tensor, got {type(loss)}"
-                                    )
+                                    logger.error(f"Loss is not a tensor: type={type(loss)}, value={loss}")
+                                    raise TypeError(f"Expected loss to be a Tensor, got {type(loss)}")
                             # Check if loss is zero or invalid - skip batch if so
-                            if (
-                                not torch.is_tensor(loss)
-                                or torch.isnan(loss)
-                                or torch.isinf(loss)
-                            ):
-                                logger.warning(
-                                    f"[skip-batch] Invalid loss detected: type={type(loss)}, value={loss}"
-                                )
+                            if not torch.is_tensor(loss) or torch.isnan(loss) or torch.isinf(loss):
+                                logger.warning(f"[skip-batch] Invalid loss detected: type={type(loss)}, value={loss}")
                                 mb_start = mb_end
                                 continue
 
@@ -9973,18 +8885,12 @@ def train(config: DictConfig) -> None:
                                 _sp_lambda = float(os.getenv("SPARSITY_LAMBDA", "0.0"))
                             except Exception:
                                 _sp_lambda = 0.0
-                            if (
-                                _sp_lambda > 0.0
-                                and isinstance(outputs, dict)
-                                and "sparsity_loss" in outputs
-                            ):
+                            if _sp_lambda > 0.0 and isinstance(outputs, dict) and "sparsity_loss" in outputs:
                                 sp_loss = outputs["sparsity_loss"]
                                 if torch.is_tensor(sp_loss):
                                     loss = loss + _sp_lambda * sp_loss
                                     if isinstance(losses, dict):
-                                        losses["sparsity_reg"] = (
-                                            sp_loss.detach() * _sp_lambda
-                                        )
+                                        losses["sparsity_reg"] = sp_loss.detach() * _sp_lambda
                         else:
                             # Fallback: if no external edges, try correlation edges from batch
                             if (
@@ -10003,9 +8909,7 @@ def train(config: DictConfig) -> None:
                                     )
 
                                     try:
-                                        k_try = int(
-                                            getattr(final_config.model.gat, "knn_k", 10)
-                                        )
+                                        k_try = int(getattr(final_config.model.gat, "knn_k", 10))
                                     except Exception:
                                         k_try = 10
                                     # Threshold: prefer graph_builder.edge_threshold, then data.graph.edge_threshold, else env/default
@@ -10023,71 +8927,45 @@ def train(config: DictConfig) -> None:
                                             pass
                                         if thr is None:
                                             try:
-                                                thr = float(
-                                                    getattr(
-                                                        final_config.data, "graph", {}
-                                                    ).edge_threshold
-                                                )
+                                                thr = float(getattr(final_config.data, "graph", {}).edge_threshold)
                                             except Exception:
                                                 thr = None
                                         if thr is None:
-                                            thr = float(
-                                                os.getenv("GRAPH_EDGE_THR", "0.3")
-                                            )
+                                            thr = float(os.getenv("GRAPH_EDGE_THR", "0.3"))
                                     except Exception:
                                         thr = 0.3
                                     # Optional stub mode for validation: skip correlation build
-                                    _graph_mode_val = (
-                                        os.getenv("GRAPH_MODE", "").strip().lower()
-                                    )
+                                    _graph_mode_val = os.getenv("GRAPH_MODE", "").strip().lower()
                                     if _graph_mode_val in ("off", "stub", "identity"):
                                         _n = features.size(0)
                                         if _n > 0:
-                                            _ei = torch.arange(
-                                                _n, device=device, dtype=torch.long
-                                            )
+                                            _ei = torch.arange(_n, device=device, dtype=torch.long)
                                             edge_index = torch.stack([_ei, _ei], dim=0)
                                             edge_attr = None
-                                            logger.info(
-                                                f"[edges-stub/val] using identity edges: N={_n}, E={_n}"
-                                            )
+                                            logger.info(f"[edges-stub/val] using identity edges: N={_n}, E={_n}")
                                     else:
                                         _gb_local2 = _GBL2(
                                             _GBC2(
                                                 max_nodes=int(features.size(0)),
                                                 edge_threshold=float(thr),
-                                                min_k=int(
-                                                    os.getenv("GRAPH_MIN_K", "5")
-                                                ),
-                                                add_self_loops=os.getenv(
-                                                    "GRAPH_ADD_SELF_LOOPS", "1"
-                                                )
-                                                == "1",
-                                                min_edges=int(
-                                                    os.getenv("GRAPH_MIN_EDGES", "0")
-                                                ),
+                                                min_k=int(os.getenv("GRAPH_MIN_K", "5")),
+                                                add_self_loops=os.getenv("GRAPH_ADD_SELF_LOOPS", "1") == "1",
+                                                min_edges=int(os.getenv("GRAPH_MIN_EDGES", "0")),
                                             )
                                         )
                                         win = int(min(features.size(1), 20))
                                         ei, ea = _gb_local2.build_correlation_edges(
                                             features, window=win, k=int(max(1, k_try))
                                         )
-                                        if (
-                                            isinstance(ei, torch.Tensor)
-                                            and ei.numel() > 0
-                                        ):
-                                            edge_index = ei.to(
-                                                device, non_blocking=True
-                                            )
+                                        if isinstance(ei, torch.Tensor) and ei.numel() > 0:
+                                            edge_index = ei.to(device, non_blocking=True)
                                             edge_attr = (
                                                 ea.to(device, non_blocking=True)
                                                 if isinstance(ea, torch.Tensor)
                                                 else None
                                             )
                                 except Exception as _e:
-                                    logger.warning(
-                                        f"[edges-fallback/val] failed to build correlation edges: {_e}"
-                                    )
+                                    logger.warning(f"[edges-fallback/val] failed to build correlation edges: {_e}")
 
                             with torch.amp.autocast(
                                 "cuda",
@@ -10095,25 +8973,19 @@ def train(config: DictConfig) -> None:
                                 enabled=use_amp,
                                 cache_enabled=False,
                             ):
-                                outputs = _forward_with_optional_graph(
-                                    model, features, edge_index, edge_attr
-                                )
+                                outputs = _forward_with_optional_graph(model, features, edge_index, edge_attr)
 
                                 # Normalize output keys: point_horizon_X -> horizon_Xd
                                 # Handle both nested {"predictions": {...}} and flat structures
                                 if isinstance(outputs, dict):
                                     # Check if we have nested predictions dict
-                                    if "predictions" in outputs and isinstance(
-                                        outputs["predictions"], dict
-                                    ):
+                                    if "predictions" in outputs and isinstance(outputs["predictions"], dict):
                                         # Normalize keys within the predictions dict
                                         normalized_predictions = {}
                                         for k, v in outputs["predictions"].items():
                                             if k.startswith("point_horizon_"):
                                                 # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
-                                                horizon_num = k.replace(
-                                                    "point_horizon_", ""
-                                                )
+                                                horizon_num = k.replace("point_horizon_", "")
                                                 new_key = f"horizon_{horizon_num}d"
                                                 normalized_predictions[new_key] = v
                                             else:
@@ -10126,9 +8998,7 @@ def train(config: DictConfig) -> None:
                                         for k, v in outputs.items():
                                             if k.startswith("point_horizon_"):
                                                 # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
-                                                horizon_num = k.replace(
-                                                    "point_horizon_", ""
-                                                )
+                                                horizon_num = k.replace("point_horizon_", "")
                                                 new_key = f"horizon_{horizon_num}d"
                                                 normalized_outputs[new_key] = v
                                             else:
@@ -10152,32 +9022,18 @@ def train(config: DictConfig) -> None:
                                 if isinstance(outputs, dict):
                                     for k, v in outputs.items():
                                         if torch.is_tensor(v):
-                                            outputs[k] = _finite_or_nan_fix_tensor(
-                                                v, f"outputs[{k}]", clamp=50.0
-                                            )
+                                            outputs[k] = _finite_or_nan_fix_tensor(v, f"outputs[{k}]", clamp=50.0)
 
                                 # Use already computed valid_masks
                                 preds_for_loss = _unwrap_predictions(outputs)
-                                loss, losses = criterion(
-                                    preds_for_loss, targets, valid_masks
-                                )
+                                loss, losses = criterion(preds_for_loss, targets, valid_masks)
                                 # Debug: Check loss type
                                 if not isinstance(loss, torch.Tensor):
-                                    logger.error(
-                                        f"Loss is not a tensor: type={type(loss)}, value={loss}"
-                                    )
-                                    raise TypeError(
-                                        f"Expected loss to be a Tensor, got {type(loss)}"
-                                    )
+                                    logger.error(f"Loss is not a tensor: type={type(loss)}, value={loss}")
+                                    raise TypeError(f"Expected loss to be a Tensor, got {type(loss)}")
                             # Check if loss is zero or invalid - skip batch if so
-                            if (
-                                not torch.is_tensor(loss)
-                                or torch.isnan(loss)
-                                or torch.isinf(loss)
-                            ):
-                                logger.warning(
-                                    f"[skip-batch] Invalid loss detected: type={type(loss)}, value={loss}"
-                                )
+                            if not torch.is_tensor(loss) or torch.isnan(loss) or torch.isinf(loss):
+                                logger.warning(f"[skip-batch] Invalid loss detected: type={type(loss)}, value={loss}")
                                 mb_start = mb_end
                                 continue
 
@@ -10194,22 +9050,14 @@ def train(config: DictConfig) -> None:
                                 _sp_lambda = float(os.getenv("SPARSITY_LAMBDA", "0.0"))
                             except Exception:
                                 _sp_lambda = 0.0
-                            if (
-                                _sp_lambda > 0.0
-                                and isinstance(outputs, dict)
-                                and "sparsity_loss" in outputs
-                            ):
+                            if _sp_lambda > 0.0 and isinstance(outputs, dict) and "sparsity_loss" in outputs:
                                 sp_loss = outputs["sparsity_loss"]
                                 if torch.is_tensor(sp_loss):
                                     loss = loss + _sp_lambda * sp_loss
                                     if isinstance(losses, dict):
-                                        losses["sparsity_reg"] = (
-                                            sp_loss.detach() * _sp_lambda
-                                        )
+                                        losses["sparsity_reg"] = sp_loss.detach() * _sp_lambda
                             if not torch.isfinite(loss):
-                                logger.warning(
-                                    "[nan-guard] loss non-finite; skipping micro-batch"
-                                )
+                                logger.warning("[nan-guard] loss non-finite; skipping micro-batch")
                                 optimizer.zero_grad(set_to_none=True)
                                 mb_start = mb_end
                                 continue
@@ -10239,11 +9087,7 @@ def train(config: DictConfig) -> None:
 
                         # Log loss breakdown and gradients (detailed diagnostics)
                         grad_log_every = int(os.getenv("GRAD_LOG_EVERY", "100"))
-                        if (
-                            grad_log_every > 0
-                            and global_step % grad_log_every == 0
-                            and global_step > 0
-                        ):
+                        if grad_log_every > 0 and global_step % grad_log_every == 0 and global_step > 0:
                             try:
                                 # Log individual loss components
                                 loss_details = []
@@ -10270,19 +9114,11 @@ def train(config: DictConfig) -> None:
                                                 "alpha",
                                             ]
                                         ):
-                                            grad_norms[
-                                                name.split(".")[-2]
-                                                + "."
-                                                + name.split(".")[-1]
-                                            ] = grad_norm
+                                            grad_norms[name.split(".")[-2] + "." + name.split(".")[-1]] = grad_norm
 
                                 # Check for zero gradients in critical components
-                                gat_grad = sum(
-                                    v for k, v in grad_norms.items() if "gat" in k
-                                )
-                                fan_grad = sum(
-                                    v for k, v in grad_norms.items() if "fan" in k
-                                )
+                                gat_grad = sum(v for k, v in grad_norms.items() if "gat" in k)
+                                fan_grad = sum(v for k, v in grad_norms.items() if "fan" in k)
 
                                 logger.info(
                                     f"[Loss@{global_step}] total={loss.item():.4f} | "
@@ -10290,22 +9126,16 @@ def train(config: DictConfig) -> None:
                                 )
 
                                 if gat_grad < 1e-8:
-                                    logger.warning(
-                                        f"[Grad@{global_step}] GAT gradients near zero: {gat_grad:.2e}"
-                                    )
+                                    logger.warning(f"[Grad@{global_step}] GAT gradients near zero: {gat_grad:.2e}")
                                 if fan_grad < 1e-8:
-                                    logger.warning(
-                                        f"[Grad@{global_step}] FAN gradients near zero: {fan_grad:.2e}"
-                                    )
+                                    logger.warning(f"[Grad@{global_step}] FAN gradients near zero: {fan_grad:.2e}")
 
                                 # Log fusion alpha if available
                                 if hasattr(model, "alpha_logit"):
-                                    alpha_val = model.alpha_graph_min + (
-                                        1 - model.alpha_graph_min
-                                    ) * torch.sigmoid(model.alpha_logit)
-                                    logger.info(
-                                        f"[Fusion@{global_step}] alpha={alpha_val.item():.4f}"
+                                    alpha_val = model.alpha_graph_min + (1 - model.alpha_graph_min) * torch.sigmoid(
+                                        model.alpha_logit
                                     )
+                                    logger.info(f"[Fusion@{global_step}] alpha={alpha_val.item():.4f}")
 
                             except Exception as e:
                                 logger.debug(f"Loss/grad logging failed: {e}")
@@ -10319,9 +9149,7 @@ def train(config: DictConfig) -> None:
                                 effective_steps_per_epoch * 2,
                             ),
                         )
-                        check_every_env = int(
-                            os.getenv("DEGENERACY_CHECK_EVERY", "100")
-                        )
+                        check_every_env = int(os.getenv("DEGENERACY_CHECK_EVERY", "100"))
                         check_every = max(
                             10,
                             min(
@@ -10330,19 +9158,11 @@ def train(config: DictConfig) -> None:
                             ),
                         )
                         use_guard = os.getenv("DEGENERACY_GUARD", "1") == "1"
-                        abort_on_guard = (
-                            os.getenv("DEGENERACY_ABORT", "0") == "1"
-                        )  # Default: don't abort
+                        abort_on_guard = os.getenv("DEGENERACY_ABORT", "0") == "1"  # Default: don't abort
                         std_eps = float(os.getenv("DEGENERACY_STD_EPS", "1e-6"))
-                        abs_min_std = float(
-                            os.getenv("DEGENERACY_ABS_MIN_STD", "0.005")
-                        )  # Absolute minimum threshold
-                        min_ratio = float(
-                            os.getenv("DEGENERACY_MIN_RATIO", "0.10")
-                        )  # yhat.std / y.std minimum ratio
-                        need_consec = int(
-                            os.getenv("DEGENERACY_CONSECUTIVE", "3")
-                        )  # Consecutive violations needed
+                        abs_min_std = float(os.getenv("DEGENERACY_ABS_MIN_STD", "0.005"))  # Absolute minimum threshold
+                        min_ratio = float(os.getenv("DEGENERACY_MIN_RATIO", "0.10"))  # yhat.std / y.std minimum ratio
+                        need_consec = int(os.getenv("DEGENERACY_CONSECUTIVE", "3"))  # Consecutive violations needed
                         ema_beta = float(os.getenv("DEGENERACY_EMA_BETA", "0.9"))
 
                         # Skip checks during warmup or if not at check interval
@@ -10355,25 +9175,16 @@ def train(config: DictConfig) -> None:
                         if should_check:
                             with torch.no_grad():
                                 # Extract predictions from outputs (works for both train and val loops)
-                                preds_for_guard = (
-                                    _unwrap_predictions(outputs)
-                                    if isinstance(outputs, dict)
-                                    else {}
-                                )
+                                preds_for_guard = _unwrap_predictions(outputs) if isinstance(outputs, dict) else {}
                                 guard_predictions = _canonicalize_horizon_dict(
-                                    preds_for_guard
-                                    if isinstance(preds_for_guard, dict)
-                                    else {}
+                                    preds_for_guard if isinstance(preds_for_guard, dict) else {}
                                 )
                                 guard_targets = _canonicalize_horizon_dict(targets)
 
                                 for h in criterion.horizons:
                                     canon_key = f"horizon_{h}"
 
-                                    if (
-                                        canon_key not in guard_predictions
-                                        or canon_key not in guard_targets
-                                    ):
+                                    if canon_key not in guard_predictions or canon_key not in guard_targets:
                                         continue
 
                                     yhat = guard_predictions[canon_key].float()
@@ -10381,36 +9192,23 @@ def train(config: DictConfig) -> None:
 
                                     # Use valid mask if available
                                     mask = None
-                                    if (
-                                        "valid_masks" in locals()
-                                        and valid_masks is not None
-                                    ):
+                                    if "valid_masks" in locals() and valid_masks is not None:
                                         mask_key = f"horizon_{h}"
                                         if mask_key in valid_masks:
                                             mask = valid_masks[mask_key]
                                     elif (
-                                        "valid_masks_else" in locals()
-                                        and locals().get("valid_masks_else") is not None
+                                        "valid_masks_else" in locals() and locals().get("valid_masks_else") is not None
                                     ):
                                         mask_key = f"horizon_{h}"
-                                        valid_masks_else = locals().get(
-                                            "valid_masks_else", {}
-                                        )
+                                        valid_masks_else = locals().get("valid_masks_else", {})
                                         if mask_key in valid_masks_else:
                                             mask = valid_masks_else[mask_key]
 
                                     # Calculate std in FP32 for stability with mask
                                     if mask is not None and mask.sum() > 0:
-                                        mask_bool = (
-                                            mask.bool()
-                                            if mask.dtype == torch.bool
-                                            else mask != 0
-                                        )
+                                        mask_bool = mask.bool() if mask.dtype == torch.bool else mask != 0
                                         # Squeeze trailing singleton dims (e.g., [B,1] -> [B])
-                                        while (
-                                            mask_bool.dim() > 1
-                                            and mask_bool.size(-1) == 1
-                                        ):
+                                        while mask_bool.dim() > 1 and mask_bool.size(-1) == 1:
                                             mask_bool = mask_bool.squeeze(-1)
                                         if mask_bool.dim() > 1:
                                             # Collapse additional feature dims by requiring validity across axis
@@ -10432,15 +9230,9 @@ def train(config: DictConfig) -> None:
                                         if mask_bool.sum() > 0:
                                             yhat_masked = yhat[mask_bool]
                                             y_masked = y[mask_bool]
-                                            yhat_std = (
-                                                yhat_masked.std().item()
-                                                if yhat_masked.numel() > 1
-                                                else 0.0
-                                            )
+                                            yhat_std = yhat_masked.std().item() if yhat_masked.numel() > 1 else 0.0
                                             y_std = max(
-                                                y_masked.std().item()
-                                                if y_masked.numel() > 1
-                                                else std_eps,
+                                                y_masked.std().item() if y_masked.numel() > 1 else std_eps,
                                                 std_eps,
                                             )
                                         else:
@@ -10453,9 +9245,7 @@ def train(config: DictConfig) -> None:
                                     # Apply EMA
                                     k = f"h{h}"
                                     prev = deg_ema[k] if deg_ema[k] > 0 else yhat_std
-                                    ema_std = (
-                                        ema_beta * prev + (1.0 - ema_beta) * yhat_std
-                                    )
+                                    ema_std = ema_beta * prev + (1.0 - ema_beta) * yhat_std
                                     deg_ema[k] = ema_std
 
                                     ratio = ema_std / max(y_std, std_eps)
@@ -10476,65 +9266,38 @@ def train(config: DictConfig) -> None:
                                         elif deg_bad[k] >= need_consec:
                                             last_reset = deg_last_reset_step.get(k, -1)
                                             if last_reset != global_step:
-                                                reset_scale = float(
-                                                    os.getenv(
-                                                        "DEGENERACY_RESET_SCALE", "0.05"
-                                                    )
-                                                )
+                                                reset_scale = float(os.getenv("DEGENERACY_RESET_SCALE", "0.05"))
                                                 logger.warning(
                                                     "[FAILSAFE] Applying prediction head reset "
                                                     f"(h={h}, scale={reset_scale:.3f})"
                                                 )
                                                 with torch.no_grad():
-                                                    if hasattr(
-                                                        model, "prediction_head"
-                                                    ):
+                                                    if hasattr(model, "prediction_head"):
                                                         for (
                                                             name,
                                                             param,
                                                         ) in model.prediction_head.named_parameters():
                                                             if param.requires_grad:
-                                                                param.add_(
-                                                                    torch.randn_like(
-                                                                        param
-                                                                    )
-                                                                    * reset_scale
-                                                                )
-                                                    if hasattr(
-                                                        model, "backbone_projection"
-                                                    ):
+                                                                param.add_(torch.randn_like(param) * reset_scale)
+                                                    if hasattr(model, "backbone_projection"):
                                                         bp = model.backbone_projection
-                                                        if isinstance(
-                                                            bp, torch.nn.Module
-                                                        ):
-                                                            for (
-                                                                param
-                                                            ) in bp.parameters():
+                                                        if isinstance(bp, torch.nn.Module):
+                                                            for param in bp.parameters():
                                                                 if param.requires_grad:
                                                                     param.add_(
-                                                                        torch.randn_like(
-                                                                            param
-                                                                        )
-                                                                        * (
-                                                                            reset_scale
-                                                                            * 0.5
-                                                                        )
+                                                                        torch.randn_like(param) * (reset_scale * 0.5)
                                                                     )
                                             deg_last_reset_step[k] = global_step
                                             deg_bad[k] = 0
                                     else:
                                         if deg_bad[k] > 0:
-                                            logger.info(
-                                                f"[FAILSAFE] recovered for h={h}, reset consecutive counter"
-                                            )
+                                            logger.info(f"[FAILSAFE] recovered for h={h}, reset consecutive counter")
                                         deg_bad[k] = 0
 
                         n_micro_steps += 1
                         if n_micro_steps % grad_accum == 0:
                             # Only unscale if scaler is enabled and we have gradients
-                            if scaler_enabled and any(
-                                p.grad is not None for p in model.parameters()
-                            ):
+                            if scaler_enabled and any(p.grad is not None for p in model.parameters()):
                                 scaler.unscale_(optimizer)
 
                             if grad_monitor is not None:
@@ -10561,9 +9324,7 @@ def train(config: DictConfig) -> None:
 
                                 # Get configurable thresholds from environment
                                 gat_warmup = int(os.getenv("GAT_WARMUP_STEPS", "50"))
-                                gat_grad_threshold = float(
-                                    os.getenv("GAT_GRAD_THR", "1e-10")
-                                )
+                                gat_grad_threshold = float(os.getenv("GAT_GRAD_THR", "1e-10"))
 
                                 if gat_count > 0 and gat_norm < gat_grad_threshold:
                                     msg = f"[GUARD] GAT grad too small: {gat_norm:.2e} (step={global_step})"
@@ -10575,31 +9336,21 @@ def train(config: DictConfig) -> None:
                                         # After warmup, check abort setting
                                         logger.error(f"[FAILSAFE] {msg}")
                                         if os.getenv("DEGENERACY_ABORT", "1") == "1":
-                                            logger.error(
-                                                "GAT gradients persistently small after warmup, aborting"
-                                            )
+                                            logger.error("GAT gradients persistently small after warmup, aborting")
                                             raise SystemExit(3)
                                         else:
-                                            logger.warning(
-                                                "DEGENERACY_ABORT=0, continuing despite small gradients"
-                                            )
+                                            logger.warning("DEGENERACY_ABORT=0, continuing despite small gradients")
 
                             # Log fusion alpha value if available
                             if isinstance(outputs, dict) and "fusion_alpha" in outputs:
-                                alpha_val = float(
-                                    outputs["fusion_alpha"].mean().detach().cpu()
-                                )
+                                alpha_val = float(outputs["fusion_alpha"].mean().detach().cpu())
                                 if batch_idx % 50 == 0:  # Log every 50 batches
-                                    logger.info(
-                                        f"[Diag] fusion_alpha={alpha_val:.4f} (step={global_step})"
-                                    )
+                                    logger.info(f"[Diag] fusion_alpha={alpha_val:.4f} (step={global_step})")
 
                             if hasattr(model, "output_heads"):
                                 head_norm, head_count = grad_norm(model.output_heads)
                                 if head_count > 0 and head_norm < 1e-8:
-                                    logger.error(
-                                        f"[FAILSAFE] Head gradient norm too small: {head_norm:.2e}"
-                                    )
+                                    logger.error(f"[FAILSAFE] Head gradient norm too small: {head_norm:.2e}")
                                     raise SystemExit(3)
 
                             # 🔧 FIX (2025-11-04): Log gradient norm before/after clipping
@@ -10615,9 +9366,7 @@ def train(config: DictConfig) -> None:
                                 grad_norm_pre = None
 
                             grad_clip_max_norm = float(os.getenv("GRAD_CLIP_NORM", "1.0"))
-                            torch.nn.utils.clip_grad_norm_(
-                                model.parameters(), max_norm=grad_clip_max_norm
-                            )
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_max_norm)
 
                             # Log post-clipping norm
                             if grad_norm_pre is not None:
@@ -10637,9 +9386,7 @@ def train(config: DictConfig) -> None:
                                 try:
                                     scaler.step(optimizer)
                                 except AssertionError as _e:
-                                    logger.error(
-                                        f"[optim] GradScaler step skipped: {_e}"
-                                    )
+                                    logger.error(f"[optim] GradScaler step skipped: {_e}")
                                 # Always update scaler to maintain consistent state
                                 scaler.update()
                             else:
@@ -10658,44 +9405,36 @@ def train(config: DictConfig) -> None:
                                 break
 
                             # Quick evaluation at intervals
-                            if (
-                                global_step % eval_every_steps == 0
-                                and val_loader is not None
-                            ):
+                            if global_step % eval_every_steps == 0 and val_loader is not None:
                                 try:
                                     quick_metrics = evaluate_quick(
                                         model,
                                         val_loader,
                                         criterion,
                                         device,
-                                        max_batches=int(
-                                            os.getenv("EVAL_MAX_BATCHES", "50")
-                                        ),
+                                        max_batches=int(os.getenv("EVAL_MAX_BATCHES", "50")),
                                     )
                                     metrics_data = {
                                         "epoch": epoch,
                                         "step": global_step,
                                         "metrics": quick_metrics,
-                                        "elapsed_hours": (time.time() - start_time)
-                                        / 3600,
+                                        "elapsed_hours": (time.time() - start_time) / 3600,
                                         "timestamp": now_jst_iso(),
-                                        "tz": str(JST.key)
-                                        if hasattr(JST, "key")
-                                        else "Asia/Tokyo",
+                                        "tz": str(JST.key) if hasattr(JST, "key") else "Asia/Tokyo",
                                     }
                                     (RUN_DIR / "latest_metrics.json").write_text(
-                                        json.dumps(
-                                            metrics_data, ensure_ascii=False, indent=2
-                                        )
+                                        json.dumps(metrics_data, ensure_ascii=False, indent=2)
                                     )
-                                    logger.info(
-                                        f"Quick eval at step {global_step}: {quick_metrics}"
-                                    )
+                                    logger.info(f"Quick eval at step {global_step}: {quick_metrics}")
 
                                     # 🔧 FIX (2025-11-04): RFI56 summary log for coefficient pinning
                                     if isinstance(quick_metrics, dict):
-                                        sharpe_ema = quick_metrics.get("Sharpe_EMA", quick_metrics.get("sharpe", float("nan")))
-                                        rank_ic = quick_metrics.get("RankIC", quick_metrics.get("rank_ic", float("nan")))
+                                        sharpe_ema = quick_metrics.get(
+                                            "Sharpe_EMA", quick_metrics.get("sharpe", float("nan"))
+                                        )
+                                        rank_ic = quick_metrics.get(
+                                            "RankIC", quick_metrics.get("rank_ic", float("nan"))
+                                        )
                                         crps = quick_metrics.get("CRPS", quick_metrics.get("crps", float("nan")))
                                         qx_rate = quick_metrics.get("qx_rate", float("nan"))
                                         logger.info(
@@ -10705,34 +9444,23 @@ def train(config: DictConfig) -> None:
 
                                     if mlf is not None:
                                         try:
-                                            if (
-                                                isinstance(quick_metrics, dict)
-                                                and "val_loss" in quick_metrics
-                                            ):
+                                            if isinstance(quick_metrics, dict) and "val_loss" in quick_metrics:
                                                 mlf.log_metric(
                                                     "quick/val_loss",
                                                     float(quick_metrics["val_loss"]),
                                                     step=global_step,
                                                 )
                                         except Exception as _e:
-                                            logger.debug(
-                                                f"MLflow metric logging failed: {_e}"
-                                            )
+                                            logger.debug(f"MLflow metric logging failed: {_e}")
                                 except Exception as e:
                                     logger.warning(f"Quick evaluation failed: {e}")
                         total_loss += float(loss.detach().item())
                         for k, v in (losses or {}).items():
                             try:
-                                horizon_losses[k] += float(
-                                    v.item() if hasattr(v, "item") else float(v)
-                                )
+                                horizon_losses[k] += float(v.item() if hasattr(v, "item") else float(v))
                             except Exception:
                                 pass
-                        if (
-                            diag_store is not None
-                            and diag_group_np is not None
-                            and mb_end >= n_items
-                        ):
+                        if diag_store is not None and diag_group_np is not None and mb_end >= n_items:
                             for horizon_key, bucket in diag_store.items():
                                 yhat_parts = bucket.get("yhat") or []
                                 y_parts = bucket.get("y") or []
@@ -10742,32 +9470,20 @@ def train(config: DictConfig) -> None:
                                 try:
                                     yhat_np = np.concatenate(yhat_parts)
                                     y_np = np.concatenate(y_parts)
-                                    group_np = np.concatenate(group_parts).astype(
-                                        np.int64, copy=False
-                                    )
+                                    group_np = np.concatenate(group_parts).astype(np.int64, copy=False)
                                 except Exception:
                                     continue
-                                if (
-                                    yhat_np.size == 0
-                                    or y_np.size != yhat_np.size
-                                    or group_np.size != yhat_np.size
-                                ):
+                                if yhat_np.size == 0 or y_np.size != yhat_np.size or group_np.size != yhat_np.size:
                                     continue
-                                uniq_groups, counts = np.unique(
-                                    group_np, return_counts=True
-                                )
+                                uniq_groups, counts = np.unique(group_np, return_counts=True)
                                 per_pred_std: list[float] = []
                                 per_targ_std: list[float] = []
                                 for g, cnt in zip(uniq_groups, counts, strict=False):
                                     if cnt <= 1:
                                         continue
                                     mask = group_np == g
-                                    per_pred_std.append(
-                                        float(np.std(yhat_np[mask]) + 1e-12)
-                                    )
-                                    per_targ_std.append(
-                                        float(np.std(y_np[mask]) + 1e-12)
-                                    )
+                                    per_pred_std.append(float(np.std(yhat_np[mask]) + 1e-12))
+                                    per_targ_std.append(float(np.std(y_np[mask]) + 1e-12))
                                 horizon_label = horizon_key
                                 if per_pred_std:
                                     pred_mean = float(np.mean(per_pred_std))
@@ -10785,10 +9501,7 @@ def train(config: DictConfig) -> None:
                                         targ_min,
                                         len(per_pred_std),
                                     )
-                                    if (
-                                        train_diag_warn > 0.0
-                                        and pred_mean < train_diag_warn
-                                    ):
+                                    if train_diag_warn > 0.0 and pred_mean < train_diag_warn:
                                         logger.warning(
                                             "[TRAIN-DIAG] ep=%d batch=%d h=%s low per-day pred std: mean=%.6f (< %.4f)",
                                             epoch,
@@ -10798,9 +9511,7 @@ def train(config: DictConfig) -> None:
                                             train_diag_warn,
                                         )
                                 else:
-                                    max_group_size = (
-                                        int(counts.max()) if counts.size else 0
-                                    )
+                                    max_group_size = int(counts.max()) if counts.size else 0
                                     logger.info(
                                         "[TRAIN-DIAG] ep=%d batch=%d h=%s insufficient cross-sectional coverage (groups=%d, max_group_size=%d)",
                                         epoch,
@@ -10834,16 +9545,10 @@ def train(config: DictConfig) -> None:
                         optimizer.step()
 
                     # 🔍 LOG GAT RESIDUAL GATE GRADIENT (After optimizer step, before zero_grad)
-                    if (
-                        hasattr(model, "gat_residual_gate")
-                        and model.gat_residual_gate.grad is not None
-                    ):
+                    if hasattr(model, "gat_residual_gate") and model.gat_residual_gate.grad is not None:
                         gate_grad_norm = model.gat_residual_gate.grad.norm().item()
                         gate_val = model.gat_residual_gate.item()
-                        logger.info(
-                            f"[GAT-GATE-GRAD] gate_value={gate_val:.4f}, "
-                            f"grad_norm={gate_grad_norm:.2e}"
-                        )
+                        logger.info(f"[GAT-GATE-GRAD] gate_value={gate_val:.4f}, " f"grad_norm={gate_grad_norm:.2e}")
 
                     optimizer.zero_grad(set_to_none=True)
                 # Log training loss (removed unused variables)
@@ -10899,10 +9604,7 @@ def train(config: DictConfig) -> None:
                                 gat_norm += grad_norm
                                 gat_param_grads.append((name, grad_norm))
                         # Log individual layer gradients if monitoring enabled
-                        if (
-                            os.getenv("MONITOR_GAT_GRADIENTS") == "1"
-                            and gat_param_grads
-                        ):
+                        if os.getenv("MONITOR_GAT_GRADIENTS") == "1" and gat_param_grads:
                             logger.info(f"[GAT-PARAM-GRAD] Total norm: {gat_norm:.2e}")
                             for name, grad_norm in gat_param_grads[:5]:  # Top 5 layers
                                 logger.info(f"  {name}: {grad_norm:.2e}")
@@ -10911,13 +9613,9 @@ def train(config: DictConfig) -> None:
                     try:
                         with torch.no_grad():
                             alpha_min = float(getattr(model, "alpha_graph_min", 0.0))
-                            alpha = alpha_min + (1 - alpha_min) * torch.sigmoid(
-                                model.alpha_logit
-                            )
+                            alpha = alpha_min + (1 - alpha_min) * torch.sigmoid(model.alpha_logit)
                             alpha_mean = float(alpha.mean().item())
-                            logger.info(
-                                f"[sanity] alpha_mean(GAT mix)={alpha_mean:.3f}"
-                            )
+                            logger.info(f"[sanity] alpha_mean(GAT mix)={alpha_mean:.3f}")
                             if alpha_mean < 0.1:
                                 logger.warning(
                                     f"[sanity] alpha_mean low ({alpha_mean:.3f}); GAT contribution may be too small"
@@ -10929,15 +9627,11 @@ def train(config: DictConfig) -> None:
             if device.type == "cuda":
                 memory_used = torch.cuda.memory_allocated() / 1e9
                 memory_cached = torch.cuda.memory_reserved() / 1e9
-                logger.info(
-                    f"GPU Memory: Used={memory_used:.2f}GB, Cached={memory_cached:.2f}GB"
-                )
+                logger.info(f"GPU Memory: Used={memory_used:.2f}GB, Cached={memory_cached:.2f}GB")
             if val_loader is not None:
                 # SWAの評価用に、後半はSWAモデルで評価
                 eval_model = model
-                if swa_model is not None and epoch >= int(
-                    max(1, round(n_epochs * swa_start_frac))
-                ):
+                if swa_model is not None and epoch >= int(max(1, round(n_epochs * swa_start_frac))):
                     try:
                         # BN統計を都度更新（重い場合は最終のみでも可）
                         from torch.optim.swa_utils import update_bn
@@ -10949,9 +9643,7 @@ def train(config: DictConfig) -> None:
                         eval_model = swa_model or model
                 # external-graph-aware validation
                 if gb is None:
-                    val_loss, val_horizon_losses, linear_cal = validate(
-                        eval_model, val_loader, criterion, device
-                    )
+                    val_loss, val_horizon_losses, linear_cal = validate(eval_model, val_loader, criterion, device)
                 else:
                     eval_model.eval()
                     total_v = 0.0
@@ -10966,9 +9658,7 @@ def train(config: DictConfig) -> None:
                                 if hasattr(mdl, "gat") and mdl.gat is not None:
                                     return True
                                 sig = inspect.signature(mdl.forward)
-                                return ("edge_index" in sig.parameters) or (
-                                    "edge_attr" in sig.parameters
-                                )
+                                return ("edge_index" in sig.parameters) or ("edge_attr" in sig.parameters)
                             except Exception:
                                 return False
 
@@ -10977,11 +9667,7 @@ def train(config: DictConfig) -> None:
                             if torch.is_tensor(feats):
                                 batch = {"features": feats}
                             else:
-                                batch = (
-                                    feats
-                                    if isinstance(feats, dict)
-                                    else {"features": feats}
-                                )
+                                batch = feats if isinstance(feats, dict) else {"features": feats}
 
                             # 🔧 FIX (2025-10-06): Pass edge_index even if edge_attr is None
                             # GAT can work without edge attributes
@@ -10999,15 +9685,11 @@ def train(config: DictConfig) -> None:
                                 if isinstance(vb.get("targets"), dict)
                                 else vb["targets"]
                             )
-                            targets = _force_finite_in_structure(
-                                targets, "phase2.forward.targets"
-                            )
+                            targets = _force_finite_in_structure(targets, "phase2.forward.targets")
                             edge_index = None
                             edge_attr = None
                             try:
-                                codes = (
-                                    vb.get("codes") if "codes" in vb else vb.get("code")
-                                )
+                                codes = vb.get("codes") if "codes" in vb else vb.get("code")
                                 date = vb.get("date", None)
                                 if isinstance(date, (list, tuple)) and len(date) > 0:
                                     date = date[0]
@@ -11022,18 +9704,14 @@ def train(config: DictConfig) -> None:
                                         try:
                                             df_pd = None
                                             try:
-                                                if hasattr(
-                                                    val_loader, "dataset"
-                                                ) and hasattr(
+                                                if hasattr(val_loader, "dataset") and hasattr(
                                                     val_loader.dataset, "data"
                                                 ):
                                                     df_pd = val_loader.dataset.data
                                             except Exception:
                                                 df_pd = None
                                             if df_pd is not None:
-                                                res = gb_adv.build_graph(
-                                                    df_pd, codes, date_end=str(date)
-                                                )
+                                                res = gb_adv.build_graph(df_pd, codes, date_end=str(date))
                                                 edge_index, edge_attr = (
                                                     res.get("edge_index"),
                                                     res.get("edge_attr"),
@@ -11041,14 +9719,10 @@ def train(config: DictConfig) -> None:
                                             else:
                                                 edge_index, edge_attr = None, None
                                         except Exception as _e:
-                                            logger.warning(
-                                                f"[AdvGraph/val] build failed: {_e}"
-                                            )
+                                            logger.warning(f"[AdvGraph/val] build failed: {_e}")
                                             edge_index, edge_attr = None, None
                                     else:
-                                        edge_index, edge_attr = gb.build_for_day(
-                                            date, codes
-                                        )
+                                        edge_index, edge_attr = gb.build_for_day(date, codes)
                                     edge_index = edge_index.to(device)
                                     edge_attr = edge_attr.to(device)
                                     # staleness stats
@@ -11056,47 +9730,27 @@ def train(config: DictConfig) -> None:
                                         import pandas as _pd
 
                                         batch_ts = _pd.Timestamp(date).normalize()
-                                        asof_ts = getattr(
-                                            gb, "last_asof_ts", lambda: None
-                                        )()
+                                        asof_ts = getattr(gb, "last_asof_ts", lambda: None)()
                                         if asof_ts is None:
                                             asof_ts = batch_ts - _pd.Timedelta(days=1)
 
                                         # データ鮮度を計算してリストに追加
                                         staleness_days = int((batch_ts - asof_ts).days)
-                                        if not hasattr(
-                                            globals(), "_val_staleness_days_list"
-                                        ):
+                                        if not hasattr(globals(), "_val_staleness_days_list"):
                                             globals()["_val_staleness_days_list"] = []
-                                        globals()["_val_staleness_days_list"].append(
-                                            staleness_days
-                                        )
+                                        globals()["_val_staleness_days_list"].append(staleness_days)
 
                                         # 100バッチごとに統計情報をログ出力
-                                        if (
-                                            len(globals()["_val_staleness_days_list"])
-                                            % 100
-                                            == 0
-                                        ):
-                                            avg_staleness = np.mean(
-                                                globals()["_val_staleness_days_list"][
-                                                    -100:
-                                                ]
-                                            )
-                                            max_staleness = np.max(
-                                                globals()["_val_staleness_days_list"][
-                                                    -100:
-                                                ]
-                                            )
+                                        if len(globals()["_val_staleness_days_list"]) % 100 == 0:
+                                            avg_staleness = np.mean(globals()["_val_staleness_days_list"][-100:])
+                                            max_staleness = np.max(globals()["_val_staleness_days_list"][-100:])
                                             logger.info(
                                                 f"Validation data staleness stats (last 100 batches): "
                                                 f"avg={avg_staleness:.2f} days, max={max_staleness:.2f} days"
                                             )
 
                                     except Exception as e:
-                                        logger.warning(
-                                            f"Failed to calculate validation staleness: {e}"
-                                        )
+                                        logger.warning(f"Failed to calculate validation staleness: {e}")
                                         pass
                             except Exception:
                                 edge_index = None
@@ -11119,11 +9773,7 @@ def train(config: DictConfig) -> None:
 
                                     # Resolve codes list for this batch (full day-batch might be preferable, but use what we have)
                                     try:
-                                        codes_list = (
-                                            vb.get("codes")
-                                            if "codes" in vb
-                                            else vb.get("code")
-                                        )
+                                        codes_list = vb.get("codes") if "codes" in vb else vb.get("code")
                                         if hasattr(codes_list, "tolist"):
                                             codes_list = codes_list.tolist()
                                         if codes_list is not None:
@@ -11138,9 +9788,7 @@ def train(config: DictConfig) -> None:
                                     except Exception:
                                         pass
                                     try:
-                                        k_try = int(
-                                            getattr(final_config.model.gat, "knn_k", 10)
-                                        )
+                                        k_try = int(getattr(final_config.model.gat, "knn_k", 10))
                                     except Exception:
                                         k_try = 10
                                     try:
@@ -11158,13 +9806,8 @@ def train(config: DictConfig) -> None:
                                             max_nodes=int(features.size(0)),
                                             edge_threshold=float(thr),
                                             min_k=int(os.getenv("GRAPH_MIN_K", "5")),
-                                            add_self_loops=os.getenv(
-                                                "GRAPH_ADD_SELF_LOOPS", "1"
-                                            )
-                                            == "1",
-                                            min_edges=int(
-                                                os.getenv("GRAPH_MIN_EDGES", "0")
-                                            ),
+                                            add_self_loops=os.getenv("GRAPH_ADD_SELF_LOOPS", "1") == "1",
+                                            min_edges=int(os.getenv("GRAPH_MIN_EDGES", "0")),
                                         )
                                     )
                                     win = int(min(features.size(1), 20))
@@ -11185,9 +9828,7 @@ def train(config: DictConfig) -> None:
                                             else None
                                         )
                                 except Exception as _e:
-                                    logger.warning(
-                                        f"[edges-fallback/val] failed to build correlation edges: {_e}"
-                                    )
+                                    logger.warning(f"[edges-fallback/val] failed to build correlation edges: {_e}")
 
                             with torch.amp.autocast(
                                 "cuda",
@@ -11195,28 +9836,20 @@ def train(config: DictConfig) -> None:
                                 enabled=use_amp,
                                 cache_enabled=False,
                             ):
-                                outputs = _forward_with_optional_graph(
-                                    eval_model, features, edge_index, edge_attr
-                                )
-                                outputs = _force_finite_in_structure(
-                                    outputs, "phase2.forward.outputs"
-                                )
+                                outputs = _forward_with_optional_graph(eval_model, features, edge_index, edge_attr)
+                                outputs = _force_finite_in_structure(outputs, "phase2.forward.outputs")
 
                                 # Normalize output keys: point_horizon_X -> horizon_Xd
                                 # Handle both nested {"predictions": {...}} and flat structures
                                 if isinstance(outputs, dict):
                                     # Check if we have nested predictions dict
-                                    if "predictions" in outputs and isinstance(
-                                        outputs["predictions"], dict
-                                    ):
+                                    if "predictions" in outputs and isinstance(outputs["predictions"], dict):
                                         # Normalize keys within the predictions dict
                                         normalized_predictions = {}
                                         for k, v in outputs["predictions"].items():
                                             if k.startswith("point_horizon_"):
                                                 # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
-                                                horizon_num = k.replace(
-                                                    "point_horizon_", ""
-                                                )
+                                                horizon_num = k.replace("point_horizon_", "")
                                                 new_key = f"horizon_{horizon_num}d"
                                                 normalized_predictions[new_key] = v
                                             else:
@@ -11229,9 +9862,7 @@ def train(config: DictConfig) -> None:
                                         for k, v in outputs.items():
                                             if k.startswith("point_horizon_"):
                                                 # Convert point_horizon_X to horizon_Xd (with 'd' suffix for days)
-                                                horizon_num = k.replace(
-                                                    "point_horizon_", ""
-                                                )
+                                                horizon_num = k.replace("point_horizon_", "")
                                                 new_key = f"horizon_{horizon_num}d"
                                                 normalized_outputs[new_key] = v
                                             else:
@@ -11239,58 +9870,35 @@ def train(config: DictConfig) -> None:
                                         outputs = normalized_outputs
 
                                 # Use valid masks if present in validation batch
-                                vmask = (
-                                    vb.get("valid_mask")
-                                    if isinstance(vb, dict) and "valid_mask" in vb
-                                    else None
-                                )
-                                loss_val, losses = criterion(
-                                    outputs, targets, valid_masks=vmask
-                                )
+                                vmask = vb.get("valid_mask") if isinstance(vb, dict) and "valid_mask" in vb else None
+                                loss_val, losses = criterion(outputs, targets, valid_masks=vmask)
                             loss_value = float(
-                                loss_val.detach().item()
-                                if hasattr(loss_val, "detach")
-                                else float(loss_val)
+                                loss_val.detach().item() if hasattr(loss_val, "detach") else float(loss_val)
                             )
                             if not math.isfinite(loss_value):
                                 nan_batches_v += 1
-                                logger.warning(
-                                    "[Phase2-Val] Skipping batch with non-finite loss"
-                                )
+                                logger.warning("[Phase2-Val] Skipping batch with non-finite loss")
                                 continue
                             total_v += loss_value
                             n_v += 1
                             for k, v in (losses or {}).items():
                                 try:
-                                    horizon_losses_v[k] += float(
-                                        v.item() if hasattr(v, "item") else float(v)
-                                    )
+                                    horizon_losses_v[k] += float(v.item() if hasattr(v, "item") else float(v))
                                 except Exception:
                                     pass
                         if n_v == 0:
-                            logger.warning(
-                                "[Phase2-Val] All validation batches skipped; returning inf loss."
-                            )
+                            logger.warning("[Phase2-Val] All validation batches skipped; returning inf loss.")
                         if nan_batches_v > 0:
-                            logger.warning(
-                                f"[Phase2-Val] Skipped {nan_batches_v} batches with NaN/Inf loss."
-                            )
+                            logger.warning(f"[Phase2-Val] Skipped {nan_batches_v} batches with NaN/Inf loss.")
                         val_loss = total_v / max(1, n_v)
-                        val_horizon_losses = {
-                            k: v / max(1, n_v) for k, v in horizon_losses_v.items()
-                        }
+                        val_horizon_losses = {k: v / max(1, n_v) for k, v in horizon_losses_v.items()}
                     logger.info(f"[{tag}] Validation loss: {val_loss:.4f}")
 
                     # Log staleness stats if available
-                    if (
-                        "_val_staleness_days_list" in globals()
-                        and globals()["_val_staleness_days_list"]
-                    ):
+                    if "_val_staleness_days_list" in globals() and globals()["_val_staleness_days_list"]:
                         import numpy as _np
 
-                        s_arr = _np.array(
-                            globals()["_val_staleness_days_list"], dtype=float
-                        )
+                        s_arr = _np.array(globals()["_val_staleness_days_list"], dtype=float)
                         s_mean = float(_np.mean(s_arr))
                         s_median = float(_np.median(s_arr))
                         s_std = float(_np.std(s_arr))
@@ -11306,29 +9914,19 @@ def train(config: DictConfig) -> None:
                         try:
                             import mlflow as _mlf  # type: ignore
 
-                            _mlf.log_metric(
-                                "val/edge_staleness_days_mean", s_mean, step=int(epoch)
-                            )
+                            _mlf.log_metric("val/edge_staleness_days_mean", s_mean, step=int(epoch))
                             _mlf.log_metric(
                                 "val/edge_staleness_days_median",
                                 s_median,
                                 step=int(epoch),
                             )
-                            _mlf.log_metric(
-                                "val/edge_staleness_days_std", s_std, step=int(epoch)
-                            )
-                            _mlf.log_metric(
-                                "val/edge_staleness_days_min", s_min, step=int(epoch)
-                            )
-                            _mlf.log_metric(
-                                "val/edge_staleness_days_max", s_max, step=int(epoch)
-                            )
+                            _mlf.log_metric("val/edge_staleness_days_std", s_std, step=int(epoch))
+                            _mlf.log_metric("val/edge_staleness_days_min", s_min, step=int(epoch))
+                            _mlf.log_metric("val/edge_staleness_days_max", s_max, step=int(epoch))
                         except Exception as e:
                             logger.warning(f"MLflow logging failed: {e}")
                     else:
-                        logger.info(
-                            "[EDGE-TS] No staleness data available for validation"
-                        )
+                        logger.info("[EDGE-TS] No staleness data available for validation")
                     # 定型ログ出力（quick_tune.py用）
                     logger.info(f"val/loss: {val_loss:.6f}")
                     logger.info(f"val/epoch: {epoch}")
@@ -11360,11 +9958,7 @@ def train(config: DictConfig) -> None:
                                 pass
                             # Flatten detailed validation metrics
                             try:
-                                hm = (
-                                    val_metrics.get("horizon_metrics", {})
-                                    if isinstance(val_metrics, dict)
-                                    else {}
-                                )
+                                hm = val_metrics.get("horizon_metrics", {}) if isinstance(val_metrics, dict) else {}
                                 for h, m in hm.items():
                                     for k in (
                                         "rmse",
@@ -11375,11 +9969,7 @@ def train(config: DictConfig) -> None:
                                     ):
                                         if k in m:
                                             log_dict[f"val_h{h}/{k}"] = float(m[k])
-                                avgm = (
-                                    val_metrics.get("average_metrics", {})
-                                    if isinstance(val_metrics, dict)
-                                    else {}
-                                )
+                                avgm = val_metrics.get("average_metrics", {}) if isinstance(val_metrics, dict) else {}
                                 for k, v in avgm.items():
                                     log_dict[f"val/{k}"] = float(v)
                             except Exception:
@@ -11392,11 +9982,7 @@ def train(config: DictConfig) -> None:
                     best_val_loss = val_loss
                     save_path = Path(f"models/checkpoints/atft_gat_fan_best_{tag}.pt")
                     save_path.parent.mkdir(parents=True, exist_ok=True)
-                    ckpt_model = (
-                        eval_model
-                        if (swa_model is not None and epoch >= int(n_epochs * 0.67))
-                        else model
-                    )
+                    ckpt_model = eval_model if (swa_model is not None and epoch >= int(n_epochs * 0.67)) else model
                     torch.save(
                         {
                             "epoch": epoch,
@@ -11405,9 +9991,7 @@ def train(config: DictConfig) -> None:
                             "scaler_state_dict": scaler.state_dict(),
                             "val_loss": val_loss,
                             "config": OmegaConf.to_container(final_config),
-                            "target_scalers": getattr(
-                                data_module, "target_scalers", {}
-                            ),
+                            "target_scalers": getattr(data_module, "target_scalers", {}),
                             "linear_calibration": linear_cal,
                             "run_manifest": run_manifest,
                         },
@@ -11416,20 +10000,19 @@ def train(config: DictConfig) -> None:
                     logger.info(f"Best model saved ({tag}) (val_loss: {val_loss:.4f})")
                     # Optionally log best checkpoint as W&B Artifact
                     try:
-                        if wb_logger is not None and os.getenv(
-                            "WANDB_ARTIFACTS", "1"
-                        ).lower() in ("1", "true", "yes", "on"):
+                        if wb_logger is not None and os.getenv("WANDB_ARTIFACTS", "1").lower() in (
+                            "1",
+                            "true",
+                            "yes",
+                            "on",
+                        ):
                             import importlib as _importlib
 
                             _wandb = _importlib.import_module("wandb")
-                            art = _wandb.Artifact(
-                                name=f"atft-gat-fan-{tag}", type="model"
-                            )
+                            art = _wandb.Artifact(name=f"atft-gat-fan-{tag}", type="model")
                             art.add_file(str(save_path))
                             if getattr(_wandb, "run", None) is not None:
-                                _wandb.run.log_artifact(
-                                    art, aliases=["best", f"ep{epoch}"]
-                                )
+                                _wandb.run.log_artifact(art, aliases=["best", f"ep{epoch}"])
                             else:
                                 _wandb.log_artifact(art)
                     except Exception:
@@ -11449,9 +10032,7 @@ def train(config: DictConfig) -> None:
                 logger.info(f"Saved snapshot checkpoint: {snap_path}")
             # 学習率スケジューラ更新 or SWA更新
             # SWA適用フェーズか判定（else節のインデント問題回避のためブールに分離）
-            use_swa_phase = swa_model is not None and epoch >= int(
-                max(1, round(n_epochs * swa_start_frac))
-            )
+            use_swa_phase = swa_model is not None and epoch >= int(max(1, round(n_epochs * swa_start_frac)))
             if use_swa_phase:
                 try:
                     swa_model.update_parameters(model)
@@ -11485,20 +10066,19 @@ def train(config: DictConfig) -> None:
                 logger.info(f"[SWA] Saved SWA checkpoint: {swa_path}")
                 # Optionally log SWA checkpoint as W&B Artifact
                 try:
-                    if wb_logger is not None and os.getenv(
-                        "WANDB_ARTIFACTS", "1"
-                    ).lower() in ("1", "true", "yes", "on"):
+                    if wb_logger is not None and os.getenv("WANDB_ARTIFACTS", "1").lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                        "on",
+                    ):
                         import importlib as _importlib
 
                         _wandb = _importlib.import_module("wandb")
-                        art = _wandb.Artifact(
-                            name=f"atft-gat-fan-{tag}-swa", type="model"
-                        )
+                        art = _wandb.Artifact(name=f"atft-gat-fan-{tag}-swa", type="model")
                         art.add_file(str(swa_path))
                         if getattr(_wandb, "run", None) is not None:
-                            _wandb.run.log_artifact(
-                                art, aliases=["swa", f"ep{n_epochs}"]
-                            )
+                            _wandb.run.log_artifact(art, aliases=["swa", f"ep{n_epochs}"])
                         else:
                             _wandb.log_artifact(art)
                 except Exception:
@@ -11514,9 +10094,7 @@ def train(config: DictConfig) -> None:
                         },
                         best_path,
                     )
-                    logger.info(
-                        f"[SWA] SWA model is new BEST; checkpoint updated: {best_path}"
-                    )
+                    logger.info(f"[SWA] SWA model is new BEST; checkpoint updated: {best_path}")
             except Exception as _e:
                 logger.warning(f"SWA evaluation failed/skipped: {_e}")
         # ===== 予測エクスポート（任意） =====
@@ -11530,9 +10108,7 @@ def train(config: DictConfig) -> None:
                         if ckpt.exists():
                             # Load with weights_only=False for backward compatibility
                             # This is safe for trusted checkpoints from our own training
-                            obj = torch.load(
-                                ckpt, map_location=device, weights_only=False
-                            )
+                            obj = torch.load(ckpt, map_location=device, weights_only=False)
                             sd = None
                             if isinstance(obj, dict):
                                 for k in ("state_dict", "model_state_dict"):
@@ -11541,19 +10117,13 @@ def train(config: DictConfig) -> None:
                                         break
                             if sd is None and isinstance(obj, dict):
                                 # 直接state_dict相当
-                                if all(
-                                    isinstance(v, torch.Tensor) for v in obj.values()
-                                ):
+                                if all(isinstance(v, torch.Tensor) for v in obj.values()):
                                     sd = obj
                             if sd is not None:
                                 model.load_state_dict(sd, strict=False)
-                                logger.info(
-                                    f"[EXPORT] Loaded checkpoint weights from {ckpt}"
-                                )
+                                logger.info(f"[EXPORT] Loaded checkpoint weights from {ckpt}")
                 except Exception as _le:
-                    logger.warning(
-                        f"[EXPORT] Loading checkpoint for export failed: {_le}"
-                    )
+                    logger.warning(f"[EXPORT] Loading checkpoint for export failed: {_le}")
 
                 model.eval()
                 rows = []
@@ -11565,9 +10135,7 @@ def train(config: DictConfig) -> None:
                         }
                         # Add optional fields if present
                         if "static_features" in vb:
-                            batch_dict["static_features"] = vb["static_features"].to(
-                                device
-                            )
+                            batch_dict["static_features"] = vb["static_features"].to(device)
                         if "edge_index" in vb:
                             batch_dict["edge_index"] = vb["edge_index"].to(device)
                         if "edge_attr" in vb:
@@ -11591,11 +10159,7 @@ def train(config: DictConfig) -> None:
                             if tk in tdict:
                                 targ_key = tk
                                 break
-                        y = (
-                            tdict[targ_key].detach().float().view(-1).cpu()
-                            if targ_key is not None
-                            else None
-                        )
+                        y = tdict[targ_key].detach().float().view(-1).cpu() if targ_key is not None else None
 
                         # メタ情報
                         codes = vb.get("codes") if "codes" in vb else vb.get("code")
@@ -11606,9 +10170,7 @@ def train(config: DictConfig) -> None:
                             codes = [None] * int(yhat.shape[0])
                         date_val = vb.get("date", None)
                         # バッチ内の全行に同一日付を適用（day-batch前提）
-                        dates = [str(date_val) if date_val is not None else None] * int(
-                            yhat.shape[0]
-                        )
+                        dates = [str(date_val) if date_val is not None else None] * int(yhat.shape[0])
 
                         for c, d, p, a in zip(
                             codes,
@@ -11622,11 +10184,7 @@ def train(config: DictConfig) -> None:
                                     "date": d,
                                     "Code": str(c) if c is not None else None,
                                     "predicted_return": float(p),
-                                    **(
-                                        {"actual_return": float(a)}
-                                        if y is not None
-                                        else {}
-                                    ),
+                                    **({"actual_return": float(a)} if y is not None else {}),
                                 }
                             )
 
@@ -11644,9 +10202,7 @@ def train(config: DictConfig) -> None:
                     df_pred.to_parquet(run_out, index=False)
                     logger.info(f"[EXPORT] Saved validation predictions: {out_path}")
                 else:
-                    logger.warning(
-                        "[EXPORT] No validation predictions collected; skipped writing"
-                    )
+                    logger.warning("[EXPORT] No validation predictions collected; skipped writing")
         except Exception as _e:
             logger.warning(f"[EXPORT] Export predictions failed: {_e}")
 
@@ -11654,9 +10210,7 @@ def train(config: DictConfig) -> None:
 
     # メイン学習（fold設定に依存）
     logger.info(f"Batch size: {final_config.train.batch.train_batch_size}")
-    logger.info(
-        f"Gradient accumulation steps: {final_config.train.batch.gradient_accumulation_steps}"
-    )
+    logger.info(f"Gradient accumulation steps: {final_config.train.batch.gradient_accumulation_steps}")
     logger.info(
         f"Effective batch size: {final_config.train.batch.train_batch_size * final_config.train.batch.gradient_accumulation_steps}"
     )
@@ -11706,17 +10260,10 @@ def train(config: DictConfig) -> None:
                 ]
                 m_use = _resolve_value_col(dfm, m_col, market_candidates)
                 if m_use:
-                    code2market = {
-                        str(r[code_col]): str(r[m_use])
-                        for _, r in dfm[[code_col, m_use]].iterrows()
-                    }
-                    logger.info(
-                        f"[CodeMap] loaded {len(code2market)} market mappings from {m_path} (col={m_use})"
-                    )
+                    code2market = {str(r[code_col]): str(r[m_use]) for _, r in dfm[[code_col, m_use]].iterrows()}
+                    logger.info(f"[CodeMap] loaded {len(code2market)} market mappings from {m_path} (col={m_use})")
                 else:
-                    logger.warning(
-                        f"[CodeMap] no usable market column found in {m_path}"
-                    )
+                    logger.warning(f"[CodeMap] no usable market column found in {m_path}")
         # Sector map
         if s_path:
             dfs = _read_table(s_path)
@@ -11730,17 +10277,10 @@ def train(config: DictConfig) -> None:
                 ]
                 s_use = _resolve_value_col(dfs, s_col, sector_candidates)
                 if s_use:
-                    code2sector = {
-                        str(r[code_col]): str(r[s_use])
-                        for _, r in dfs[[code_col, s_use]].iterrows()
-                    }
-                    logger.info(
-                        f"[CodeMap] loaded {len(code2sector)} sector mappings from {s_path} (col={s_use})"
-                    )
+                    code2sector = {str(r[code_col]): str(r[s_use]) for _, r in dfs[[code_col, s_use]].iterrows()}
+                    logger.info(f"[CodeMap] loaded {len(code2sector)} sector mappings from {s_path} (col={s_use})")
                 else:
-                    logger.warning(
-                        f"[CodeMap] no usable sector column found in {s_path}"
-                    )
+                    logger.warning(f"[CodeMap] no usable sector column found in {s_path}")
 
     _load_code_maps()
 
@@ -11754,17 +10294,13 @@ def train(config: DictConfig) -> None:
         try:
             desired_dim = 1
             try:
-                desired_dim = int(
-                    getattr(final_config.model.gat.edge_features, "edge_dim", 1)
-                )
+                desired_dim = int(getattr(final_config.model.gat.edge_features, "edge_dim", 1))
             except Exception:
                 desired_dim = 1
 
             # Ensure 2D tensor
             if eattr is None:
-                eattr = torch.zeros(
-                    (eidx.size(1), 0), device=eidx.device, dtype=torch.float32
-                )
+                eattr = torch.zeros((eidx.size(1), 0), device=eidx.device, dtype=torch.float32)
             if eattr.dim() == 1:
                 eattr = eattr.unsqueeze(-1)
 
@@ -11795,23 +10331,11 @@ def train(config: DictConfig) -> None:
                             mj = markets_list[j]
                             si = sectors_list[i] if i < len(sectors_list) else None
                             sj = sectors_list[j] if j < len(sectors_list) else None
-                            m_sim.append(
-                                1.0
-                                if (mi is not None and mj is not None and mi == mj)
-                                else 0.0
-                            )
-                            s_sim.append(
-                                1.0
-                                if (si is not None and sj is not None and si == sj)
-                                else 0.0
-                            )
+                            m_sim.append(1.0 if (mi is not None and mj is not None and mi == mj) else 0.0)
+                            s_sim.append(1.0 if (si is not None and sj is not None and si == sj) else 0.0)
                     else:
                         # Fall back to code->meta maps
-                        if (
-                            codes_list is None
-                            or i >= len(codes_list)
-                            or j >= len(codes_list)
-                        ):
+                        if codes_list is None or i >= len(codes_list) or j >= len(codes_list):
                             m_sim.append(0.0)
                             s_sim.append(0.0)
                         else:
@@ -11820,25 +10344,13 @@ def train(config: DictConfig) -> None:
                             # Market
                             mi = code2market.get(ci)
                             mj = code2market.get(cj)
-                            m_sim.append(
-                                1.0
-                                if (mi is not None and mj is not None and mi == mj)
-                                else 0.0
-                            )
+                            m_sim.append(1.0 if (mi is not None and mj is not None and mi == mj) else 0.0)
                             # Sector
                             si = code2sector.get(ci)
                             sj = code2sector.get(cj)
-                            s_sim.append(
-                                1.0
-                                if (si is not None and sj is not None and si == sj)
-                                else 0.0
-                            )
-                m_sim_t = torch.tensor(
-                    m_sim, device=eattr.device, dtype=eattr.dtype
-                ).unsqueeze(-1)
-                s_sim_t = torch.tensor(
-                    s_sim, device=eattr.device, dtype=eattr.dtype
-                ).unsqueeze(-1)
+                            s_sim.append(1.0 if (si is not None and sj is not None and si == sj) else 0.0)
+                m_sim_t = torch.tensor(m_sim, device=eattr.device, dtype=eattr.dtype).unsqueeze(-1)
+                s_sim_t = torch.tensor(s_sim, device=eattr.device, dtype=eattr.dtype).unsqueeze(-1)
                 # Column 0 is correlation (already present), fill 1 and 2
                 if eattr.size(-1) >= 2:
                     eattr[:, 1:2] = m_sim_t
@@ -11900,9 +10412,7 @@ def train(config: DictConfig) -> None:
 
             if _pt_cfg is not None and bool(getattr(_pt_cfg, "enabled", False)):
                 logger.info("[PhaseTraining] enabled; running phase-wise training")
-                best_val_main = run_phase_training(
-                    model, train_loader, val_loader, config, device
-                )
+                best_val_main = run_phase_training(model, train_loader, val_loader, config, device)
             else:
                 ckpt_tag = os.getenv("CKPT_TAG", "main").strip() or "main"
                 best_val_main = run_training(
@@ -11912,9 +10422,7 @@ def train(config: DictConfig) -> None:
                     grad_monitor=grad_monitor,
                 )
         except Exception as _e:
-            logger.error(
-                f"[PhaseTraining] failed or disabled: {_e}; falling back to standard training"
-            )
+            logger.error(f"[PhaseTraining] failed or disabled: {_e}; falling back to standard training")
             # Reset critical resources before fallback to prevent double initialization
             optimizer.zero_grad(set_to_none=True)
             # Reinitialize scaler for fallback
@@ -11938,18 +10446,14 @@ def train(config: DictConfig) -> None:
     # CV評価（学習後に全foldを現行モデルで評価）
     if cv_folds >= 2 and "fold_ranges" in locals() and fold_ranges:
         eval_only = os.getenv("CV_EVAL_ONLY", "1") == "1"
-        logger.info(
-            f"\n=== CV across {len(fold_ranges)} folds | eval_only={eval_only} ==="
-        )
+        logger.info(f"\n=== CV across {len(fold_ranges)} folds | eval_only={eval_only} ===")
         cv_losses = []
         for i, (val_start, val_end) in enumerate(fold_ranges):
             embargo = pd.to_timedelta(embargo_days, unit="D")
             train_end_eff = val_start - embargo
             # データ構築
             cv_train_ds = ProductionDatasetV2(
-                data_module.train_files
-                if hasattr(data_module, "train_files")
-                else all_files,
+                data_module.train_files if hasattr(data_module, "train_files") else all_files,
                 final_config,
                 mode="train",
                 target_scalers=None,
@@ -11961,9 +10465,7 @@ def train(config: DictConfig) -> None:
                 arr = np.array(cv_train_ds.targets[h], dtype=np.float64)
                 if not np.isfinite(arr).all():
                     bad = np.size(arr) - np.isfinite(arr).sum()
-                    logger.warning(
-                        f"[target-normalize][cv] horizon={h}: replacing {bad} non-finite values"
-                    )
+                    logger.warning(f"[target-normalize][cv] horizon={h}: replacing {bad} non-finite values")
                 arr = np.nan_to_num(arr, nan=0.0, posinf=1e6, neginf=-1e6)
                 arr = np.clip(arr, -1e6, 1e6)
                 if arr.size > 0:
@@ -12020,13 +10522,9 @@ def train(config: DictConfig) -> None:
                 # 戻す
                 final_config.train.scheduler.total_epochs = old_total
             cv_losses.append(val_loss_i)
-            logger.info(
-                f"CV fold#{i+1}: dates=({val_start.date()}..{val_end.date()}) val_loss={val_loss_i:.4f}"
-            )
+            logger.info(f"CV fold#{i+1}: dates=({val_start.date()}..{val_end.date()}) val_loss={val_loss_i:.4f}")
         if cv_losses:
-            logger.info(
-                f"CV mean val_loss={np.mean(cv_losses):.4f} ± {np.std(cv_losses):.4f}"
-            )
+            logger.info(f"CV mean val_loss={np.mean(cv_losses):.4f} ± {np.std(cv_losses):.4f}")
 
     logger.info("\n=== Training Complete ===")
     try:
@@ -12064,9 +10562,7 @@ def train(config: DictConfig) -> None:
         try:
             if os.getenv("RUN_SAFE_EVAL", "0") != "1":
                 return
-            logger.info(
-                "[SafeEval] RUN_SAFE_EVAL=1 → starting SafeTrainingPipeline evaluation"
-            )
+            logger.info("[SafeEval] RUN_SAFE_EVAL=1 → starting SafeTrainingPipeline evaluation")
             # Locate evaluation data
             data_hint = os.getenv("SAFE_EVAL_DATA", "")
             if data_hint:
@@ -12075,9 +10571,7 @@ def train(config: DictConfig) -> None:
                 # Common default used by SafeTrainingPipeline
                 dp = Path("data/raw/large_scale/ml_dataset_full.parquet")
             if not dp.exists():
-                logger.warning(
-                    f"[SafeEval] data file not found: {dp}; skipping SafeEvaluation"
-                )
+                logger.warning(f"[SafeEval] data file not found: {dp}; skipping SafeEvaluation")
                 return
             # Outputs
             out_dir = Path(os.getenv("SAFE_EVAL_OUT", "output/safe_eval"))
@@ -12088,11 +10582,7 @@ def train(config: DictConfig) -> None:
             except Exception:
                 n_splits = 5
             try:
-                horizons = list(
-                    getattr(
-                        _cfg.data.time_series, "prediction_horizons", [1, 5, 10, 20]
-                    )
-                )
+                horizons = list(getattr(_cfg.data.time_series, "prediction_horizons", [1, 5, 10, 20]))
                 embargo_days = int(max(horizons)) if horizons else 20
             except Exception:
                 embargo_days = 20
@@ -12111,9 +10601,7 @@ def train(config: DictConfig) -> None:
                         SafeTrainingPipeline,
                     )
                 except Exception as _ie:
-                    logger.warning(
-                        f"[SafeEval] SafeTrainingPipeline import failed: {_ie}"
-                    )
+                    logger.warning(f"[SafeEval] SafeTrainingPipeline import failed: {_ie}")
                     return
             try:
                 pipeline = SafeTrainingPipeline(
@@ -12130,14 +10618,8 @@ def train(config: DictConfig) -> None:
                 )
                 # Save a small marker
                 summary_path = out_dir / "safe_eval_summary.json"
-                summary_path.write_text(
-                    json.dumps(
-                        res.get("final_report", res), ensure_ascii=False, indent=2
-                    )
-                )
-                logger.info(
-                    f"[SafeEval] Completed WF+Embargo evaluation → results saved to {out_dir}"
-                )
+                summary_path.write_text(json.dumps(res.get("final_report", res), ensure_ascii=False, indent=2))
+                logger.info(f"[SafeEval] Completed WF+Embargo evaluation → results saved to {out_dir}")
                 print(f"\n✅ SafeEval summary: {summary_path.resolve()}\n")
             except Exception as _e:
                 logger.warning(f"[SafeEval] pipeline run failed: {_e}")
@@ -12165,13 +10647,9 @@ def _maybe_output_hpo_metrics(final_config, best_val_loss, run_manifest):
         # Extract metrics from run manifest
         hpo_metrics = {
             "trial_number": int(trial_number),
-            "best_val_loss": float(best_val_loss)
-            if best_val_loss != float("inf")
-            else None,
+            "best_val_loss": float(best_val_loss) if best_val_loss != float("inf") else None,
             "training_completed": True,
-            "final_epoch": int(
-                getattr(final_config.train.scheduler, "total_epochs", 0)
-            ),
+            "final_epoch": int(getattr(final_config.train.scheduler, "total_epochs", 0)),
             "timestamp": time.time(),
         }
 
@@ -12195,18 +10673,14 @@ def _maybe_output_hpo_metrics(final_config, best_val_loss, run_manifest):
                             # Parse horizon from key (e.g., "val_rank_ic_1d" -> "1d")
                             for horizon in ["1d", "5d", "10d", "20d"]:
                                 if horizon in key:
-                                    rank_ic[horizon] = (
-                                        float(value) if value is not None else 0.0
-                                    )
+                                    rank_ic[horizon] = float(value) if value is not None else 0.0
                                     break
 
                         # Extract Sharpe metrics
                         elif "sharpe" in key.lower():
                             for horizon in ["1d", "5d", "10d", "20d"]:
                                 if horizon in key:
-                                    sharpe[horizon] = (
-                                        float(value) if value is not None else 0.0
-                                    )
+                                    sharpe[horizon] = float(value) if value is not None else 0.0
                                     break
 
                     # Also extract general validation metrics
@@ -12218,9 +10692,7 @@ def _maybe_output_hpo_metrics(final_config, best_val_loss, run_manifest):
                         "val_hit_rate",
                     ]:
                         if metric_key in final_epoch_data:
-                            hpo_metrics[metric_key] = float(
-                                final_epoch_data[metric_key]
-                            )
+                            hpo_metrics[metric_key] = float(final_epoch_data[metric_key])
 
                 # Store horizon-specific metrics
                 if rank_ic:
@@ -12262,9 +10734,7 @@ def _maybe_output_hpo_metrics(final_config, best_val_loss, run_manifest):
         summary_path = trial_dir / "trial_summary.txt"
         with open(summary_path, "w") as f:
             f.write(f"Trial: {trial_number}\n")
-            f.write(
-                f"Status: {'COMPLETED' if hpo_metrics['training_completed'] else 'FAILED'}\n"
-            )
+            f.write(f"Status: {'COMPLETED' if hpo_metrics['training_completed'] else 'FAILED'}\n")
             f.write(f"Best Val Loss: {hpo_metrics.get('best_val_loss', 'N/A')}\n")
             f.write(f"Final Epoch: {hpo_metrics['final_epoch']}\n")
 

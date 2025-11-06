@@ -8,7 +8,16 @@ from typing import Optional, Sequence
 import polars as pl
 
 from ..config import DatasetBuilderSettings, get_settings
-from ..features.macro.global_regime import load_global_regime_data, prepare_vvmd_features
+from ..features.macro.futures_topix import build_futures_features, load_futures
+from ..features.macro.global_regime import (
+    load_global_regime_data,
+    prepare_vvmd_features,
+)
+from ..features.macro.index_option_225 import (
+    build_index_option_225_features,
+    load_index_option_225,
+)
+from ..features.macro.options_asof import build_option_signals, load_options
 from ..features.macro.vix import load_vix_history, prepare_vix_features
 from ..utils import CacheManager
 from .advanced_fetcher import AdvancedJQuantsFetcher
@@ -89,6 +98,76 @@ class DataSourceManager:
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
 
+    def dividends(self, *, start: str, end: str) -> pl.DataFrame:
+        """Return dividend announcements (raw J-Quants format)."""
+
+        cache_key = f"dividend_{start}_{end}"
+        ttl = self.settings.macro_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            return self.fetcher.fetch_dividends(start=start, end=end)
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
+    def fs_details(self, *, start: str, end: str) -> pl.DataFrame:
+        """Return financial statement details."""
+
+        cache_key = f"fs_details_{start}_{end}"
+        ttl = self.settings.macro_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            return self.fetcher.fetch_fs_details(start=start, end=end)
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
+    def listed_info(self, *, start: str, end: str) -> pl.DataFrame:
+        """Return listed info daily snapshots (日次スナップショット).
+
+        Note: J-Quants API supports date parameter for daily snapshots.
+        This method fetches listed info for each date in the range.
+        """
+        cache_key = f"listed_info_{start}_{end}"
+        ttl = self.settings.macro_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            # Fetch listed info for each date in the range
+            # J-Quants API supports date parameter for daily snapshots
+            from ..utils import business_date_range
+
+            dates = business_date_range(start, end)
+            all_rows = []
+            for date_str in dates:
+                try:
+                    # fetch_listed_info accepts date parameter (YYYY-MM-DD format)
+                    raw = self.fetcher.fetch_listed_info(as_of=date_str)
+                    if not raw.is_empty():
+                        # Ensure Date column exists
+                        if "Date" not in raw.columns:
+                            raw = raw.with_columns(pl.lit(date_str, dtype=pl.Date).alias("Date"))
+                        all_rows.append(raw)
+                except Exception as exc:
+                    # Log and continue for other dates
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"Failed to fetch listed_info for {date_str}: {exc}")
+                    continue
+
+            if not all_rows:
+                return pl.DataFrame()
+
+            # Combine all dates
+            combined = pl.concat(all_rows)
+            # Ensure Date column is Date type
+            if "Date" in combined.columns:
+                combined = combined.with_columns(pl.col("Date").cast(pl.Date, strict=False))
+            return combined
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
     def topix(self, *, start: str, end: str) -> pl.DataFrame:
         """Return TOPIX history for the given range."""
 
@@ -100,6 +179,121 @@ class DataSourceManager:
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
+
+    def futures_topix(
+        self,
+        *,
+        start: str,
+        end: str,
+        topix_df: pl.DataFrame | None = None,
+        trading_calendar: pl.DataFrame | None = None,
+        force_refresh: bool = False,
+    ) -> pl.DataFrame:
+        """Return TOPIX futures features (P0: minimal set).
+
+        Fetches TOPIXF futures data and generates features:
+        - Market regime (direction/change)
+        - Overnight/intraday decomposition
+        - Volatility indicators
+        - Open interest pressure
+        - Term structure (front vs next)
+        - Basis (futures vs spot)
+        - Roll window flags
+
+        All features use T+1 09:00 JST as-of availability.
+        """
+        cache_key = f"futures_topix_{start}_{end}"
+        ttl = self.settings.macro_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            raw_futures = self.fetcher.fetch_futures(start=start, end=end)
+            normalized = load_futures(raw_futures, category="TOPIXF")
+            features = build_futures_features(
+                normalized,
+                topix_df=topix_df,
+                trading_calendar=trading_calendar,
+            )
+            return features
+
+        features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return features
+
+    def options_daily(
+        self,
+        *,
+        start: str,
+        end: str,
+        topix_df: pl.DataFrame | None = None,
+        nk225_df: pl.DataFrame | None = None,
+        trading_calendar: pl.DataFrame | None = None,
+        force_refresh: bool = False,
+    ) -> pl.DataFrame:
+        """Return index option features (P0: minimal set).
+
+        Fetches index option data (TOPIXE, NK225E) and generates features:
+        - IV level (30D, 90D)
+        - IV term structure (90D - 30D)
+        - IV skew (±5% moneyness)
+        - Put-Call ratio (OI and Volume)
+        - VRP (Variance Risk Premium) - TODO: implement
+
+        All features use T+1 09:00 JST as-of availability.
+        """
+        cache_key = f"options_daily_{start}_{end}"
+        ttl = self.settings.macro_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            raw_options = self.fetcher.fetch_options(start=start, end=end)
+            normalized = load_options(raw_options, categories=["TOPIXE", "NK225E"])
+            features = build_option_signals(
+                normalized,
+                topix_df=topix_df,
+                nk225_df=nk225_df,
+                trading_calendar=trading_calendar,
+            )
+            return features
+
+        features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return features
+
+    def index_option_225(
+        self,
+        *,
+        start: str,
+        end: str,
+        topix_df: pl.DataFrame | None = None,
+        trading_calendar: pl.DataFrame | None = None,
+        force_refresh: bool = False,
+    ) -> pl.DataFrame:
+        """Return Nikkei225 index option features (P0: minimal set).
+
+        Fetches /option/index_option data and generates features:
+        - ATM IV (near month, 30D synthetic)
+        - VRP (IV - RV, IV / RV)
+        - IV Term Structure (near vs next)
+        - Put/Call sentiment (OI ratio, volume ratio)
+        - Skew (25Δ approximation)
+        - Days to expiration
+        - Night → Day IV jump
+
+        All features use T+0 15:10 JST as-of availability (day session close).
+        Night session features use T+0 06:00 JST (separate flag).
+        """
+        cache_key = f"index_option_225_{start}_{end}"
+        ttl = self.settings.macro_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            raw_options = self.fetcher.fetch_options(start=start, end=end)
+            normalized = load_index_option_225(raw_options)
+            features = build_index_option_225_features(
+                normalized,
+                topix_df=topix_df,
+                trading_calendar=trading_calendar,
+            )
+            return features
+
+        features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return features
 
     def indices(self, *, start: str, end: str, codes: Sequence[str]) -> pl.DataFrame:
         """Return OHLC history for a set of index codes."""
@@ -114,6 +308,18 @@ class DataSourceManager:
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
 
+    def trading_breakdown(self, *, start: str, end: str) -> pl.DataFrame:
+        """Return investor breakdown (buy/sell detail) data."""
+
+        cache_key = f"breakdown_{start}_{end}"
+        ttl = self.settings.trades_spec_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            return self.fetcher.fetch_trading_breakdown(start=start, end=end)
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
     def trades_spec(self, *, start: str, end: str) -> pl.DataFrame:
         """Return investor flow (trades spec) data."""
 
@@ -122,6 +328,18 @@ class DataSourceManager:
 
         def _fetch() -> pl.DataFrame:
             return self.fetcher.fetch_trades_spec(start=start, end=end)
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
+    def earnings(self, *, start: str, end: str) -> pl.DataFrame:
+        """Return earnings announcement schedule."""
+
+        cache_key = f"earnings_{start}_{end}"
+        ttl = self.settings.cache_ttl_days_default
+
+        def _fetch() -> pl.DataFrame:
+            return self.fetcher.fetch_earnings(start=start, end=end)
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
@@ -144,6 +362,27 @@ class DataSourceManager:
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
 
+    def short_positions(
+        self,
+        *,
+        start: str,
+        end: str,
+    ) -> pl.DataFrame:
+        """Return short selling positions (outstanding positions ≥0.5% disclosure threshold).
+
+        Data from /markets/short_selling_positions endpoint.
+        Published on day T at 17:30/18:00/19:00 JST, available at T+1 09:00 JST.
+        """
+
+        cache_key = f"short_positions_{start}_{end}"
+        ttl = self.settings.short_selling_cache_ttl_days
+
+        def _fetch() -> pl.DataFrame:
+            return self.fetcher.fetch_short_positions(start=start, end=end)
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
     def sector_short_selling(
         self,
         *,
@@ -162,6 +401,18 @@ class DataSourceManager:
                 end=end,
                 business_days=business_days,
             )
+
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
+        return df
+
+    def prices_am(self, *, start: str, end: str) -> pl.DataFrame:
+        """Return morning session (AM) price snapshots."""
+
+        cache_key = f"prices_am_{start}_{end}"
+        ttl = self.settings.cache_ttl_days_default
+
+        def _fetch() -> pl.DataFrame:
+            return self.fetcher.fetch_prices_am(start=start, end=end)
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df

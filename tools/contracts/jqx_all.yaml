@@ -1,0 +1,350 @@
+version: 1
+dataset:
+  primary_key: ["code", "date"]  # 最終出力の主キー
+
+sources:
+  daily_quotes:
+    required:
+      - adjustmentclose
+      - adjustmentopen
+      - adjustmenthigh
+      - adjustmentlow
+      - adjustmentvolume
+      - adjustmentfactor
+      - upper_limit
+      - lower_limit
+    derived:
+      - ret_prev_1d
+      - ret_overnight
+      - ret_intraday
+      - gap_sign
+      - gap_magnitude_z20
+      - gap_confirmed
+      - day_range
+      - close_location
+      - range_expansion
+      - is_limit_up
+      - is_limit_down
+      - limit_up_streak
+      - limit_down_streak
+      - post_limit_reversal_flag
+    rules:
+      asof: "same_day_15:00"
+      invariants:
+        - "(1+ret_prev_1d) ≈ (1+ret_overnight)*(1+ret_intraday) tol=1e-5"
+      null_max:
+        adjustmentclose: 0.05
+        ret_prev_1d: 0.05
+        ret_overnight: 0.10
+        ret_intraday: 0.10
+
+  prices_am:
+    optional: true
+    required:
+      - morning_open
+      - morning_close
+      - morning_high
+      - morning_low
+      - morning_volume
+    derived:
+      - am_gap_prev_close
+      - am_range
+      - am_pos
+      - am_vol_ratio_20
+    rules:
+      asof: "T+1_09:00"
+      null_max:
+        am_gap_prev_close: 0.35
+
+  margin_daily:
+    optional: true
+    required:
+      - dmi_long_balance
+      - dmi_short_balance
+      - dmi_total
+      - dmi_net
+      - dmi_long_short_ratio
+    derived:
+      - dmi_long_balance_diff_1d
+      - dmi_short_balance_diff_1d
+      - dmi_net_diff_1d
+      - dmi_net_z20
+      - dmi_long_short_ratio_z20
+      - dmi_total_over_adv20
+      - dmi_net_over_adv20
+      - is_dmi_valid
+    rules:
+      asof: "T+1_09:00"
+      null_max:
+        dmi_net: 0.40
+        is_dmi_valid: 0.30
+
+  margin_weekly:
+    optional: true
+    required:
+      - wm_long
+      - wm_short
+      - wm_net
+      - wm_lsr
+    derived:
+      - wm_net_d1w
+      - wm_long_d1w
+      - wm_short_d1w
+      - wm_net_pct_d1w
+      - wm_net_to_adv20
+      - wm_long_to_adv20
+      - wm_short_to_adv20
+      - wm_net_z20
+      - wm_short_z20
+      - wm_long_z20
+      - is_wm_valid
+      - wm_staleness_bd
+    rules:
+      asof: "T+1_09:00"
+      null_max:
+        wm_net: 0.50
+        is_wm_valid: 0.30
+
+  breakdown:
+    optional: true
+    required:
+      - bd_total_buy
+      - bd_total_sell
+    derived:
+      - bd_net_ratio
+      - bd_short_intensity
+      - bd_activity_ratio
+      - bd_*_z52
+    rules:
+      asof: "T+1_15:00"
+      null_max:
+        bd_net_ratio: 0.50
+
+  short_selling:
+    optional: true
+    required:
+      - ss_total
+      - ss_ratio_market
+    derived:
+      - ss_ratio_market_z20
+      - d1_ss_ratio_market
+      - pct_chg_ss_ratio_market
+      - is_ss_valid
+    rules:
+      asof: "T+1_09:00"
+      null_max:
+        ss_ratio_market: 0.40
+
+  short_selling_positions:
+    optional: true
+    derived:
+      - ssp_ratio_sum
+      - ssp_ratio_sum_z20
+      - ssp_delta_sum
+      - ssp_delta_sum_z20
+      - is_ssp_valid
+    rules:
+      asof: "T+1_15:00"
+      null_max:
+        ssp_ratio_sum: 0.60
+
+  earnings:
+    optional: true
+    required:
+      - days_to_earnings
+      - is_earnings_sched_valid
+    derived:
+      - is_E_pm1
+      - is_E_0
+      - is_E_pp1
+      - is_E_pp3
+      - is_E_pp5
+    rules:
+      asof: "T-1_19:00"
+      null_max:
+        is_earnings_sched_valid: 0.30
+
+  statements:
+    optional: true
+    required:
+      - fs_ttm_sales
+      - fs_ttm_op_profit
+      - fs_ttm_net_income
+      - fs_ttm_cfo
+      - fs_is_valid
+    derived:
+      - fs_ttm_op_margin
+      - fs_ttm_cfo_margin
+      - fs_equity_ratio
+      - fs_net_cash_ratio
+      - fs_yoy_ttm_sales
+      - fs_yoy_ttm_op_profit
+      - fs_yoy_ttm_net_income
+      - fs_roe_ttm
+      - fs_roa_ttm
+      - fs_accruals
+      - fs_days_since
+      - fs_days_to_next
+      - fs_window_e_pm1
+      - fs_window_e_pp3
+      - fs_window_e_pp5
+    rules:
+      asof: "DisclosedDate+Time_15:00_or_T+1_09:00"
+      null_max:
+        fs_ttm_sales: 0.50
+        fs_is_valid: 0.30
+
+  dividend:
+    optional: true
+    derived:
+      - div_ex_date
+      - div_payment_date
+      - div_amount
+      - div_yield_12m
+    rules:
+      asof: "T+1_09:00"
+      null_max:
+        div_yield_12m: 0.80
+
+  indices:
+    optional: true
+    required:
+      - idx_topix_ret_prev_1d
+      - idx_topix_atr_14
+    derived:
+      - idx_*_ret_prev_*
+      - idx_*_atr_14
+      - idx_*_natr_14
+      - idx_*_mom_63d
+      - idx_spread_*
+    rules:
+      asof: "same_day_15:00"
+      null_max:
+        idx_topix_ret_prev_1d: 0.005
+
+  topix:
+    optional: true
+    required:
+      - topix_ret_prev_1d
+      - topix_atr14
+      - topix_natr14
+    derived:
+      - topix_ret_prev_5d
+      - topix_ret_prev_20d
+      - topix_realized_vol_20
+      - topix_vol_z_252d
+      - topix_drawdown_60d
+    rules:
+      asof: "same_day_15:00"
+      null_max:
+        topix_ret_prev_1d: 0.005
+
+  index_option_225:
+    optional: true
+    derived:
+      - idxopt_iv_atm_near
+      - idxopt_iv_atm_30d
+      - idxopt_vrp_gap
+      - idxopt_vrp_ratio
+      - idxopt_iv_ts_slope
+      - idxopt_pc_oi_ratio
+      - idxopt_pc_vol_ratio
+      - idxopt_skew_25
+      - idxopt_days_to_sq
+      - idxopt_iv_night_jump
+      - idxopt_iv_30d_z20
+      - is_idxopt_valid
+    rules:
+      asof: "same_day_15:10_or_night_06:00"
+      null_max:
+        idxopt_iv_atm_near: 0.30
+
+  trades_spec:
+    optional: true
+    derived:
+      - mkt_flow_foreigners_net
+      - mkt_flow_foreigners_net_ratio
+      - mkt_flow_foreigners_net_ratio_z13
+      - mkt_flow_foreigners_net_ratio_z52
+      - is_trades_spec_valid
+    rules:
+      asof: "T+1_09:00"
+      null_max:
+        is_trades_spec_valid: 0.30
+
+  listed_info:
+    required:
+      - is_prime
+      - is_standard
+      - is_growth
+      - sector33_code
+      - sector17_code
+      - is_listed_info_valid
+    derived:
+      - scale_bucket
+      - is_margin_eligible
+      - sec17_ret_1d_eq
+      - rel_to_sec17_1d
+      - is_prime_x_ret_20d
+      - is_growth_x_ret_20d
+      - is_scale_large70
+      - is_scale_mid400
+      - is_scale_small
+      - days_since_market_change
+      - market_changed_5d
+      - days_since_sector33_change
+      - sector33_changed_5d
+    rules:
+      asof: "same_day_09:00_or_T+1_09:00"
+      null_max:
+        sector33_code: 0.005
+        sector17_code: 0.02
+        is_listed_info_valid: 0.30
+
+  trading_calendar:
+    required:
+      - is_trading_day
+      - is_month_end
+      - is_quarter_end
+      - is_fy_end
+    derived:
+      - is_sq_day
+      - days_to_sq
+      - days_since_sq
+      - is_sq_week
+    rules:
+      asof: "static"
+
+  # 学習禁則列（denylist）
+  denylist:
+    patterns:
+      - "^ret_fwd_"
+      - "^returns_"
+      - "^feat_ret_"
+      - "_?available_ts"
+      - "_?next_available_ts"
+      - "_?disclosed_ts"
+      - "_?asof_ts"
+      - "published.*date"
+      - "application_date"
+      - "_metadata$"
+      - "_leak_$"
+
+  # カノニカルOHLCチェック（raw/Adj Close削除）
+  canonical_ohlc:
+    required:
+      - adjustmentclose
+      - adjustmentopen
+      - adjustmenthigh
+      - adjustmentlow
+      - adjustmentvolume
+    banned:
+      - "^Close$"  # raw Close（adjustmentcloseが正）
+      - "^Open$"   # raw Open
+      - "^High$"   # raw High
+      - "^Low$"    # raw Low
+      - "^Volume$"  # raw Volume
+      - "Adj Close"  # yfinance-style
+      - "AdjClose"
+    rules:
+      policy: "canonical_adjusted_only_split_no_yf_adj"
