@@ -36,24 +36,30 @@ def _compute_rsi_polars(
     eps = 1e-12
     out_name = output_name or f"rsi_{period}"
 
-    # Compute delta (price change)
-    delta_expr = pl.col(column).diff().over(group_col)
+    # Step 1: Compute delta (price change) per group
+    df = df.with_columns(
+        pl.col(column).diff().over(group_col).alias("_delta")
+    )
 
-    # Separate gains and losses
-    gain_expr = delta_expr.clip(lower_bound=0)
-    loss_expr = (-delta_expr).clip(lower_bound=0)
+    # Step 2: Separate gains and losses
+    df = df.with_columns([
+        pl.col("_delta").clip(lower_bound=0).alias("_gain"),
+        (-pl.col("_delta")).clip(lower_bound=0).alias("_loss")
+    ])
 
-    # Compute average gain and loss (EMA-style smoothing)
-    # Note: Using rolling_mean for simplicity; could use EWM for exact RSI
-    avg_gain = gain_expr.rolling_mean(window_size=period, min_periods=period).over(group_col)
-    avg_loss = loss_expr.rolling_mean(window_size=period, min_periods=period).over(group_col)
+    # Step 3: Compute rolling average of gains and losses per group
+    df = df.with_columns([
+        pl.col("_gain").rolling_mean(window_size=period, min_periods=period).over(group_col).alias("_avg_gain"),
+        pl.col("_loss").rolling_mean(window_size=period, min_periods=period).over(group_col).alias("_avg_loss")
+    ])
 
-    # RS = avg_gain / avg_loss
-    # RSI = 100 - (100 / (1 + RS))
-    rs = avg_gain / (avg_loss + eps)
-    rsi = 100.0 - (100.0 / (1.0 + rs))
+    # Step 4: Compute RS and RSI
+    df = df.with_columns(
+        (100.0 - (100.0 / (1.0 + pl.col("_avg_gain") / (pl.col("_avg_loss") + eps)))).alias(out_name)
+    )
 
-    return df.with_columns(rsi.alias(out_name))
+    # Cleanup temporary columns
+    return df.drop(["_delta", "_gain", "_loss", "_avg_gain", "_avg_loss"])
 
 
 def _compute_macd_polars(
@@ -77,21 +83,29 @@ def _compute_macd_polars(
     Returns:
         DataFrame with macd, macd_signal, macd_histogram columns added
     """
-    # MACD line = EMA(fast) - EMA(slow)
-    macd_line_expr = pl.col(column).ewm_mean(span=fast, ignore_nulls=True).over(group_col) - pl.col(
-        column
-    ).ewm_mean(span=slow, ignore_nulls=True).over(group_col)
+    # Step 1: Compute fast and slow EMAs per group
+    df = df.with_columns([
+        pl.col(column).ewm_mean(span=fast, ignore_nulls=True).over(group_col).alias("_ema_fast"),
+        pl.col(column).ewm_mean(span=slow, ignore_nulls=True).over(group_col).alias("_ema_slow")
+    ])
 
-    # Signal line = EMA(macd_line, signal)
-    # Note: We need to materialize macd_line first, then compute EMA
-    df = df.with_columns(macd_line_expr.alias("_macd_temp"))
-    signal_line_expr = pl.col("_macd_temp").ewm_mean(span=signal, ignore_nulls=True).over(group_col)
+    # Step 2: MACD line = EMA(fast) - EMA(slow)
+    df = df.with_columns(
+        (pl.col("_ema_fast") - pl.col("_ema_slow")).alias("macd")
+    )
 
-    # Histogram = MACD - Signal
-    histogram_expr = pl.col("_macd_temp") - signal_line_expr
+    # Step 3: Signal line = EMA(macd, signal)
+    df = df.with_columns(
+        pl.col("macd").ewm_mean(span=signal, ignore_nulls=True).over(group_col).alias("macd_signal")
+    )
 
-    # Add all columns and drop temp
-    return df.with_columns([pl.col("_macd_temp").alias("macd"), signal_line_expr.alias("macd_signal"), histogram_expr.alias("macd_histogram")]).drop("_macd_temp")
+    # Step 4: Histogram = MACD - Signal
+    df = df.with_columns(
+        (pl.col("macd") - pl.col("macd_signal")).alias("macd_histogram")
+    )
+
+    # Cleanup temporary columns
+    return df.drop(["_ema_fast", "_ema_slow"])
 
 
 def _kama(series: pd.Series, window: int, fast: int, slow: int) -> pd.Series:
@@ -509,18 +523,20 @@ class TechnicalFeatureEngineer:
                 g["idr_atr"] = idr_atr.shift(1)
 
             # 5. Connors RSI (CRSI: RSI(3), StreakRSI(2), PercentRank(100))
+            # Define pandas RSI helper (used for StreakRSI below)
+            def rsi(series, period):
+                delta = series.diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=period, min_periods=period).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=period, min_periods=period).mean()
+                rs = gain / (loss + eps)
+                return 100.0 - (100.0 / (1.0 + rs))
+
             # Phase A: RSI(3) already computed in Polars (30-40% faster)
             # Use pre-computed Polars RSI column
             if "rsi_3_polars" in g.columns:
                 rsi_3 = g["rsi_3_polars"]
             else:
-                # Fallback if Polars version not available (should not happen)
-                def rsi(series, period):
-                    delta = series.diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=period, min_periods=period).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=period, min_periods=period).mean()
-                    rs = gain / (loss + eps)
-                    return 100.0 - (100.0 / (1.0 + rs))
+                # Fallback if Polars version not available
                 rsi_3 = rsi(values, 3)
 
             # StreakRSI(2): 連続上昇/下降日数の符号付きRSI
