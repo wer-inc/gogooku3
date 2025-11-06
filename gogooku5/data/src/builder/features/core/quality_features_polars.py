@@ -6,8 +6,7 @@ from typing import Iterable, List, Optional, Sequence, Union
 
 import polars as pl
 
-from src.utils.gpu_etl import is_gpu_available
-
+from ...utils.gpu_check import is_gpu_available
 from ..utils.rolling import roll_mean_safe, roll_std_safe
 
 LOGGER = logging.getLogger(__name__)
