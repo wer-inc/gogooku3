@@ -203,11 +203,13 @@ class TechnicalFeatureEngineer:
                 g["close_to_high"] = (high - values) / ((high - low) + eps)
                 g["close_to_low"] = (values - low) / ((high - low) + eps)
 
+                # Use reindex to ensure index alignment for shift operations
+                shifted_close_tr = values.shift(1).reindex(g.index)
                 true_range = pd.concat(
                     [
                         high - low,
-                        (high - values.shift(1)).abs(),
-                        (low - values.shift(1)).abs(),
+                        (high - shifted_close_tr).abs(),
+                        (low - shifted_close_tr).abs(),
                     ],
                     axis=1,
                 ).max(axis=1)
