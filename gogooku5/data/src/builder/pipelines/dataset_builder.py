@@ -3902,11 +3902,9 @@ class DatasetBuilder:
         if "date" in index_features_df.columns:
             index_features_df = prepare_snapshot_pl(
                 index_features_df,
-                date_col="date",
-                hour=15,
-                minute=10,
-                tz="Asia/Tokyo",
-                available_col="available_ts",
+                published_date_col="date",
+                availability_hour=15,
+                availability_minute=10,
             )
 
         # As-of結合（日付キーでbackward）
