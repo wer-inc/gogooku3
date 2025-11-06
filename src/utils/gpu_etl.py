@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import logging
+import os
+from collections.abc import Iterable
+
+import polars as pl
+
 """
 GPU-ETL utilities (optional, safe fallback to CPU).
 
@@ -12,18 +18,14 @@ If RAPIDS/cuDF or a CUDA device is not available, every function falls back to
 CPU/Polars and preserves the original outputs/column names to avoid regressions.
 """
 
-import logging
-import os
-from collections.abc import Iterable
-
-import polars as pl
-
 # Workaround for cuDF 24.12 + numba-cuda 0.0.17+ compatibility issue
 # Must be done before any cuDF imports
 try:
     import pynvjitlink.patch
-    def _noop_patch(*args, **kwargs):  # type: ignore
+
+    def _noop_patch(*_args, **_kwargs):  # type: ignore  # noqa: ARG001
         pass
+
     pynvjitlink.patch.patch_numba_linker = _noop_patch
 except Exception:
     pass
@@ -99,13 +101,13 @@ def init_rmm_legacy(initial_pool_size: str | None = None) -> bool:
                 size_str_upper = size_str.upper().strip()
 
                 if size_str_upper.endswith("GB"):
-                    size_bytes = int(float(size_str_upper[:-2]) * 1024 ** 3)
+                    size_bytes = int(float(size_str_upper[:-2]) * 1024**3)
                 elif size_str_upper.endswith("G"):
-                    size_bytes = int(float(size_str_upper[:-1]) * 1024 ** 3)
+                    size_bytes = int(float(size_str_upper[:-1]) * 1024**3)
                 elif size_str_upper.endswith("MB"):
-                    size_bytes = int(float(size_str_upper[:-2]) * 1024 ** 2)
+                    size_bytes = int(float(size_str_upper[:-2]) * 1024**2)
                 elif size_str_upper.endswith("M"):
-                    size_bytes = int(float(size_str_upper[:-1]) * 1024 ** 2)
+                    size_bytes = int(float(size_str_upper[:-1]) * 1024**2)
                 else:
                     # Assume it's already in bytes or a plain number
                     try:
@@ -128,7 +130,9 @@ def init_rmm_legacy(initial_pool_size: str | None = None) -> bool:
         rmm.reinitialize(**kwargs)
         attached = _attach_cupy_allocator(cp, rmm, logger)
         if not attached:
-            logger.warning("RMM initialized but CuPy allocator attachment failed; GPU ETL will use default CuPy allocator")
+            logger.warning(
+                "RMM initialized but CuPy allocator attachment failed; GPU ETL will use default CuPy allocator"
+            )
         return True
     except Exception as e:
         logger.warning(f"RMM init failed: {e}")
@@ -136,6 +140,7 @@ def init_rmm_legacy(initial_pool_size: str | None = None) -> bool:
         try:
             import cupy as cp
             import rmm
+
             rmm.reinitialize(pool_allocator=False)
             attached = _attach_cupy_allocator(cp, rmm, logger)
             if attached:
@@ -203,13 +208,10 @@ def cs_rank_and_z(
                 )
             )
             if gdf is not None:
-
                 keys = list(group_keys)
                 # Rank within groups (average ties), NA kept
                 gdf[out_rank_name] = (
-                    gdf.groupby(keys)[rank_col]
-                    .rank(method="average", ascending=True)
-                    .astype("float64")
+                    gdf.groupby(keys)[rank_col].rank(method="average", ascending=True).astype("float64")
                 )
                 # Normalize rank to [0,1] similar to CPU実装
                 # We need group sizes; compute via groupby size then merge
@@ -229,9 +231,7 @@ def cs_rank_and_z(
                 gdf[out_z_name] = (gdf[z_col] - gdf["__gmean__"]) / (gdf["__gstd__"] + eps)
                 gdf[out_z_name] = gdf[out_z_name].fillna(0.0)
 
-                out = to_polars(
-                    gdf[["__rid__", out_rank_name, out_z_name]]
-                )
+                out = to_polars(gdf[["__rid__", out_rank_name, out_z_name]])
                 if out is not None:
                     out = out.sort("__rid__").drop("__rid__")
                     return df.hstack([out])
@@ -244,9 +244,7 @@ def cs_rank_and_z(
     if rank_col in out.columns:
         cnt = pl.count().over(list(group_keys))
         rk = pl.col(rank_col).rank(method="average").over(list(group_keys))
-        out = out.with_columns(
-            [pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias(out_rank_name)]
-        )
+        out = out.with_columns([pl.when(cnt > 1).then((rk - 1.0) / (cnt - 1.0)).otherwise(0.5).alias(out_rank_name)])
     if z_col in out.columns:
         out = out.with_columns(
             [
@@ -329,7 +327,9 @@ def init_rmm(initial_pool_size: str | None = None) -> bool:
                         f"RMM cuda_async configured (pool={'on' if use_pool else 'off'}, size={size_str or '0'})"
                     )
                 else:
-                    logger.warning("RMM cuda_async set, but CuPy allocator attachment failed; CuPy will use default allocator")
+                    logger.warning(
+                        "RMM cuda_async set, but CuPy allocator attachment failed; CuPy will use default allocator"
+                    )
                 return True
             except Exception as exc:
                 logger.warning(f"cuda_async MR init failed, using legacy path: {exc}")
@@ -341,11 +341,20 @@ def init_rmm(initial_pool_size: str | None = None) -> bool:
         return init_rmm_legacy(initial_pool_size)
 
 
+def is_gpu_available() -> bool:
+    """Check if GPU/CUDA is available for ETL operations.
+
+    Public wrapper around _has_cuda() for use in feature generators.
+    """
+    return _has_cuda()
+
+
 __all__ = [
     "init_rmm",
     "to_cudf",
     "to_polars",
     "cs_rank_and_z",
+    "is_gpu_available",
 ]
 
 
