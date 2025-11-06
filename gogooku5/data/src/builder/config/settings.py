@@ -37,6 +37,19 @@ class DatasetBuilderSettings(BaseSettings):
     macro_cache_ttl_days: int = Field(14, ge=0, env="CACHE_TTL_DAYS_MACRO")
     calendar_cache_ttl_days: int = Field(7, ge=0, env="CACHE_TTL_DAYS_CALENDAR")
 
+    # Arrow IPC cache optimization settings
+    cache_format: str = Field("auto", env="CACHE_FORMAT")
+    """Cache file format: 'parquet' (compatible), 'ipc' (fast), 'auto' (IPC with Parquet fallback)."""
+
+    dataset_output_format: str = Field("parquet", env="DATASET_OUTPUT_FORMAT")
+    """Final dataset format: 'parquet' (archival), 'ipc' (fast reads), 'dual' (both formats)."""
+
+    enable_lazy_scans: bool = Field(True, env="ENABLE_LAZY_SCANS")
+    """Enable Polars lazy scan optimizations (predicate pushdown, column pruning)."""
+
+    ipc_compression: str = Field("lz4", env="IPC_COMPRESSION")
+    """Compression codec for Arrow IPC files: 'lz4' (fast), 'zstd' (better ratio), 'uncompressed'."""
+
     request_timeout_seconds: float = Field(30.0, ge=1.0, env="REQUEST_TIMEOUT_SECONDS")
 
     # Cache V2 configuration
