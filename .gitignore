@@ -133,6 +133,7 @@ htmlcov/
 /_archive/**
 *.backup
 *_backup.*
+*_backup_*/
 backup/
 temp/
 tmp/
@@ -158,3 +159,28 @@ archive/*/
 # Secrets directory (credentials, API keys)
 secrets/
 secrets.zip
+
+# gogooku5 migration workspace (work-in-progress)
+gogooku5/data/models/
+gogooku5/data/output/cache/quotes_v2/
+gogooku5/data/output/ml_dataset_*_full_metadata.json
+gogooku5/data/src/builder/utils/gpu_utils.py
+gogooku5/data/src/builder/utils/quotes_l0.py
+gogooku5/models/apex_ranker/output/
+gogooku5/models/apex_ranker/configs/feature_*_compat.yaml
+gogooku5/models/apex_ranker/configs/feature_groups_*.yaml
+gogooku5/models/apex_ranker/configs/*_cleanADV.yaml
+gogooku5/models/apex_ranker/src/apex_ranker/backtest/
+gogooku5/models/apex_ranker/src/apex_ranker/models/feature_gate.py
+gogooku5/models/apex_ranker/src/apex_ranker/utils/statistics.py
+gogooku5/models/apex_ranker/*_PURGED_*.md
+gogooku5/models/apex_ranker/QUICKSTART_*.md
+gogooku5/models/apex_ranker/TRAINING_*.md
+gogooku5/models/apex_ranker/VERIFICATION_*.md
+
+# apex-ranker legacy (use gogooku5/models/apex_ranker instead)
+apex-ranker/apex_ranker/models/feature_gate.py
+
+# MCP filesystem temporary directories
+tmp_fs_cache/
+tmp_fs_output/
