@@ -28,6 +28,8 @@ from typing import Any
 import aiohttp
 import polars as pl
 
+from ..utils.lazy_io import lazy_load
+
 
 def enforce_code_column_types(df: pl.DataFrame) -> pl.DataFrame:
     """
@@ -116,7 +118,7 @@ def read_parquet_with_consistent_code_types(file_path: str | os.PathLike) -> pl.
         # Instead of: df = pl.read_parquet(path)
         df = read_parquet_with_consistent_code_types(path)
     """
-    df = pl.read_parquet(file_path)
+    df = lazy_load(file_path, prefer_ipc=True)
     return enforce_code_column_types(df)
 
 

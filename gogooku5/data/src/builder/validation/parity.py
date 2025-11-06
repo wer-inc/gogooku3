@@ -8,6 +8,8 @@ from typing import Dict, List, Sequence
 
 import polars as pl
 
+from ..utils.lazy_io import lazy_load
+
 
 def _is_numeric(dtype: pl.DataType) -> bool:
     if dtype.is_numeric():
@@ -64,8 +66,8 @@ def compare_datasets(
 ) -> ParityResult:
     """Compare two dataset parquet files and return parity report."""
 
-    ref_df = pl.read_parquet(reference)
-    cand_df = pl.read_parquet(candidate)
+    ref_df = lazy_load(reference, prefer_ipc=True)
+    cand_df = lazy_load(candidate, prefer_ipc=True)
 
     if sample_rows is not None:
         ref_df = ref_df.head(sample_rows)

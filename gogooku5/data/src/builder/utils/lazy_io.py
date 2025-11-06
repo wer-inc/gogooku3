@@ -114,8 +114,7 @@ def lazy_load(
     missing = [p for p in paths if not p.exists()]
     if missing:
         raise FileNotFoundError(
-            f"Dataset file(s) not found: {missing}. "
-            f"Ensure data pipeline has completed successfully."
+            f"Dataset file(s) not found: {missing}. " f"Ensure data pipeline has completed successfully."
         )
 
     LOGGER.debug("Lazy scanning Parquet file(s): %s", parquet_paths)
@@ -244,11 +243,7 @@ def save_with_cache(
         try:
             df.write_ipc(ipc_path, compression="lz4")
         except Exception as exc:
-            LOGGER.warning(
-                "Failed to write IPC file %s: %s. Parquet file is still available.",
-                ipc_path,
-                exc
-            )
+            LOGGER.warning("Failed to write IPC file %s: %s. Parquet file is still available.", ipc_path, exc)
             ipc_path = None
 
     return (path, ipc_path)

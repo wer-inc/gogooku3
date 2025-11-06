@@ -7,6 +7,7 @@ from pathlib import Path
 
 import polars as pl
 
+from ..utils.lazy_io import lazy_load
 from .yfinance_utils import (
     flatten_yfinance_columns,
     get_yfinance_module,
@@ -33,8 +34,8 @@ def load_vix_history(
 
     if resolved_cache and resolved_cache.exists() and not force_refresh:
         try:
-            df = pl.read_parquet(resolved_cache)
-            LOGGER.info("Loaded VIX history from cache: %s", resolved_cache)
+            df = lazy_load(resolved_cache, prefer_ipc=True)
+            LOGGER.info("Loaded VIX history from cache: %s (IPC-optimized)", resolved_cache)
             return df
         except Exception as exc:  # pragma: no cover
             LOGGER.warning("Failed to read cached VIX parquet (%s): %s", resolved_cache, exc)
