@@ -6,8 +6,8 @@ from typing import Optional
 
 import polars as pl
 
-from ...utils.rolling import roll_mean_safe, roll_std_safe
 from ..utils.asof_join import prepare_snapshot_pl
+from ..utils.rolling import roll_mean_safe, roll_std_safe
 
 LOGGER = logging.getLogger(__name__)
 

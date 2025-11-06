@@ -46,11 +46,14 @@ from ..features.fundamentals import (
     prepare_fs_snapshot,
 )
 from ..features.macro.engineer import MacroFeatureEngineer
+from ..features.macro.indexes import build_index_features, load_indices_allowlist
+from ..features.macro.topix_features import build_topix_features
 from ..features.macro.trades_spec import (
     build_trades_spec_features,
     load_trades_spec,
     map_market_code_to_section,
 )
+from ..features.macro.trading_calendar import build_trading_calendar_features
 from ..features.margin.asof import prepare_margin_daily_asof, prepare_margin_weekly_asof
 from ..features.session import SessionFeatureEngineer
 from ..features.utils import (
