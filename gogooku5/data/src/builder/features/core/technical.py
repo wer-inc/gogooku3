@@ -367,8 +367,9 @@ class TechnicalFeatureEngineer:
                         aroon_up.append(100.0 * (aroon_period - days_since_high) / aroon_period)
                         aroon_dn.append(100.0 * (aroon_period - days_since_low) / aroon_period)
 
-                g["aroon_up_25"] = pd.Series(aroon_up, index=g.index).shift(1)
-                g["aroon_dn_25"] = pd.Series(aroon_dn, index=g.index).shift(1)
+                # Use high.index to match the actual data length
+                g["aroon_up_25"] = pd.Series(aroon_up, index=high.index).reindex(g.index).shift(1)
+                g["aroon_dn_25"] = pd.Series(aroon_dn, index=high.index).reindex(g.index).shift(1)
                 g["aroon_osc_25"] = g["aroon_up_25"] - g["aroon_dn_25"]
 
                 # 7. ATR正規化ギャップ/レンジ
@@ -407,7 +408,8 @@ class TechnicalFeatureEngineer:
                         streak_val = 0
                     streak.append(streak_val)
 
-            streak_series = pd.Series(streak, index=g.index)
+            # Use values.index to match the actual data length
+            streak_series = pd.Series(streak, index=values.index).reindex(g.index)
             streak_rsi = rsi(streak_series, 2)
 
             # PercentRank(100): 現在の価格が過去100日間の何パーセンタイルか
@@ -445,7 +447,8 @@ class TechnicalFeatureEngineer:
                         # If price unchanged, OBV stays the same
                         obv.append(obv_val)
 
-                obv_series = pd.Series(obv, index=g.index)
+                # Use values.index to match the actual data length
+                obv_series = pd.Series(obv, index=values.index).reindex(g.index)
                 g["obv"] = obv_series.shift(1)
 
                 # OBV Z-score (20-day)
