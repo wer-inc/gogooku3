@@ -8,7 +8,7 @@ from typing import Dict, List, Sequence
 
 import polars as pl
 
-from ..utils.lazy_io import lazy_load
+from ..features.utils.lazy_io import lazy_load
 
 
 def _is_numeric(dtype: pl.DataType) -> bool:

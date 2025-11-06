@@ -1,15 +1,8 @@
 """Feature engineering utilities."""
 
-from .adv import (
-    apply_adv_filter,
-    compute_adv60_from_raw,
-    get_raw_quotes_paths,
-)
-from .asof_join import (
-    add_asof_timestamp,
-    interval_join_pl,
-    prepare_snapshot_pl,
-)
+from .adv import apply_adv_filter, compute_adv60_from_raw, get_raw_quotes_paths
+from .asof_join import add_asof_timestamp, interval_join_pl, prepare_snapshot_pl
+from .lazy_io import lazy_load, save_with_cache
 from .rolling import (
     ewm_mean_safe,
     roll_mean_safe,
@@ -38,6 +31,9 @@ __all__ = [
     "add_asof_timestamp",
     "prepare_snapshot_pl",
     "interval_join_pl",
+    # Lazy I/O (Quick Wins Task 1)
+    "lazy_load",
+    "save_with_cache",
     # ADV filter (Patch E)
     "compute_adv60_from_raw",
     "apply_adv_filter",

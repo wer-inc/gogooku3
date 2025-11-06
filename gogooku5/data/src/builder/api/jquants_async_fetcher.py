@@ -28,7 +28,7 @@ from typing import Any
 import aiohttp
 import polars as pl
 
-from ..utils.lazy_io import lazy_load
+from ..features.utils.lazy_io import lazy_load
 
 
 def enforce_code_column_types(df: pl.DataFrame) -> pl.DataFrame:
