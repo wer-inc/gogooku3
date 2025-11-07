@@ -507,7 +507,6 @@ class DatasetBuilder:
             LOGGER.info("Latest symlink not created (safety gate). Returning parquet_path instead.")
             return artifact.parquet_path
 
-<<<<<<< HEAD
     def _load_small_table_cached(self, table_name: str, generator_fn) -> pl.LazyFrame:
         """Load small table with Arrow IPC mmap caching for fast reuse.
 
@@ -544,86 +543,6 @@ class DatasetBuilder:
         # Load with lazy scan (mmap) + cache in memory
         lf = pl.scan_ipc(str(cache_path))
         return lf.cache()  # In-memory cache for repeated use
-=======
-    def _build_batch_window(
-        self,
-        fact_lf: pl.LazyFrame,
-        small_lf: pl.LazyFrame,
-        start: str,
-        end: str,
-        batch_days: int = 14,
-    ) -> pl.DataFrame:
-        """
-        Build dataset batch for a date window with optimized Lazy join.
-
-        Pattern 3: Batch join for multi-horizon features with streaming collect.
-        - Filter fact table by date range (batch_days, e.g., 2 weeks)
-        - Join with small cached table (LazyFrame, mmap)
-        - Generate multi-horizon targets (1d/5d/10d/20d) in single pipeline
-        - Use streaming collect for memory efficiency
-
-        Args:
-            fact_lf: Large fact table as LazyFrame (e.g., prices)
-            small_lf: Small dimension table as LazyFrame (cached, mmap)
-            start: Start date (YYYY-MM-DD)
-            end: End date (YYYY-MM-DD)
-            batch_days: Batch size in trading days (default: 14 = 2 weeks)
-
-        Returns:
-            DataFrame with features and targets for the batch window
-        """
-        # Filter fact table by date range
-        batch_lf = (
-            fact_lf.filter((pl.col("date") >= pl.lit(start)) & (pl.col("date") <= pl.lit(end)))
-            .join(small_lf, on="code", how="left")
-            .with_columns(
-                [
-                    # Multi-horizon targets (shift negative = look forward)
-                    ((pl.col("close").shift(-1) / pl.col("close") - 1).alias("target_1d")),
-                    ((pl.col("close").shift(-5) / pl.col("close") - 1).alias("target_5d")),
-                    ((pl.col("close").shift(-10) / pl.col("close") - 1).alias("target_10d")),
-                    ((pl.col("close").shift(-20) / pl.col("close") - 1).alias("target_20d")),
-                    # Feature generation (can be extended)
-                    (pl.col("close") / pl.col("close").shift(5) - 1).alias("ret_5d"),
-                    pl.col("volume").log().alias("log_vol"),
-                ]
-            )
-        )
-
-        # Materialize with streaming
-        return batch_lf.collect(streaming=True)
-
-    def _split_date_range_into_batches(
-        self,
-        start: str,
-        end: str,
-        batch_days: int = 14,
-    ) -> list[tuple[str, str]]:
-        """
-        Split date range into batches for incremental processing.
-
-        Args:
-            start: Start date (YYYY-MM-DD)
-            end: End date (YYYY-MM-DD)
-            batch_days: Batch size in trading days (default: 14 = 2 weeks)
-
-        Returns:
-            List of (batch_start, batch_end) tuples
-        """
-        # Get all trading days in range
-        trading_days = business_date_range(start, end)
-
-        if not trading_days:
-            return [(start, end)]
-
-        batches = []
-        for i in range(0, len(trading_days), batch_days):
-            batch_start = trading_days[i]
-            batch_end = trading_days[min(i + batch_days - 1, len(trading_days) - 1)]
-            batches.append((batch_start, batch_end))
-
-        return batches
->>>>>>> feat-polars-arrow-data-ZRYqn
 
     def _load_or_fetch_quotes(self, *, symbols: Iterable[str], start: str, end: str) -> pl.DataFrame:
         """Load quotes using L0 month shards with selective API backfill."""
