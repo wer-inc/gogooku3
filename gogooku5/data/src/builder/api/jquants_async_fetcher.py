@@ -1,20 +1,5 @@
 from __future__ import annotations
 
-"""
-Asynchronous J-Quants API fetcher (extracted from legacy pipeline).
-
-Minimal surface used by current pipelines:
- - authenticate(session)
- - get_trades_spec(session, from_date, to_date) -> pl.DataFrame
- - get_listed_info(session, date=None) -> pl.DataFrame
- - fetch_topix_data(session, from_date, to_date) -> pl.DataFrame
- - get_futures_daily(session, from_date, to_date) -> pl.DataFrame
-
-Notes:
- - Optionally filters listed_info via scripts.components.market_code_filter if available.
- - No dependency on scripts/_archive; safe when _archive is removed.
-"""
-
 import asyncio
 import datetime as _dt
 import logging
@@ -29,6 +14,21 @@ import aiohttp
 import polars as pl
 
 from ..features.utils.lazy_io import lazy_load
+
+"""
+Asynchronous J-Quants API fetcher (extracted from legacy pipeline).
+
+Minimal surface used by current pipelines:
+ - authenticate(session)
+ - get_trades_spec(session, from_date, to_date) -> pl.DataFrame
+ - get_listed_info(session, date=None) -> pl.DataFrame
+ - fetch_topix_data(session, from_date, to_date) -> pl.DataFrame
+ - get_futures_daily(session, from_date, to_date) -> pl.DataFrame
+
+Notes:
+ - Optionally filters listed_info via scripts.components.market_code_filter if available.
+ - No dependency on scripts/_archive; safe when _archive is removed.
+"""
 
 
 def enforce_code_column_types(df: pl.DataFrame) -> pl.DataFrame:
@@ -840,110 +840,6 @@ class JQuantsAsyncFetcher:
             .sort(["Code", "Date"])
         )
         return enforce_code_column_types(out)
-
-    async def get_futures_daily(self, session: aiohttp.ClientSession, from_date: str, to_date: str) -> pl.DataFrame:
-        """Fetch index futures daily OHLC (derivatives/futures) within a date range.
-
-        Attempts range fetch with pagination; if the API requires per-date queries,
-        falls back to iterating by date. Returns normalized DataFrame with the raw
-        schema provided by J-Quants (columns used downstream include:
-          Date, DerivativesProductCategory, CentralContractMonthFlag,
-          EmergencyMarginTriggerDivision, SpecialQuotationDay,
-          NightSessionOpen/High/Low/Close, DaySessionOpen/High/Low/Close,
-          WholeDayOpen/High/Low/Close, Volume, OpenInterest, SettlementPrice).
-        """
-        if not self.id_token:
-            raise RuntimeError("authenticate() must be called first")
-
-        headers = {"Authorization": f"Bearer {self.id_token}"}
-        base_url = f"{self.base_url}/derivatives/futures"
-
-        async def _fetch_range() -> pl.DataFrame:
-            rows: list[dict] = []
-            pagination_key: str | None = None
-            while True:
-                params = {"from": from_date, "to": to_date}
-                if pagination_key:
-                    params["pagination_key"] = pagination_key
-                status, data = await self._request_json(
-                    session,
-                    "GET",
-                    base_url,
-                    label="futures_range",
-                    params=params,
-                    headers=headers,
-                )
-                if status != 200 or not isinstance(data, dict):
-                    break
-                items = data.get("futures") or data.get("derivatives") or data.get("data") or []
-                if items:
-                    rows.extend(items)
-                pagination_key = data.get("pagination_key")
-                if not pagination_key:
-                    break
-            return pl.DataFrame(rows) if rows else pl.DataFrame()
-
-        df = await _fetch_range()
-        # Fallback: per-day queries (if range not supported)
-        if df.is_empty():
-            import datetime as _dt
-
-            def _parse(d: str) -> _dt.date:
-                return (
-                    _dt.datetime.strptime(d, "%Y-%m-%d").date()
-                    if "-" in d
-                    else _dt.datetime.strptime(d, "%Y%m%d").date()
-                )
-
-            cur = _parse(from_date)
-            end = _parse(to_date)
-            rows: list[dict] = []
-            while cur <= end:
-                date_str = cur.strftime("%Y-%m-%d")
-                pagination_key: str | None = None
-                while True:
-                    params = {"date": date_str}
-                    if pagination_key:
-                        params["pagination_key"] = pagination_key
-                    status, data = await self._request_json(
-                        session,
-                        "GET",
-                        base_url,
-                        label=f"futures_date:{date_str}",
-                        params=params,
-                        headers=headers,
-                    )
-                    if status != 200 or not isinstance(data, dict):
-                        break
-                    items = data.get("futures") or data.get("derivatives") or data.get("data") or []
-                    if items:
-                        rows.extend(items)
-                    pagination_key = data.get("pagination_key")
-                    if not pagination_key:
-                        break
-                cur += _dt.timedelta(days=1)
-            df = pl.DataFrame(rows) if rows else pl.DataFrame()
-
-        if df.is_empty():
-            return df
-
-        # Normalize date columns
-        def _dtcol(name: str) -> pl.Expr:
-            if name not in df.columns:
-                return pl.lit(None, dtype=pl.Date).alias(name)
-            # Polars 1.x: Check column type via schema instead of Expr.dtype
-            date_is_str = df.schema.get(name) == pl.Utf8
-            return (
-                pl.col(name).str.strptime(pl.Date, strict=False) if date_is_str else pl.col(name).cast(pl.Date)
-            ).alias(name)
-
-        out = df.with_columns(
-            [
-                _dtcol("Date"),
-                _dtcol("SpecialQuotationDay"),
-            ]
-        )
-        return out.sort(["Date"]) if "Date" in out.columns else out
 
     async def get_prices_am(self, session: aiohttp.ClientSession, from_date: str, to_date: str) -> pl.DataFrame:
         """Fetch morning session (AM) OHLCV for all stocks within a date range."""
@@ -1906,6 +1802,7 @@ class JQuantsAsyncFetcher:
         )
 
         # Deduplicate by keeping 002 (clearing) records when both 001 and 002 exist
+        # First, keep original EmergencyMarginTriggerDivision for fallback
         deduped = (
             normalized.sort(["Code", "Date", "ContractMonth", "EmergencyMarginTriggerDivision"])
             .group_by(["Code", "Date", "ContractMonth"])
@@ -1916,6 +1813,8 @@ class JQuantsAsyncFetcher:
                     .filter(pl.col("EmergencyMarginTriggerDivision") == "002")
                     .first()
                     .alias("EmergencyMarginTriggerDivision_tmp"),
+                    # Also keep original for fallback
+                    pl.col("EmergencyMarginTriggerDivision").first().alias("EmergencyMarginTriggerDivision_orig"),
                     pl.col("emergency_margin_triggered")
                     .max()
                     .alias("emergency_margin_triggered"),  # 1 if any 001 exists
@@ -1928,11 +1827,11 @@ class JQuantsAsyncFetcher:
                     # Use 002 if available, otherwise use original
                     pl.when(pl.col("EmergencyMarginTriggerDivision_tmp").is_not_null())
                     .then(pl.col("EmergencyMarginTriggerDivision_tmp"))
-                    .otherwise(pl.col("EmergencyMarginTriggerDivision"))
+                    .otherwise(pl.col("EmergencyMarginTriggerDivision_orig"))
                     .alias("EmergencyMarginTriggerDivision")
                 ]
             )
-            .drop("EmergencyMarginTriggerDivision_tmp")
+            .drop(["EmergencyMarginTriggerDivision_tmp", "EmergencyMarginTriggerDivision_orig"])
             .sort(["Code", "Date", "ContractMonth"])
         )
 

@@ -80,24 +80,21 @@ def register_ei_cli(parser: argparse.ArgumentParser) -> None:
         )
 
     # A.4: Risk factors (with aliases)
-    if not (
-        _already_registered(parser, "--ei-factors")
-        or _already_registered(parser, "--ei-risk-factors")
-    ):
+    if not (_already_registered(parser, "--ei-factors") or _already_registered(parser, "--ei-risk-factors")):
         parser.add_argument(
             "--ei-factors",
             "--ei-risk-factors",
             dest="ei_factors",
             nargs="+",
             default=None,
-            help="A.4: Risk factors for neutralization (space or comma-separated). Example: Sector33Code volatility_60d",
+            help=(
+                "A.4: Risk factors for neutralization (space or comma-separated). "
+                "Example: Sector33Code volatility_60d"
+            ),
         )
 
     # A.4: Gamma (partial neutralization coefficient)
-    if not (
-        _already_registered(parser, "--ei-neutralize-gamma")
-        or _already_registered(parser, "--neutralize-gamma")
-    ):
+    if not (_already_registered(parser, "--ei-neutralize-gamma") or _already_registered(parser, "--neutralize-gamma")):
         parser.add_argument(
             "--ei-neutralize-gamma",
             "--neutralize-gamma",
@@ -108,10 +105,7 @@ def register_ei_cli(parser: argparse.ArgumentParser) -> None:
         )
 
     # A.4: Ridge alpha (regularization)
-    if not (
-        _already_registered(parser, "--ei-ridge-alpha")
-        or _already_registered(parser, "--ridge-alpha")
-    ):
+    if not (_already_registered(parser, "--ei-ridge-alpha") or _already_registered(parser, "--ridge-alpha")):
         parser.add_argument(
             "--ei-ridge-alpha",
             "--ridge-alpha",
@@ -122,24 +116,18 @@ def register_ei_cli(parser: argparse.ArgumentParser) -> None:
         )
 
     # A.4: Re-scale flag
-    if not (
-        _already_registered(parser, "--ei-rescale")
-        or _already_registered(parser, "--neutralize-rescale")
-    ):
+    if not (_already_registered(parser, "--ei-rescale") or _already_registered(parser, "--neutralize-rescale")):
         parser.add_argument(
             "--ei-rescale",
             "--neutralize-rescale",
             dest="ei_rescale",
             action="store_true",
-            default=True,
-            help="A.4: Re-scale residuals to original std (default: True, recommended)",
+            default=False,
+            help="A.4: Re-scale residuals to original std (default: False, use flag to enable)",
         )
 
     # A.4: Clip multiplier (safety guard)
-    if not (
-        _already_registered(parser, "--ei-clip-mult")
-        or _already_registered(parser, "--neutralize-clip-mult")
-    ):
+    if not (_already_registered(parser, "--ei-clip-mult") or _already_registered(parser, "--neutralize-clip-mult")):
         parser.add_argument(
             "--ei-clip-mult",
             "--neutralize-clip-mult",
