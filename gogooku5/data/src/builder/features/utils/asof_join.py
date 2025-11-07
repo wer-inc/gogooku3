@@ -67,7 +67,7 @@ def prepare_snapshot_pl(
         )
         return df.with_columns(pl.lit(None).cast(pl.Datetime("us", "Asia/Tokyo")).alias("available_ts"))
 
-    work = df.with_columns(pl.coalesce(date_exprs).alias("_published_effective"))
+    work = df.with_columns(pl.coalesce(*date_exprs).alias("_published_effective"))
 
     # 2) Get unique published dates (exclude NULLs)
     unique_dates = (

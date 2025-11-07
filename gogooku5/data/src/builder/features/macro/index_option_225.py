@@ -154,7 +154,7 @@ def build_index_option_225_features(
     # 日次集約（Pythonで処理）
     feature_list = []
 
-    for date_val, group in opt.group_by("Date", maintain_order=True):
+    for (date_val,), group in opt.group_by("Date", maintain_order=True):
         if group.is_empty():
             continue
 
@@ -308,8 +308,6 @@ def build_index_option_225_features(
         # 4. Skew（25Δ近似、±10% OTMのIV差で代用）
         skew_25 = None
         if "ImpliedVolatility" in group.columns and "StrikePrice" in group.columns:
-            # ATM（±2.5%）
-            atm_strikes = group.filter((pl.col("moneyness_abs").is_not_null()) & (pl.col("moneyness_abs") <= 0.025))
             # OTM Put（10% OTM、K < S * 0.9）
             otm_puts = group.filter(
                 (pl.col("PutCallDivision") == "1")
