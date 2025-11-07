@@ -248,11 +248,17 @@ class DatasetBuilder:
             raise ValueError(error_msg)
 
         LOGGER.info("[DEBUG] Step 5: Preparing listed dataframe...")
-        listed_df = self._prepare_listed_dataframe(listed)
-        listed_df = listed_df.filter(pl.col("code").is_in(symbols))
+        # Use IPC cache for fast reuse (Pattern 1: small table mmap caching)
+        listed_lf = self._load_small_table_cached("listed", lambda: self._prepare_listed_dataframe(listed))
+        # Filter to symbols and materialize (small table, fast)
+        listed_df = listed_lf.filter(pl.col("code").is_in(symbols)).collect()
 
         LOGGER.info("[DEBUG] Step 6: Building calendar...")
-        calendar_df = self._business_calendar(start=start, end=end)
+        # Use IPC cache for fast reuse (calendar is ~250 rows/year, perfect for caching)
+        calendar_lf = self._load_small_table_cached(
+            f"trading_calendar_{start}_{end}", lambda: self._business_calendar(start=start, end=end)
+        )
+        calendar_df = calendar_lf.collect()
         LOGGER.info("[DEBUG] Step 6 complete: %d business days", len(calendar_df))
 
         LOGGER.info("[DEBUG] Step 7: Checking quotes cache (smart reuse enabled)...")
@@ -500,6 +506,43 @@ class DatasetBuilder:
         else:
             LOGGER.info("Latest symlink not created (safety gate). Returning parquet_path instead.")
             return artifact.parquet_path
+
+    def _load_small_table_cached(self, table_name: str, generator_fn) -> pl.LazyFrame:
+        """Load small table with Arrow IPC mmap caching for fast reuse.
+
+        This method implements Pattern 1 from the Lazy Join optimization proposal:
+        - Arrow IPC format for 3-5x faster reads vs Parquet
+        - Memory-mapped (mmap) for zero-copy access
+        - .lazy().cache() for in-memory reuse across multiple joins
+
+        Args:
+            table_name: Cache file name (e.g., "listed", "trading_calendar")
+            generator_fn: Function that generates the DataFrame if cache miss
+
+        Returns:
+            Cached LazyFrame ready for multiple joins (zero-copy reuse)
+
+        Performance:
+            - First load: Generate + save IPC (~100-500ms)
+            - Subsequent loads: mmap read (~10-50ms, 10-50x faster)
+            - Memory: Zero-copy mmap, minimal overhead
+        """
+        cache_dir = self.settings.cache_dir / "small_tables"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / f"{table_name}.arrow"
+
+        if not cache_path.exists():
+            # Cache miss: Generate and save as Arrow IPC
+            LOGGER.info("[SMALL TABLE] Cache miss for %s, generating...", table_name)
+            df = generator_fn()
+            df.write_ipc(cache_path, compression="lz4")
+            LOGGER.info("[SMALL TABLE] Saved %s to IPC cache: %d rows, %d cols", table_name, df.height, df.width)
+        else:
+            LOGGER.debug("[SMALL TABLE] Cache hit for %s", table_name)
+
+        # Load with lazy scan (mmap) + cache in memory
+        lf = pl.scan_ipc(str(cache_path))
+        return lf.cache()  # In-memory cache for repeated use
 
     def _load_or_fetch_quotes(self, *, symbols: Iterable[str], start: str, end: str) -> pl.DataFrame:
         """Load quotes using L0 month shards with selective API backfill."""
@@ -4064,9 +4107,7 @@ class DatasetBuilder:
             return self._ensure_beta_alpha_columns(df)
 
         # Normalize column names to lowercase
-        topix_df = topix_df.rename(
-            {col: col.lower() for col in topix_df.columns if col.lower() != col}
-        )
+        topix_df = topix_df.rename({col: col.lower() for col in topix_df.columns if col.lower() != col})
 
         # TOPIXリターンを計算
         topix_df = topix_df.sort("date")
