@@ -57,7 +57,6 @@ def map_market_code_to_section(df: pl.DataFrame, market_code_col: str = "market_
     mapping_expr = pl.col(market_code_col).map_elements(
         lambda x: MARKET_CODE_TO_SECTION.get(str(x), None) if x is not None else None,
         return_dtype=pl.Utf8,
-        strict=False,
     )
 
     return df.with_columns(mapping_expr.alias("section"))

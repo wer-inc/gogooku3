@@ -115,8 +115,8 @@ def build_topix_features(
     # 利得と損失
     topix_df = topix_df.with_columns(
         [
-            pl.col("_price_change").clip_min(0.0).alias("_gain"),
-            (-pl.col("_price_change")).clip_min(0.0).alias("_loss"),
+            pl.col("_price_change").clip(lower_bound=0.0).alias("_gain"),
+            (-pl.col("_price_change")).clip(lower_bound=0.0).alias("_loss"),
         ]
     )
 
