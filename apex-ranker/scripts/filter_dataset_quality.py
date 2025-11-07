@@ -75,9 +75,7 @@ def compute_adv60_trailing(
         df = df.with_columns(pl.col(turnover_col).alias("_turnover"))
     elif volume_col and volume_col in df.columns:
         # volume * price で turnover を算出
-        df = df.with_columns(
-            (pl.col(volume_col) * pl.col(price_col)).alias("_turnover")
-        )
+        df = df.with_columns((pl.col(volume_col) * pl.col(price_col)).alias("_turnover"))
     else:
         raise ValueError("Neither turnover nor volume column found")
 
@@ -85,12 +83,10 @@ def compute_adv60_trailing(
     df = df.sort([code_col, date_col]).unique([code_col, date_col], keep="first")
 
     # ADV60（当日除外）
+    # Correct order: shift(1) first to exclude current day, then rolling_mean per code
+    # Following pattern from gogooku5/data/src/builder/features/utils/rolling.py
     df = df.with_columns(
-        pl.col("_turnover")
-        .rolling_mean(window_size=60)
-        .shift(1)  # 当日除外（ルックアヘッド防止）
-        .over(code_col)
-        .alias("adv60_trailing")
+        pl.col("_turnover").shift(1).over(code_col).rolling_mean(window_size=60).over(code_col).alias("adv60_trailing")
     )
 
     return df.drop("_turnover")
@@ -101,9 +97,7 @@ def compute_ret_1d(df: pl.DataFrame, code_col: str, price_col: str) -> pl.DataFr
     if "ret_1d" in df.columns:
         return df
 
-    df = df.with_columns(
-        pl.col(price_col).pct_change().over(code_col).alias("ret_1d")
-    )
+    df = df.with_columns(pl.col(price_col).pct_change().over(code_col).alias("ret_1d"))
 
     return df
 
@@ -129,10 +123,7 @@ def detect_price_freezes(
     df_freeze = df.sort([code_col, date_col]).with_columns(
         [
             # 前日と同じ価格かどうか
-            (pl.col(price_col) == pl.col(price_col).shift(1))
-            .over(code_col)
-            .fill_null(False)
-            .alias("_is_same"),
+            (pl.col(price_col) == pl.col(price_col).shift(1)).over(code_col).fill_null(False).alias("_is_same"),
         ]
     )
 
@@ -178,15 +169,9 @@ def main():
         default=DATASET_CLEAN,
         help=f"出力parquetファイル（デフォルト: {DATASET_CLEAN}）",
     )
-    parser.add_argument(
-        "--min-price", type=float, default=100.0, help="最低価格（円）"
-    )
-    parser.add_argument(
-        "--max-ret-1d", type=float, default=0.15, help="最大1日リターン（絶対値）"
-    )
-    parser.add_argument(
-        "--min-adv", type=float, default=50_000_000, help="最低ADV60（円）"
-    )
+    parser.add_argument("--min-price", type=float, default=100.0, help="最低価格（円）")
+    parser.add_argument("--max-ret-1d", type=float, default=0.15, help="最大1日リターン（絶対値）")
+    parser.add_argument("--min-adv", type=float, default=50_000_000, help="最低ADV60（円）")
     parser.add_argument(
         "--freeze-reduction-ratio-max",
         type=float,
@@ -261,12 +246,8 @@ def main():
     df = compute_ret_1d(df, code_col, price_col)
 
     # 異常リターン統計（Pre）
-    ret_extreme_10_pre = (
-        df.filter(pl.col("ret_1d").abs() > 0.10).height / max(df.height, 1)
-    )
-    ret_extreme_15_pre = (
-        df.filter(pl.col("ret_1d").abs() > 0.15).height / max(df.height, 1)
-    )
+    ret_extreme_10_pre = df.filter(pl.col("ret_1d").abs() > 0.10).height / max(df.height, 1)
+    ret_extreme_15_pre = df.filter(pl.col("ret_1d").abs() > 0.15).height / max(df.height, 1)
     print(f"  - |ret_1d| > 10%: {ret_extreme_10_pre * 100:.2f}%")
     print(f"  - |ret_1d| > 15%: {ret_extreme_15_pre * 100:.2f}%")
 
@@ -295,12 +276,8 @@ def main():
     print(f"  - 影響銘柄数: {post_freeze['affected_codes']:,}")
 
     # 異常リターン統計（Post）
-    ret_extreme_10_post = (
-        df_clean.filter(pl.col("ret_1d").abs() > 0.10).height / max(df_clean.height, 1)
-    )
-    ret_extreme_15_post = (
-        df_clean.filter(pl.col("ret_1d").abs() > 0.15).height / max(df_clean.height, 1)
-    )
+    ret_extreme_10_post = df_clean.filter(pl.col("ret_1d").abs() > 0.10).height / max(df_clean.height, 1)
+    ret_extreme_15_post = df_clean.filter(pl.col("ret_1d").abs() > 0.15).height / max(df_clean.height, 1)
     print(f"  - |ret_1d| > 10%: {ret_extreme_10_post * 100:.2f}%")
     print(f"  - |ret_1d| > 15%: {ret_extreme_15_post * 100:.2f}%")
 
@@ -310,16 +287,12 @@ def main():
 
     # Check 1: ret_1d extreme values
     if ret_extreme_10_post > 0.005:  # 0.5%
-        issues.append(
-            f"❌ |ret_1d| > 10% の割合が高い: {ret_extreme_10_post * 100:.2f}% (> 0.5%)"
-        )
+        issues.append(f"❌ |ret_1d| > 10% の割合が高い: {ret_extreme_10_post * 100:.2f}% (> 0.5%)")
     else:
         print(f"  ✅ |ret_1d| > 10%: {ret_extreme_10_post * 100:.2f}% (< 0.5%)")
 
     if ret_extreme_15_post > 1e-6:  # ≈ 0%
-        issues.append(
-            f"❌ |ret_1d| > 15% が存在: {ret_extreme_15_post * 100:.4f}% (> 0%)"
-        )
+        issues.append(f"❌ |ret_1d| > 15% が存在: {ret_extreme_15_post * 100:.4f}% (> 0%)")
     else:
         print(f"  ✅ |ret_1d| > 15%: {ret_extreme_15_post * 100:.4f}% (≈ 0%)")
 
@@ -331,26 +304,18 @@ def main():
         print(f"  ✅ 価格フィルタ: 全て >= {args.min_price}円")
 
     # Check 3: freeze reduction
-    freeze_ratio = (
-        post_freeze["total_freeze_days"] / max(pre_freeze["total_freeze_days"], 1)
-    )
+    freeze_ratio = post_freeze["total_freeze_days"] / max(pre_freeze["total_freeze_days"], 1)
     if freeze_ratio > args.freeze_reduction_ratio_max:
         issues.append(
             f"❌ フリーズ削減不足: {freeze_ratio * 100:.1f}% (> {args.freeze_reduction_ratio_max * 100:.0f}%)"
         )
     else:
-        print(
-            f"  ✅ フリーズ削減: {freeze_ratio * 100:.1f}% (< {args.freeze_reduction_ratio_max * 100:.0f}%)"
-        )
+        print(f"  ✅ フリーズ削減: {freeze_ratio * 100:.1f}% (< {args.freeze_reduction_ratio_max * 100:.0f}%)")
 
     if post_freeze["total_freeze_days"] > args.freeze_abs_max:
-        issues.append(
-            f"❌ フリーズ日数が多い: {post_freeze['total_freeze_days']}日 (> {args.freeze_abs_max}日)"
-        )
+        issues.append(f"❌ フリーズ日数が多い: {post_freeze['total_freeze_days']}日 (> {args.freeze_abs_max}日)")
     else:
-        print(
-            f"  ✅ フリーズ日数: {post_freeze['total_freeze_days']}日 (< {args.freeze_abs_max}日)"
-        )
+        print(f"  ✅ フリーズ日数: {post_freeze['total_freeze_days']}日 (< {args.freeze_abs_max}日)")
 
     # レポート保存
     report = {

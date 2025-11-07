@@ -507,6 +507,7 @@ class DatasetBuilder:
             LOGGER.info("Latest symlink not created (safety gate). Returning parquet_path instead.")
             return artifact.parquet_path
 
+<<<<<<< HEAD
     def _load_small_table_cached(self, table_name: str, generator_fn) -> pl.LazyFrame:
         """Load small table with Arrow IPC mmap caching for fast reuse.
 
@@ -543,6 +544,86 @@ class DatasetBuilder:
         # Load with lazy scan (mmap) + cache in memory
         lf = pl.scan_ipc(str(cache_path))
         return lf.cache()  # In-memory cache for repeated use
+=======
+    def _build_batch_window(
+        self,
+        fact_lf: pl.LazyFrame,
+        small_lf: pl.LazyFrame,
+        start: str,
+        end: str,
+        batch_days: int = 14,
+    ) -> pl.DataFrame:
+        """
+        Build dataset batch for a date window with optimized Lazy join.
+
+        Pattern 3: Batch join for multi-horizon features with streaming collect.
+        - Filter fact table by date range (batch_days, e.g., 2 weeks)
+        - Join with small cached table (LazyFrame, mmap)
+        - Generate multi-horizon targets (1d/5d/10d/20d) in single pipeline
+        - Use streaming collect for memory efficiency
+
+        Args:
+            fact_lf: Large fact table as LazyFrame (e.g., prices)
+            small_lf: Small dimension table as LazyFrame (cached, mmap)
+            start: Start date (YYYY-MM-DD)
+            end: End date (YYYY-MM-DD)
+            batch_days: Batch size in trading days (default: 14 = 2 weeks)
+
+        Returns:
+            DataFrame with features and targets for the batch window
+        """
+        # Filter fact table by date range
+        batch_lf = (
+            fact_lf.filter((pl.col("date") >= pl.lit(start)) & (pl.col("date") <= pl.lit(end)))
+            .join(small_lf, on="code", how="left")
+            .with_columns(
+                [
+                    # Multi-horizon targets (shift negative = look forward)
+                    ((pl.col("close").shift(-1) / pl.col("close") - 1).alias("target_1d")),
+                    ((pl.col("close").shift(-5) / pl.col("close") - 1).alias("target_5d")),
+                    ((pl.col("close").shift(-10) / pl.col("close") - 1).alias("target_10d")),
+                    ((pl.col("close").shift(-20) / pl.col("close") - 1).alias("target_20d")),
+                    # Feature generation (can be extended)
+                    (pl.col("close") / pl.col("close").shift(5) - 1).alias("ret_5d"),
+                    pl.col("volume").log().alias("log_vol"),
+                ]
+            )
+        )
+
+        # Materialize with streaming
+        return batch_lf.collect(streaming=True)
+
+    def _split_date_range_into_batches(
+        self,
+        start: str,
+        end: str,
+        batch_days: int = 14,
+    ) -> list[tuple[str, str]]:
+        """
+        Split date range into batches for incremental processing.
+
+        Args:
+            start: Start date (YYYY-MM-DD)
+            end: End date (YYYY-MM-DD)
+            batch_days: Batch size in trading days (default: 14 = 2 weeks)
+
+        Returns:
+            List of (batch_start, batch_end) tuples
+        """
+        # Get all trading days in range
+        trading_days = business_date_range(start, end)
+
+        if not trading_days:
+            return [(start, end)]
+
+        batches = []
+        for i in range(0, len(trading_days), batch_days):
+            batch_start = trading_days[i]
+            batch_end = trading_days[min(i + batch_days - 1, len(trading_days) - 1)]
+            batches.append((batch_start, batch_end))
+
+        return batches
+>>>>>>> feat-polars-arrow-data-ZRYqn
 
     def _load_or_fetch_quotes(self, *, symbols: Iterable[str], start: str, end: str) -> pl.DataFrame:
         """Load quotes using L0 month shards with selective API backfill."""
@@ -1239,6 +1320,67 @@ class DatasetBuilder:
             aligned = aligned.drop("sector_code_listed")
 
         return aligned.sort(["code", "date"])
+
+    def _align_quotes_with_calendar_lazy(
+        self,
+        quotes: pl.DataFrame,
+        calendar_lf: pl.LazyFrame,
+        listed_lf: pl.LazyFrame,
+    ) -> pl.DataFrame:
+        """
+        Optimized version using LazyFrame for batch join with streaming collect.
+
+        Pattern 2: Batch join with LazyFrame + streaming collect for memory efficiency.
+        - Convert quotes to LazyFrame
+        - Join with cached small tables (LazyFrame)
+        - Use streaming collect to reduce memory footprint
+        """
+        if quotes.is_empty():
+            return pl.DataFrame(
+                {
+                    "code": pl.Series([], dtype=pl.Utf8),
+                    "date": pl.Series([], dtype=pl.Utf8),
+                    "sector_code": pl.Series([], dtype=pl.Utf8),
+                    "market_code": pl.Series([], dtype=pl.Utf8),
+                    "close": pl.Series([], dtype=pl.Float64),
+                }
+            )
+
+        # Convert quotes to LazyFrame for lazy evaluation
+        quotes_lf = quotes.lazy()
+
+        # Join with listed metadata (LazyFrame, cached)
+        # Filter listed to only codes present in quotes for efficiency
+        quotes_codes = quotes_lf.select("code").unique()
+        listed_filtered = listed_lf.join(quotes_codes, on="code", how="inner").with_columns(
+            [
+                pl.col("sector_code").fill_null("UNKNOWN"),
+                pl.col("market_code").cast(pl.Utf8, strict=False),
+            ]
+        )
+
+        # Join quotes with listed metadata (lazy, optimized)
+        aligned_lf = (
+            quotes_lf.join(listed_filtered.select(["code", "sector_code", "market_code"]), on="code", how="left")
+            .with_columns(
+                [
+                    # Ensure sector_code exists
+                    pl.when(pl.col("sector_code").is_null() | (pl.col("sector_code") == ""))
+                    .then(pl.lit("UNKNOWN"))
+                    .otherwise(pl.col("sector_code"))
+                    .alias("sector_code")
+                ]
+            )
+            .sort(["code", "date"])
+        )
+
+        # Materialize with streaming for memory efficiency
+        aligned = aligned_lf.collect(streaming=True)
+
+        # BATCH-2B: Ensure sector dimensions for sector_short_selling_ratio (#12)
+        aligned = ensure_sector_dimensions(aligned)
+
+        return aligned
 
     def _fetch_margin_data(self, *, start: str, end: str) -> pl.DataFrame:
         return self.data_sources.margin_daily(start=start, end=end)
@@ -2393,9 +2535,10 @@ class DatasetBuilder:
 
         # P0: Quality flags
         published_date_col = _resolve(["PublishedDate_dmi", "PublishedDate", "published_date_dmi", "published_date"])
-        application_date_col = _resolve(
-            ["ApplicationDate_dmi", "ApplicationDate", "application_date_dmi", "application_date"]
-        )
+        # application_date_col is reserved for future use
+        # application_date_col = _resolve(
+        #     ["ApplicationDate_dmi", "ApplicationDate", "application_date_dmi", "application_date"]
+        # )
 
         joined = joined.with_columns(
             [
@@ -3892,12 +4035,13 @@ class DatasetBuilder:
 
         # インデックスコードのリストを作成
         index_codes = [idx["code"] for idx in p0_indices]
-        index_map = {idx["code"]: idx for idx in p0_indices}  # code -> 設定のマップ
+        # index_map is reserved for future use
+        # index_map = {idx["code"]: idx for idx in p0_indices}  # code -> 設定のマップ
 
         if not index_codes:
             LOGGER.debug("No P0 indices defined in allowlist, using defaults (TOPIX, NK225)")
             index_codes = ["0000", "0101"]
-            index_map = {"0000": {"prefix": "topix"}, "0101": {"prefix": "nk225"}}
+            # index_map = {"0000": {"prefix": "topix"}, "0101": {"prefix": "nk225"}}
 
         # インデックスデータを取得
         all_indices_df = pl.DataFrame()
@@ -5199,10 +5343,11 @@ class DatasetBuilder:
 
                         # P0: 品質フラグ
                         # 日付カラムを取得（PublishedDateまたはDate）
-                        date_col_sector = "date"
-                        if "date" not in sector_prepared.columns:
-                            # available_tsから日付を推定（近似）
-                            date_col_sector = "available_ts"
+                        # date_col_sector is reserved for future use
+                        # date_col_sector = "date"
+                        # if "date" not in sector_prepared.columns:
+                        #     # available_tsから日付を推定（近似）
+                        #     date_col_sector = "available_ts"
 
                         sector = sector.with_columns(
                             [
@@ -5562,7 +5707,8 @@ class DatasetBuilder:
         # Calculate staleness_days: business days since last disclosure
         if "date" in joined.columns and "_ssp_date" in joined.columns:
             # Get trading calendar dates for staleness calculation
-            cal_dates = calendar_df.select(pl.col("date").cast(pl.Date).alias("cal_date")).sort("cal_date")
+            # cal_dates is reserved for future use
+            # cal_dates = calendar_df.select(pl.col("date").cast(pl.Date).alias("cal_date")).sort("cal_date")
 
             # For each row, find business days between date and _ssp_date
             joined = joined.with_columns(
@@ -5794,7 +5940,8 @@ class DatasetBuilder:
         )
 
         # ローリング特徴量（shift(1)でリーク防止）
-        from ..features.utils.rolling import roll_mean_safe, roll_std_safe
+        # roll_mean_safe and roll_std_safe are already imported at module level (line 68)
+        from ..features.utils.rolling import roll_std_safe
 
         # 20営業日Z-score
         joined = joined.with_columns(

@@ -63,20 +63,11 @@ def build_panel_cache(
         codes_data[str(code)] = {
             "dates": dates_int,
             "features": feat_arr.astype(np.float32, copy=False),
-            "targets": None
-            if targ_arr is None
-            else targ_arr.astype(np.float32, copy=False),
-            "masks": None
-            if mask_arr is None
-            else mask_arr.astype(np.float32, copy=False),
+            "targets": None if targ_arr is None else targ_arr.astype(np.float32, copy=False),
+            "masks": None if mask_arr is None else mask_arr.astype(np.float32, copy=False),
         }
 
-    unique_dates = (
-        sorted_df.select(pl.col(date_col).unique())
-        .to_series()
-        .to_numpy()
-        .astype("datetime64[D]")
-    )
+    unique_dates = sorted_df.select(pl.col(date_col).unique()).to_series().to_numpy().astype("datetime64[D]")
     unique_date_ints = np.unique(unique_dates.astype("int64"))
 
     date_to_codes: dict[int, list[str]] = {}
@@ -167,10 +158,18 @@ class DayPanelDataset(Dataset):
                 continue
 
             window = payload["features"][start : idx + 1]
-            targets = payload["targets"][idx]
 
-            if np.isnan(window).any() or np.isnan(targets).any():
+            # Check for NaN in features
+            if np.isnan(window).any():
                 continue
+
+            # Check for NaN in targets (only if targets exist)
+            if payload["targets"] is not None:
+                targets = payload["targets"][idx]
+                if np.isnan(targets).any():
+                    continue
+            else:
+                targets = None
 
             if payload["masks"] is not None:
                 mask_row = payload["masks"][idx]
@@ -178,21 +177,32 @@ class DayPanelDataset(Dataset):
                     continue
 
             X_list.append(window)
-            Y_list.append(targets)
+            if targets is not None:
+                Y_list.append(targets)
             valid_codes.append(code)
 
         if not X_list:
             return None
 
         features = np.stack(X_list, axis=0).astype(np.float32, copy=False)
-        targets = np.stack(Y_list, axis=0).astype(np.float32, copy=False)
 
-        return {
-            "X": torch.from_numpy(features),
-            "y": torch.from_numpy(targets),
-            "codes": valid_codes,
-            "date_int": date_int,
-        }
+        # Handle optional targets (mirroring build_panel_cache behavior)
+        if Y_list:
+            targets = np.stack(Y_list, axis=0).astype(np.float32, copy=False)
+            return {
+                "X": torch.from_numpy(features),
+                "y": torch.from_numpy(targets),
+                "codes": valid_codes,
+                "date_int": date_int,
+            }
+        else:
+            # No targets available (targets were None for all codes)
+            return {
+                "X": torch.from_numpy(features),
+                "y": None,
+                "codes": valid_codes,
+                "date_int": date_int,
+            }
 
 
 def collate_day_batch(batch: Sequence[dict | None]) -> dict | None:

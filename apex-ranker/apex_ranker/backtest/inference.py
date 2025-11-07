@@ -73,7 +73,7 @@ def load_model_checkpoint(
         n_features: Number of raw input features
         feature_names: Optional feature names for ABI validation
         validate_features: If True, validates feature compatibility (default: True)
-        add_csz: If True, applies CS-Z normalization (REPLACE, not append)
+        add_csz: If True, uses CS-Z normalized features (CS-Z features replace raw features in cache)
     """
     if not model_path.exists():
         raise FileNotFoundError(f"Model checkpoint not found: {model_path}")
@@ -81,12 +81,16 @@ def load_model_checkpoint(
     model_cfg = config["model"]  # type: ignore[index]
     horizons = config["train"]["horizons"]  # type: ignore[index]
 
-    # FIX: CS-Z is REPLACE mode (not append), so in_features stays at n_features
-    # Checkpoint: in_features=89, patch_multiplier=2 → Conv output=178
-    # CS-Z replaces raw values with z-scores, shape remains [N, L, 89]
+    # Determine in_features based on add_csz mode
+    # Training uses CS-Z features only (z_features) when add_csz=True
+    # - Training: add_cross_sectional_zscores() adds *_cs_z columns, then z_features only are cached
+    # - Training: in_features=len(z_features) = 89 (CS-Z features count)
+    # - Inference: Same pattern - CS-Z features only are cached and used
+    # Therefore: in_features always equals n_features (raw feature count)
+    # because CS-Z features replace raw features in the cache, not append to them
     in_features = n_features  # Always raw feature count (e.g., 89)
 
-    print(f"[Model Init] in_features={in_features}, patch_multiplier={model_cfg.get('patch_multiplier', 'auto')}, add_csz={add_csz}")
+    print(f"[Model Init] in_features={in_features}, n_features={n_features}, add_csz={add_csz}")
 
     model = APEXRankerV0(
         in_features=in_features,
@@ -104,9 +108,7 @@ def load_model_checkpoint(
     if validate_features and feature_names is not None:
         from apex_ranker.models.ranker import load_with_validation
 
-        ckpt = load_with_validation(
-            str(model_path), expected_features=feature_names, strict=False
-        )
+        ckpt = load_with_validation(str(model_path), expected_features=feature_names, strict=False)
         state_dict = ckpt.get("model_state_dict", ckpt)
     else:
         state_dict = torch.load(model_path, map_location=device, weights_only=False)
@@ -125,10 +127,7 @@ def compute_weight_turnover(
 ) -> float:
     """Calculate turnover implied by weight change."""
     codes = set(current_weights.keys()) | set(target_weights.keys())
-    total_change = sum(
-        abs(target_weights.get(code, 0.0) - current_weights.get(code, 0.0))
-        for code in codes
-    )
+    total_change = sum(abs(target_weights.get(code, 0.0) - current_weights.get(code, 0.0)) for code in codes)
     return total_change / 2.0
 
 
@@ -203,9 +202,7 @@ class BacktestInferenceEngine:
                     cache_loaded = True
                     print(f"[Inference] Loaded panel cache from {cache_path}")
                 except Exception as exc:
-                    print(
-                        f"[Inference] Failed to load panel cache ({exc}); rebuilding."
-                    )
+                    print(f"[Inference] Failed to load panel cache ({exc}); rebuilding.")
                     self.cache = None
 
         if not cache_loaded:
@@ -220,17 +217,23 @@ class BacktestInferenceEngine:
                     aliases_yaml=self.aliases_yaml,
                 )
 
-            normalization_cfg = config.get("normalization", {})  # type: ignore[call-arg]
-            clip_sigma = normalization_cfg.get("clip_sigma", 5.0)
-            feature_frame = source_frame.select(
-                [self.date_col, self.code_col] + list(self.feature_cols)
-            )
-            feature_frame = add_cross_sectional_zscores(
-                feature_frame,
-                columns=self.feature_cols,
-                date_col=self.date_col,
-                clip_sigma=clip_sigma,
-            )
+            feature_frame = source_frame.select([self.date_col, self.code_col] + list(self.feature_cols))
+
+            # Apply CS-Z normalization if enabled
+            if self.add_csz:
+                normalization_cfg = config.get("normalization", {})  # type: ignore[call-arg]
+                clip_sigma = normalization_cfg.get("clip_sigma", 5.0)
+                feature_frame = add_cross_sectional_zscores(
+                    feature_frame,
+                    columns=self.feature_cols,
+                    date_col=self.date_col,
+                    clip_sigma=clip_sigma,
+                )
+                # Use CS-Z features only (matching training behavior)
+                cache_feature_cols = self.z_features
+            else:
+                # Use raw features only
+                cache_feature_cols = self.feature_cols
 
             unique_days = feature_frame.select(self.date_col).unique().height
             if unique_days < self.lookback:
@@ -241,7 +244,7 @@ class BacktestInferenceEngine:
 
             self.cache = build_panel_cache(
                 feature_frame,
-                feature_cols=self.z_features,
+                feature_cols=cache_feature_cols,
                 target_cols=[],
                 mask_cols=[],
                 date_col=self.date_col,
@@ -261,31 +264,6 @@ class BacktestInferenceEngine:
     def available_dates(self) -> set[Date]:
         """Return set of dates for which inference can be generated."""
         return {int_to_date(date_int) for date_int in self.cache.date_to_codes.keys()}
-
-    def _replace_with_cross_sectional_z(self, features: np.ndarray) -> np.ndarray:
-        """
-        Replace raw features with cross-sectional Z-scores (in-place normalization).
-
-        IMPORTANT: This is REPLACE mode, not APPEND. Shape stays [N, L, F].
-        The checkpoint was trained with in_features=89, patch_multiplier=2.
-        CS-Z normalization replaces raw values with z-scores, maintaining 89 channels.
-
-        Args:
-            features: [N_stocks, L_lookback, F] raw feature array
-
-        Returns:
-            [N_stocks, L_lookback, F] with values replaced by CS-Z (same shape)
-        """
-        # Cross-sectional normalization per lookback timestep
-        # Normalize across stocks (axis=0) for each time step and feature
-        mean = np.nanmean(features, axis=0, keepdims=True)  # [1, L, F]
-        std = np.nanstd(features, axis=0, keepdims=True)    # [1, L, F]
-        std = np.maximum(std, self.csz_eps)  # Prevent division by zero
-
-        z_features = (features - mean) / std  # [N, L, F]
-        z_features = np.clip(z_features, -self.csz_clip, self.csz_clip)
-
-        return z_features  # [N, L, F] - SAME shape as input
 
     def _tensor_for_date(
         self,
@@ -321,13 +299,15 @@ class BacktestInferenceEngine:
 
         features = np.stack(feature_windows, axis=0).astype(np.float32, copy=False)
 
-        # Apply cross-sectional Z-normalization if enabled (REPLACE mode, not append)
-        # Shape remains [N, L, F] - values are replaced with z-scores
-        if self.add_csz:
-            features = self._replace_with_cross_sectional_z(features)
+        # Note: When add_csz=True, cache contains CS-Z features only (z_features)
+        # These are already normalized and ready to use - no additional processing needed
+        # The cache was built with feature_cols=self.z_features, so features from cache
+        # are already CS-Z normalized values, matching training behavior
 
         # Fail-fast check (Phase 1.2): Use model's expected dimension as single source of truth
-        # With REPLACE mode, dimension should always match raw feature count
+        # When add_csz=True: cache contains CS-Z features (same count as raw features)
+        # When add_csz=False: cache contains raw features
+        # In both cases, feature count equals n_features (raw feature count)
         expected_dim = self.model.in_features
         if features.shape[-1] != expected_dim:
             raise ValueError(
@@ -335,7 +315,8 @@ class BacktestInferenceEngine:
                 f"   Model expects: {expected_dim} features (in_features)\n"
                 f"   Data provides: {features.shape[-1]} features\n"
                 f"   Raw features: {len(self.feature_cols)}\n"
-                f"   CS-Z mode: {'REPLACE (values normalized)' if self.add_csz else 'RAW'}\n"
+                f"   CS-Z enabled: {self.add_csz}\n"
+                f"   Cache contains: {'CS-Z features only' if self.add_csz else 'raw features'}\n"
                 f"   First 3 features: {self.feature_cols[:3]}\n"
                 f"   This indicates model/data configuration mismatch!"
             )
@@ -351,15 +332,11 @@ class BacktestInferenceEngine:
         top_k: int | None = None,
     ) -> pl.DataFrame:
         if horizon not in self.horizons:
-            raise ValueError(
-                f"Horizon {horizon} not available. Options: {sorted(self.horizons)}"
-            )
+            raise ValueError(f"Horizon {horizon} not available. Options: {sorted(self.horizons)}")
 
         tensor, codes = self._tensor_for_date(target_date)
         if tensor is None or not codes:
-            return pl.DataFrame(
-                {"Date": [], "Rank": [], "Code": [], "Score": [], "Horizon": []}
-            )
+            return pl.DataFrame({"Date": [], "Rank": [], "Code": [], "Score": [], "Horizon": []})
 
         tensor = tensor.to(self.device)
         with torch.no_grad():
