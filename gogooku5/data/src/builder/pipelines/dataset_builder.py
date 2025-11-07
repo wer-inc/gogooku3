@@ -4063,6 +4063,11 @@ class DatasetBuilder:
             LOGGER.debug("TOPIX data is empty, skipping beta/alpha features")
             return self._ensure_beta_alpha_columns(df)
 
+        # Normalize column names to lowercase
+        topix_df = topix_df.rename(
+            {col: col.lower() for col in topix_df.columns if col.lower() != col}
+        )
+
         # TOPIXリターンを計算
         topix_df = topix_df.sort("date")
         topix_df = topix_df.with_columns(
