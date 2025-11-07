@@ -67,8 +67,8 @@ def load_index_option_225(df: pl.DataFrame) -> pl.DataFrame:
         if col in df.columns:
             df = df.with_columns(
                 pl.when(
-                    (pl.col(col).cast(pl.Utf8, strict=False).str.strip() == "")
-                    | (pl.col(col).cast(pl.Utf8, strict=False).str.strip().is_in(["-", "*", "null", "NULL", "None"]))
+                    (pl.col(col).cast(pl.Utf8, strict=False) == "")
+                    | (pl.col(col).cast(pl.Utf8, strict=False).is_in(["-", "*", "null", "NULL", "None"]))
                 )
                 .then(None)
                 .otherwise(pl.col(col).cast(pl.Float64, strict=False))
@@ -87,7 +87,7 @@ def load_index_option_225(df: pl.DataFrame) -> pl.DataFrame:
     for col in string_cols:
         if col in df.columns:
             df = df.with_columns(
-                pl.when(pl.col(col).cast(pl.Utf8, strict=False).str.strip() == "")
+                pl.when(pl.col(col).cast(pl.Utf8, strict=False) == "")
                 .then(None)
                 .otherwise(pl.col(col).cast(pl.Utf8, strict=False))
                 .alias(col)
@@ -411,11 +411,9 @@ def build_index_option_225_features(
     # ナイトセッション含む特徴: T+0 06:00 JST（別フラグ管理）
     features_df = prepare_snapshot_pl(
         features_df,
-        date_col="date",
-        hour=15,
-        minute=10,
-        tz="Asia/Tokyo",
-        available_col="available_ts",
+        published_date_col="date",
+        availability_hour=15,
+        availability_minute=10,
     )
 
     return features_df
