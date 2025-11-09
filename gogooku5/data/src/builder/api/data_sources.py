@@ -1,10 +1,10 @@
 """Higher-level data source helpers backed by J-Quants advanced fetcher."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
-import logging
 
 import polars as pl
 
@@ -42,9 +42,7 @@ class DataSourceManager:
             raw = self.fetcher.fetch_margin_daily(start=start, end=end)
             return self._normalize_margin_daily(raw)
 
-        df, _ = self.cache.get_or_fetch_dataframe(
-            cache_key, _fetch, ttl_days=ttl, allow_empty=False
-        )
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         return df
 
     def macro_vix(self, *, start: str, end: str, force_refresh: bool = False) -> pl.DataFrame:
@@ -63,9 +61,7 @@ class DataSourceManager:
             return prepare_vix_features(history)
 
         try:
-            features, _ = self.cache.get_or_fetch_dataframe(
-                cache_key, _fetch, ttl_days=ttl, allow_empty=False
-            )
+            features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         except ValueError as exc:
             logging.getLogger(__name__).warning(
                 "TOPIX futures features unavailable for %s→%s (%s); returning empty frame",
@@ -97,9 +93,16 @@ class DataSourceManager:
             )
             return prepare_vvmd_features(history)
 
-        features, _ = self.cache.get_or_fetch_dataframe(
-            cache_key, _fetch, ttl_days=ttl, allow_empty=False
-        )
+        try:
+            features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
+        except ValueError as exc:
+            logging.getLogger(__name__).warning(
+                "TOPIX futures features unavailable for %s→%s (%s); returning empty frame",
+                start,
+                end,
+                exc,
+            )
+            return pl.DataFrame()
         return features
 
     def margin_weekly(self, *, start: str, end: str) -> pl.DataFrame:
@@ -111,9 +114,7 @@ class DataSourceManager:
         def _fetch() -> pl.DataFrame:
             return self.fetcher.fetch_margin_weekly(start=start, end=end)
 
-        df, _ = self.cache.get_or_fetch_dataframe(
-            cache_key, _fetch, ttl_days=ttl, allow_empty=False
-        )
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         return df
 
     def dividends(self, *, start: str, end: str) -> pl.DataFrame:
@@ -125,9 +126,7 @@ class DataSourceManager:
         def _fetch() -> pl.DataFrame:
             df = self.fetcher.fetch_dividends(start=start, end=end)
             if df.is_empty():
-                logging.getLogger(__name__).warning(
-                    "Dividend API returned zero rows for %s → %s", start, end
-                )
+                logging.getLogger(__name__).warning("Dividend API returned zero rows for %s → %s", start, end)
                 return df
 
             # Ensure dates are proper Date types
@@ -136,9 +135,7 @@ class DataSourceManager:
 
             return df
 
-        df, _ = self.cache.get_or_fetch_dataframe(
-            cache_key, _fetch, ttl_days=ttl, allow_empty=False
-        )
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         return df
 
     def fs_details(self, *, start: str, end: str) -> pl.DataFrame:
@@ -150,9 +147,7 @@ class DataSourceManager:
         def _fetch() -> pl.DataFrame:
             return self.fetcher.fetch_fs_details(start=start, end=end)
 
-        df, _ = self.cache.get_or_fetch_dataframe(
-            cache_key, _fetch, ttl_days=ttl, allow_empty=False
-        )
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         return df
 
     def listed_info(self, *, start: str, end: str) -> pl.DataFrame:
@@ -196,9 +191,7 @@ class DataSourceManager:
                 combined = combined.with_columns(pl.col("Date").cast(pl.Date, strict=False))
             return combined
 
-        df, _ = self.cache.get_or_fetch_dataframe(
-            cache_key, _fetch, ttl_days=ttl, allow_empty=False
-        )
+        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         return df
 
     def topix(self, *, start: str, end: str) -> pl.DataFrame:
@@ -248,9 +241,7 @@ class DataSourceManager:
             )
             return features
 
-        features, _ = self.cache.get_or_fetch_dataframe(
-            cache_key, _fetch, ttl_days=ttl, allow_empty=False
-        )
+        features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         return features
 
     def options_daily(
@@ -335,7 +326,7 @@ class DataSourceManager:
             logger = logging.getLogger(__name__)
             logger.info(
                 "[INDEX OPTION] Cache miss for %s, fetching from API (this may take 2-3 hours for 6+ years)",
-                raw_cache_key
+                raw_cache_key,
             )
             return self.fetcher.fetch_options(start=start, end=end)
 
@@ -353,7 +344,7 @@ class DataSourceManager:
             logger.info(
                 "[INDEX OPTION] ✅ Cache hit for %s, loaded %d rows in <5s (saved ~2h42m)",
                 raw_cache_key,
-                len(raw_options)
+                len(raw_options),
             )
 
         # Process raw options into features (fast, <10s)

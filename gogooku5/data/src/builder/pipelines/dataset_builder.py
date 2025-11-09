@@ -80,8 +80,8 @@ from ..utils import (
     month_range,
     shift_trading_days,
 )
-from ..utils.prefetch import DataSourcePrefetcher
 from ..utils.lazy_io import save_with_cache
+from ..utils.prefetch import DataSourcePrefetcher
 
 LOGGER = configure_logger("builder.pipeline")
 BETA_EPS = 1e-12
@@ -287,9 +287,7 @@ class DatasetBuilder:
         LOGGER.info("[DEBUG] Step 6: Building calendar...")
         # Use IPC cache for fast reuse (calendar is ~250 rows/year, perfect for caching)
         calendar_key = f"trading_calendar_{start}_{end}"
-        calendar_lf = self._load_small_table_cached(
-            calendar_key, lambda: self._business_calendar(start=start, end=end)
-        )
+        calendar_lf = self._load_small_table_cached(calendar_key, lambda: self._business_calendar(start=start, end=end))
         calendar_df = calendar_lf.collect()
         LOGGER.info("[DEBUG] Step 6 complete: %d business days", len(calendar_df))
 
@@ -1663,7 +1661,9 @@ class DatasetBuilder:
 
         return df
 
-    def _ensure_ret_prev_columns(self, df: pl.DataFrame, horizons: tuple[int, ...] = (1, 5, 10, 20, 60, 120)) -> pl.DataFrame:
+    def _ensure_ret_prev_columns(
+        self, df: pl.DataFrame, horizons: tuple[int, ...] = (1, 5, 10, 20, 60, 120)
+    ) -> pl.DataFrame:
         """Guarantee past-return columns exist (used by validators and downstream features)."""
 
         if df.is_empty():
@@ -3986,7 +3986,12 @@ class DatasetBuilder:
         )
 
         joined = joined.with_columns(
-            (pl.col("earnings_event_date") - pl.col("_earn_today")).dt.total_days().alias("_earn_days_delta")
+            pl.date_diff(
+                pl.col("earnings_event_date"),
+                pl.col("_earn_today"),
+                "days",
+                time_unit="ns",
+            ).alias("_earn_days_delta")
         )
 
         joined = joined.with_columns(pl.col("_earn_days_delta").cast(pl.Int32).alias("days_to_earnings"))
@@ -6035,9 +6040,9 @@ class DatasetBuilder:
         )
 
         return df.with_columns(
-            (
-                pl.col(ratio_col).cast(pl.Float64, strict=False) - pl.col(prev_col).cast(pl.Float64, strict=False)
-            ).alias(delta_col)
+            (pl.col(ratio_col).cast(pl.Float64, strict=False) - pl.col(prev_col).cast(pl.Float64, strict=False)).alias(
+                delta_col
+            )
         )
 
     def _add_index_option_225_features_asof(
