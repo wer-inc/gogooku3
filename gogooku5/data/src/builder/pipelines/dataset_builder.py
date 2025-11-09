@@ -67,7 +67,7 @@ from ..features.utils import (
     interval_join_pl,
     prepare_snapshot_pl,
 )
-from ..features.utils.rolling import roll_mean_safe
+from ..features.utils.rolling import roll_mean_safe, roll_std_safe
 from ..utils import (
     CacheManager,
     DatasetArtifact,
@@ -456,6 +456,8 @@ class DatasetBuilder:
             end=end,
             positions_df=short_positions_df,
         )
+
+        combined_df = self._add_float_turnover_crowding_features(combined_df)
 
         # 日経225オプション特徴量の追加（P0: 最小構成）
         combined_df = self._add_index_option_225_features_asof(
@@ -1770,6 +1772,146 @@ class DatasetBuilder:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
 
+    def _ensure_float_crowding_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "float_turnover_pct": (pl.Float64, None),
+            "float_turnover_pct_z20": (pl.Float64, None),
+            "float_turnover_pct_roc_5d": (pl.Float64, None),
+            "margin_long_pct_float": (pl.Float64, None),
+            "margin_long_pct_float_z20": (pl.Float64, None),
+            "margin_long_pct_float_roc_5d": (pl.Float64, None),
+            "weekly_margin_long_pct_float": (pl.Float64, None),
+            "weekly_margin_long_pct_float_z20": (pl.Float64, None),
+            "weekly_margin_long_pct_float_roc_5d": (pl.Float64, None),
+            "crowding_score": (pl.Float64, None),
+            "is_crowding_signal_valid": (pl.Int8, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_float_turnover_crowding_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_float_crowding_columns(df)
+
+        required_cols = {"code", "date"}
+        if not required_cols.issubset(df.columns):
+            LOGGER.debug("[FLOAT] Missing base columns for float turnover computation")
+            return self._ensure_float_crowding_columns(df)
+
+        shares_col = self._resolve_column_name(df, "fs_shares_outstanding")
+        turnover_col = self._resolve_column_name(df, "turnovervalue")
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+        margin_long_col = self._resolve_column_name(df, "dmi_long_balance")
+        weekly_long_col = self._resolve_column_name(df, "wm_long")
+
+        if shares_col is None or turnover_col is None or price_col is None:
+            LOGGER.debug(
+                "[FLOAT] Insufficient inputs (shares=%s, turnover=%s, price=%s)", shares_col, turnover_col, price_col
+            )
+            return self._ensure_float_crowding_columns(df)
+
+        eps = 1e-12
+        share_expr = pl.col(shares_col).cast(pl.Float64, strict=False)
+        turnover_expr = pl.col(turnover_col).cast(pl.Float64, strict=False)
+        price_expr = pl.col(price_col).cast(pl.Float64, strict=False)
+
+        new_columns: list[pl.Expr] = [
+            pl.when(
+                share_expr.is_not_null()
+                & (share_expr > 0)
+                & turnover_expr.is_not_null()
+                & price_expr.is_not_null()
+            )
+            .then(turnover_expr / (price_expr * share_expr + eps))
+            .otherwise(None)
+            .alias("float_turnover_pct")
+        ]
+
+        if margin_long_col is not None:
+            long_expr = pl.col(margin_long_col).cast(pl.Float64, strict=False)
+            new_columns.append(
+                pl.when(share_expr.is_not_null() & (share_expr > 0) & long_expr.is_not_null())
+                .then(long_expr / (share_expr + eps))
+                .otherwise(None)
+                .alias("margin_long_pct_float")
+            )
+        else:
+            new_columns.append(pl.lit(None).cast(pl.Float64).alias("margin_long_pct_float"))
+
+        if weekly_long_col is not None:
+            weekly_expr = pl.col(weekly_long_col).cast(pl.Float64, strict=False)
+            new_columns.append(
+                pl.when(share_expr.is_not_null() & (share_expr > 0) & weekly_expr.is_not_null())
+                .then(weekly_expr / (share_expr + eps))
+                .otherwise(None)
+                .alias("weekly_margin_long_pct_float")
+            )
+        else:
+            new_columns.append(pl.lit(None).cast(pl.Float64).alias("weekly_margin_long_pct_float"))
+
+        df = df.sort(["code", "date"]).with_columns(new_columns)
+
+        def _apply_roll_metrics(
+            frame: pl.DataFrame,
+            base_col: str,
+            z_col: str,
+            roc_col: str,
+        ) -> pl.DataFrame:
+            if base_col not in frame.columns:
+                frame = frame.with_columns(pl.lit(None).cast(pl.Float64).alias(base_col))
+            ma_col = f"_{base_col}_ma20"
+            std_col = f"_{base_col}_std20"
+            base_series = pl.col(base_col)
+            frame = frame.with_columns(
+                roll_mean_safe(base_series, 20, min_periods=5, by="code").alias(ma_col),
+                roll_std_safe(base_series, 20, min_periods=5, by="code").alias(std_col),
+            )
+            frame = frame.with_columns(
+                pl.when(pl.col(std_col).is_not_null() & (pl.col(std_col) > eps))
+                .then((base_series.shift(1).over("code") - pl.col(ma_col)) / (pl.col(std_col) + eps))
+                .otherwise(None)
+                .alias(z_col),
+                pl.when(base_series.shift(5).over("code").is_not_null())
+                .then(base_series / (base_series.shift(5).over("code") + eps) - 1.0)
+                .otherwise(None)
+                .alias(roc_col),
+            )
+            frame = frame.drop([ma_col, std_col])
+            return frame
+
+        df = _apply_roll_metrics(df, "float_turnover_pct", "float_turnover_pct_z20", "float_turnover_pct_roc_5d")
+        df = _apply_roll_metrics(
+            df,
+            "margin_long_pct_float",
+            "margin_long_pct_float_z20",
+            "margin_long_pct_float_roc_5d",
+        )
+        df = _apply_roll_metrics(
+            df,
+            "weekly_margin_long_pct_float",
+            "weekly_margin_long_pct_float_z20",
+            "weekly_margin_long_pct_float_roc_5d",
+        )
+
+        df = df.with_columns(
+            pl.when(
+                pl.col("margin_long_pct_float_z20").is_not_null()
+                & pl.col("weekly_margin_long_pct_float_z20").is_not_null()
+            )
+            .then(pl.col("margin_long_pct_float_z20") + pl.col("weekly_margin_long_pct_float_z20"))
+            .otherwise(None)
+            .alias("crowding_score"),
+        )
+
+        df = df.with_columns(
+            pl.when(pl.col("crowding_score").is_not_null()).then(1).otherwise(0).cast(pl.Int8).alias("is_crowding_signal_valid")
+        )
+
+        df = self._ensure_float_crowding_columns(df)
+        return df
+
     def _extend_limit_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """Extend limit features with P0: is_limit_up/down, streak, post_limit_reversal_flag."""
         required = {"code", "date", "upper_limit", "lower_limit", "ret_intraday"}
@@ -2376,6 +2518,8 @@ class DatasetBuilder:
             "fs_is_recent": (pl.Int8, 0),
             "fs_staleness_bd": (pl.Int32, None),
             "is_fs_valid": (pl.Int8, 0),
+            "fs_shares_outstanding": (pl.Float64, None),
+            "fs_average_shares": (pl.Float64, None),
             # P0新特徴量
             "fs_ttm_sales": (pl.Float64, None),
             "fs_ttm_op_profit": (pl.Float64, None),

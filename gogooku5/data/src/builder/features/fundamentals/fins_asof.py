@@ -368,6 +368,40 @@ def build_fs_feature_frame(snapshot: pl.DataFrame) -> pl.DataFrame:
         if column not in snapshot.columns:
             snapshot = snapshot.with_columns(pl.lit(None).cast(pl.Float64).alias(column))
 
+    # Ensure share-related raw columns exist with consistent naming
+    share_preprocess_exprs: list[pl.Expr] = []
+    if _ISSUED_SHARES_COL in snapshot.columns:
+        share_preprocess_exprs.append(
+            pl.col(_ISSUED_SHARES_COL)
+            .cast(pl.Float64, strict=False)
+            .alias("_fs_issued_shares")
+        )
+    else:
+        share_preprocess_exprs.append(pl.lit(None).cast(pl.Float64).alias("_fs_issued_shares"))
+    if _TREASURY_SHARES_COL in snapshot.columns:
+        share_preprocess_exprs.append(
+            pl.col(_TREASURY_SHARES_COL)
+            .cast(pl.Float64, strict=False)
+            .alias("_fs_treasury_shares")
+        )
+    else:
+        share_preprocess_exprs.append(pl.lit(None).cast(pl.Float64).alias("_fs_treasury_shares"))
+    if _AVERAGE_SHARES_COL in snapshot.columns:
+        share_preprocess_exprs.append(
+            pl.col(_AVERAGE_SHARES_COL)
+            .cast(pl.Float64, strict=False)
+            .alias("_fs_average_shares")
+        )
+    else:
+        share_preprocess_exprs.append(pl.lit(None).cast(pl.Float64).alias("_fs_average_shares"))
+
+    snapshot = snapshot.with_columns(share_preprocess_exprs)
+    snapshot = snapshot.with_columns(
+        (
+            pl.col("_fs_issued_shares") - pl.col("_fs_treasury_shares").fill_null(0.0)
+        ).alias("_fs_shares_outstanding")
+    )
+
     if "fs_period_end_date" not in snapshot.columns:
         snapshot = snapshot.with_columns(pl.lit(None).cast(pl.Date).alias("fs_period_end_date"))
 
@@ -379,6 +413,8 @@ def build_fs_feature_frame(snapshot: pl.DataFrame) -> pl.DataFrame:
 
         group = group.with_columns(
             [
+                pl.col("_fs_shares_outstanding").forward_fill().alias("fs_shares_outstanding"),
+                pl.col("_fs_average_shares").forward_fill().alias("fs_average_shares"),
                 _ttm(pl.col("NetSales")).alias("fs_revenue_ttm"),
                 _ttm(pl.col("OperatingProfit")).alias("fs_op_profit_ttm"),
                 _ttm(pl.col("Profit")).alias("fs_net_income_ttm"),
@@ -506,6 +542,8 @@ def build_fs_feature_frame(snapshot: pl.DataFrame) -> pl.DataFrame:
             "available_ts",
             "fs_period_end_date",
             "DisclosedDate",
+            "fs_shares_outstanding",
+            "fs_average_shares",
             # 既存特徴量（後方互換性）
             "fs_revenue_ttm",
             "fs_op_profit_ttm",
