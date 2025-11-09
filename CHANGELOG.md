@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🧾 **Feature Manifest Enforcement**: emit `feature_index.json` with canonical column order/dtypes/normalization metadata, update dataset metadata with hash summaries, and teach loaders to fail-fast on manifest mismatches (optional strict mode).
 - ⚡ **Gap Decomposition**: split `ret_prev_1d` into `gap_ov_prev1`/`gap_id_prev1`, enforce leak-safe prev-day semantics, purge redundant `log_returns_1d`, and add persist-time validation.
 - 🕘 **Morning Session Features**: gate `/prices/prices_am` by default with T+1 as-of, emit a minimal six-column feature set (`am_gap_prev_close`, `am_body`, `am_range`, `am_vol_ratio_20`, `am_pos_in_am_range`, `am_to_full_range_prev`, `is_am_valid`), and add CLI/config controls for SAME_DAY_PM scenarios.
+- 🚚 **DataLoader Defaults**: switched `ALLOW_UNSAFE_DATALOADER` to `auto` with automatic NUM_WORKERS/PIN_MEMORY/PREFETCH defaults so multi-worker pipelines are enabled out of the box while safe-mode overrides still force single-worker operation.
 
 ### Fixed
 - 🐛 **DataLoader Hanging Issue**: Fixed missing import causing training script to hang indefinitely

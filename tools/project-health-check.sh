@@ -434,10 +434,10 @@ echo -e "${BLUE}[7/9] Performance optimization status...${NC}"
 
 if [ -f ".env" ]; then
     # Check for multi-worker DataLoader
-    if grep -q "ALLOW_UNSAFE_DATALOADER=1" .env; then
+    if grep -Eq "ALLOW_UNSAFE_DATALOADER=(1|auto|true|yes)" .env; then
         SUCCESSES+=("✓ Multi-worker DataLoader enabled")
     else
-        RECOMMENDATIONS+=("Enable multi-worker DataLoader: ALLOW_UNSAFE_DATALOADER=1 (2-3x GPU utilization)")
+        RECOMMENDATIONS+=("Enable multi-worker DataLoader: ALLOW_UNSAFE_DATALOADER=auto/1 (2-3x GPU utilization)")
     fi
 
     # Check for torch.compile

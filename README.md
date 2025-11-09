@@ -713,6 +713,10 @@ python scripts/integrated_ml_training_pipeline.py --adv-graph-train
 4. **DataLoaderハング問題**
    - 解決済み: ImportError による無限ハングを修正
    - 詳細: [docs/fixes/dataloader_hanging_fix.md](docs/fixes/dataloader_hanging_fix.md)
+5. **マルチワーカー DataLoader 設定**
+   - 既定で `ALLOW_UNSAFE_DATALOADER=auto` となり、CPUコア数から自動算出した `NUM_WORKERS` / `PREFETCH_FACTOR` / `PIN_MEMORY` を使用します。
+   - シングルワーカーへ戻したい場合は `.env` で `ALLOW_UNSAFE_DATALOADER=0` または `FORCE_SINGLE_PROCESS=1` を設定してください。
+   - より細かな調整が必要な場合は `NUM_WORKERS` / `PREFETCH_FACTOR` / `PIN_MEMORY` / `PERSISTENT_WORKERS` を個別に上書きできます。
 
 ### ログ確認
 

@@ -85,6 +85,7 @@ from ..utils.prefetch import DataSourcePrefetcher
 
 LOGGER = configure_logger("builder.pipeline")
 BETA_EPS = 1e-12
+SUPPLY_SHOCK_THRESHOLD = 0.01
 TOPIX_FEATURE_WHITELIST: tuple[str, ...] = (
     "close",
     "r_prev_1d",
@@ -416,6 +417,8 @@ class DatasetBuilder:
             calendar_df=calendar_df,
         )
 
+        combined_df = self._add_supply_shock_features(combined_df)
+
         flow_df = self.data_sources.trades_spec(start=start, end=end)
         combined_df = self.flow_features.add_features(combined_df, flow_df)
 
@@ -458,6 +461,10 @@ class DatasetBuilder:
         )
 
         combined_df = self._add_float_turnover_crowding_features(combined_df)
+        combined_df = self._add_short_squeeze_features(combined_df)
+        combined_df = self._add_margin_pain_index(combined_df)
+        combined_df = self._add_pre_earnings_flow_features(combined_df)
+        combined_df = self._add_liquidity_impact_features(combined_df)
 
         # 日経225オプション特徴量の追加（P0: 最小構成）
         combined_df = self._add_index_option_225_features_asof(
@@ -527,6 +534,8 @@ class DatasetBuilder:
                 LOGGER.debug("Option features empty, skipping")
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.warning("Failed to attach option features: %s", exc, exc_info=True)
+
+        combined_df = self._add_gap_basis_features(combined_df)
 
         enriched_df = self.quality_features.generate_quality_features(combined_df)
 
@@ -1054,6 +1063,8 @@ class DatasetBuilder:
             "AdjustmentFactor": pl.Float64,
             "UpperLimit": pl.Int8,
             "LowerLimit": pl.Int8,
+            "UpperLimitPrice": pl.Float64,
+            "LowerLimitPrice": pl.Float64,
             "MorningOpen": pl.Float64,
             "MorningHigh": pl.Float64,
             "MorningLow": pl.Float64,
@@ -1062,6 +1073,8 @@ class DatasetBuilder:
             "MorningTurnoverValue": pl.Float64,
             "MorningUpperLimit": pl.Int8,
             "MorningLowerLimit": pl.Int8,
+            "MorningUpperLimitPrice": pl.Float64,
+            "MorningLowerLimitPrice": pl.Float64,
             "AfternoonOpen": pl.Float64,
             "AfternoonHigh": pl.Float64,
             "AfternoonLow": pl.Float64,
@@ -1070,6 +1083,8 @@ class DatasetBuilder:
             "AfternoonTurnoverValue": pl.Float64,
             "AfternoonUpperLimit": pl.Int8,
             "AfternoonLowerLimit": pl.Int8,
+            "AfternoonUpperLimitPrice": pl.Float64,
+            "AfternoonLowerLimitPrice": pl.Float64,
         }
 
         try:
@@ -1088,6 +1103,8 @@ class DatasetBuilder:
         snake_case_overrides = {
             "UpperLimit": "upper_limit",
             "LowerLimit": "lower_limit",
+            "UpperLimitPrice": "upper_limit_price",
+            "LowerLimitPrice": "lower_limit_price",
             "MorningOpen": "morning_open",
             "MorningHigh": "morning_high",
             "MorningLow": "morning_low",
@@ -1096,6 +1113,8 @@ class DatasetBuilder:
             "MorningTurnoverValue": "morning_turnover_value",
             "MorningUpperLimit": "morning_upper_limit",
             "MorningLowerLimit": "morning_lower_limit",
+            "MorningUpperLimitPrice": "morning_upper_limit_price",
+            "MorningLowerLimitPrice": "morning_lower_limit_price",
             "AfternoonOpen": "afternoon_open",
             "AfternoonHigh": "afternoon_high",
             "AfternoonLow": "afternoon_low",
@@ -1104,6 +1123,8 @@ class DatasetBuilder:
             "AfternoonTurnoverValue": "afternoon_turnover_value",
             "AfternoonUpperLimit": "afternoon_upper_limit",
             "AfternoonLowerLimit": "afternoon_lower_limit",
+            "AfternoonUpperLimitPrice": "afternoon_upper_limit_price",
+            "AfternoonLowerLimitPrice": "afternoon_lower_limit_price",
         }
         rename_map = {col: snake_case_overrides.get(col, col.lower()) for col in df.columns}
         df = df.rename(rename_map)
@@ -1131,12 +1152,18 @@ class DatasetBuilder:
             "morning_close",
             "morning_volume",
             "morning_turnover_value",
+            "upper_limit_price",
+            "lower_limit_price",
             "afternoon_open",
             "afternoon_high",
             "afternoon_low",
             "afternoon_close",
             "afternoon_volume",
             "afternoon_turnover_value",
+            "morning_upper_limit_price",
+            "morning_lower_limit_price",
+            "afternoon_upper_limit_price",
+            "afternoon_lower_limit_price",
         ]
         present_float = [col for col in float_cols if col in df.columns]
         if present_float:
@@ -1772,6 +1799,48 @@ class DatasetBuilder:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
 
+    def _ensure_supply_shock_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "fs_shares_outstanding": (pl.Float64, None),
+            "shares_out_delta_pct": (pl.Float64, None),
+            "buyback_flag": (pl.Int8, 0),
+            "dilution_flag": (pl.Int8, 0),
+            "supply_shock": (pl.Int8, 0),
+            "is_supply_shock_valid": (pl.Int8, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_supply_shock_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_supply_shock_columns(df)
+
+        shares_col = self._resolve_column_name(df, "fs_shares_outstanding")
+        if shares_col is None:
+            LOGGER.debug("[SUPPLY] No fs_shares_outstanding column available")
+            return self._ensure_supply_shock_columns(df)
+
+        df = df.sort(["code", "date"])
+        prev_col = "__prev_shares"
+        df = df.with_columns(pl.col(shares_col).shift(1).over("code").alias(prev_col))
+        df = df.with_columns(
+            pl.when(pl.col(prev_col).is_not_null() & (pl.col(prev_col).abs() > 1e-3))
+            .then((pl.col(shares_col) - pl.col(prev_col)) / (pl.col(prev_col) + 1e-12))
+            .otherwise(None)
+            .alias("shares_out_delta_pct")
+        )
+
+        df = df.with_columns(
+            (pl.col("shares_out_delta_pct") <= -SUPPLY_SHOCK_THRESHOLD).cast(pl.Int8).alias("buyback_flag"),
+            (pl.col("shares_out_delta_pct") >= SUPPLY_SHOCK_THRESHOLD).cast(pl.Int8).alias("dilution_flag"),
+            (pl.col("shares_out_delta_pct").is_not_null()).cast(pl.Int8).alias("is_supply_shock_valid"),
+        )
+        df = df.with_columns((pl.col("buyback_flag") - pl.col("dilution_flag")).alias("supply_shock"))
+        df = df.drop([prev_col], strict=False)
+        return self._ensure_supply_shock_columns(df)
+
     def _ensure_float_crowding_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
             "float_turnover_pct": (pl.Float64, None),
@@ -1819,10 +1888,7 @@ class DatasetBuilder:
 
         new_columns: list[pl.Expr] = [
             pl.when(
-                share_expr.is_not_null()
-                & (share_expr > 0)
-                & turnover_expr.is_not_null()
-                & price_expr.is_not_null()
+                share_expr.is_not_null() & (share_expr > 0) & turnover_expr.is_not_null() & price_expr.is_not_null()
             )
             .then(turnover_expr / (price_expr * share_expr + eps))
             .otherwise(None)
@@ -1906,11 +1972,416 @@ class DatasetBuilder:
         )
 
         df = df.with_columns(
-            pl.when(pl.col("crowding_score").is_not_null()).then(1).otherwise(0).cast(pl.Int8).alias("is_crowding_signal_valid")
+            pl.when(pl.col("crowding_score").is_not_null())
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("is_crowding_signal_valid")
         )
 
         df = self._ensure_float_crowding_columns(df)
         return df
+
+    def _ensure_short_squeeze_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "ssp_ratio_component": (pl.Float64, None),
+            "sector_short_ratio_z20": (pl.Float64, None),
+            "limit_up_flag_lag1": (pl.Float64, None),
+            "squeeze_risk": (pl.Float64, None),
+            "is_squeeze_signal_valid": (pl.Int8, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_short_squeeze_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_short_squeeze_columns(df)
+
+        ssp_col = self._resolve_column_name(df, "ssp_ratio_sum")
+        sector_ratio_col = self._resolve_column_name(df, "sector_short_selling_ratio") or self._resolve_column_name(
+            df, "ss_ratio_market"
+        )
+        limit_flag_col = self._resolve_column_name(df, "limit_up_flag") or self._resolve_column_name(df, "is_limit_up")
+
+        if ssp_col is None or sector_ratio_col is None or limit_flag_col is None:
+            LOGGER.debug(
+                "[SQUEEZE] Missing inputs (ssp=%s, sector_ratio=%s, limit_flag=%s)",
+                ssp_col,
+                sector_ratio_col,
+                limit_flag_col,
+            )
+            return self._ensure_short_squeeze_columns(df)
+
+        df = df.sort(["code", "date"])
+
+        ssp_z_col = self._resolve_column_name(df, "ssp_ratio_sum_z20")
+        if ssp_z_col is None and ssp_col is not None:
+            temp_ma = "__ssp_ma20"
+            temp_std = "__ssp_std20"
+            df = df.with_columns(
+                roll_mean_safe(pl.col(ssp_col), 20, min_periods=5, by="code").alias(temp_ma),
+                roll_std_safe(pl.col(ssp_col), 20, min_periods=5, by="code").alias(temp_std),
+            )
+            df = df.with_columns(
+                pl.when(pl.col(temp_std).abs() > 1e-12)
+                .then((pl.col(ssp_col).shift(1).over("code") - pl.col(temp_ma)) / (pl.col(temp_std) + 1e-12))
+                .otherwise(None)
+                .alias("ssp_ratio_sum_z20")
+            )
+            df = df.drop([temp_ma, temp_std], strict=False)
+            ssp_z_col = "ssp_ratio_sum_z20"
+
+        sector_mean = "__sector_short_ma20"
+        sector_std = "__sector_short_std20"
+        df = df.with_columns(
+            roll_mean_safe(pl.col(sector_ratio_col), 20, min_periods=5, by="sector_code").alias(sector_mean),
+            roll_std_safe(pl.col(sector_ratio_col), 20, min_periods=5, by="sector_code").alias(sector_std),
+        )
+        df = df.with_columns(
+            pl.when(pl.col(sector_std).abs() > 1e-12)
+            .then(
+                (pl.col(sector_ratio_col).shift(1).over("sector_code") - pl.col(sector_mean))
+                / (pl.col(sector_std) + 1e-12)
+            )
+            .otherwise(None)
+            .alias("sector_short_ratio_z20")
+        )
+        df = df.drop([sector_mean, sector_std], strict=False)
+
+        df = df.with_columns(
+            pl.col(limit_flag_col).shift(1).over("code").fill_null(0).cast(pl.Float64).alias("limit_up_flag_lag1"),
+            pl.col(ssp_z_col if ssp_z_col else ssp_col).alias("ssp_ratio_component"),
+        )
+
+        df = df.with_columns(
+            pl.sum_horizontal(
+                [
+                    pl.col("ssp_ratio_component"),
+                    pl.col("sector_short_ratio_z20"),
+                    pl.col("limit_up_flag_lag1"),
+                ]
+            ).alias("squeeze_risk"),
+            pl.when(pl.col("ssp_ratio_component").is_not_null() & pl.col("sector_short_ratio_z20").is_not_null())
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("is_squeeze_signal_valid"),
+        )
+
+        return self._ensure_short_squeeze_columns(df)
+
+    def _ensure_margin_pain_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "mpi_drawdown": (pl.Float64, None),
+            "mpi_drawdown_z20": (pl.Float64, None),
+            "mpi_dist_to_limit": (pl.Float64, None),
+            "mpi_dist_to_limit_z20": (pl.Float64, None),
+            "margin_long_pct_float_z20": (pl.Float64, None),
+            "margin_pain_index": (pl.Float64, None),
+            "is_margin_pain_valid": (pl.Int8, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_margin_pain_index(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_margin_pain_columns(df)
+
+        # Note: shares_col resolved but not needed (margin pain uses percentage)
+        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_float")
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+        lower_limit_price_col = self._resolve_column_name(df, "lower_limit_price")
+
+        if margin_pct_col is None or price_col is None or lower_limit_price_col is None:
+            LOGGER.debug(
+                "[MPI] Missing inputs (margin_pct=%s, price=%s, lower_limit_price=%s)",
+                margin_pct_col,
+                price_col,
+                lower_limit_price_col,
+            )
+            return self._ensure_margin_pain_columns(df)
+
+        df = df.sort(["code", "date"])
+        price_expr = pl.col(price_col).cast(pl.Float64, strict=False)
+
+        roll_alias = "__mpi_roll_max20"
+        if hasattr(pl.Expr, "rolling_max"):
+            df = df.with_columns(
+                price_expr.shift(1).over("code").rolling_max(window_size=20, min_periods=5).alias(roll_alias)
+            )
+        else:
+            df = df.with_columns(price_expr.shift(1).over("code").alias(roll_alias))
+
+        df = df.with_columns(
+            pl.when(pl.col(roll_alias).is_not_null() & (pl.col(roll_alias).abs() > 1e-12))
+            .then((price_expr / pl.col(roll_alias)) - 1.0)
+            .otherwise(None)
+            .alias("mpi_drawdown")
+        )
+
+        limit_expr = pl.col(lower_limit_price_col).cast(pl.Float64, strict=False)
+        df = df.with_columns(
+            pl.when(price_expr.is_not_null() & (price_expr.abs() > 1e-9) & limit_expr.is_not_null())
+            .then((price_expr - limit_expr) / price_expr)
+            .otherwise(None)
+            .alias("mpi_dist_to_limit")
+        )
+        df = df.drop([roll_alias], strict=False)
+
+        def _zscore(expr_col: str, alias: str, by: str = "code") -> None:
+            nonlocal df
+            mean_alias = f"__{alias}_ma20"
+            std_alias = f"__{alias}_std20"
+            df = df.with_columns(
+                roll_mean_safe(pl.col(expr_col), 20, min_periods=5, by=by).alias(mean_alias),
+                roll_std_safe(pl.col(expr_col), 20, min_periods=5, by=by).alias(std_alias),
+            )
+            df = df.with_columns(
+                pl.when(pl.col(std_alias).abs() > 1e-12)
+                .then((pl.col(expr_col) - pl.col(mean_alias)) / (pl.col(std_alias) + 1e-12))
+                .otherwise(None)
+                .alias(alias)
+            )
+            df = df.drop([mean_alias, std_alias], strict=False)
+
+        _zscore("mpi_drawdown", "mpi_drawdown_z20")
+        _zscore("mpi_dist_to_limit", "mpi_dist_to_limit_z20")
+
+        df = df.with_columns(
+            pl.sum_horizontal(
+                [
+                    pl.col("margin_long_pct_float_z20"),
+                    pl.col("mpi_drawdown_z20").abs(),
+                    (-pl.col("mpi_dist_to_limit_z20")),
+                ]
+            ).alias("margin_pain_index"),
+            pl.when(
+                pl.col("margin_long_pct_float_z20").is_not_null()
+                & pl.col("mpi_drawdown_z20").is_not_null()
+                & pl.col("mpi_dist_to_limit_z20").is_not_null()
+            )
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("is_margin_pain_valid"),
+        )
+
+        return self._ensure_margin_pain_columns(df)
+
+    def _ensure_pre_earnings_flow_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "preE_margin_diff": (pl.Float64, None),
+            "preE_short_ratio_diff": (pl.Float64, None),
+            "preE_margin_diff_z20": (pl.Float64, None),
+            "preE_short_ratio_diff_z20": (pl.Float64, None),
+            "preE_flow_score": (pl.Float64, None),
+            "preE_risk_score": (pl.Float64, None),
+            "is_preE_flow_valid": (pl.Int8, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_pre_earnings_flow_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_pre_earnings_flow_columns(df)
+
+        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_float")
+        short_ratio_col = self._resolve_column_name(df, "short_selling_ratio_market")
+        earn_flag_col = self._resolve_column_name(df, "earnings_upcoming_3d") or self._resolve_column_name(
+            df, "is_E_pp3"
+        )
+
+        if margin_pct_col is None or short_ratio_col is None or earn_flag_col is None:
+            LOGGER.debug(
+                "[EARN-FLOW] Missing inputs (margin=%s, short_ratio=%s, earn_flag=%s)",
+                margin_pct_col,
+                short_ratio_col,
+                earn_flag_col,
+            )
+            return self._ensure_pre_earnings_flow_columns(df)
+
+        df = df.sort(["code", "date"])
+        margin_diff = (
+            pl.col(margin_pct_col).cast(pl.Float64) - pl.col(margin_pct_col).cast(pl.Float64).shift(5).over("code")
+        ).alias("preE_margin_diff")
+        short_diff = (
+            pl.col(short_ratio_col).cast(pl.Float64) - pl.col(short_ratio_col).cast(pl.Float64).shift(5)
+        ).alias("preE_short_ratio_diff")
+        df = df.with_columns([margin_diff, short_diff])
+
+        def _zscore(col: str, alias: str, by: str | None) -> None:
+            nonlocal df
+            mean_alias = f"__{alias}_ma20"
+            std_alias = f"__{alias}_std20"
+            df = df.with_columns(
+                roll_mean_safe(pl.col(col), 20, min_periods=5, by=by).alias(mean_alias),
+                roll_std_safe(pl.col(col), 20, min_periods=5, by=by).alias(std_alias),
+            )
+            df = df.with_columns(
+                pl.when(pl.col(std_alias).abs() > 1e-12)
+                .then((pl.col(col) - pl.col(mean_alias)) / (pl.col(std_alias) + 1e-12))
+                .otherwise(None)
+                .alias(alias)
+            )
+            df = df.drop([mean_alias, std_alias], strict=False)
+
+        _zscore("preE_margin_diff", "preE_margin_diff_z20", "code")
+        _zscore("preE_short_ratio_diff", "preE_short_ratio_diff_z20", None)
+
+        df = df.with_columns(
+            pl.sum_horizontal([pl.col("preE_margin_diff_z20"), pl.col("preE_short_ratio_diff_z20")]).alias(
+                "preE_flow_score"
+            ),
+        )
+
+        pre_event_mask = pl.col(earn_flag_col) == 1
+        earn_1d_col = self._resolve_column_name(df, "earnings_upcoming_1d")
+        earn_5d_col = self._resolve_column_name(df, "earnings_upcoming_5d")
+        if earn_1d_col is not None:
+            pre_event_mask = pre_event_mask | (pl.col(earn_1d_col) == 1)
+        if earn_5d_col is not None:
+            pre_event_mask = pre_event_mask | (pl.col(earn_5d_col) == 1)
+
+        df = df.with_columns(
+            pre_event_mask.cast(pl.Int8).alias("_preE_flag"),
+            (pre_event_mask.cast(pl.Float64) * pl.col("preE_flow_score")).alias("preE_risk_score"),
+            pl.when(pl.col("preE_flow_score").is_not_null() & pre_event_mask.is_not_null())
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("is_preE_flow_valid"),
+        )
+
+        df = df.drop(["_preE_flag"], strict=False)
+
+        return self._ensure_pre_earnings_flow_columns(df)
+
+    def _ensure_gap_basis_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "gap_predictor": (pl.Float64, None),
+            "basis_gate": (pl.Float64, None),
+            "is_gap_basis_valid": (pl.Int8, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_gap_basis_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_gap_basis_columns(df)
+
+        fut_overnight_col = self._resolve_column_name(df, "fut_topix_overnight")
+        basis_col = self._resolve_column_name(df, "fut_topix_basis")
+        beta_col = self._resolve_column_name(df, "beta60_topix")
+
+        if fut_overnight_col is None or basis_col is None or beta_col is None:
+            LOGGER.debug(
+                "[GAP] Missing inputs (overnight=%s, basis=%s, beta=%s)",
+                fut_overnight_col,
+                basis_col,
+                beta_col,
+            )
+            return self._ensure_gap_basis_columns(df)
+
+        df = df.with_columns(
+            (pl.col(fut_overnight_col) * pl.col(beta_col)).alias("gap_predictor"),
+            (pl.col(basis_col) * pl.col(beta_col)).alias("basis_gate"),
+            pl.when(
+                pl.col(fut_overnight_col).is_not_null()
+                & pl.col(basis_col).is_not_null()
+                & pl.col(beta_col).is_not_null()
+            )
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("is_gap_basis_valid"),
+        )
+
+        return self._ensure_gap_basis_columns(df)
+
+    def _ensure_liquidity_impact_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "amihud_z20": (pl.Float64, None),
+            "bd_activity_z20": (pl.Float64, None),
+            "liquidity_impact": (pl.Float64, None),
+            "is_liquidity_signal_valid": (pl.Int8, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_liquidity_impact_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_liquidity_impact_columns(df)
+
+        amihud_z_col = self._resolve_column_name(df, "amihud_z20")
+        amihud_raw_col = self._resolve_column_name(df, "amihud_20")
+        bd_activity_col = self._resolve_column_name(df, "bd_activity_ratio")
+
+        if bd_activity_col is None or (amihud_z_col is None and amihud_raw_col is None):
+            LOGGER.debug(
+                "[LIQ] Missing inputs (amihud_z=%s, amihud_raw=%s, bd_activity=%s)",
+                amihud_z_col,
+                amihud_raw_col,
+                bd_activity_col,
+            )
+            return self._ensure_liquidity_impact_columns(df)
+
+        df = df.sort(["code", "date"])
+
+        if amihud_z_col is None and amihud_raw_col is not None:
+            mean_alias = "__amihud_ma20"
+            std_alias = "__amihud_std20"
+            df = df.with_columns(
+                roll_mean_safe(pl.col(amihud_raw_col), 20, min_periods=5, by="code").alias(mean_alias),
+                roll_std_safe(pl.col(amihud_raw_col), 20, min_periods=5, by="code").alias(std_alias),
+            )
+            df = df.with_columns(
+                pl.when(pl.col(std_alias).abs() > 1e-12)
+                .then((pl.col(amihud_raw_col) - pl.col(mean_alias)) / (pl.col(std_alias) + 1e-12))
+                .otherwise(None)
+                .alias("amihud_z20"),
+            )
+            df = df.drop([mean_alias, std_alias], strict=False)
+            amihud_z_col = "amihud_z20"
+
+        bd_mean = "__bd_activity_ma20"
+        bd_std = "__bd_activity_std20"
+        df = df.with_columns(
+            roll_mean_safe(pl.col(bd_activity_col), 20, min_periods=5, by="code").alias(bd_mean),
+            roll_std_safe(pl.col(bd_activity_col), 20, min_periods=5, by="code").alias(bd_std),
+        )
+        df = df.with_columns(
+            pl.when(pl.col(bd_std).abs() > 1e-12)
+            .then((pl.col(bd_activity_col) - pl.col(bd_mean)) / (pl.col(bd_std) + 1e-12))
+            .otherwise(None)
+            .alias("bd_activity_z20"),
+        )
+        df = df.drop([bd_mean, bd_std], strict=False)
+
+        df = df.with_columns(
+            (pl.col(amihud_z_col if amihud_z_col else "amihud_z20") * pl.col("bd_activity_z20")).alias(
+                "liquidity_impact"
+            ),
+            pl.when(
+                pl.col("bd_activity_z20").is_not_null()
+                & pl.col(amihud_z_col if amihud_z_col else "amihud_z20").is_not_null()
+            )
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("is_liquidity_signal_valid"),
+        )
+
+        return self._ensure_liquidity_impact_columns(df)
 
     def _extend_limit_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """Extend limit features with P0: is_limit_up/down, streak, post_limit_reversal_flag."""
@@ -2574,14 +3045,19 @@ class DatasetBuilder:
             "div_is_ex0": (pl.Int8, 0),
             "div_dy_12m": (pl.Float64, None),
             "div_yield_ttm": (pl.Float64, None),
+            "div_yield_12m": (pl.Float64, None),
             "div_amount_next": (pl.Float64, None),
             "div_amount_12m": (pl.Float64, None),
             "div_ex_drop_expected": (pl.Float64, None),
+            "div_ex_gap_theo": (pl.Float64, None),
+            "div_ex_gap_miss": (pl.Float64, None),
             "div_is_obs": (pl.Int8, 0),
             "is_div_valid": (pl.Int8, 0),
             "div_is_special": (pl.Int8, 0),
             "div_staleness_bd": (pl.Int32, None),
             "div_staleness_days": (pl.Int32, None),
+            "div_ex_soon_3": (pl.Int8, 0),
+            "div_ex_cycle_z": (pl.Float64, None),
         }
         for col, (dtype, default) in specs.items():
             if col not in df.columns:
@@ -3850,6 +4326,10 @@ class DatasetBuilder:
             ]
         )
 
+        joined = joined.with_columns(
+            ((pl.col("div_days_to_ex") >= 0) & (pl.col("div_days_to_ex") <= 3)).cast(pl.Int8).alias("div_ex_soon_3")
+        )
+
         # P0: div_yield_ttm (TTM dividend yield)
         # Note: div_dy_12m is a legacy name, div_yield_ttm is the P0 standard name
         # Both are the same: div_sum_12m / adjustmentclose
@@ -3860,7 +4340,10 @@ class DatasetBuilder:
             .alias("div_yield_ttm")
         )
         # Keep div_dy_12m as alias for backward compatibility
-        joined = joined.with_columns(pl.col("div_yield_ttm").alias("div_dy_12m"))
+        joined = joined.with_columns(
+            pl.col("div_yield_ttm").alias("div_dy_12m"),
+            pl.col("div_yield_ttm").alias("div_yield_12m"),
+        )
 
         # P0: div_days_since_ex (days since last ex-date, calendar days)
         joined = joined.with_columns(
@@ -3872,6 +4355,21 @@ class DatasetBuilder:
             .cast(pl.Int32)
             .alias("div_days_since_ex")
         )
+
+        if "div_days_since_ex" in joined.columns:
+            mean_alias = "__div_cycle_ma20"
+            std_alias = "__div_cycle_std20"
+            joined = joined.with_columns(
+                roll_mean_safe(pl.col("div_days_since_ex"), 20, min_periods=5, by="code").alias(mean_alias),
+                roll_std_safe(pl.col("div_days_since_ex"), 20, min_periods=5, by="code").alias(std_alias),
+            )
+            joined = joined.with_columns(
+                pl.when(pl.col(std_alias).abs() > 1e-12)
+                .then((pl.col("div_days_since_ex") - pl.col(mean_alias)) / (pl.col(std_alias) + 1e-12))
+                .otherwise(None)
+                .alias("div_ex_cycle_z")
+            )
+            joined = joined.drop([mean_alias, std_alias], strict=False)
 
         # P0: div_ex_drop_expected (expected drop ratio on ex-date)
         # = div_amount_next / adjustmentclose_{t-1}
@@ -3893,6 +4391,22 @@ class DatasetBuilder:
             joined = joined.drop("_prev_close")
         else:
             joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("div_ex_drop_expected"))
+
+        joined = joined.with_columns(pl.col("div_ex_drop_expected").alias("div_ex_gap_theo"))
+        ret_overnight_col = self._resolve_column_name(joined, "ret_overnight")
+        if ret_overnight_col is not None:
+            joined = joined.with_columns(
+                pl.when(
+                    (pl.col("div_is_ex0") == 1)
+                    & pl.col("div_ex_gap_theo").is_not_null()
+                    & pl.col(ret_overnight_col).is_not_null()
+                )
+                .then(pl.col(ret_overnight_col) - pl.col("div_ex_gap_theo"))
+                .otherwise(None)
+                .alias("div_ex_gap_miss")
+            )
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("div_ex_gap_miss"))
 
         # P0: Add P0 naming convention flags (keep existing div_pre1/div_pre3/etc for backward compatibility)
         # div_pre_ex_1d, div_pre_ex_3d are P0 standard names (same as div_pre1, div_pre3)
@@ -4130,15 +4644,10 @@ class DatasetBuilder:
         )
 
         joined = joined.with_columns(
-            pl.date_diff(
-                pl.col("earnings_event_date"),
-                pl.col("_earn_today"),
-                "days",
-                time_unit="ns",
-            ).alias("_earn_days_delta")
+            (pl.col("earnings_event_date") - pl.col("_earn_today")).dt.total_days().alias("_earn_days_delta")
         )
 
-        joined = joined.with_columns(pl.col("_earn_days_delta").cast(pl.Int32).alias("days_to_earnings"))
+        joined = joined.with_columns(pl.col("_earn_days_delta").cast(pl.Int32, strict=False).alias("days_to_earnings"))
 
         dte = pl.col("days_to_earnings")
         joined = joined.with_columns(

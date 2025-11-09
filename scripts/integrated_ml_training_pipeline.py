@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402, E501
 """
 Complete ATFT-GAT-FAN Training Pipeline for gogooku3
 ATFT-GAT-FANの成果（Sharpe 0.849）を完全に再現する統合学習パイプライン
@@ -375,6 +376,9 @@ class CompleteATFTTrainingPipeline:
                 os.environ[key] = str(value)
 
             # 長期調査結果に基づく運用デフォルト
+            cpu_count = os.cpu_count() or 8
+            auto_workers = max(2, min(8, max(1, cpu_count // 4)))
+            default_pin = "1" if torch.cuda.is_available() else "0"
             os.environ.setdefault("FEATURE_CLIP_VALUE", "8")
             os.environ.setdefault("EXPORT_PREDICTIONS", "1")
             os.environ.setdefault("USE_BEST_CKPT_FOR_EXPORT", "1")
@@ -385,10 +389,11 @@ class CompleteATFTTrainingPipeline:
             os.environ.setdefault("EARLY_STOP_PATIENCE", "12")
             os.environ.setdefault("NORMALIZATION_MAX_SAMPLES", "8192")
             os.environ.setdefault("NORMALIZATION_MAX_FILES", "256")
-            os.environ.setdefault("ALLOW_UNSAFE_DATALOADER", "0")
-            os.environ.setdefault("NUM_WORKERS", "0")
-            os.environ.setdefault("PERSISTENT_WORKERS", "0")
-            os.environ.setdefault("PREFETCH_FACTOR", "0")
+            os.environ.setdefault("ALLOW_UNSAFE_DATALOADER", "auto")
+            os.environ.setdefault("NUM_WORKERS", str(auto_workers))
+            os.environ.setdefault("PERSISTENT_WORKERS", "1")
+            os.environ.setdefault("PREFETCH_FACTOR", "2")
+            os.environ.setdefault("PIN_MEMORY", default_pin)
             os.environ.setdefault("ENABLE_AUGMENTATION_PHASE", "1")
             os.environ.setdefault("PHASE4_EPOCHS", "15")
 
@@ -972,7 +977,13 @@ class CompleteATFTTrainingPipeline:
                 # If ALLOW_UNSAFE_DATALOADER=1, use NUM_WORKERS from environment (default behavior)
                 # If ALLOW_UNSAFE_DATALOADER=0 or unset, force single-worker mode for stability
                 # Note: Safe mode (FORCE_SINGLE_PROCESS=1) always forces single-worker above
-                allow_multiworker = os.getenv("ALLOW_UNSAFE_DATALOADER", "0").strip() in ("1", "true", "yes", "auto")
+                allow_multiworker = os.getenv("ALLOW_UNSAFE_DATALOADER", "0").strip().lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                    "auto",
+                    "multi",
+                )
                 if not allow_multiworker and not is_safe_mode:
                     # Only force single-worker if not already in safe mode (avoid duplicate logic)
                     if "train.batch.num_workers" not in cli_override_keys:
@@ -990,10 +1001,32 @@ class CompleteATFTTrainingPipeline:
                 elif allow_multiworker and not is_safe_mode:
                     # Respect environment variables for multi-worker configuration
                     num_workers = int(os.getenv("NUM_WORKERS", "8"))
+                    prefetch_factor = os.getenv("PREFETCH_FACTOR", "2")
+                    persistent_workers = os.getenv("PERSISTENT_WORKERS", "1").lower() in ("1", "true", "yes")
+                    pin_memory = os.getenv("PIN_MEMORY", "1").lower() in ("1", "true", "yes")
                     if "train.batch.num_workers" not in cli_override_keys:
                         overrides.append(f"train.batch.num_workers={num_workers}")
+                    if num_workers > 0:
+                        if (
+                            prefetch_factor
+                            and prefetch_factor not in ("0", "null", "none", "None", None)
+                            and "train.batch.prefetch_factor" not in cli_override_keys
+                        ):
+                            overrides.append(f"train.batch.prefetch_factor={prefetch_factor}")
+                        if "train.batch.persistent_workers" not in cli_override_keys:
+                            overrides.append(
+                                f"train.batch.persistent_workers={'true' if persistent_workers else 'false'}"
+                            )
+                        if "train.batch.pin_memory" not in cli_override_keys:
+                            overrides.append(f"train.batch.pin_memory={'true' if pin_memory else 'false'}")
                     logger.info(
-                        f"[DataLoader] Multi-worker mode enabled (ALLOW_UNSAFE_DATALOADER=1): num_workers={num_workers}"
+                        "[DataLoader] Multi-worker mode enabled (ALLOW_UNSAFE_DATALOADER=%s): "
+                        "num_workers=%d, prefetch_factor=%s, persistent_workers=%s, pin_memory=%s",
+                        os.getenv("ALLOW_UNSAFE_DATALOADER", "auto"),
+                        num_workers,
+                        prefetch_factor,
+                        persistent_workers,
+                        pin_memory,
                     )
 
                 cmd.extend(overrides)
@@ -1132,10 +1165,16 @@ class CompleteATFTTrainingPipeline:
             env.pop("VALIDATE_CONFIG", None)
             env["HYDRA_FULL_ERROR"] = "1"  # 詳細なエラー情報を取得
             env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            default_workers = max(2, min(8, max(1, (os.cpu_count() or 8) // 4)))
+            default_pin = "1" if torch.cuda.is_available() else "0"
             env.setdefault(
                 "ALLOW_UNSAFE_DATALOADER",
-                (os.getenv("ALLOW_UNSAFE_DATALOADER", "0") or "0"),
+                (os.getenv("ALLOW_UNSAFE_DATALOADER", "auto") or "auto"),
             )
+            env.setdefault("NUM_WORKERS", os.getenv("NUM_WORKERS", str(default_workers)))
+            env.setdefault("PREFETCH_FACTOR", os.getenv("PREFETCH_FACTOR", "2"))
+            env.setdefault("PERSISTENT_WORKERS", os.getenv("PERSISTENT_WORKERS", "1"))
+            env.setdefault("PIN_MEMORY", os.getenv("PIN_MEMORY", default_pin))
             # 学習安定化向け環境変数（既存指定があれば尊重）
             env.setdefault("REQUIRE_GPU", os.getenv("REQUIRE_GPU", "1"))
             env.setdefault("ACCELERATOR", os.getenv("ACCELERATOR", "gpu"))

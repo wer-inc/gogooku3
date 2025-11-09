@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: ARG001, E501
 
 """
 validator_1to9.py — A lightweight acceptance harness to verify items (1)–(9)
@@ -38,7 +39,7 @@ import json
 import math
 import os
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import polars as pl
 from polars import Expr as _Expr
@@ -77,7 +78,7 @@ pl.sum = _sum_compat  # type: ignore[attr-defined]
 pl.quantile = _quantile_compat  # type: ignore[attr-defined]
 
 
-def resolve_column(columns: List[str], *candidates: str) -> Optional[str]:
+def resolve_column(columns: list[str], *candidates: str) -> str | None:
     """Return the first matching column name ignoring case."""
 
     lookup = {col.lower(): col for col in columns}
@@ -87,17 +88,21 @@ def resolve_column(columns: List[str], *candidates: str) -> Optional[str]:
             return actual
     return None
 
+
 def _date(s: str) -> date:
     return datetime.fromisoformat(s).date()
 
-def _exists(path: Optional[str]) -> bool:
+
+def _exists(path: str | None) -> bool:
     return bool(path) and os.path.exists(path)
+
 
 def head(df: pl.DataFrame, n=3):
     try:
         return df.head(n)
     except Exception:
         return df
+
 
 class Score:
     def __init__(self):
@@ -106,16 +111,19 @@ class Score:
         self.warn = 0
         self.fail = 0
 
-    def add(self, item: str, status: str, detail: str, metrics: Dict[str, Any] = None):
+    def add(self, item: str, status: str, detail: str, metrics: dict[str, Any] = None):
         metrics = metrics or {}
         if status not in {"PASS", "WARN", "FAIL", "SKIP"}:
             status = "FAIL"
-        if status == "PASS": self.ok += 1
-        elif status == "WARN": self.warn += 1
-        elif status == "FAIL": self.fail += 1
+        if status == "PASS":
+            self.ok += 1
+        elif status == "WARN":
+            self.warn += 1
+        elif status == "FAIL":
+            self.fail += 1
         self.items.append({"item": item, "status": status, "detail": detail, "metrics": metrics})
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         return {
             "summary": {"pass": self.ok, "warn": self.warn, "fail": self.fail, "total": len(self.items)},
             "checks": self.items,
@@ -131,10 +139,7 @@ def _mean(
     """Compute mean with optional filtering; returns None on failure."""
     try:
         frame = lf.filter(filter_expr) if filter_expr is not None else lf
-        result = (
-            frame.select(pl.col(column).cast(pl.Float64).mean().alias("_mean"))
-            .collect()
-        )
+        result = frame.select(pl.col(column).cast(pl.Float64).mean().alias("_mean")).collect()
         if result.is_empty():
             return None
         value = result["_mean"][0]
@@ -153,10 +158,7 @@ def _series_quantile(
     """Compute quantile with optional filtering; returns None on failure."""
     try:
         frame = lf.filter(filter_expr) if filter_expr is not None else lf
-        result = (
-            frame.select(pl.col(column).cast(pl.Float64).quantile(quantile).alias("_quantile"))
-            .collect()
-        )
+        result = frame.select(pl.col(column).cast(pl.Float64).quantile(quantile).alias("_quantile")).collect()
         if result.is_empty():
             return None
         value = result["_quantile"][0]
@@ -164,7 +166,8 @@ def _series_quantile(
     except Exception:
         return None
 
-def load_dataset_lazy(path: str, start: Optional[str], end: Optional[str]) -> pl.LazyFrame:
+
+def load_dataset_lazy(path: str, start: str | None, end: str | None) -> pl.LazyFrame:
     lf = pl.scan_parquet(path)
     # Try to filter by date if Date column exists
     try:
@@ -180,11 +183,13 @@ def load_dataset_lazy(path: str, start: Optional[str], end: Optional[str]) -> pl
         pass
     return lf
 
-def get_columns(path: str) -> List[str]:
+
+def get_columns(path: str) -> list[str]:
     lf = pl.scan_parquet(path)
     return lf.columns
 
-def check0_primary_key_and_core(path: str, score: Score, start: Optional[str], end: Optional[str]) -> None:
+
+def check0_primary_key_and_core(path: str, score: Score, start: str | None, end: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
     required_pk = {"Code", "Date"}
@@ -197,18 +202,14 @@ def check0_primary_key_and_core(path: str, score: Score, start: Optional[str], e
         )
         return
 
-    stats = (
-        lf.select(
-            [
-                pl.len().alias("total_rows"),
-                pl.concat_str(
-                    [pl.col("Code"), pl.col("Date").cast(pl.Utf8)], separator="|"
-                )
-                .n_unique()
-                .alias("unique_keys"),
-            ]
-        ).collect()
-    )
+    stats = lf.select(
+        [
+            pl.len().alias("total_rows"),
+            pl.concat_str([pl.col("Code"), pl.col("Date").cast(pl.Utf8)], separator="|")
+            .n_unique()
+            .alias("unique_keys"),
+        ]
+    ).collect()
     total_rows = int(stats["total_rows"][0]) if stats.height else 0
     unique_keys = int(stats["unique_keys"][0]) if stats.height else 0
     duplicate_rate = 0.0 if total_rows == 0 else max(0.0, 1.0 - unique_keys / total_rows)
@@ -226,14 +227,9 @@ def check0_primary_key_and_core(path: str, score: Score, start: Optional[str], e
     present_core = [col for col in core_required if col in cols]
     coverage = {}
     if present_core:
-        cover_df = (
-            lf.select(
-                [
-                    pl.col(col).is_not_null().cast(pl.Float64).mean().alias(col)
-                    for col in present_core
-                ]
-            ).collect()
-        )
+        cover_df = lf.select(
+            [pl.col(col).is_not_null().cast(pl.Float64).mean().alias(col) for col in present_core]
+        ).collect()
         for col in present_core:
             coverage[col] = float(cover_df[col][0]) if cover_df.height else 0.0
 
@@ -245,10 +241,7 @@ def check0_primary_key_and_core(path: str, score: Score, start: Optional[str], e
     low_cov = {col: cov for col, cov in coverage.items() if cov < 0.99}
     if low_cov:
         status = "FAIL"
-        details.append(
-            "low coverage "
-            + ", ".join(f"{col}={cov:.3%}" for col, cov in sorted(low_cov.items()))
-        )
+        details.append("low coverage " + ", ".join(f"{col}={cov:.3%}" for col, cov in sorted(low_cov.items())))
     if duplicate_rate > 0.0:
         status = "FAIL"
         details.append(f"duplicate key rate={duplicate_rate:.3e}")
@@ -262,10 +255,11 @@ def check0_primary_key_and_core(path: str, score: Score, start: Optional[str], e
         {"duplicate_rate": duplicate_rate, "coverage": coverage, "missing_core": missing_core},
     )
 
+
 def check1_schema_governance(path: str, score: Score) -> None:
     cols = set(get_columns(path))
-    raw_names = {"Close","Open","High","Low","Volume","Adj Close","AdjClose"}
-    adjusted_names = {"adjustmentclose","adjustmentopen","adjustmenthigh","adjustmentlow","adjustmentvolume"}
+    raw_names = {"Close", "Open", "High", "Low", "Volume", "Adj Close", "AdjClose"}
+    adjusted_names = {"adjustmentclose", "adjustmentopen", "adjustmenthigh", "adjustmentlow", "adjustmentvolume"}
     # canonical must exist; raw should NOT
     has_adj = adjusted_names.issubset({c.lower() for c in cols})
     has_raw = any(name in cols for name in raw_names)
@@ -275,10 +269,15 @@ def check1_schema_governance(path: str, score: Score) -> None:
     if has_raw:
         detail.append("raw OHLC/Adj Close still present (should be removed at finalize)")
     status = "PASS" if has_adj and not has_raw else ("WARN" if has_adj and has_raw else "FAIL")
-    score.add("1) Schema governance (canonicalized OHLC)", status, "; ".join(detail) or "ok",
-              {"has_adj": has_adj, "has_raw": has_raw})
+    score.add(
+        "1) Schema governance (canonicalized OHLC)",
+        status,
+        "; ".join(detail) or "ok",
+        {"has_adj": has_adj, "has_raw": has_raw},
+    )
 
-def check2_returns_left_closed(path: str, score: Score, start: Optional[str], end: Optional[str]) -> None:
+
+def check2_returns_left_closed(path: str, score: Score, start: str | None, end: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
     leak_cols = [c for c in cols if c.startswith("ret_fwd_") or c.startswith("returns_") or c.startswith("feat_ret_")]
@@ -288,7 +287,7 @@ def check2_returns_left_closed(path: str, score: Score, start: Optional[str], en
     metrics = {}
     if leak_cols:
         status = "FAIL"
-        detail.append(f"leak-like columns present: {leak_cols[:5]}{'...' if len(leak_cols)>5 else ''}")
+        detail.append(f"leak-like columns present: {leak_cols[:5]}{'...' if len(leak_cols) > 5 else ''}")
     if not has_prev:
         status = "FAIL"
         detail.append("ret_prev_1d not found")
@@ -296,43 +295,49 @@ def check2_returns_left_closed(path: str, score: Score, start: Optional[str], en
     if has_prev:
         # compute sample error
         try:
-            lf2 = (lf
-                   .select(["Code","Date","adjustmentclose","ret_prev_1d"])
-                   .drop_nulls(["Code","Date","adjustmentclose","ret_prev_1d"])
-                   .sort(["Code","Date"])
-                   .with_columns([pl.col("adjustmentclose").shift(1).over("Code").alias("adj_lag1")])
-                   .with_columns([((pl.col("adjustmentclose") / pl.col("adj_lag1")) - 1.0).alias("ret_calc")])
-                   .with_columns([(pl.col("ret_calc") - pl.col("ret_prev_1d")).abs().alias("abs_err")])
-                   .select([pl.col("abs_err").mean().alias("mae"), pl.col("abs_err").quantile(0.99).alias("q99")])
+            lf2 = (
+                lf.select(["Code", "Date", "adjustmentclose", "ret_prev_1d"])
+                .drop_nulls(["Code", "Date", "adjustmentclose", "ret_prev_1d"])
+                .sort(["Code", "Date"])
+                .with_columns([pl.col("adjustmentclose").shift(1).over("Code").alias("adj_lag1")])
+                .with_columns([((pl.col("adjustmentclose") / pl.col("adj_lag1")) - 1.0).alias("ret_calc")])
+                .with_columns([(pl.col("ret_calc") - pl.col("ret_prev_1d")).abs().alias("abs_err")])
+                .select([pl.col("abs_err").mean().alias("mae"), pl.col("abs_err").quantile(0.99).alias("q99")])
             )
             res = lf2.collect()
             mae = float(res["mae"][0]) if res.height else None
             q99 = float(res["q99"][0]) if res.height else None
             metrics.update({"mae": mae, "q99": q99})
             if mae is None or math.isnan(mae):
-                status = "FAIL"; detail.append("could not compute MAE for ret_prev_1d")
+                status = "FAIL"
+                detail.append("could not compute MAE for ret_prev_1d")
             else:
                 if mae > 1e-4 or q99 > 5e-4:
-                    status = "FAIL"; detail.append(f"ret_prev_1d deviates from adj-close formula (mae={mae:.2e}, q99={q99:.2e})")
+                    status = "FAIL"
+                    detail.append(f"ret_prev_1d deviates from adj-close formula (mae={mae:.2e}, q99={q99:.2e})")
         except Exception as e:
-            status = "WARN"; detail.append(f"calc error: {e}")
+            status = "WARN"
+            detail.append(f"calc error: {e}")
     score.add("2) Returns separation & left-closed", status, "; ".join(detail) or "ok", metrics)
 
-def check3_gap_intraday(path: str, score: Score, start: Optional[str], end: Optional[str]) -> None:
+
+def check3_gap_intraday(path: str, score: Score, start: str | None, end: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
-    need = {"ret_overnight","ret_intraday","ret_prev_1d"}
+    need = {"ret_overnight", "ret_intraday", "ret_prev_1d"}
     missing = [c for c in need if c not in cols]
     if missing:
         score.add("3) Gap/Intraday split", "FAIL", f"missing columns: {missing}. Implement ret_overnight/ret_intraday.")
         return
     # Relation: (1+overnight)*(1+intraday)-1 ~= ret_prev_1d
     try:
-        lf2 = (lf.select(["Code","Date","ret_overnight","ret_intraday","ret_prev_1d"])
-                 .drop_nulls()
-                 .with_columns([((1+pl.col("ret_overnight"))*(1+pl.col("ret_intraday"))-1).alias("ret_comp")])
-                 .with_columns([(pl.col("ret_comp")-pl.col("ret_prev_1d")).abs().alias("abs_err")])
-                 .select([pl.col("abs_err").mean().alias("mae"), pl.col("abs_err").quantile(0.99).alias("q99")]))
+        lf2 = (
+            lf.select(["Code", "Date", "ret_overnight", "ret_intraday", "ret_prev_1d"])
+            .drop_nulls()
+            .with_columns([((1 + pl.col("ret_overnight")) * (1 + pl.col("ret_intraday")) - 1).alias("ret_comp")])
+            .with_columns([(pl.col("ret_comp") - pl.col("ret_prev_1d")).abs().alias("abs_err")])
+            .select([pl.col("abs_err").mean().alias("mae"), pl.col("abs_err").quantile(0.99).alias("q99")])
+        )
         res = lf2.collect()
         mae = float(res["mae"][0]) if res.height else None
         q99 = float(res["q99"][0]) if res.height else None
@@ -347,91 +352,122 @@ def check3_gap_intraday(path: str, score: Score, start: Optional[str], end: Opti
     except Exception as e:
         score.add("3) Gap/Intraday split", "FAIL", f"calc error: {e}")
 
-def coverage_ratio(lf: pl.LazyFrame, cols: List[str]) -> float:
+
+def coverage_ratio(lf: pl.LazyFrame, cols: list[str]) -> float:
     if not cols:
         return 0.0
     try:
-        q = (
-            lf.select(
-                [
-                    pl.any_horizontal([pl.col(c).is_not_null() for c in cols])
-                    .cast(pl.Int8)
-                    .sum()
-                    .alias("nz"),
-                    pl.len().alias("n"),
-                ]
-            ).collect()
-        )
-        nz = int(q["nz"][0]); n = int(q["n"][0])
-        return 0.0 if n==0 else nz/n
+        q = lf.select(
+            [
+                pl.any_horizontal([pl.col(c).is_not_null() for c in cols]).cast(pl.Int8).sum().alias("nz"),
+                pl.len().alias("n"),
+            ]
+        ).collect()
+        nz = int(q["nz"][0])
+        n = int(q["n"][0])
+        return 0.0 if n == 0 else nz / n
     except Exception:
         return 0.0
 
-def check4_margin_asof(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check4_margin_asof(path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
     weekly_cols = [c for c in cols if c.startswith("weekly_margin_")]
-    daily_cols  = [c for c in cols if c.startswith("margin_")]  # beware: includes many derived
-    has_weekly = any(c.endswith(("_volume","_imbalance","_long_short_ratio")) for c in weekly_cols)
-    has_daily = any(c in cols for c in ["margin_net","margin_total","margin_long_short_ratio","margin_imbalance"])
-    cov_weekly = coverage_ratio(lf, [c for c in weekly_cols if c.endswith(("_volume","_imbalance","_long_short_ratio"))])
-    cov_daily  = coverage_ratio(lf, ["margin_net","margin_total","margin_long_short_ratio","margin_imbalance"])
-    status = "PASS" if has_weekly and cov_weekly>0.3 else "WARN"
+    # Note: daily_cols would include many derived features - not used here
+    has_weekly = any(c.endswith(("_volume", "_imbalance", "_long_short_ratio")) for c in weekly_cols)
+    has_daily = any(c in cols for c in ["margin_net", "margin_total", "margin_long_short_ratio", "margin_imbalance"])
+    cov_weekly = coverage_ratio(
+        lf, [c for c in weekly_cols if c.endswith(("_volume", "_imbalance", "_long_short_ratio"))]
+    )
+    cov_daily = coverage_ratio(lf, ["margin_net", "margin_total", "margin_long_short_ratio", "margin_imbalance"])
+    status = "PASS" if has_weekly and cov_weekly > 0.3 else "WARN"
     detail = f"weekly(has={has_weekly}, cov≈{cov_weekly:.2f}); daily(has={has_daily}, cov≈{cov_daily:.2f})"
     # Strict as-of (if snapshots exist)
-    if snapshots_dir and os.path.exists(os.path.join(snapshots_dir,"margin_daily_snapshot.parquet")):
+    if snapshots_dir and os.path.exists(os.path.join(snapshots_dir, "margin_daily_snapshot.parquet")):
         try:
-            snap = pl.scan_parquet(os.path.join(snapshots_dir,"margin_daily_snapshot.parquet")).select(["Code","Date","availability_ts"])
+            snap = pl.scan_parquet(os.path.join(snapshots_dir, "margin_daily_snapshot.parquet")).select(
+                ["Code", "Date", "availability_ts"]
+            )
             # join a tiny sample and check availability_ts <= asof_ts (requires asof_ts in dataset during audit builds)
             if "asof_ts" in cols:
-                lf2 = (lf.select(["Code","Date","asof_ts"])
-                         .join(snap, on=["Code","Date"], how="inner")
-                         .select([ (pl.col("availability_ts") <= pl.col("asof_ts")).cast(pl.Int8).alias("ok") ])
-                         .select([1 - pl.mean("ok").alias("violation_rate") ]))
+                lf2 = (
+                    lf.select(["Code", "Date", "asof_ts"])
+                    .join(snap, on=["Code", "Date"], how="inner")
+                    .select([(pl.col("availability_ts") <= pl.col("asof_ts")).cast(pl.Int8).alias("ok")])
+                    .select([1 - pl.mean("ok").alias("violation_rate")])
+                )
                 vr = float(lf2.collect()["violation_rate"][0])
-                if vr > 0.0: status = "FAIL"; detail += f"; as-of violations={vr:.3f}"
+                if vr > 0.0:
+                    status = "FAIL"
+                    detail += f"; as-of violations={vr:.3f}"
         except Exception as e:
             detail += f"; as-of check error: {e}"
     score.add("4) Margin weekly/daily as‑of", status, detail, {"cov_weekly": cov_weekly, "cov_daily": cov_daily})
 
-def check5_earnings(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check5_earnings(path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
-    need_any = ["days_to_earnings","earnings_upcoming_5d","earnings_recent_5d"]
+    need_any = ["days_to_earnings", "earnings_upcoming_5d", "earnings_recent_5d"]
     present = [c for c in need_any if c in cols]
     if not present:
         score.add("5) Earnings announcements", "WARN", "no earnings columns found (days_to_earnings / windows)")
         return
     # Distribution sanity: days_to_earnings integer & range
-    status = "PASS"; detail = "ok"; metrics = {}
+    status = "PASS"
+    detail = "ok"
+    metrics = {}
     try:
         if "days_to_earnings" in cols:
-            q = (lf.select(pl.col("days_to_earnings"))
-                   .drop_nulls()
-                   .select([pl.len().alias("n"),
-                            pl.col("days_to_earnings").min().alias("min"),
-                            pl.col("days_to_earnings").max().alias("max")]).collect())
-            n = int(q["n"][0]); _min = int(q["min"][0]); _max = int(q["max"][0])
+            q = (
+                lf.select(pl.col("days_to_earnings"))
+                .drop_nulls()
+                .select(
+                    [
+                        pl.len().alias("n"),
+                        pl.col("days_to_earnings").min().alias("min"),
+                        pl.col("days_to_earnings").max().alias("max"),
+                    ]
+                )
+                .collect()
+            )
+            n = int(q["n"][0])
+            _min = int(q["min"][0])
+            _max = int(q["max"][0])
             metrics.update({"n": n, "min": _min, "max": _max})
             if _min < -30 or _max > 60:
-                status = "WARN"; detail = f"days_to_earnings out-of-expected range [{_min},{_max}]"
+                status = "WARN"
+                detail = f"days_to_earnings out-of-expected range [{_min},{_max}]"
     except Exception as e:
-        status = "WARN"; detail = f"stat error: {e}"
+        status = "WARN"
+        detail = f"stat error: {e}"
     # Strict as-of if snapshot
-    if snapshots_dir and os.path.exists(os.path.join(snapshots_dir,"earnings_announcements_snapshot.parquet")) and "asof_ts" in lf.columns:
+    if (
+        snapshots_dir
+        and os.path.exists(os.path.join(snapshots_dir, "earnings_announcements_snapshot.parquet"))
+        and "asof_ts" in lf.columns
+    ):
         try:
-            snap = pl.scan_parquet(os.path.join(snapshots_dir,"earnings_announcements_snapshot.parquet")).select(["Code","Date","availability_ts"])
-            vr = (lf.select(["Code","Date","asof_ts"])
-                    .join(snap, on=["Code","Date"], how="inner")
-                    .select([(pl.col("availability_ts") <= pl.col("asof_ts")).cast(pl.Int8).alias("ok")])
-                    .select([1 - pl.mean("ok").alias("violation_rate")])).collect()
+            snap = pl.scan_parquet(os.path.join(snapshots_dir, "earnings_announcements_snapshot.parquet")).select(
+                ["Code", "Date", "availability_ts"]
+            )
+            vr = (
+                lf.select(["Code", "Date", "asof_ts"])
+                .join(snap, on=["Code", "Date"], how="inner")
+                .select([(pl.col("availability_ts") <= pl.col("asof_ts")).cast(pl.Int8).alias("ok")])
+                .select([1 - pl.mean("ok").alias("violation_rate")])
+            ).collect()
             v = float(vr["violation_rate"][0])
-            if v > 0.0: status="FAIL"; detail += f"; as-of violations={v:.3f}"
+            if v > 0.0:
+                status = "FAIL"
+                detail += f"; as-of violations={v:.3f}"
         except Exception as e:
             detail += f"; as-of check error: {e}"
     score.add("5) Earnings announcements", status, detail, metrics)
 
-def check6_fs_dividends(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check6_fs_dividends(path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
 
@@ -459,7 +495,9 @@ def check6_fs_dividends(path: str, score: Score, start: Optional[str], end: Opti
         fs_details.append(f"missing: {fs_missing}")
 
     fs_valid_rate = _mean(lf, "is_fs_valid")
-    fs_recent_rate = _mean(lf, "fs_is_recent", filter_expr=pl.col("is_fs_valid") == 1) if "fs_is_recent" in cols else None
+    fs_recent_rate = (
+        _mean(lf, "fs_is_recent", filter_expr=pl.col("is_fs_valid") == 1) if "fs_is_recent" in cols else None
+    )
     fs_cov = coverage_ratio(lf, [c for c in fs_required if c in cols])
     fs_staleness_p95 = _series_quantile(lf, "fs_staleness_bd", 0.95) if "fs_staleness_bd" in cols else None
     fs_staleness_mean = _mean(lf, "fs_staleness_bd") if "fs_staleness_bd" in cols else None
@@ -486,9 +524,7 @@ def check6_fs_dividends(path: str, score: Score, start: Optional[str], end: Opti
 
     def _share(expr: pl.Expr) -> float:
         try:
-            return float(
-                lf.select(pl.mean(expr.cast(pl.Float64)).alias("share")).collect()["share"][0]
-            )
+            return float(lf.select(pl.mean(expr.cast(pl.Float64)).alias("share")).collect()["share"][0])
         except Exception:
             return 0.0
 
@@ -544,7 +580,9 @@ def check6_fs_dividends(path: str, score: Score, start: Optional[str], end: Opti
                     violation = (
                         lf.select([pl.col(code_col).alias("code"), pl.col(date_col).alias("Date"), pl.col("asof_ts")])
                         .join(
-                            snap_lf.select([snap_code, snap_date, "available_ts"]).rename({snap_code: "code", snap_date: "Date"}),
+                            snap_lf.select([snap_code, snap_date, "available_ts"]).rename(
+                                {snap_code: "code", snap_date: "Date"}
+                            ),
                             on=["code", "Date"],
                             how="inner",
                         )
@@ -604,33 +642,44 @@ def check6_fs_dividends(path: str, score: Score, start: Optional[str], end: Opti
         },
     )
 
-def check7_indices(path: str, score: Score, start: Optional[str], end: Optional[str]) -> None:
+
+def check7_indices(path: str, score: Score, start: str | None, end: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
-    need = ["topix_idx_r_1d","topix_idx_atr14","topix_idx_natr14"]
+    need = ["topix_idx_r_1d", "topix_idx_atr14", "topix_idx_natr14"]
     present = [c for c in need if c in cols]
-    status = "PASS" if len(present)>=2 else "WARN"
+    status = "PASS" if len(present) >= 2 else "WARN"
     detail = f"present={present}"
     # Optional beta_60d plausibility
     beta_col = "beta_60d"
     if beta_col in cols:
         try:
-            q = (lf.select(pl.col(beta_col).drop_nulls())
-                   .select([pl.len().alias("n"),
-                            pl.col(beta_col).quantile(0.01).alias("q01"),
-                            pl.col(beta_col).quantile(0.99).alias("q99")]).collect())
+            q = (
+                lf.select(pl.col(beta_col).drop_nulls())
+                .select(
+                    [
+                        pl.len().alias("n"),
+                        pl.col(beta_col).quantile(0.01).alias("q01"),
+                        pl.col(beta_col).quantile(0.99).alias("q99"),
+                    ]
+                )
+                .collect()
+            )
             q01, q99 = float(q["q01"][0]), float(q["q99"][0])
-            if q01 < -3 or q99 > 3: status="WARN"; detail += f"; beta_60d wide [{q01:.2f},{q99:.2f}]"
+            if q01 < -3 or q99 > 3:
+                status = "WARN"
+                detail += f"; beta_60d wide [{q01:.2f},{q99:.2f}]"
         except Exception:
             pass
     score.add("7) Indices (TOPIX etc.)", status, detail)
+
 
 def _escalate(current: str, candidate: str) -> str:
     ordering = {"PASS": 0, "WARN": 1, "FAIL": 2}
     return candidate if ordering[candidate] > ordering[current] else current
 
 
-def check8_limit_session(path: str, score: Score, start: Optional[str], end: Optional[str]) -> None:
+def check8_limit_session(path: str, score: Score, start: str | None, end: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
 
@@ -722,14 +771,14 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
             missing_columns.append(name)
 
     status = "PASS"
-    detail_parts: List[str] = []
-    metrics: Dict[str, Any] = {}
+    detail_parts: list[str] = []
+    metrics: dict[str, Any] = {}
 
     if missing_columns:
         status = "FAIL"
         detail_parts.append(f"missing columns: {sorted(missing_columns)}")
 
-    agg_exprs: List[pl.Expr] = []
+    agg_exprs: list[pl.Expr] = []
 
     if upper_limit_col and limit_up_flag_col:
         agg_exprs.extend(
@@ -737,12 +786,7 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
                 pl.mean(
                     pl.when(pl.col(upper_limit_col).is_null() | pl.col(limit_up_flag_col).is_null())
                     .then(None)
-                    .otherwise(
-                        (
-                            pl.col(upper_limit_col).eq(1).cast(pl.Int8)
-                            - pl.col(limit_up_flag_col)
-                        ).abs()
-                    )
+                    .otherwise((pl.col(upper_limit_col).eq(1).cast(pl.Int8) - pl.col(limit_up_flag_col)).abs())
                 ).alias("limit_up_mismatch"),
                 pl.mean(pl.col(limit_up_flag_col).is_null().cast(pl.Float64)).alias("limit_up_null_rate"),
             ]
@@ -753,12 +797,7 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
                 pl.mean(
                     pl.when(pl.col(lower_limit_col).is_null() | pl.col(limit_down_flag_col).is_null())
                     .then(None)
-                    .otherwise(
-                        (
-                            pl.col(lower_limit_col).eq(1).cast(pl.Int8)
-                            - pl.col(limit_down_flag_col)
-                        ).abs()
-                    )
+                    .otherwise((pl.col(lower_limit_col).eq(1).cast(pl.Int8) - pl.col(limit_down_flag_col)).abs())
                 ).alias("limit_down_mismatch"),
                 pl.mean(pl.col(limit_down_flag_col).is_null().cast(pl.Float64)).alias("limit_down_null_rate"),
             ]
@@ -775,33 +814,21 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
                 .then(None)
                 .otherwise(
                     (
-                        (
-                            (pl.col(limit_up_flag_col) == 1)
-                            | (pl.col(limit_down_flag_col) == 1)
-                        )
-                        .cast(pl.Int8)
+                        ((pl.col(limit_up_flag_col) == 1) | (pl.col(limit_down_flag_col) == 1)).cast(pl.Int8)
                         - pl.col(limit_any_flag_col)
                     ).abs()
                 )
             ).alias("limit_any_mismatch")
         )
 
-    if (
-        limit_up_flag_col
-        and limit_up_5d_col
-        and code_col
-    ):
+    if limit_up_flag_col and limit_up_5d_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 pl.when(pl.col(limit_up_5d_col).is_null())
                 .then(None)
                 .otherwise(
                     (
-                        pl.col(limit_up_flag_col)
-                        .cast(pl.Float64)
-                        .shift(1)
-                        .over(code_col)
-                        .rolling_sum(window_size=5)
+                        pl.col(limit_up_flag_col).cast(pl.Float64).shift(1).over(code_col).rolling_sum(window_size=5)
                         - pl.col(limit_up_5d_col)
                     ).abs()
                 ),
@@ -809,22 +836,14 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
             ).alias("limit_up_5d_q99_err")
         )
 
-    if (
-        limit_down_flag_col
-        and limit_down_5d_col
-        and code_col
-    ):
+    if limit_down_flag_col and limit_down_5d_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 pl.when(pl.col(limit_down_5d_col).is_null())
                 .then(None)
                 .otherwise(
                     (
-                        pl.col(limit_down_flag_col)
-                        .cast(pl.Float64)
-                        .shift(1)
-                        .over(code_col)
-                        .rolling_sum(window_size=5)
+                        pl.col(limit_down_flag_col).cast(pl.Float64).shift(1).over(code_col).rolling_sum(window_size=5)
                         - pl.col(limit_down_5d_col)
                     ).abs()
                 ),
@@ -858,27 +877,19 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
                                 (pl.col(limit_down_flag_col) == 1)
                                 & (pl.col(adj_low_col) - pl.col(adj_close_col)).abs().lt(EPS)
                             )
-                        )
-                        .cast(pl.Int8)
+                        ).cast(pl.Int8)
                         - pl.col(price_locked_col)
                     ).abs()
                 )
             ).alias("price_locked_mismatch")
         )
 
-    if (
-        am_gap_col
-        and morning_open_col
-        and adj_close_col
-        and code_col
-    ):
+    if am_gap_col and morning_open_col and adj_close_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 (
                     (
-                        pl.col(morning_open_col)
-                        .shift(1)
-                        .over(code_col)
+                        pl.col(morning_open_col).shift(1).over(code_col)
                         / (pl.col(adj_close_col).shift(2).over(code_col) + EPS)
                         - 1.0
                     )
@@ -888,20 +899,11 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
             ).alias("am_gap_prev_close_q99_err")
         )
 
-    if (
-        am_range_col
-        and morning_high_col
-        and morning_low_col
-        and morning_open_col
-        and code_col
-    ):
+    if am_range_col and morning_high_col and morning_low_col and morning_open_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 (
-                    (
-                        pl.col(morning_high_col).shift(1).over(code_col)
-                        - pl.col(morning_low_col).shift(1).over(code_col)
-                    )
+                    (pl.col(morning_high_col).shift(1).over(code_col) - pl.col(morning_low_col).shift(1).over(code_col))
                     / (pl.col(morning_open_col).shift(1).over(code_col) + EPS)
                     - pl.col(am_range_col)
                 ).abs(),
@@ -909,23 +911,15 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
             ).alias("am_range_q99_err")
         )
 
-    if (
-        am_to_full_range_col
-        and morning_high_col
-        and morning_low_col
-        and adj_high_col
-        and adj_low_col
-        and code_col
-    ):
+    if am_to_full_range_col and morning_high_col and morning_low_col and adj_high_col and adj_low_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 (
-                    (
-                        pl.col(morning_high_col).shift(1).over(code_col)
-                        - pl.col(morning_low_col).shift(1).over(code_col)
-                    )
+                    (pl.col(morning_high_col).shift(1).over(code_col) - pl.col(morning_low_col).shift(1).over(code_col))
                     / (
-                        (pl.col(adj_high_col).shift(1).over(code_col) - pl.col(adj_low_col).shift(1).over(code_col)).abs()
+                        (
+                            pl.col(adj_high_col).shift(1).over(code_col) - pl.col(adj_low_col).shift(1).over(code_col)
+                        ).abs()
                         + EPS
                     )
                     - pl.col(am_to_full_range_col)
@@ -934,12 +928,7 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
             ).alias("am_to_full_range_q99_err")
         )
 
-    if (
-        am_vol_share_col
-        and morning_volume_col
-        and adj_volume_col
-        and code_col
-    ):
+    if am_vol_share_col and morning_volume_col and adj_volume_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 (
@@ -953,55 +942,35 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
             ).alias("am_vol_share_q99_err")
         )
 
-    if (
-        am_limit_up_col
-        and morning_upper_limit_col
-        and code_col
-    ):
+    if am_limit_up_col and morning_upper_limit_col and code_col:
         agg_exprs.append(
             pl.mean(
                 pl.when(pl.col(am_limit_up_col).is_null())
                 .then(None)
                 .otherwise(
                     (
-                        pl.col(morning_upper_limit_col)
-                        .shift(1)
-                        .over(code_col)
-                        .eq(1)
-                        .cast(pl.Int8)
+                        pl.col(morning_upper_limit_col).shift(1).over(code_col).eq(1).cast(pl.Int8)
                         - pl.col(am_limit_up_col)
                     ).abs()
                 )
             ).alias("am_limit_up_mismatch")
         )
 
-    if (
-        am_limit_down_col
-        and morning_lower_limit_col
-        and code_col
-    ):
+    if am_limit_down_col and morning_lower_limit_col and code_col:
         agg_exprs.append(
             pl.mean(
                 pl.when(pl.col(am_limit_down_col).is_null())
                 .then(None)
                 .otherwise(
                     (
-                        pl.col(morning_lower_limit_col)
-                        .shift(1)
-                        .over(code_col)
-                        .eq(1)
-                        .cast(pl.Int8)
+                        pl.col(morning_lower_limit_col).shift(1).over(code_col).eq(1).cast(pl.Int8)
                         - pl.col(am_limit_down_col)
                     ).abs()
                 )
             ).alias("am_limit_down_mismatch")
         )
 
-    if (
-        am_limit_any_col
-        and am_limit_up_col
-        and am_limit_down_col
-    ):
+    if am_limit_any_col and am_limit_up_col and am_limit_down_col:
         agg_exprs.append(
             pl.mean(
                 pl.when(
@@ -1012,51 +981,29 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
                 .then(None)
                 .otherwise(
                     (
-                        (
-                            (pl.col(am_limit_up_col) == 1)
-                            | (pl.col(am_limit_down_col) == 1)
-                        )
-                        .cast(pl.Int8)
+                        ((pl.col(am_limit_up_col) == 1) | (pl.col(am_limit_down_col) == 1)).cast(pl.Int8)
                         - pl.col(am_limit_any_col)
                     ).abs()
                 )
             ).alias("am_limit_any_mismatch")
         )
 
-    if (
-        pm_gap_col
-        and afternoon_open_col
-        and morning_close_col
-        and code_col
-    ):
+    if pm_gap_col and afternoon_open_col and morning_close_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 (
-                    (
-                        pl.col(afternoon_open_col) / (pl.col(morning_close_col) + EPS) - 1.0
-                    )
-                    .shift(1)
-                    .over(code_col)
+                    (pl.col(afternoon_open_col) / (pl.col(morning_close_col) + EPS) - 1.0).shift(1).over(code_col)
                     - pl.col(pm_gap_col)
                 ).abs(),
                 0.99,
             ).alias("pm_gap_q99_err")
         )
 
-    if (
-        pm_range_col
-        and afternoon_high_col
-        and afternoon_low_col
-        and afternoon_open_col
-        and code_col
-    ):
+    if pm_range_col and afternoon_high_col and afternoon_low_col and afternoon_open_col and code_col:
         agg_exprs.append(
             pl.quantile(
                 (
-                    (
-                        pl.col(afternoon_high_col) - pl.col(afternoon_low_col)
-                    )
-                    / (pl.col(afternoon_open_col) + EPS)
+                    (pl.col(afternoon_high_col) - pl.col(afternoon_low_col)) / (pl.col(afternoon_open_col) + EPS)
                     - pl.col(pm_range_col)
                 )
                 .shift(1)
@@ -1066,29 +1013,17 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
             ).alias("pm_range_q99_err")
         )
 
-    if (
-        limit_up_flag_col
-        and ret_prev_col
-    ):
+    if limit_up_flag_col and ret_prev_col:
         agg_exprs.append(
-            pl.mean(
-                (
-                    (pl.col(limit_up_flag_col) == 1)
-                    & (pl.col(ret_prev_col) < -0.3)
-                ).cast(pl.Float64)
-            ).alias("limit_up_negative_ret_share")
+            pl.mean(((pl.col(limit_up_flag_col) == 1) & (pl.col(ret_prev_col) < -0.3)).cast(pl.Float64)).alias(
+                "limit_up_negative_ret_share"
+            )
         )
-    if (
-        limit_down_flag_col
-        and ret_prev_col
-    ):
+    if limit_down_flag_col and ret_prev_col:
         agg_exprs.append(
-            pl.mean(
-                (
-                    (pl.col(limit_down_flag_col) == 1)
-                    & (pl.col(ret_prev_col) > 0.3)
-                ).cast(pl.Float64)
-            ).alias("limit_down_positive_ret_share")
+            pl.mean(((pl.col(limit_down_flag_col) == 1) & (pl.col(ret_prev_col) > 0.3)).cast(pl.Float64)).alias(
+                "limit_down_positive_ret_share"
+            )
         )
 
     stats = {}
@@ -1195,7 +1130,8 @@ def check8_limit_session(path: str, score: Score, start: Optional[str], end: Opt
         metrics,
     )
 
-def check9_breakdown(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check9_breakdown(path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None) -> None:
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
 
@@ -1230,100 +1166,54 @@ def check9_breakdown(path: str, score: Score, start: Optional[str], end: Optiona
 
     exprs = [
         pl.mean(
-            (
-                (pl.col("bd_net_ratio").abs() > 1.0001)
-                & pl.col("bd_net_ratio").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("bd_net_ratio").abs() > 1.0001) & pl.col("bd_net_ratio").is_not_null()).cast(pl.Float64)
         ).alias("ratio_violation"),
         pl.mean(
             (
-                (
-                    (pl.col("bd_short_share") > 1.0001)
-                    | (pl.col("bd_short_share") < -1e-4)
-                )
+                ((pl.col("bd_short_share") > 1.0001) | (pl.col("bd_short_share") < -1e-4))
                 & pl.col("bd_short_share").is_not_null()
             ).cast(pl.Float64)
         ).alias("short_violation"),
+        pl.mean(((pl.col("bd_net_z20").abs() > 6.0) & pl.col("bd_net_z20").is_not_null()).cast(pl.Float64)).alias(
+            "z_extreme_share"
+        ),
+        pl.mean(((pl.col("bd_net_z260").abs() > 6.0) & pl.col("bd_net_z260").is_not_null()).cast(pl.Float64)).alias(
+            "z260_extreme_share"
+        ),
+        pl.mean(((pl.col("bd_short_z260").abs() > 6.0) & pl.col("bd_short_z260").is_not_null()).cast(pl.Float64)).alias(
+            "short_z260_extreme_share"
+        ),
+        pl.mean((pl.col("bd_turn_up").is_not_null() & ~pl.col("bd_turn_up").is_in([0, 1])).cast(pl.Float64)).alias(
+            "turn_invalid"
+        ),
+        pl.mean((pl.col("bd_is_recent").is_not_null() & ~pl.col("bd_is_recent").is_in([0, 1])).cast(pl.Float64)).alias(
+            "recent_invalid"
+        ),
+        pl.mean((pl.col("is_bd_valid").is_not_null() & ~pl.col("is_bd_valid").is_in([0, 1])).cast(pl.Float64)).alias(
+            "valid_invalid"
+        ),
         pl.mean(
-            (
-                (
-                    pl.col("bd_net_z20").abs() > 6.0
-                )
-                & pl.col("bd_net_z20").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("z_extreme_share"),
-        pl.mean(
-            (
-                (
-                    pl.col("bd_net_z260").abs() > 6.0
-                )
-                & pl.col("bd_net_z260").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("z260_extreme_share"),
-        pl.mean(
-            (
-                (
-                    pl.col("bd_short_z260").abs() > 6.0
-                )
-                & pl.col("bd_short_z260").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("short_z260_extreme_share"),
-        pl.mean(
-            (
-                pl.col("bd_turn_up").is_not_null()
-                & ~pl.col("bd_turn_up").is_in([0, 1])
-            ).cast(pl.Float64)
-        ).alias("turn_invalid"),
-        pl.mean(
-            (
-                pl.col("bd_is_recent").is_not_null()
-                & ~pl.col("bd_is_recent").is_in([0, 1])
-            ).cast(pl.Float64)
-        ).alias("recent_invalid"),
-        pl.mean(
-            (
-                pl.col("is_bd_valid").is_not_null()
-                & ~pl.col("is_bd_valid").is_in([0, 1])
-            ).cast(pl.Float64)
-        ).alias("valid_invalid"),
-        pl.mean(
-            (
-                (
-                    pl.col("bd_activity_ratio") <= 0
-                )
-                & pl.col("bd_activity_ratio").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("bd_activity_ratio") <= 0) & pl.col("bd_activity_ratio").is_not_null()).cast(pl.Float64)
         ).alias("activity_nonpos"),
         pl.mean(
-            (
-                pl.col("bd_net_ratio_local_max").is_not_null()
-                & ~pl.col("bd_net_ratio_local_max").is_in([0, 1])
-            ).cast(pl.Float64)
+            (pl.col("bd_net_ratio_local_max").is_not_null() & ~pl.col("bd_net_ratio_local_max").is_in([0, 1])).cast(
+                pl.Float64
+            )
         ).alias("local_max_invalid"),
         pl.mean(
-            (
-                pl.col("bd_net_ratio_local_min").is_not_null()
-                & ~pl.col("bd_net_ratio_local_min").is_in([0, 1])
-            ).cast(pl.Float64)
+            (pl.col("bd_net_ratio_local_min").is_not_null() & ~pl.col("bd_net_ratio_local_min").is_in([0, 1])).cast(
+                pl.Float64
+            )
         ).alias("local_min_invalid"),
         pl.col("bd_staleness_bd").mean().alias("staleness_mean"),
         pl.col("bd_staleness_bd").quantile(0.95).alias("staleness_p95"),
-        pl.mean(
-            (
-                (
-                    pl.col("bd_staleness_bd") < 0
-                )
-                & pl.col("bd_staleness_bd").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("staleness_negative_share"),
+        pl.mean(((pl.col("bd_staleness_bd") < 0) & pl.col("bd_staleness_bd").is_not_null()).cast(pl.Float64)).alias(
+            "staleness_negative_share"
+        ),
     ]
 
     if "bd_net_adv60" in cols:
-        exprs.append(
-            pl.mean(
-                pl.col("bd_net_adv60").is_finite().not_().cast(pl.Float64)
-            ).alias("adv_invalid")
-        )
+        exprs.append(pl.mean(pl.col("bd_net_adv60").is_finite().not_().cast(pl.Float64)).alias("adv_invalid"))
     stats = lf.select(exprs).collect()
     metrics = {name: float(stats[name][0]) for name in stats.columns}
 
@@ -1365,9 +1255,7 @@ def check9_breakdown(path: str, score: Score, start: Optional[str], end: Optiona
         details.append(f"staleness negative share={metrics['staleness_negative_share']:.3%}")
     if metrics["staleness_mean"] >= 7 or metrics["staleness_p95"] >= 20:
         status = _escalate(status, "WARN")
-        details.append(
-            f"staleness(mean={metrics['staleness_mean']:.2f}, p95={metrics['staleness_p95']:.1f})"
-        )
+        details.append(f"staleness(mean={metrics['staleness_mean']:.2f}, p95={metrics['staleness_p95']:.1f})")
     if "adv_invalid" in metrics and metrics["adv_invalid"] > 0:
         status = _escalate(status, "WARN")
         details.append("bd_net_adv60 has non-finite values")
@@ -1380,7 +1268,10 @@ def check9_breakdown(path: str, score: Score, start: Optional[str], end: Optiona
         metrics,
     )
 
-def check12_weekly_margin(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check12_weekly_margin(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate weekly margin interest features (wm_* from /markets/weekly_margin_interest)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -1421,69 +1312,38 @@ def check12_weekly_margin(path: str, score: Score, start: Optional[str], end: Op
 
     exprs = [
         # Range checks: wm_long, wm_short must be ≥ 0
-        pl.mean(
-            (
-                (pl.col("wm_long") < 0)
-                & pl.col("wm_long").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("wm_long_negative"),
-        pl.mean(
-            (
-                (pl.col("wm_short") < 0)
-                & pl.col("wm_short").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("wm_short_negative"),
+        pl.mean(((pl.col("wm_long") < 0) & pl.col("wm_long").is_not_null()).cast(pl.Float64)).alias("wm_long_negative"),
+        pl.mean(((pl.col("wm_short") < 0) & pl.col("wm_short").is_not_null()).cast(pl.Float64)).alias(
+            "wm_short_negative"
+        ),
         # wm_lsr must be finite (or null)
-        pl.mean(
-            (
-                pl.col("wm_lsr").is_not_null()
-                & ~pl.col("wm_lsr").is_finite()
-            ).cast(pl.Float64)
-        ).alias("wm_lsr_nonfinite"),
+        pl.mean((pl.col("wm_lsr").is_not_null() & ~pl.col("wm_lsr").is_finite()).cast(pl.Float64)).alias(
+            "wm_lsr_nonfinite"
+        ),
         # wm_net_to_adv20: 極端値チェック（|値|>30日分が0.1%未満）
         pl.mean(
-            (
-                pl.col("wm_net_to_adv20").abs() > 30.0
-                & pl.col("wm_net_to_adv20").is_not_null()
-            ).cast(pl.Float64)
+            (pl.col("wm_net_to_adv20").abs() > 30.0 & pl.col("wm_net_to_adv20").is_not_null()).cast(pl.Float64)
         ).alias("wm_net_to_adv20_extreme_share"),
         # wm_staleness_bd must be ≥ 0 (no future leaks)
-        pl.mean(
-            (
-                (pl.col("wm_staleness_bd") < 0)
-                & pl.col("wm_staleness_bd").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("staleness_negative"),
+        pl.mean(((pl.col("wm_staleness_bd") < 0) & pl.col("wm_staleness_bd").is_not_null()).cast(pl.Float64)).alias(
+            "staleness_negative"
+        ),
         # is_wm_valid must be 0 or 1
-        pl.mean(
-            (
-                pl.col("is_wm_valid").is_not_null()
-                & ~pl.col("is_wm_valid").is_in([0, 1])
-            ).cast(pl.Float64)
-        ).alias("is_valid_invalid"),
+        pl.mean((pl.col("is_wm_valid").is_not_null() & ~pl.col("is_wm_valid").is_in([0, 1])).cast(pl.Float64)).alias(
+            "is_valid_invalid"
+        ),
         # wm_is_recent must be 0 or 1
-        pl.mean(
-            (
-                pl.col("wm_is_recent").is_not_null()
-                & ~pl.col("wm_is_recent").is_in([0, 1])
-            ).cast(pl.Float64)
-        ).alias("is_recent_invalid"),
+        pl.mean((pl.col("wm_is_recent").is_not_null() & ~pl.col("wm_is_recent").is_in([0, 1])).cast(pl.Float64)).alias(
+            "is_recent_invalid"
+        ),
         # Coverage: is_wm_valid daily average
-        pl.mean(
-            pl.col("is_wm_valid").cast(pl.Float64)
-        ).alias("coverage_avg"),
+        pl.mean(pl.col("is_wm_valid").cast(pl.Float64)).alias("coverage_avg"),
         # Staleness p95 (should not be too large)
-        pl.col("wm_staleness_bd")
-        .filter(pl.col("wm_staleness_bd").is_not_null())
-        .quantile(0.95)
-        .alias("staleness_p95"),
+        pl.col("wm_staleness_bd").filter(pl.col("wm_staleness_bd").is_not_null()).quantile(0.95).alias("staleness_p95"),
         # Extreme z-scores (should be rare)
-        pl.mean(
-            (
-                (pl.col("wm_net_z20").abs() > 3.0)
-                & pl.col("wm_net_z20").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("z20_extreme_share"),
+        pl.mean(((pl.col("wm_net_z20").abs() > 3.0) & pl.col("wm_net_z20").is_not_null()).cast(pl.Float64)).alias(
+            "z20_extreme_share"
+        ),
     ]
 
     try:
@@ -1557,7 +1417,10 @@ def check12_weekly_margin(path: str, score: Score, start: Optional[str], end: Op
         metrics,
     )
 
-def check13_index_option_225(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check13_index_option_225(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate Nikkei225 index option features (idxopt_* from /option/index_option)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -1591,16 +1454,11 @@ def check13_index_option_225(path: str, score: Score, start: Optional[str], end:
 
     exprs = [
         # Coverage: is_idxopt_valid daily average
-        pl.mean(
-            pl.col("is_idxopt_valid").cast(pl.Float64)
-        ).alias("coverage_avg"),
+        pl.mean(pl.col("is_idxopt_valid").cast(pl.Float64)).alias("coverage_avg"),
         # iv_atm_30d should be positive (or null)
-        pl.mean(
-            (
-                (pl.col("idxopt_iv_atm_30d") < 0)
-                & pl.col("idxopt_iv_atm_30d").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("iv_negative"),
+        pl.mean(((pl.col("idxopt_iv_atm_30d") < 0) & pl.col("idxopt_iv_atm_30d").is_not_null()).cast(pl.Float64)).alias(
+            "iv_negative"
+        ),
         # iv_ts_slope: 通常は正（順カーブ）で大きく負に偏らない（p10 > -5%）
         pl.col("idxopt_iv_ts_slope")
         .filter(pl.col("idxopt_iv_ts_slope").is_not_null())
@@ -1613,34 +1471,22 @@ def check13_index_option_225(path: str, score: Score, start: Optional[str], end:
         .alias("pc_oi_ratio_median"),
         pl.mean(
             (
-                (
-                    (pl.col("idxopt_pc_oi_ratio") < 0.1)
-                    | (pl.col("idxopt_pc_oi_ratio") > 10.0)
-                )
+                ((pl.col("idxopt_pc_oi_ratio") < 0.1) | (pl.col("idxopt_pc_oi_ratio") > 10.0))
                 & pl.col("idxopt_pc_oi_ratio").is_not_null()
             ).cast(pl.Float64)
         ).alias("pc_oi_ratio_extreme_share"),
         # VRP整合性: iv_atm_30d >= topix_realized_vol_20d の割合が過半
         # 注: topix_realized_vol_20dは特徴量には含まれていないため、VRP比で検証
         pl.mean(
-            (
-                (pl.col("idxopt_vrp_ratio") >= 1.0)
-                & pl.col("idxopt_vrp_ratio").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("idxopt_vrp_ratio") >= 1.0) & pl.col("idxopt_vrp_ratio").is_not_null()).cast(pl.Float64)
         ).alias("vrp_ratio_above_one"),
         # Extreme z-scores should be rare (<0.5%)
         pl.mean(
-            (
-                (pl.col("idxopt_iv_30d_z20").abs() > 3.0)
-                & pl.col("idxopt_iv_30d_z20").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("idxopt_iv_30d_z20").abs() > 3.0) & pl.col("idxopt_iv_30d_z20").is_not_null()).cast(pl.Float64)
         ).alias("z20_extreme_share"),
         # is_idxopt_valid must be 0 or 1
         pl.mean(
-            (
-                pl.col("is_idxopt_valid").is_not_null()
-                & ~pl.col("is_idxopt_valid").is_in([0, 1])
-            ).cast(pl.Float64)
+            (pl.col("is_idxopt_valid").is_not_null() & ~pl.col("is_idxopt_valid").is_in([0, 1])).cast(pl.Float64)
         ).alias("is_valid_invalid"),
     ]
 
@@ -1712,7 +1558,10 @@ def check13_index_option_225(path: str, score: Score, start: Optional[str], end:
         metrics,
     )
 
-def check14_index_features(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check14_index_features(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate market index features (idx_* from /indices, /indices/topix)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -1732,24 +1581,11 @@ def check14_index_features(path: str, score: Score, start: Optional[str], end: O
         return
 
     # オプション列（存在する場合にチェック）
-    optional_cols = [
-        "idx_topix_ret_prev_5d",
-        "idx_topix_ret_prev_20d",
-        "idx_topix_ret_oc",
-        "idx_topix_ret_co",
-        "idx_topix_mom_63d",
-        "idx_topix_trend_gap_20_100",
-        "idx_topix_realized_vol_20",
-        "idx_spread_topix_nk225_1d",
-        "idx_spread_growth_value_1d",
-    ]
-    available_optional = [col for col in optional_cols if col in cols]
+    # Note: available_optional could filter optional_cols but not used
 
     exprs = [
         # TOPIXリターンの欠損率
-        pl.mean(
-            pl.col("idx_topix_ret_prev_1d").is_null().cast(pl.Float64)
-        ).alias("topix_ret_1d_null_rate"),
+        pl.mean(pl.col("idx_topix_ret_prev_1d").is_null().cast(pl.Float64)).alias("topix_ret_1d_null_rate"),
         # リターン整合性: ret_prev_1d ≈ ret_oc + ret_co の誤差 < 5bps
         pl.mean(
             (
@@ -1761,12 +1597,9 @@ def check14_index_features(path: str, score: Score, start: Optional[str], end: O
             & pl.col("idx_topix_ret_co").is_not_null()
         ).alias("ret_decomposition_error_rate"),
         # ATRは正でなければならない
-        pl.mean(
-            (
-                (pl.col("idx_topix_atr_14") <= 0)
-                & pl.col("idx_topix_atr_14").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("atr_nonpositive_rate"),
+        pl.mean(((pl.col("idx_topix_atr_14") <= 0) & pl.col("idx_topix_atr_14").is_not_null()).cast(pl.Float64)).alias(
+            "atr_nonpositive_rate"
+        ),
     ]
 
     # スプレッドが存在する場合
@@ -1828,7 +1661,10 @@ def check14_index_features(path: str, score: Score, start: Optional[str], end: O
         metrics,
     )
 
-def check15_topix_features(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check15_topix_features(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate TOPIX-derived features (topix_* from /indices/topix)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -1851,9 +1687,7 @@ def check15_topix_features(path: str, score: Score, start: Optional[str], end: O
 
     exprs = [
         # TOPIXリターンの欠損率
-        pl.mean(
-            pl.col("topix_ret_prev_1d").is_null().cast(pl.Float64)
-        ).alias("topix_ret_1d_null_rate"),
+        pl.mean(pl.col("topix_ret_prev_1d").is_null().cast(pl.Float64)).alias("topix_ret_1d_null_rate"),
         # リターン分解整合性: ret_prev_1d ≈ ret_overnight + ret_intraday の誤差 < 1e-8
         pl.mean(
             (
@@ -1865,17 +1699,13 @@ def check15_topix_features(path: str, score: Score, start: Optional[str], end: O
             & pl.col("topix_ret_intraday").is_not_null()
         ).alias("ret_decomposition_error_rate"),
         # ATRは正でなければならない
-        pl.mean(
-            (
-                (pl.col("topix_atr14") <= 0)
-                & pl.col("topix_atr14").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("atr_nonpositive_rate"),
+        pl.mean(((pl.col("topix_atr14") <= 0) & pl.col("topix_atr14").is_not_null()).cast(pl.Float64)).alias(
+            "atr_nonpositive_rate"
+        ),
         # RSIは0-100の範囲
         pl.mean(
             (
-                ((pl.col("topix_rsi_14") < 0) | (pl.col("topix_rsi_14") > 100))
-                & pl.col("topix_rsi_14").is_not_null()
+                ((pl.col("topix_rsi_14") < 0) | (pl.col("topix_rsi_14") > 100)) & pl.col("topix_rsi_14").is_not_null()
             ).cast(pl.Float64)
         ).alias("rsi_out_of_range_rate"),
     ]
@@ -1929,7 +1759,9 @@ def check15_topix_features(path: str, score: Score, start: Optional[str], end: O
     )
 
 
-def check16_trades_spec_features(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+def check16_trades_spec_features(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate trades_spec (投資部門別売買状況) features (mkt_flow_* from /markets/trades_spec)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -1964,27 +1796,23 @@ def check16_trades_spec_features(path: str, score: Score, start: Optional[str], 
             ).cast(pl.Float64)
         ).alias("individuals_ratio_extreme_rate"),
         # is_trades_spec_validのカバレッジ（>= 70%）
-        pl.mean(
-            pl.col("is_trades_spec_valid").is_not_null().cast(pl.Float64)
-        ).alias("is_valid_coverage"),
-        pl.mean(
-            (pl.col("is_trades_spec_valid") == 1).cast(pl.Float64)
-        ).alias("is_valid_true_rate"),
+        pl.mean(pl.col("is_trades_spec_valid").is_not_null().cast(pl.Float64)).alias("is_valid_coverage"),
+        pl.mean((pl.col("is_trades_spec_valid") == 1).cast(pl.Float64)).alias("is_valid_true_rate"),
         # trades_spec_staleness_bdのp95（<= 10営業日）
         pl.col("trades_spec_staleness_bd").quantile(0.95).alias("staleness_p95"),
         # z-scoreの範囲チェック（|z| > 5の日が0.5%未満）
         pl.mean(
-            (
-                pl.col("mkt_flow_foreigners_net_ratio_z13").abs() > 5
-            )
+            (pl.col("mkt_flow_foreigners_net_ratio_z13").abs() > 5)
             & pl.col("mkt_flow_foreigners_net_ratio_z13").is_not_null()
-        ).cast(pl.Float64).alias("foreigners_z13_extreme_rate"),
+        )
+        .cast(pl.Float64)
+        .alias("foreigners_z13_extreme_rate"),
         pl.mean(
-            (
-                pl.col("mkt_flow_individuals_net_ratio_z13").abs() > 5
-            )
+            (pl.col("mkt_flow_individuals_net_ratio_z13").abs() > 5)
             & pl.col("mkt_flow_individuals_net_ratio_z13").is_not_null()
-        ).cast(pl.Float64).alias("individuals_z13_extreme_rate"),
+        )
+        .cast(pl.Float64)
+        .alias("individuals_z13_extreme_rate"),
     ]
 
     try:
@@ -2045,6 +1873,7 @@ def check16_trades_spec_features(path: str, score: Score, start: Optional[str], 
         # available_ts <= asof_tsのチェック（0 violations）
         # 簡易実装: trades_specのavailable_tsは特徴量生成時に設定済み
         # 詳細なチェックは省略（snapshot parquetが存在する場合のみ実施）
+        pass
 
     score.add(
         "16) Trades spec features (as‑of)",
@@ -2054,7 +1883,9 @@ def check16_trades_spec_features(path: str, score: Score, start: Optional[str], 
     )
 
 
-def check17_earnings_announcement(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+def check17_earnings_announcement(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate earnings announcement features (is_E_*, days_to_earnings from /fins/announcement)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -2084,18 +1915,12 @@ def check17_earnings_announcement(path: str, score: Score, start: Optional[str],
         pl.mean(pl.col("is_earnings_sched_valid").cast(pl.Float64)).alias("is_valid_coverage"),
         # days_to_earningsの範囲チェック（-30～30日程度が妥当）
         pl.mean(
-            (
-                (pl.col("days_to_earnings").abs() > 30)
-                & pl.col("days_to_earnings").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("days_to_earnings").abs() > 30) & pl.col("days_to_earnings").is_not_null()).cast(pl.Float64)
         ).alias("dte_extreme_rate"),
         # is_E_0とis_E_pp3の整合性（is_E_0=1ならis_E_pp3=1のはず）
-        pl.mean(
-            (
-                (pl.col("is_E_0") == 1)
-                & (pl.col("is_E_pp3") != 1)
-            ).cast(pl.Float64)
-        ).alias("E_flag_inconsistency_rate"),
+        pl.mean(((pl.col("is_E_0") == 1) & (pl.col("is_E_pp3") != 1)).cast(pl.Float64)).alias(
+            "E_flag_inconsistency_rate"
+        ),
     ]
 
     try:
@@ -2112,7 +1937,7 @@ def check17_earnings_announcement(path: str, score: Score, start: Optional[str],
         metrics = {}
 
     is_E_0_rate = float(metrics.get("is_E_0_rate", 0.0) or 0.0)
-    is_E_pp3_rate = float(metrics.get("is_E_pp3_rate", 0.0) or 0.0)
+    # Note: is_E_pp3_rate available but not used in current checks
     is_valid_coverage = float(metrics.get("is_valid_coverage", 0.0) or 0.0)
     dte_extreme = float(metrics.get("dte_extreme_rate", 0.0) or 0.0)
     inconsistency = float(metrics.get("E_flag_inconsistency_rate", 0.0) or 0.0)
@@ -2145,6 +1970,7 @@ def check17_earnings_announcement(path: str, score: Score, start: Optional[str],
         # available_ts <= asof_tsのチェック（0 violations）
         # 簡易実装: earnings特徴量のavailable_tsは特徴量生成時に設定済み
         # 詳細なチェックは省略（snapshot parquetが存在する場合のみ実施）
+        pass
 
     score.add(
         "17) Earnings announcement features (as‑of)",
@@ -2154,7 +1980,9 @@ def check17_earnings_announcement(path: str, score: Score, start: Optional[str],
     )
 
 
-def check18_trading_calendar(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+def check18_trading_calendar(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate trading calendar features (is_*, days_* from /markets/trading_calendar)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -2244,7 +2072,9 @@ def check18_trading_calendar(path: str, score: Score, start: Optional[str], end:
     )
 
 
-def check19_financial_statements(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+def check19_financial_statements(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate financial statement features (fs_* from /fins/statements, /fins/fs_details)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -2275,25 +2105,18 @@ def check19_financial_statements(path: str, score: Score, start: Optional[str], 
         pl.mean(pl.col("fs_ttm_op_profit").is_null().cast(pl.Float64)).alias("fs_ttm_op_profit_null_rate"),
         # マージンの範囲チェック（-1～1程度が妥当）
         pl.mean(
-            (
-                (pl.col("fs_ttm_op_margin").abs() > 1.5)
-                & pl.col("fs_ttm_op_margin").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("fs_ttm_op_margin").abs() > 1.5) & pl.col("fs_ttm_op_margin").is_not_null()).cast(pl.Float64)
         ).alias("op_margin_extreme_rate"),
         pl.mean(
-            (
-                (pl.col("fs_ttm_cfo_margin").abs() > 1.5)
-                & pl.col("fs_ttm_cfo_margin").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("fs_ttm_cfo_margin").abs() > 1.5) & pl.col("fs_ttm_cfo_margin").is_not_null()).cast(pl.Float64)
         ).alias("cfo_margin_extreme_rate"),
         # 財務体力の範囲チェック
         pl.mean(
-            (
-                (pl.col("fs_equity_ratio") < 0)
-                | (pl.col("fs_equity_ratio") > 1.5)
-            )
+            ((pl.col("fs_equity_ratio") < 0) | (pl.col("fs_equity_ratio") > 1.5))
             & pl.col("fs_equity_ratio").is_not_null()
-        ).cast(pl.Float64).alias("equity_ratio_extreme_rate"),
+        )
+        .cast(pl.Float64)
+        .alias("equity_ratio_extreme_rate"),
         # fs_staleness_bdのp95（<= 65営業日）
         pl.col("fs_staleness_bd").quantile(0.95).alias("staleness_p95"),
         # fs_window_e_pp3の比率（Eシーズンで上振れ）
@@ -2370,6 +2193,7 @@ def check19_financial_statements(path: str, score: Score, start: Optional[str], 
         # available_ts <= asof_tsのチェック（0 violations）
         # 簡易実装: fs特徴量のavailable_tsは特徴量生成時に設定済み
         # 詳細なチェックは省略（snapshot parquetが存在する場合のみ実施）
+        pass
 
     score.add(
         "19) Financial statement features (as‑of)",
@@ -2379,7 +2203,9 @@ def check19_financial_statements(path: str, score: Score, start: Optional[str], 
     )
 
 
-def check20_daily_quotes(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+def check20_daily_quotes(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate daily quotes features (ret_overnight, ret_intraday, gap_*, range_*, limit_*)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -2410,95 +2236,62 @@ def check20_daily_quotes(path: str, score: Score, start: Optional[str], end: Opt
             (
                 (
                     pl.col("ret_prev_1d").abs()
-                    - (
-                        (1.0 + pl.col("ret_overnight"))
-                        * (1.0 + pl.col("ret_intraday"))
-                        - 1.0
-                    ).abs()
-                )
-                .abs()
+                    - ((1.0 + pl.col("ret_overnight")) * (1.0 + pl.col("ret_intraday")) - 1.0).abs()
+                ).abs()
                 > 1e-5  # 1bps許容
             )
             & pl.col("ret_prev_1d").is_not_null()
             & pl.col("ret_overnight").is_not_null()
             & pl.col("ret_intraday").is_not_null()
-        ).cast(pl.Float64).alias("gap_consistency_violation_rate"),
+        )
+        .cast(pl.Float64)
+        .alias("gap_consistency_violation_rate"),
         # gap_signの範囲チェック（-1, 0, 1）
         pl.mean(
-            (
-                ~pl.col("gap_sign").is_in([-1.0, 0.0, 1.0])
-                & pl.col("gap_sign").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("gap_sign").is_in([-1.0, 0.0, 1.0]) & pl.col("gap_sign").is_not_null()).cast(pl.Float64)
         ).alias("gap_sign_invalid_rate"),
         # gap_magnitude_z20の極端値チェック（|z|>5が0.5%未満）
         pl.mean(
-            (
-                pl.col("gap_magnitude_z20").abs() > 5
-                & pl.col("gap_magnitude_z20").is_not_null()
-            ).cast(pl.Float64)
+            (pl.col("gap_magnitude_z20").abs() > 5 & pl.col("gap_magnitude_z20").is_not_null()).cast(pl.Float64)
         ).alias("gap_magnitude_z20_extreme_rate"),
         # gap_confirmedの範囲チェック（0/1）
         pl.mean(
-            (
-                ~pl.col("gap_confirmed").is_in([0, 1])
-                & pl.col("gap_confirmed").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("gap_confirmed").is_in([0, 1]) & pl.col("gap_confirmed").is_not_null()).cast(pl.Float64)
         ).alias("gap_confirmed_invalid_rate"),
         # day_rangeの範囲チェック（0-1程度が妥当）
         pl.mean(
-            (
-                (pl.col("day_range") < 0)
-                | (pl.col("day_range") > 0.5)
-                & pl.col("day_range").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("day_range") < 0) | (pl.col("day_range") > 0.5) & pl.col("day_range").is_not_null()).cast(
+                pl.Float64
+            )
         ).alias("day_range_extreme_rate"),
         # close_locationの範囲チェック（0-1）
         pl.mean(
             (
                 (pl.col("close_location") < 0)
-                | (pl.col("close_location") > 1.01)
-                & pl.col("close_location").is_not_null()
+                | (pl.col("close_location") > 1.01) & pl.col("close_location").is_not_null()
             ).cast(pl.Float64)
         ).alias("close_location_extreme_rate"),
         # is_limit_up/downの範囲チェック（0/1）
+        pl.mean((~pl.col("is_limit_up").is_in([0, 1]) & pl.col("is_limit_up").is_not_null()).cast(pl.Float64)).alias(
+            "is_limit_up_invalid_rate"
+        ),
         pl.mean(
-            (
-                ~pl.col("is_limit_up").is_in([0, 1])
-                & pl.col("is_limit_up").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("is_limit_up_invalid_rate"),
-        pl.mean(
-            (
-                ~pl.col("is_limit_down").is_in([0, 1])
-                & pl.col("is_limit_down").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("is_limit_down").is_in([0, 1]) & pl.col("is_limit_down").is_not_null()).cast(pl.Float64)
         ).alias("is_limit_down_invalid_rate"),
         # upper_limit/lower_limitの範囲チェック（0/1）
-        pl.mean(
-            (
-                ~pl.col("upper_limit").is_in([0, 1])
-                & pl.col("upper_limit").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("upper_limit_invalid_rate"),
-        pl.mean(
-            (
-                ~pl.col("lower_limit").is_in([0, 1])
-                & pl.col("lower_limit").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("lower_limit_invalid_rate"),
+        pl.mean((~pl.col("upper_limit").is_in([0, 1]) & pl.col("upper_limit").is_not_null()).cast(pl.Float64)).alias(
+            "upper_limit_invalid_rate"
+        ),
+        pl.mean((~pl.col("lower_limit").is_in([0, 1]) & pl.col("lower_limit").is_not_null()).cast(pl.Float64)).alias(
+            "lower_limit_invalid_rate"
+        ),
         # ret_overnight, ret_intradayの極端値チェック（|ret|>30%が0.1%未満）
-        pl.mean(
-            (
-                pl.col("ret_overnight").abs() > 0.30
-                & pl.col("ret_overnight").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("ret_overnight_extreme_rate"),
-        pl.mean(
-            (
-                pl.col("ret_intraday").abs() > 0.30
-                & pl.col("ret_intraday").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("ret_intraday_extreme_rate"),
+        pl.mean((pl.col("ret_overnight").abs() > 0.30 & pl.col("ret_overnight").is_not_null()).cast(pl.Float64)).alias(
+            "ret_overnight_extreme_rate"
+        ),
+        pl.mean((pl.col("ret_intraday").abs() > 0.30 & pl.col("ret_intraday").is_not_null()).cast(pl.Float64)).alias(
+            "ret_intraday_extreme_rate"
+        ),
         # canonical OHLCチェック: raw/Adj Closeが残置していないか
         # adjustmentcloseがある場合、closeがrawかどうかを確認（調整係数が異なる場合はraw）
         # 簡易チェック: adjustmentcloseとcloseが大幅に異なる行が少ないか（調整係数による差は正常）
@@ -2567,23 +2360,30 @@ def check20_daily_quotes(path: str, score: Score, start: Optional[str], end: Opt
     # is_limit_up/downの範囲チェック
     if is_limit_up_invalid > 1e-4 or is_limit_down_invalid > 1e-4:
         status = _escalate(status, "WARN")
-        detail_parts.append(f"is_limit_up/down invalid rate={is_limit_up_invalid:.3%}/{is_limit_down_invalid:.3%} > 0.01%")
+        detail_parts.append(
+            f"is_limit_up/down invalid rate={is_limit_up_invalid:.3%}/{is_limit_down_invalid:.3%} > 0.01%"
+        )
 
     # upper_limit/lower_limitの範囲チェック
     if upper_limit_invalid > 1e-4 or lower_limit_invalid > 1e-4:
         status = _escalate(status, "WARN")
-        detail_parts.append(f"upper_limit/lower_limit invalid rate={upper_limit_invalid:.3%}/{lower_limit_invalid:.3%} > 0.01%")
+        detail_parts.append(
+            f"upper_limit/lower_limit invalid rate={upper_limit_invalid:.3%}/{lower_limit_invalid:.3%} > 0.01%"
+        )
 
     # ret_overnight/intradayの極端値チェック
     if ret_overnight_extreme > 0.001 or ret_intraday_extreme > 0.001:
         status = _escalate(status, "WARN")
-        detail_parts.append(f"ret_overnight/intraday extreme rate={ret_overnight_extreme:.3%}/{ret_intraday_extreme:.3%} > 0.1%")
+        detail_parts.append(
+            f"ret_overnight/intraday extreme rate={ret_overnight_extreme:.3%}/{ret_intraday_extreme:.3%} > 0.1%"
+        )
 
     # canonical OHLCチェック（snapshots_dirが指定されている場合）
     if snapshots_dir:
         # canonicalize_ohlc後のraw/Adj Close残置チェック
         # 簡易実装: raw列の存在を確認（より正確にはcanonicalize_ohlcの実行結果を確認）
         # 詳細なチェックは省略（snapshot parquetが存在する場合のみ実施）
+        pass
 
     score.add(
         "20) Daily quotes features",
@@ -2593,7 +2393,7 @@ def check20_daily_quotes(path: str, score: Score, start: Optional[str], end: Opt
     )
 
 
-def check21_listed_info(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+def check21_listed_info(path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None) -> None:
     """Validate listed info features (market dummies, sector codes, scale bucket, margin eligibility)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -2618,24 +2418,15 @@ def check21_listed_info(path: str, score: Score, start: Optional[str], end: Opti
 
     exprs = [
         # 市場区分ダミーの範囲チェック（0/1）
-        pl.mean(
-            (
-                ~pl.col("is_prime").is_in([0, 1])
-                & pl.col("is_prime").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("is_prime_invalid_rate"),
-        pl.mean(
-            (
-                ~pl.col("is_standard").is_in([0, 1])
-                & pl.col("is_standard").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("is_standard_invalid_rate"),
-        pl.mean(
-            (
-                ~pl.col("is_growth").is_in([0, 1])
-                & pl.col("is_growth").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("is_growth_invalid_rate"),
+        pl.mean((~pl.col("is_prime").is_in([0, 1]) & pl.col("is_prime").is_not_null()).cast(pl.Float64)).alias(
+            "is_prime_invalid_rate"
+        ),
+        pl.mean((~pl.col("is_standard").is_in([0, 1]) & pl.col("is_standard").is_not_null()).cast(pl.Float64)).alias(
+            "is_standard_invalid_rate"
+        ),
+        pl.mean((~pl.col("is_growth").is_in([0, 1]) & pl.col("is_growth").is_not_null()).cast(pl.Float64)).alias(
+            "is_growth_invalid_rate"
+        ),
         # sector33_code, sector17_codeの欠損率
         pl.mean(pl.col("sector33_code").is_null().cast(pl.Float64)).alias("sector33_code_null_rate"),
         pl.mean(pl.col("sector17_code").is_null().cast(pl.Float64)).alias("sector17_code_null_rate"),
@@ -2643,15 +2434,15 @@ def check21_listed_info(path: str, score: Score, start: Optional[str], end: Opti
         pl.mean((pl.col("is_listed_info_valid") == 1).cast(pl.Float64)).alias("is_listed_info_valid_coverage"),
         # market_codeの既知コード比率（0111/0112/0113以外の比率）
         pl.mean(
-            (
-                ~pl.col("market_code").is_in(["0111", "0112", "0113"])
-                & pl.col("market_code").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("market_code").is_in(["0111", "0112", "0113"]) & pl.col("market_code").is_not_null()).cast(
+                pl.Float64
+            )
         ).alias("market_code_unknown_rate"),
         # 市場区分ダミーの排他性（is_prime + is_standard + is_growth <= 1）
         pl.mean(
             (
-                (pl.col("is_prime") + pl.col("is_standard") + pl.col("is_growth")) > 1
+                (pl.col("is_prime") + pl.col("is_standard") + pl.col("is_growth"))
+                > 1
                 & pl.col("is_prime").is_not_null()
                 & pl.col("is_standard").is_not_null()
                 & pl.col("is_growth").is_not_null()
@@ -2687,7 +2478,9 @@ def check21_listed_info(path: str, score: Score, start: Optional[str], end: Opti
     # 市場区分ダミーの範囲チェック
     if is_prime_invalid > 1e-4 or is_standard_invalid > 1e-4 or is_growth_invalid > 1e-4:
         status = _escalate(status, "WARN")
-        detail_parts.append(f"is_prime/standard/growth invalid rate={is_prime_invalid:.3%}/{is_standard_invalid:.3%}/{is_growth_invalid:.3%} > 0.01%")
+        detail_parts.append(
+            f"is_prime/standard/growth invalid rate={is_prime_invalid:.3%}/{is_standard_invalid:.3%}/{is_growth_invalid:.3%} > 0.01%"
+        )
 
     # sector33_code, sector17_codeの欠損率
     if sector33_null > 0.005:
@@ -2717,6 +2510,7 @@ def check21_listed_info(path: str, score: Score, start: Optional[str], end: Opti
         # available_ts <= asof_tsのチェック（0 violations）
         # 簡易実装: listed_info特徴量のavailable_tsは特徴量生成時に設定済み
         # 詳細なチェックは省略（snapshot parquetが存在する場合のみ実施）
+        pass
 
     score.add(
         "21) Listed info features",
@@ -2726,7 +2520,9 @@ def check21_listed_info(path: str, score: Score, start: Optional[str], end: Opti
     )
 
 
-def check11_sector_short_selling(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+def check11_sector_short_selling(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate sector short selling features (ss_* from /markets/short_selling)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -2762,91 +2558,53 @@ def check11_sector_short_selling(path: str, score: Score, start: Optional[str], 
     exprs = [
         # Range checks: ss_ratio_market ∈ [0, 1]
         pl.mean(
-            (
-                (pl.col("ss_ratio_market") < -1e-6)
-                | (pl.col("ss_ratio_market") > 1.0001)
-            )
+            ((pl.col("ss_ratio_market") < -1e-6) | (pl.col("ss_ratio_market") > 1.0001))
             & pl.col("ss_ratio_market").is_not_null()
         ).alias("ratio_market_violation"),
         # Range checks: ss_ratio_with_restr ∈ [0, 1]
         pl.mean(
-            (
-                (pl.col("ss_ratio_with_restr") < -1e-6)
-                | (pl.col("ss_ratio_with_restr") > 1.0001)
-            )
+            ((pl.col("ss_ratio_with_restr") < -1e-6) | (pl.col("ss_ratio_with_restr") > 1.0001))
             & pl.col("ss_ratio_with_restr").is_not_null()
         ).alias("ratio_with_restr_violation"),
         # Range checks: ss_ratio_without_restr ∈ [0, 1]
         pl.mean(
-            (
-                (pl.col("ss_ratio_without_restr") < -1e-6)
-                | (pl.col("ss_ratio_without_restr") > 1.0001)
-            )
+            ((pl.col("ss_ratio_without_restr") < -1e-6) | (pl.col("ss_ratio_without_restr") > 1.0001))
             & pl.col("ss_ratio_without_restr").is_not_null()
         ).alias("ratio_without_restr_violation"),
         # 整合性チェック: with_restr + without_restr ≈ 1 (許容誤差±0.5%)
         pl.mean(
             (
-                (
-                    (pl.col("ss_ratio_with_restr") + pl.col("ss_ratio_without_restr")).abs()
-                    > 1.005
-                )
-                & (
-                    pl.col("ss_ratio_with_restr").is_not_null()
-                    | pl.col("ss_ratio_without_restr").is_not_null()
-                )
+                ((pl.col("ss_ratio_with_restr") + pl.col("ss_ratio_without_restr")).abs() > 1.005)
+                & (pl.col("ss_ratio_with_restr").is_not_null() | pl.col("ss_ratio_without_restr").is_not_null())
             ).cast(pl.Float64)
         ).alias("ratio_sum_violation"),
         # ss_total must be ≥ 0
-        pl.mean(
-            (
-                (pl.col("ss_total") < 0)
-                & pl.col("ss_total").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("ss_total_negative"),
+        pl.mean(((pl.col("ss_total") < 0) & pl.col("ss_total").is_not_null()).cast(pl.Float64)).alias(
+            "ss_total_negative"
+        ),
         # ss_staleness_bd must be ≥ 0 (no future leaks)
-        pl.mean(
-            (
-                (pl.col("ss_staleness_bd") < 0)
-                & pl.col("ss_staleness_bd").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("staleness_negative"),
+        pl.mean(((pl.col("ss_staleness_bd") < 0) & pl.col("ss_staleness_bd").is_not_null()).cast(pl.Float64)).alias(
+            "staleness_negative"
+        ),
         # is_ss_valid must be 0 or 1
-        pl.mean(
-            (
-                pl.col("is_ss_valid").is_not_null()
-                & ~pl.col("is_ss_valid").is_in([0, 1])
-            ).cast(pl.Float64)
-        ).alias("is_valid_invalid"),
+        pl.mean((pl.col("is_ss_valid").is_not_null() & ~pl.col("is_ss_valid").is_in([0, 1])).cast(pl.Float64)).alias(
+            "is_valid_invalid"
+        ),
         # ss_extreme_hi must be 0 or 1
         pl.mean(
-            (
-                pl.col("ss_extreme_hi").is_not_null()
-                & ~pl.col("ss_extreme_hi").is_in([0, 1])
-            ).cast(pl.Float64)
+            (pl.col("ss_extreme_hi").is_not_null() & ~pl.col("ss_extreme_hi").is_in([0, 1])).cast(pl.Float64)
         ).alias("extreme_hi_invalid"),
         # ss_regime_switch must be 0 or 1
         pl.mean(
-            (
-                pl.col("ss_regime_switch").is_not_null()
-                & ~pl.col("ss_regime_switch").is_in([0, 1])
-            ).cast(pl.Float64)
+            (pl.col("ss_regime_switch").is_not_null() & ~pl.col("ss_regime_switch").is_in([0, 1])).cast(pl.Float64)
         ).alias("regime_switch_invalid"),
         # Coverage: is_ss_valid daily average
-        pl.mean(
-            pl.col("is_ss_valid").cast(pl.Float64)
-        ).alias("coverage_avg"),
+        pl.mean(pl.col("is_ss_valid").cast(pl.Float64)).alias("coverage_avg"),
         # Staleness p95 (should not be too large)
-        pl.col("ss_staleness_bd")
-        .filter(pl.col("ss_staleness_bd").is_not_null())
-        .quantile(0.95)
-        .alias("staleness_p95"),
+        pl.col("ss_staleness_bd").filter(pl.col("ss_staleness_bd").is_not_null()).quantile(0.95).alias("staleness_p95"),
         # Extreme z-scores (should be rare)
         pl.mean(
-            (
-                (pl.col("ss_ratio_market_z20").abs() > 3.0)
-                & pl.col("ss_ratio_market_z20").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("ss_ratio_market_z20").abs() > 3.0) & pl.col("ss_ratio_market_z20").is_not_null()).cast(pl.Float64)
         ).alias("z20_extreme_share"),
     ]
 
@@ -2929,7 +2687,10 @@ def check11_sector_short_selling(path: str, score: Score, start: Optional[str], 
         metrics,
     )
 
-def check10_short_positions(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check10_short_positions(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate short selling positions features (ssp_*)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -2961,60 +2722,37 @@ def check10_short_positions(path: str, score: Score, start: Optional[str], end: 
     exprs = [
         # Range checks: ratio_sum ∈ [0, 1]
         pl.mean(
-            (
-                (pl.col("ssp_ratio_sum") < -1e-6)
-                | (pl.col("ssp_ratio_sum") > 1.0001)
-            )
+            ((pl.col("ssp_ratio_sum") < -1e-6) | (pl.col("ssp_ratio_sum") > 1.0001))
             & pl.col("ssp_ratio_sum").is_not_null()
         ).alias("ratio_sum_violation"),
         # Range checks: delta_sum ∈ [-1, 1]
         pl.mean(
-            (
-                (pl.col("ssp_delta_sum") < -1.0001)
-                | (pl.col("ssp_delta_sum") > 1.0001)
-            )
+            ((pl.col("ssp_delta_sum") < -1.0001) | (pl.col("ssp_delta_sum") > 1.0001))
             & pl.col("ssp_delta_sum").is_not_null()
         ).alias("delta_sum_violation"),
         # Range checks: top_ratio ∈ [0, 1]
         pl.mean(
-            (
-                (pl.col("ssp_top_ratio") < -1e-6)
-                | (pl.col("ssp_top_ratio") > 1.0001)
-            )
+            ((pl.col("ssp_top_ratio") < -1e-6) | (pl.col("ssp_top_ratio") > 1.0001))
             & pl.col("ssp_top_ratio").is_not_null()
         ).alias("top_ratio_violation"),
         # Reporters must be ≥ 0
-        pl.mean(
-            (
-                (pl.col("ssp_reporters") < 0)
-                & pl.col("ssp_reporters").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("reporters_negative"),
+        pl.mean(((pl.col("ssp_reporters") < 0) & pl.col("ssp_reporters").is_not_null()).cast(pl.Float64)).alias(
+            "reporters_negative"
+        ),
         # Staleness must be ≥ 0 (no future disclosures)
         pl.mean(
-            (
-                (pl.col("ssp_staleness_days") < 0)
-                & pl.col("ssp_staleness_days").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("ssp_staleness_days") < 0) & pl.col("ssp_staleness_days").is_not_null()).cast(pl.Float64)
         ).alias("staleness_negative"),
         # is_recent must be 0 or 1
         pl.mean(
-            (
-                pl.col("ssp_is_recent").is_not_null()
-                & ~pl.col("ssp_is_recent").is_in([0, 1])
-            ).cast(pl.Float64)
+            (pl.col("ssp_is_recent").is_not_null() & ~pl.col("ssp_is_recent").is_in([0, 1])).cast(pl.Float64)
         ).alias("is_recent_invalid"),
         # is_ssp_valid must be 0 or 1
-        pl.mean(
-            (
-                pl.col("is_ssp_valid").is_not_null()
-                & ~pl.col("is_ssp_valid").is_in([0, 1])
-            ).cast(pl.Float64)
-        ).alias("is_valid_invalid"),
+        pl.mean((pl.col("is_ssp_valid").is_not_null() & ~pl.col("is_ssp_valid").is_in([0, 1])).cast(pl.Float64)).alias(
+            "is_valid_invalid"
+        ),
         # Coverage: is_ssp_valid daily average
-        pl.mean(
-            pl.col("is_ssp_valid").cast(pl.Float64)
-        ).alias("coverage_avg"),
+        pl.mean(pl.col("is_ssp_valid").cast(pl.Float64)).alias("coverage_avg"),
         # Staleness p95 (should not be too large)
         pl.col("ssp_staleness_days")
         .filter(pl.col("ssp_staleness_days").is_not_null())
@@ -3022,16 +2760,10 @@ def check10_short_positions(path: str, score: Score, start: Optional[str], end: 
         .alias("staleness_p95"),
         # Extreme z-scores (should be rare)
         pl.mean(
-            (
-                (pl.col("ssp_ratio_sum_z20").abs() > 6.0)
-                & pl.col("ssp_ratio_sum_z20").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("ssp_ratio_sum_z20").abs() > 6.0) & pl.col("ssp_ratio_sum_z20").is_not_null()).cast(pl.Float64)
         ).alias("z20_extreme_share"),
         pl.mean(
-            (
-                (pl.col("ssp_delta_sum_z20").abs() > 6.0)
-                & pl.col("ssp_delta_sum_z20").is_not_null()
-            ).cast(pl.Float64)
+            ((pl.col("ssp_delta_sum_z20").abs() > 6.0) & pl.col("ssp_delta_sum_z20").is_not_null()).cast(pl.Float64)
         ).alias("delta_z20_extreme_share"),
     ]
 
@@ -3110,7 +2842,10 @@ def check10_short_positions(path: str, score: Score, start: Optional[str], end: 
         metrics,
     )
 
-def check22_technical_indicators(path: str, score: Score, start: Optional[str], end: Optional[str], snapshots_dir: Optional[str]) -> None:
+
+def check22_technical_indicators(
+    path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None
+) -> None:
     """Validate P0 technical indicators (ADX/DMI, Donchian, Keltner, Aroon, CRSI, OBV/CMF, ATR normalization, Amihud, Beta/Alpha)."""
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
@@ -3158,84 +2893,52 @@ def check22_technical_indicators(path: str, score: Score, start: Optional[str], 
 
     exprs = [
         # ADX range check (0-100)
-        pl.mean(
-            (
-                (pl.col("adx_14") < 0) | (pl.col("adx_14") > 100)
-            ) & pl.col("adx_14").is_not_null()
-        ).cast(pl.Float64).alias("adx_out_of_range"),
+        pl.mean(((pl.col("adx_14") < 0) | (pl.col("adx_14") > 100)) & pl.col("adx_14").is_not_null())
+        .cast(pl.Float64)
+        .alias("adx_out_of_range"),
         # DMI range check (0-100)
-        pl.mean(
-            (
-                (pl.col("dmi_pos_14") < 0) | (pl.col("dmi_pos_14") > 100)
-            ) & pl.col("dmi_pos_14").is_not_null()
-        ).cast(pl.Float64).alias("dmi_pos_out_of_range"),
-        pl.mean(
-            (
-                (pl.col("dmi_neg_14") < 0) | (pl.col("dmi_neg_14") > 100)
-            ) & pl.col("dmi_neg_14").is_not_null()
-        ).cast(pl.Float64).alias("dmi_neg_out_of_range"),
+        pl.mean(((pl.col("dmi_pos_14") < 0) | (pl.col("dmi_pos_14") > 100)) & pl.col("dmi_pos_14").is_not_null())
+        .cast(pl.Float64)
+        .alias("dmi_pos_out_of_range"),
+        pl.mean(((pl.col("dmi_neg_14") < 0) | (pl.col("dmi_neg_14") > 100)) & pl.col("dmi_neg_14").is_not_null())
+        .cast(pl.Float64)
+        .alias("dmi_neg_out_of_range"),
         # Aroon range check (0-100)
-        pl.mean(
-            (
-                (pl.col("aroon_up_25") < 0) | (pl.col("aroon_up_25") > 100)
-            ) & pl.col("aroon_up_25").is_not_null()
-        ).cast(pl.Float64).alias("aroon_up_out_of_range"),
-        pl.mean(
-            (
-                (pl.col("aroon_dn_25") < 0) | (pl.col("aroon_dn_25") > 100)
-            ) & pl.col("aroon_dn_25").is_not_null()
-        ).cast(pl.Float64).alias("aroon_dn_out_of_range"),
+        pl.mean(((pl.col("aroon_up_25") < 0) | (pl.col("aroon_up_25") > 100)) & pl.col("aroon_up_25").is_not_null())
+        .cast(pl.Float64)
+        .alias("aroon_up_out_of_range"),
+        pl.mean(((pl.col("aroon_dn_25") < 0) | (pl.col("aroon_dn_25") > 100)) & pl.col("aroon_dn_25").is_not_null())
+        .cast(pl.Float64)
+        .alias("aroon_dn_out_of_range"),
         # CRSI range check (0-100)
-        pl.mean(
-            (
-                (pl.col("crsi_3_2_100") < 0) | (pl.col("crsi_3_2_100") > 100)
-            ) & pl.col("crsi_3_2_100").is_not_null()
-        ).cast(pl.Float64).alias("crsi_out_of_range"),
+        pl.mean(((pl.col("crsi_3_2_100") < 0) | (pl.col("crsi_3_2_100") > 100)) & pl.col("crsi_3_2_100").is_not_null())
+        .cast(pl.Float64)
+        .alias("crsi_out_of_range"),
         # CMF range check (-1 to 1)
-        pl.mean(
-            (
-                (pl.col("cmf_20") < -1.1) | (pl.col("cmf_20") > 1.1)
-            ) & pl.col("cmf_20").is_not_null()
-        ).cast(pl.Float64).alias("cmf_out_of_range"),
+        pl.mean(((pl.col("cmf_20") < -1.1) | (pl.col("cmf_20") > 1.1)) & pl.col("cmf_20").is_not_null())
+        .cast(pl.Float64)
+        .alias("cmf_out_of_range"),
         # Donchian break flags (0/1)
         pl.mean(
-            (
-                ~pl.col("don_break_20_up").is_in([0, 1])
-                & pl.col("don_break_20_up").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("don_break_20_up").is_in([0, 1]) & pl.col("don_break_20_up").is_not_null()).cast(pl.Float64)
         ).alias("don_break_up_invalid"),
         pl.mean(
-            (
-                ~pl.col("don_break_20_down").is_in([0, 1])
-                & pl.col("don_break_20_down").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("don_break_20_down").is_in([0, 1]) & pl.col("don_break_20_down").is_not_null()).cast(pl.Float64)
         ).alias("don_break_down_invalid"),
         # TTM squeeze flags (0/1)
         pl.mean(
-            (
-                ~pl.col("ttm_squeeze_on").is_in([0, 1])
-                & pl.col("ttm_squeeze_on").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("ttm_squeeze_on").is_in([0, 1]) & pl.col("ttm_squeeze_on").is_not_null()).cast(pl.Float64)
         ).alias("ttm_squeeze_on_invalid"),
         pl.mean(
-            (
-                ~pl.col("ttm_squeeze_fire").is_in([0, 1])
-                & pl.col("ttm_squeeze_fire").is_not_null()
-            ).cast(pl.Float64)
+            (~pl.col("ttm_squeeze_fire").is_in([0, 1]) & pl.col("ttm_squeeze_fire").is_not_null()).cast(pl.Float64)
         ).alias("ttm_squeeze_fire_invalid"),
         # Beta/Alpha extreme values
-        pl.mean(
-            (
-                (pl.col("beta60_topix").abs() > 10.0)
-                & pl.col("beta60_topix").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("beta_extreme"),
-        pl.mean(
-            (
-                (pl.col("alpha60_topix").abs() > 0.5)
-                & pl.col("alpha60_topix").is_not_null()
-            ).cast(pl.Float64)
-        ).alias("alpha_extreme"),
+        pl.mean(((pl.col("beta60_topix").abs() > 10.0) & pl.col("beta60_topix").is_not_null()).cast(pl.Float64)).alias(
+            "beta_extreme"
+        ),
+        pl.mean(((pl.col("alpha60_topix").abs() > 0.5) & pl.col("alpha60_topix").is_not_null()).cast(pl.Float64)).alias(
+            "alpha_extreme"
+        ),
     ]
 
     try:
@@ -3311,12 +3014,96 @@ def check22_technical_indicators(path: str, score: Score, start: Optional[str], 
     )
 
 
+def check23_flow_supply(path: str, score: Score, start: str | None, end: str | None, snapshots_dir: str | None) -> None:
+    lf = load_dataset_lazy(path, start, end)
+    cols = lf.columns
+    status = "PASS"
+    details: list[str] = []
+
+    def _quantile(col: str, q: float) -> float | None:
+        try:
+            res = lf.select(pl.col(col).drop_nulls().quantile(q).alias("q")).collect()
+            if res.is_empty():
+                return None
+            val = res["q"][0]
+            return None if val is None else float(val)
+        except Exception:
+            return None
+
+    float_col = resolve_column(cols, "float_turnover_pct")
+    if float_col:
+        q99 = _quantile(float_col, 0.99)
+        q01 = _quantile(float_col, 0.01)
+        if q99 is not None and q99 > 5.0:
+            status = _escalate(status, "WARN")
+            details.append(f"float_turnover q99={q99:.2f}")
+        if q01 is not None and q01 < -0.05:
+            status = _escalate(status, "WARN")
+            details.append(f"float_turnover q01={q01:.2f}")
+    else:
+        status = _escalate(status, "WARN")
+        details.append("missing float_turnover_pct")
+
+    margin_pct_col = resolve_column(cols, "margin_long_pct_float")
+    if margin_pct_col:
+        q99 = _quantile(margin_pct_col, 0.99)
+        if q99 is not None and q99 > 5.0:
+            status = _escalate(status, "WARN")
+            details.append(f"margin_pct q99={q99:.2f}")
+    else:
+        status = _escalate(status, "WARN")
+        details.append("missing margin_long_pct_float")
+
+    coverage_targets = [
+        ("crowding_score", "crowding"),
+        ("squeeze_risk", "squeeze"),
+        ("margin_pain_index", "mpi"),
+        ("preE_risk_score", "preE"),
+        ("liquidity_impact", "liquidity"),
+        ("gap_predictor", "gap"),
+        ("basis_gate", "basis"),
+        ("supply_shock", "supply"),
+    ]
+    for col, label in coverage_targets:
+        if col not in cols:
+            status = _escalate(status, "WARN")
+            details.append(f"missing {label}")
+            continue
+        cov = coverage_ratio(lf, [col])
+        if cov < 0.2:
+            status = _escalate(status, "WARN")
+            details.append(f"{label} coverage={cov:.2f}")
+
+    supply_col = resolve_column(cols, "supply_shock")
+    if supply_col:
+        try:
+            uniq = lf.select(pl.col(supply_col).drop_nulls().unique()).collect().get_columns()[0].to_list()
+            if any(val not in (-1, 0, 1) for val in uniq if val is not None):
+                status = _escalate(status, "WARN")
+                details.append("supply_shock outside {-1,0,1}")
+        except Exception:
+            pass
+
+    div_gap_col = resolve_column(cols, "div_ex_gap_miss")
+    if div_gap_col:
+        q99 = _quantile(div_gap_col, 0.99)
+        q01 = _quantile(div_gap_col, 0.01)
+        if (q99 is not None and abs(q99) > 0.5) or (q01 is not None and abs(q01) > 0.5):
+            status = _escalate(status, "WARN")
+            details.append("div_gap_miss spread large")
+
+    detail = ", ".join(details) if details else "ok"
+    score.add("23) Flow/Supply composite features", status, detail)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True, help="Path to ml_dataset_*.parquet")
     ap.add_argument("--start", default=None, help="Start date (YYYY-MM-DD) for validation window")
     ap.add_argument("--end", default=None, help="End date (YYYY-MM-DD) for validation window")
-    ap.add_argument("--snapshots-dir", default=None, help="Directory containing *_snapshot.parquet with availability_ts")
+    ap.add_argument(
+        "--snapshots-dir", default=None, help="Directory containing *_snapshot.parquet with availability_ts"
+    )
     ap.add_argument("--policy-margin", default="T+1_0900")
     ap.add_argument("--policy-earnings", default="T+1_1900")
     ap.add_argument("--policy-am", default="T+1_0900")
@@ -3361,6 +3148,7 @@ def main():
     check20_daily_quotes(args.dataset, score, args.start, args.end, args.snapshots_dir)
     check21_listed_info(args.dataset, score, args.start, args.end, args.snapshots_dir)
     check22_technical_indicators(args.dataset, score, args.start, args.end, args.snapshots_dir)
+    check23_flow_supply(args.dataset, score, args.start, args.end, args.snapshots_dir)
 
     # Optional: Run contract-driven validation if contract file is provided
     contract_path = getattr(args, "contract", None)
@@ -3417,6 +3205,7 @@ def main():
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     print(f"\n📄 Wrote: {out_json}")
+
 
 if __name__ == "__main__":
     main()
