@@ -1,4 +1,10 @@
 {
+  "breakdown_2019-08-28_2025-10-30": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 6146359,
+    "updated_at": "2025-11-09T05:31:54.642977"
+  },
   "breakdown_2019-08-28_2025-10-31": {
     "rows": 6150590,
     "updated_at": "2025-11-06T00:19:33.050373"
@@ -38,6 +44,12 @@
     "format": "ipc",
     "rows": 87,
     "updated_at": "2025-11-06T22:36:32.484131"
+  },
+  "calendar_2019-08-28_2025-10-30": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 1521,
+    "updated_at": "2025-11-09T04:27:30.595808"
   },
   "calendar_2019-08-28_2025-10-31": {
     "rows": 1522,
@@ -127,6 +139,12 @@
     "rows": 0,
     "updated_at": "2025-11-05T08:54:57.880823"
   },
+  "earnings_2019-08-28_2025-10-30": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 190,
+    "updated_at": "2025-11-09T04:46:21.592922"
+  },
   "earnings_2019-08-28_2025-10-31": {
     "dual_format": true,
     "format": "ipc",
@@ -148,6 +166,12 @@
   "earnings_2025-06-03_2025-11-05": {
     "rows": 90,
     "updated_at": "2025-11-05T08:58:29.821661"
+  },
+  "fs_details_2019-08-28_2025-10-30": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 96926,
+    "updated_at": "2025-11-09T04:46:20.077489"
   },
   "fs_details_2019-08-28_2025-10-31": {
     "rows": 97230,
@@ -308,6 +332,12 @@
   "margin_daily_2018-05-18_2025-01-31": {
     "rows": 280651,
     "updated_at": "2025-11-03T02:24:43.066697"
+  },
+  "margin_daily_2019-08-28_2025-10-30": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 280147,
+    "updated_at": "2025-11-09T04:47:09.979247"
   },
   "margin_daily_2019-08-28_2025-10-31": {
     "dual_format": true,
@@ -512,6 +542,12 @@
   "short_2025-01-06_2025-01-07": {
     "rows": 68,
     "updated_at": "2025-11-02T00:18:30.251421"
+  },
+  "short_positions_2019-08-28_2025-10-30": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 603233,
+    "updated_at": "2025-11-09T05:06:50.018481"
   },
   "short_positions_2019-08-28_2025-10-31": {
     "rows": 603776,
