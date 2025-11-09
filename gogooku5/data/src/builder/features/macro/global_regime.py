@@ -198,7 +198,11 @@ def load_global_regime_data(
     if target_cache:
         try:
             target_cache.parent.mkdir(parents=True, exist_ok=True)
-            base_df.write_parquet(target_cache)
+            # Save with IPC cache for 3-5x faster reads
+            from ..utils.lazy_io import save_with_cache
+            _, ipc_path = save_with_cache(base_df, target_cache, create_ipc=True)
+            if ipc_path:
+                LOGGER.debug("Created global regime IPC cache: %s", ipc_path)
             LOGGER.info("Cached global regime data to %s", target_cache)
         except Exception as exc:  # pragma: no cover
             LOGGER.warning("Failed to cache global regime parquet (%s): %s", target_cache, exc)

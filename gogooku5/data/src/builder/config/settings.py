@@ -36,6 +36,7 @@ class DatasetBuilderSettings(BaseSettings):
     sector_short_cache_ttl_days: int = Field(2, ge=0, env="CACHE_TTL_DAYS_SECTOR_SHORT")
     macro_cache_ttl_days: int = Field(14, ge=0, env="CACHE_TTL_DAYS_MACRO")
     calendar_cache_ttl_days: int = Field(7, ge=0, env="CACHE_TTL_DAYS_CALENDAR")
+    data_prefetch_threads: int = Field(2, ge=0, env="DATA_PREFETCH_THREADS")
 
     # Arrow IPC cache optimization settings
     cache_format: str = Field("auto", env="CACHE_FORMAT")

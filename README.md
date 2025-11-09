@@ -101,6 +101,34 @@ make dataset-bg
 tail -f _logs/dataset/*.log
 ```
 
+#### 🔄 チャンク化パイプライン
+
+長期間の再構築や増分更新は四半期チャンクで実行できます。ウォームアップは
+85営業日固定で、自動的にカットされます。
+
+```bash
+# チャンク計画の確認（ドライラン）
+make build-chunks START=2020-01-01 END=2020-12-31 DRY_RUN=1
+
+# 完了済みをスキップしながら実行
+make build-chunks START=2020-01-01 END=2020-12-31 RESUME=1
+
+# 最新チャンクのみ（例: デイリー更新）
+make build-chunks START=2024-01-01 END=2024-12-31 LATEST=1
+
+# マージして最新データセットを更新
+make merge-chunks
+
+# 未完了チャンクを許容してマージする場合（明示的に指定）
+make merge-chunks ALLOW_PARTIAL=1
+# CLI を直接使う場合
+python data/tools/merge_chunks.py --chunks-dir output/chunks --allow-partial
+```
+
+チャンクごとの `ml_dataset.parquet` / `metadata.json` / `status.json` は
+`output/chunks/<chunk_id>/` に保存されます。詳細は
+[docs/CHUNK_PIPELINE.md](docs/CHUNK_PIPELINE.md) を参照してください。
+
 ### 4. モデルトレーニング
 
 ```bash

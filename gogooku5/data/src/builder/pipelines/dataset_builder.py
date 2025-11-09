@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import weakref
 from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, List
+from typing import Any, Callable, Iterable, List, TypeVar
 
 import polars as pl
 from polars.datatypes import Date as PlDateType
@@ -23,6 +24,7 @@ from ..api import (
     RateLimitDetected,
     TradingCalendarFetcher,
 )
+from ..chunks import ChunkSpec
 from ..config import DatasetBuilderSettings, get_settings
 from ..features.core.advanced import AdvancedFeatureEngineer
 from ..features.core.flow.enhanced import FlowFeatureEngineer
@@ -78,6 +80,8 @@ from ..utils import (
     month_range,
     shift_trading_days,
 )
+from ..utils.prefetch import DataSourcePrefetcher
+from ..utils.lazy_io import save_with_cache
 
 LOGGER = configure_logger("builder.pipeline")
 BETA_EPS = 1e-12
@@ -104,6 +108,7 @@ INDEX_FEATURE_WHITELIST: dict[str, tuple[str, ...]] = {
     "topix": TOPIX_FEATURE_WHITELIST,
     "nk225": NK225_FEATURE_WHITELIST,
 }
+PrefetchResult = TypeVar("PrefetchResult")
 
 
 def _compute_auto_warmup(
@@ -184,50 +189,76 @@ class DatasetBuilder:
         self._schema_fp_cache = None  # Lazy initialization for L0 schema fingerprint
         self._run_meta: dict[str, Any] | None = None
 
-    def build(self, *, start: str, end: str, refresh_listed: bool = False) -> Path:
-        """Build the dataset for the given date range."""
+    def build(
+        self,
+        *,
+        start: str,
+        end: str,
+        refresh_listed: bool = False,
+        chunk_spec: ChunkSpec | None = None,
+    ) -> Path:
+        """Build the dataset for the given date range or chunk."""
 
         # Phase 2 Patch A: Warmup period + final slice
-        # Save output range
-        start_out, end_out = start, end
         self._run_meta = {}
 
-        # Calculate warmup period with env var override support
-        # Default horizons: [1, 5, 10, 20] → max = 20
-        horizon_max = 20
-        default_lookback = max(60, 20) + horizon_max + 5  # = 60 + 20 + 5 = 85 (legacy default)
-
-        # Priority: WARMUP_DAYS env var > default
-        env_warm = os.getenv("WARMUP_DAYS")
-        if env_warm:
-            try:
-                if str(env_warm).lower() in ("auto", "automatic"):
-                    lookback_days = _compute_auto_warmup(max_window=252, horizon_max=horizon_max)
-                    warmup_policy = f"env:auto->{lookback_days}"
-                else:
-                    lookback_days = int(env_warm)
-                    warmup_policy = f"env:{lookback_days}"
-            except ValueError as e:
-                raise SystemExit(f"WARMUP_DAYS must be int or 'auto', got: {env_warm}") from e
+        if chunk_spec is not None:
+            start_out, end_out = chunk_spec.output_start, chunk_spec.output_end
+            start_ctx = chunk_spec.input_start
+            warmup_policy = f"chunk:{chunk_spec.chunk_id}"
+            LOGGER.info(
+                "[WARMUP] Chunk build %s: output=%s→%s, context=%s→%s",
+                chunk_spec.chunk_id,
+                start_out,
+                end_out,
+                start_ctx,
+                chunk_spec.input_end,
+            )
         else:
-            lookback_days = default_lookback
-            warmup_policy = f"default:{lookback_days}"
+            # Save output range
+            start_out, end_out = start, end
 
-        LOGGER.info("[WARMUP] policy=%s (horizon_max=%d)", warmup_policy, horizon_max)
+            # Calculate warmup period with env var override support
+            # Default horizons: [1, 5, 10, 20] → max = 20
+            horizon_max = 20
+            default_lookback = max(60, 20) + horizon_max + 5  # = 60 + 20 + 5 = 85 (legacy default)
 
-        # Calculate context start date (warmup period)
-        try:
-            start_ctx = shift_trading_days(start_out, -lookback_days)
-            LOGGER.info("[WARMUP] Output range: %s to %s", start_out, end_out)
-            LOGGER.info("[WARMUP] Context range: %s to %s (warmup: %d days)", start_ctx, end_out, lookback_days)
-        except Exception as e:
-            LOGGER.warning("[WARMUP] Failed to calculate warmup period: %s. Using original start date.", e)
-            start_ctx = start_out
+            # Priority: WARMUP_DAYS env var > default
+            env_warm = os.getenv("WARMUP_DAYS")
+            if env_warm:
+                try:
+                    if str(env_warm).lower() in ("auto", "automatic"):
+                        lookback_days = _compute_auto_warmup(max_window=252, horizon_max=horizon_max)
+                        warmup_policy = f"env:auto->{lookback_days}"
+                    else:
+                        lookback_days = int(env_warm)
+                        warmup_policy = f"env:{lookback_days}"
+                except ValueError as e:
+                    raise SystemExit(f"WARMUP_DAYS must be int or 'auto', got: {env_warm}") from e
+            else:
+                lookback_days = default_lookback
+                warmup_policy = f"default:{lookback_days}"
+
+            LOGGER.info("[WARMUP] policy=%s (horizon_max=%d)", warmup_policy, horizon_max)
+
+            # Calculate context start date (warmup period)
+            try:
+                start_ctx = shift_trading_days(start_out, -lookback_days)
+                LOGGER.info("[WARMUP] Output range: %s to %s", start_out, end_out)
+                LOGGER.info("[WARMUP] Context range: %s to %s (warmup: %d days)", start_ctx, end_out, lookback_days)
+            except Exception as e:
+                LOGGER.warning("[WARMUP] Failed to calculate warmup period: %s. Using original start date.", e)
+                start_ctx = start_out
 
         # Use context dates for data fetching
         start, end = start_ctx, end_out
 
         LOGGER.info("Starting dataset build from %s to %s", start, end)
+
+        prefetcher = DataSourcePrefetcher(self.settings.data_prefetch_threads, logger=LOGGER)
+        _prefetcher_finalizer = weakref.finalize(prefetcher, prefetcher.close)
+        if prefetcher.enabled:
+            self._schedule_prefetch_targets(prefetcher, start=start, end=end)
         LOGGER.info("[DEBUG] Step 1: Creating ListedManager...")
         listed_manager = ListedManager(fetcher=self.fetcher)
         LOGGER.info("[DEBUG] Step 2: Fetching listed symbols...")
@@ -255,8 +286,9 @@ class DatasetBuilder:
 
         LOGGER.info("[DEBUG] Step 6: Building calendar...")
         # Use IPC cache for fast reuse (calendar is ~250 rows/year, perfect for caching)
+        calendar_key = f"trading_calendar_{start}_{end}"
         calendar_lf = self._load_small_table_cached(
-            f"trading_calendar_{start}_{end}", lambda: self._business_calendar(start=start, end=end)
+            calendar_key, lambda: self._business_calendar(start=start, end=end)
         )
         calendar_df = calendar_lf.collect()
         LOGGER.info("[DEBUG] Step 6 complete: %d business days", len(calendar_df))
@@ -298,6 +330,7 @@ class DatasetBuilder:
             raise
 
         combined_df = self._add_return_targets(combined_df)
+        combined_df = self._ensure_ret_prev_columns(combined_df)
         combined_df = self._add_gap_features(combined_df)
         combined_df = self._add_range_features(combined_df)
         combined_df = self.limit_features.add_features(combined_df, meta=self._run_meta)
@@ -314,25 +347,41 @@ class DatasetBuilder:
         combined_df = self.peer_features.add_features(combined_df)
 
         try:
-            fs_df = self.data_sources.fs_details(start=start, end=end)
+            fs_df = self._resolve_prefetched(
+                prefetcher,
+                "fs_details",
+                lambda: self.data_sources.fs_details(start=start, end=end),
+            )
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.debug("Failed to fetch fs_details: %s", exc)
             fs_df = pl.DataFrame()
 
         try:
-            div_df = self.data_sources.dividends(start=start, end=end)
+            div_df = self._resolve_prefetched(
+                prefetcher,
+                "dividends",
+                lambda: self.data_sources.dividends(start=start, end=end),
+            )
         except Exception as exc:  # pragma: no cover
             LOGGER.debug("Failed to fetch dividend data: %s", exc)
             div_df = pl.DataFrame()
 
         try:
-            breakdown_df = self.data_sources.trading_breakdown(start=start, end=end)
+            breakdown_df = self._resolve_prefetched(
+                prefetcher,
+                "trading_breakdown",
+                lambda: self.data_sources.trading_breakdown(start=start, end=end),
+            )
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.debug("Failed to fetch trading breakdown data: %s", exc)
             breakdown_df = pl.DataFrame()
 
         try:
-            earnings_df = self.data_sources.earnings(start=start, end=end)
+            earnings_df = self._resolve_prefetched(
+                prefetcher,
+                "earnings",
+                lambda: self.data_sources.earnings(start=start, end=end),
+            )
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.debug("Failed to fetch earnings announcements: %s", exc)
             earnings_df = pl.DataFrame()
@@ -393,8 +442,21 @@ class DatasetBuilder:
             end=end,
         )
         combined_df = self._add_short_selling_features_asof(combined_df, calendar_df=calendar_df, start=start, end=end)
+        try:
+            short_positions_df = self._resolve_prefetched(
+                prefetcher,
+                "short_positions",
+                lambda: self.data_sources.short_positions(start=start, end=end),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.debug("Failed to fetch short positions data: %s", exc)
+            short_positions_df = pl.DataFrame()
         combined_df = self._add_short_positions_features_asof(
-            combined_df, calendar_df=calendar_df, start=start, end=end
+            combined_df,
+            calendar_df=calendar_df,
+            start=start,
+            end=end,
+            positions_df=short_positions_df,
         )
 
         # 日経225オプション特徴量の追加（P0: 最小構成）
@@ -495,8 +557,13 @@ class DatasetBuilder:
 
         # Phase 2 Patch E: ADV filter (optional, controlled by MIN_ADV_YEN env var)
         enriched_df = self._apply_adv_filter(enriched_df, start=start, end=end)
+        enriched_df = self._ensure_ret_prev_columns(enriched_df)
 
         finalized = self._finalize_for_output(enriched_df)
+        finalized = self._ensure_ret_prev_columns(finalized)
+        if chunk_spec is not None:
+            return self._persist_chunk_dataset(finalized, chunk_spec)
+
         artifact = self._persist_dataset(finalized, start=start_out, end=end_out)
         self.storage.ensure_remote_symlink(target=str(artifact.latest_symlink))
 
@@ -506,6 +573,118 @@ class DatasetBuilder:
         else:
             LOGGER.info("Latest symlink not created (safety gate). Returning parquet_path instead.")
             return artifact.parquet_path
+
+    def _schedule_prefetch_targets(
+        self,
+        prefetcher: DataSourcePrefetcher,
+        *,
+        start: str,
+        end: str,
+    ) -> None:
+        """Submit long-tail data source fetches to overlap with CPU/GPU work."""
+
+        tasks: dict[str, Callable[[], Any]] = {
+            "fs_details": lambda: self.data_sources.fs_details(start=start, end=end),
+            "dividends": lambda: self.data_sources.dividends(start=start, end=end),
+            "trading_breakdown": lambda: self.data_sources.trading_breakdown(start=start, end=end),
+            "earnings": lambda: self.data_sources.earnings(start=start, end=end),
+            "short_positions": lambda: self.data_sources.short_positions(start=start, end=end),
+        }
+        for key, factory in tasks.items():
+            try:
+                scheduled = prefetcher.schedule(key, factory)
+                if scheduled:
+                    LOGGER.debug("[PREFETCH] Scheduled %s (range %s→%s)", key, start, end)
+            except Exception as exc:  # pragma: no cover - defensive
+                LOGGER.debug("[PREFETCH] Failed to schedule %s: %s", key, exc)
+
+    def _resolve_prefetched(
+        self,
+        prefetcher: DataSourcePrefetcher,
+        key: str,
+        fallback_fn: Callable[[], PrefetchResult],
+    ) -> PrefetchResult:
+        """Return prefetched result if available, otherwise call fallback synchronously."""
+
+        if prefetcher is not None and prefetcher.enabled:
+            return prefetcher.resolve(key, fallback_fn)
+        return fallback_fn()
+
+    def _persist_chunk_dataset(self, df: pl.DataFrame, chunk_spec: ChunkSpec) -> Path:
+        """Persist chunk outputs and metadata without touching global symlinks."""
+
+        parquet_kwargs = {"compression": self.settings.dataset_parquet_compression}
+        parquet_path, ipc_path = save_with_cache(
+            df,
+            chunk_spec.dataset_path,
+            create_ipc=True,
+            parquet_kwargs=parquet_kwargs,
+        )
+
+        metadata: dict[str, Any] = {
+            "chunk_id": chunk_spec.chunk_id,
+            "input_start": chunk_spec.input_start,
+            "input_end": chunk_spec.input_end,
+            "output_start": chunk_spec.output_start,
+            "output_end": chunk_spec.output_end,
+            "rows": df.height,
+            "columns": df.columns,
+            "dtypes": {name: str(dtype) for name, dtype in df.schema.items()},
+            "paths": {
+                "parquet": str(parquet_path),
+                "ipc": str(ipc_path) if ipc_path else None,
+            },
+        }
+        if isinstance(self._run_meta, dict):
+            metadata["builder_meta"] = self._run_meta
+
+        chunk_spec.output_dir.mkdir(parents=True, exist_ok=True)
+        with chunk_spec.metadata_path.open("w", encoding="utf-8") as meta_fp:
+            json.dump(metadata, meta_fp, indent=2, ensure_ascii=False, sort_keys=True)
+
+        self._write_chunk_status(chunk_spec, state="completed", rows=df.height)
+        return parquet_path
+
+    def _write_chunk_status(
+        self,
+        chunk_spec: ChunkSpec,
+        *,
+        state: str,
+        rows: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Write status.json for a chunk build."""
+
+        payload: dict[str, Any] = {
+            "chunk_id": chunk_spec.chunk_id,
+            "state": state,
+            "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
+        }
+        if rows is not None:
+            payload["rows"] = rows
+        if error:
+            payload["error"] = error
+
+        chunk_spec.output_dir.mkdir(parents=True, exist_ok=True)
+        with chunk_spec.status_path.open("w", encoding="utf-8") as status_fp:
+            json.dump(payload, status_fp, indent=2, ensure_ascii=False, sort_keys=True)
+
+    def build_chunk(self, chunk_spec: ChunkSpec, *, refresh_listed: bool = False) -> Path:
+        """Build a single chunk described by ``chunk_spec``."""
+
+        chunk_spec.output_dir.mkdir(parents=True, exist_ok=True)
+        self._write_chunk_status(chunk_spec, state="running")
+
+        try:
+            return self.build(
+                start=chunk_spec.output_start,
+                end=chunk_spec.output_end,
+                refresh_listed=refresh_listed,
+                chunk_spec=chunk_spec,
+            )
+        except Exception as exc:
+            self._write_chunk_status(chunk_spec, state="failed", error=str(exc))
+            raise
 
     def _load_small_table_cached(self, table_name: str, generator_fn) -> pl.LazyFrame:
         """Load small table with Arrow IPC mmap caching for fast reuse.
@@ -527,7 +706,7 @@ class DatasetBuilder:
             - Subsequent loads: mmap read (~10-50ms, 10-50x faster)
             - Memory: Zero-copy mmap, minimal overhead
         """
-        cache_dir = self.settings.cache_dir / "small_tables"
+        cache_dir = self.settings.data_cache_dir / "small_tables"
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_path = cache_dir / f"{table_name}.arrow"
 
@@ -538,7 +717,7 @@ class DatasetBuilder:
             df.write_ipc(cache_path, compression="lz4")
             LOGGER.info("[SMALL TABLE] Saved %s to IPC cache: %d rows, %d cols", table_name, df.height, df.width)
         else:
-            LOGGER.debug("[SMALL TABLE] Cache hit for %s", table_name)
+            LOGGER.info("[SMALL TABLE] Cache hit for %s", table_name)
 
         # Load with lazy scan (mmap) + cache in memory
         lf = pl.scan_ipc(str(cache_path))
@@ -1311,13 +1490,21 @@ class DatasetBuilder:
         IMPORTANT: This now generates ret_prev_* (past returns) for features.
         Forward returns (ret_fwd_*) are generated separately as labels.
         """
-        if df.is_empty() or "close" not in df.columns:
+        if df.is_empty():
+            return df
+        code_col = self._resolve_column_name(df, "code")
+        date_col = self._resolve_column_name(df, "date")
+        adj_close = self._resolve_column_name(df, "adjustmentclose")
+        raw_close = self._resolve_column_name(df, "close")
+        if code_col is None or (adj_close is None and raw_close is None):
             return df
 
-        if "adjustmentclose" in df.columns:
-            base_price = pl.col("adjustmentclose").fill_null(pl.col("close"))
+        if adj_close and raw_close:
+            base_price = pl.col(adj_close).fill_null(pl.col(raw_close))
+        elif adj_close:
+            base_price = pl.col(adj_close)
         else:
-            base_price = pl.col("close")
+            base_price = pl.col(raw_close)  # type: ignore[arg-type]
 
         # Generate PAST returns (safe for features - no look-ahead)
         horizons = {
@@ -1331,17 +1518,23 @@ class DatasetBuilder:
         exprs = []
         for name, horizon in horizons.items():
             # shift(+horizon) = look backward (safe!)
-            past = base_price.shift(+horizon).over("code")
+            past = base_price.shift(+horizon).over(code_col)
             exprs.append(((base_price / (past + 1e-12)) - 1.0).alias(name))
 
-        price_expr = pl.col("adjustmentclose") if "adjustmentclose" in df.columns else pl.col("close")
-        volume_expr = pl.col("adjustmentvolume") if "adjustmentvolume" in df.columns else pl.col("volume")
-        if "turnovervalue" in df.columns:
-            dollar_volume = pl.col("turnovervalue").fill_null(price_expr * volume_expr).alias("dollar_volume")
+        price_expr = pl.col(adj_close) if adj_close else pl.col(raw_close)  # type: ignore[arg-type]
+        adj_volume = self._resolve_column_name(df, "adjustmentvolume")
+        raw_volume = self._resolve_column_name(df, "volume")
+        volume_expr = pl.col(adj_volume) if adj_volume else pl.col(raw_volume)  # type: ignore[arg-type]
+        turnover_col = self._resolve_column_name(df, "turnovervalue")
+        if turnover_col:
+            dollar_volume = pl.col(turnover_col).fill_null(price_expr * volume_expr).alias("dollar_volume")
         else:
             dollar_volume = (price_expr * volume_expr).alias("dollar_volume")
 
-        return df.sort(["code", "date"]).with_columns(exprs + [dollar_volume])
+        sort_cols = [col for col in (code_col, date_col) if col is not None]
+        if sort_cols:
+            df = df.sort(sort_cols)
+        return df.with_columns(exprs + [dollar_volume])
 
     def _add_gap_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """Decompose previous-day returns into overnight and intraday components."""
@@ -1469,6 +1662,49 @@ class DatasetBuilder:
             )
 
         return df
+
+    def _ensure_ret_prev_columns(self, df: pl.DataFrame, horizons: tuple[int, ...] = (1, 5, 10, 20, 60, 120)) -> pl.DataFrame:
+        """Guarantee past-return columns exist (used by validators and downstream features)."""
+
+        if df.is_empty():
+            return df
+        code_col = self._resolve_column_name(df, "code")
+        date_col = self._resolve_column_name(df, "date")
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+
+        if code_col is None or price_col is None:
+            return df
+
+        missing_exprs = []
+        for horizon in horizons:
+            name = f"ret_prev_{horizon}d"
+            if name in df.columns:
+                continue
+            past = pl.col(price_col).shift(+horizon).over(code_col)
+            missing_exprs.append(((pl.col(price_col) / (past + 1e-12)) - 1.0).alias(name))
+
+        if not missing_exprs:
+            return df
+
+        LOGGER.debug(
+            "[RET] Backfilling missing past-return columns: %s",
+            [f"ret_prev_{h}d" for h in horizons if f"ret_prev_{h}d" not in df.columns],
+        )
+        sort_cols = [col for col in (code_col, date_col) if col is not None]
+        if sort_cols:
+            df = df.sort(sort_cols)
+        enriched = df.with_columns(missing_exprs)
+        return enriched
+
+    @staticmethod
+    def _resolve_column_name(df: pl.DataFrame, canonical: str) -> str | None:
+        """Return actual column matching canonical name (case-insensitive)."""
+
+        target = canonical.lower()
+        for column in df.columns:
+            if column.lower() == target:
+                return column
+        return None
 
     def _add_range_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """Add range/position features (P0: day_range, close_location, range_expansion)."""
@@ -3970,7 +4206,7 @@ class DatasetBuilder:
                 try:
                     topix_df = self.data_sources.topix(start=start, end=end)
                     if not topix_df.is_empty():
-                        topix_df = topix_df.with_columns(pl.lit("0000").cast(pl.Utf8).alias("code"))
+                        topix_df = topix_df.with_columns(pl.lit("0000").cast(pl.Utf8).alias("Code"))
                         all_indices_df = (
                             pl.concat([all_indices_df, topix_df]) if not all_indices_df.is_empty() else topix_df
                         )
@@ -3992,6 +4228,9 @@ class DatasetBuilder:
                     LOGGER.debug("Failed to fetch other indices: %s", exc)
         except Exception as exc:
             LOGGER.warning("Failed to fetch indices: %s", exc)
+
+        if "Code" in all_indices_df.columns:
+            all_indices_df = all_indices_df.drop("code", strict=False).rename({"Code": "code"})
 
         if all_indices_df.is_empty():
             LOGGER.debug("No index data available, skipping index features")
@@ -4034,15 +4273,8 @@ class DatasetBuilder:
         # 既存の列名を確認して、必要に応じてリネーム
         rename_map = {}
         for col in joined.columns:
-            if (
-                col.startswith("ret_")
-                or col.startswith("atr_")
-                or col.startswith("natr_")
-                or col.startswith("mom_")
-                or col.startswith("trend_")
-                or col.startswith("realized_vol_")
-            ):
-                if not col.startswith("idx_"):
+            if col.startswith(("ret_", "atr_", "natr_", "mom_", "trend_", "realized_vol_")):
+                if not (col.startswith("idx_") or col.startswith("topix_") or col.startswith("nk225_")):
                     rename_map[col] = f"idx_{col}"
 
         if rename_map:
@@ -5446,6 +5678,7 @@ class DatasetBuilder:
         calendar_df: pl.DataFrame,
         start: str,
         end: str,
+        positions_df: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """
         Add short selling positions features with T+1 as-of join (P0 implementation).
@@ -5465,38 +5698,36 @@ class DatasetBuilder:
         """
 
         try:
-            positions_df = self.data_sources.short_positions(start=start, end=end)
+            if positions_df is None:
+                positions_df = self.data_sources.short_positions(start=start, end=end)
         except Exception as exc:  # pragma: no cover
             LOGGER.debug("Failed to fetch short positions data: %s", exc)
             return self._ensure_short_positions_columns(df)
 
-        if positions_df.is_empty():
+        if positions_df is None or positions_df.is_empty():
             LOGGER.debug("Short positions data is empty, skipping as-of join")
             return self._ensure_short_positions_columns(df)
 
-        # Normalize column names (API uses PascalCase)
-        col_lookup = {col.lower(): col for col in positions_df.columns}
-        required_cols = {
-            "discloseddate": "DisclosedDate",
-            "code": "Code",
-            "shortpositionstosharesoutstandingratio": "ShortPositionsToSharesOutstandingRatio",
-            "differenceinshortpositionsratiofrompreviousreport": "DifferenceInShortPositionsRatioFromPreviousReport",
-        }
+        normalized = positions_df.rename({col: col.lower() for col in positions_df.columns})
 
-        # Check if we have required columns
-        missing = []
-        for key, pascal_name in required_cols.items():
-            if key not in col_lookup and pascal_name not in positions_df.columns:
-                missing.append(pascal_name)
+        ratio_col = "shortpositionstosharesoutstandingratio"
+        delta_col = "differenceinshortpositionsratiofrompreviousreport"
+        prev_ratio_col = "shortpositionsinpreviousreportingratio"
+
+        missing = [col for col in ("discloseddate", "code", ratio_col) if col not in normalized.columns]
         if missing:
-            LOGGER.warning(
-                "Short positions data missing required columns: %s, skipping features",
-                missing,
-            )
+            LOGGER.warning("Short positions data missing required columns: %s, skipping features", missing)
             return self._ensure_short_positions_columns(df)
 
-        # Normalize to lowercase for easier processing
-        normalized = positions_df.rename({col: col.lower() for col in positions_df.columns})
+        normalized = self._ensure_short_positions_delta_column(normalized, ratio_col=ratio_col, prev_col=prev_ratio_col)
+
+        if delta_col not in normalized.columns:
+            LOGGER.warning(
+                "Short positions data missing '%s' column even after fallback (available=%s); skipping features",
+                delta_col,
+                sorted(normalized.columns),
+            )
+            return self._ensure_short_positions_columns(df)
 
         # Use DisclosedDate as published date (most conservative: 19:00 JST)
         if "discloseddate" not in normalized.columns:
@@ -5514,8 +5745,6 @@ class DatasetBuilder:
 
         # Convert ratio from percentage to decimal (0-1 range)
         # API may return percentage or decimal - check and normalize
-        ratio_col = "shortpositionstosharesoutstandingratio"
-        delta_col = "differenceinshortpositionsratiofrompreviousreport"
 
         # Check if values are in percentage range (>1) or decimal range (≤1)
         sample_ratio = (
@@ -5576,8 +5805,8 @@ class DatasetBuilder:
                     pl.count().alias("ssp_reporters"),
                     pl.col(ratio_col).max().alias("ssp_top_ratio"),
                     pl.col(delta_col).sum().alias("ssp_delta_sum"),
-                    pl.col(delta_col).clip_min(0).sum().alias("ssp_delta_pos"),
-                    pl.col(delta_col).clip_max(0).sum().alias("ssp_delta_neg"),
+                    pl.col(delta_col).clip(lower_bound=0).sum().alias("ssp_delta_pos"),
+                    pl.col(delta_col).clip(upper_bound=0).sum().alias("ssp_delta_neg"),
                     # P1: HHI (concentration) - sum of squared ratios
                     (pl.col(ratio_col) ** 2).sum().alias("ssp_hhi"),
                 ]
@@ -5780,6 +6009,36 @@ class DatasetBuilder:
                 df = df.with_columns(pl.lit(None).cast(dtype).alias(col_name))
 
         return df
+
+    @staticmethod
+    def _ensure_short_positions_delta_column(
+        df: pl.DataFrame,
+        *,
+        ratio_col: str,
+        prev_col: str,
+    ) -> pl.DataFrame:
+        """
+        Synthesise the delta column when the API omits DifferenceInShortPositionsRatioFromPreviousReport.
+
+        The API sometimes ships payloads without the delta column but still includes the previous reporting ratio.
+        In that case we can safely derive delta = current_ratio - previous_ratio.
+        """
+
+        delta_col = "differenceinshortpositionsratiofrompreviousreport"
+        if delta_col in df.columns or prev_col not in df.columns or ratio_col not in df.columns:
+            return df
+
+        LOGGER.info(
+            "Short positions delta column missing; synthesizing from %s - %s",
+            ratio_col,
+            prev_col,
+        )
+
+        return df.with_columns(
+            (
+                pl.col(ratio_col).cast(pl.Float64, strict=False) - pl.col(prev_col).cast(pl.Float64, strict=False)
+            ).alias(delta_col)
+        )
 
     def _add_index_option_225_features_asof(
         self,
@@ -6147,6 +6406,31 @@ class DatasetBuilder:
             if isinstance(meta, dict):
                 schema_meta = meta.setdefault("schema_governance", {})
                 schema_meta["dropped_macro_columns"] = macro_drop_cols
+
+        # Safety net: ensure ret_overnight / ret_intraday exist before persistence.
+        required_gap_inputs = {"code", "date", "adjustmentopen", "adjustmentclose"}
+        missing_gap_cols = [col for col in ("ret_overnight", "ret_intraday") if col not in df.columns]
+        if missing_gap_cols:
+            if required_gap_inputs.issubset(df.columns):
+                LOGGER.warning(
+                    "[GAP-FIX] Recomputing missing gap columns (%s) before finalize",
+                    ", ".join(missing_gap_cols),
+                )
+                df = df.sort(["code", "date"])
+                ao = pl.col("adjustmentopen")
+                ac = pl.col("adjustmentclose")
+                eps = 1e-9
+                gap_exprs: list[pl.Expr] = []
+                if "ret_overnight" in missing_gap_cols:
+                    gap_exprs.append(((ao / (ac.shift(1).over("code") + eps)) - 1.0).alias("ret_overnight"))
+                if "ret_intraday" in missing_gap_cols:
+                    gap_exprs.append(((ac / (ao + eps)) - 1.0).alias("ret_intraday"))
+                df = df.with_columns(gap_exprs)
+            else:
+                LOGGER.error(
+                    "[GAP-FIX] Cannot recompute missing gap columns %s (required inputs absent)",
+                    ", ".join(missing_gap_cols),
+                )
 
         # Hotfix Step 3: Safe rename (handles collision when rename target already exists)
         rename_map = {

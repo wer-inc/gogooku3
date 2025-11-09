@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 import polars as pl
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load, save_with_cache
 
 logging.basicConfig(
     level=logging.INFO,
@@ -142,7 +143,8 @@ def main() -> None:
 
     # Load dataset
     LOGGER.info("Loading dataset...")
-    df = pl.read_parquet(input_path)
+    # Use lazy_load for IPC cache support (3-5x faster reads)
+    df = lazy_load(input_path, prefer_ipc=True)
     LOGGER.info("  Loaded: %d rows × %d columns", len(df), len(df.columns))
 
     # Check for required columns
@@ -175,7 +177,10 @@ def main() -> None:
     LOGGER.info("")
     LOGGER.info("Saving result to: %s", output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df_with_labels.write_parquet(output_path)
+    # Use save_with_cache to create IPC cache for 3-5x faster subsequent reads
+    _, ipc_path = save_with_cache(df_with_labels, output_path, create_ipc=True)
+    if ipc_path:
+        LOGGER.debug("Created IPC cache: %s (3-5x faster reads)", ipc_path)
 
     # Report statistics
     LOGGER.info("")

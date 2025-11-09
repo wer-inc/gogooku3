@@ -12,6 +12,7 @@ from typing import Optional
 import polars as pl
 
 from ..config import DatasetBuilderSettings, get_settings
+from .lazy_io import save_with_cache
 from .logger import get_logger
 
 LOGGER = get_logger("artifacts")
@@ -78,7 +79,11 @@ class DatasetArtifactWriter:
                 df.width,
             )
 
-        df.write_parquet(parquet_path, compression=self.settings.dataset_parquet_compression)
+        # Save with IPC cache for 3-5x faster reads
+        parquet_kwargs = {"compression": self.settings.dataset_parquet_compression}
+        _, ipc_path = save_with_cache(df, parquet_path, create_ipc=True, parquet_kwargs=parquet_kwargs)
+        if ipc_path:
+            LOGGER.debug("Created IPC cache: %s (3-5x faster reads)", ipc_path)
 
         feature_index_payload = self._build_feature_index_payload(
             df=df,

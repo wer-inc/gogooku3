@@ -17,6 +17,7 @@ import polars as pl
 import torch
 import yaml
 from _bootstrap import ensure_import_paths
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 from tqdm import tqdm
 
 ensure_import_paths()
@@ -131,7 +132,8 @@ def load_model_and_config(
 
 def prepare_dataset(config: dict, val_days: int | None, max_days: int | None):
     data_cfg = config["data"]
-    df = pl.read_parquet(data_cfg["parquet_path"])
+    # Use lazy_load for IPC cache support (3-5x faster reads)
+    df = lazy_load(data_cfg["parquet_path"], prefer_ipc=True)
 
     feature_selector = FeatureSelector(data_cfg["feature_groups_config"])
     groups = list(data_cfg.get("feature_groups", []))

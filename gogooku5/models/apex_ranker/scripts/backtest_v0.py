@@ -27,6 +27,7 @@ import numpy as np
 import polars as pl
 import torch
 from _bootstrap import ensure_import_paths
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 from tqdm import tqdm
 
 ensure_import_paths()
@@ -358,7 +359,8 @@ def prepare_validation_data(
     data_path = resolve_dataset_path(
         data_cfg.get("parquet_path"), extra_bases=[config_dir]
     )
-    df = pl.read_parquet(data_path)
+    # Use lazy_load for IPC cache support (3-5x faster reads)
+    df = lazy_load(data_path, prefer_ipc=True)
     print(f"[INFO] Loaded dataset: {len(df):,} rows from {data_path}")
 
     feature_groups_path = resolve_artifact_path(

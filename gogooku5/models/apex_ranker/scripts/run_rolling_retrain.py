@@ -24,6 +24,7 @@ from typing import Any
 
 import polars as pl
 from _bootstrap import ensure_import_paths
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 
 ensure_import_paths()
 
@@ -153,7 +154,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def load_trading_calendar(data_path: Path, date_column: str = "Date") -> list[date]:
-    frame = pl.read_parquet(str(data_path), columns=[date_column])
+    # Use lazy_load for IPC cache support (3-5x faster reads) with column pruning
+    frame = lazy_load(str(data_path), columns=[date_column], prefer_ipc=True)
     return [
         d if isinstance(d, date) else d.date()
         for d in frame[date_column].unique().sort().to_list()

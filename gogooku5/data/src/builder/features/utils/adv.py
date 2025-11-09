@@ -50,12 +50,31 @@ def compute_adv60_from_raw(
         │ 1301 │ 2024-09-02 │ 5.2e8      │
         └──────┴────────────┴────────────┘
     """
-    # 1) Load raw data (lazy for efficiency)
-    raw_path_list = [str(p) for p in raw_paths]
+    # 1) Load raw data (lazy for efficiency, prefer IPC cache for 3-5x faster reads)
+    raw_path_list = [Path(p) for p in raw_paths]
     LOGGER.info("Loading raw quotes from %d file(s): %s", len(raw_path_list), raw_path_list)
 
+    # Build list of LazyFrames, preferring IPC cache when available
+    scans = []
+    for path in raw_path_list:
+        path = Path(path)
+        ipc_path = path.with_suffix(".arrow")
+        if ipc_path.exists():
+            try:
+                scans.append(pl.scan_ipc(str(ipc_path)))
+                LOGGER.debug("Using IPC cache: %s", ipc_path)
+            except Exception as exc:
+                LOGGER.warning("Failed to scan IPC cache %s, falling back to Parquet: %s", ipc_path, exc)
+                scans.append(pl.scan_parquet(str(path)))
+        else:
+            scans.append(pl.scan_parquet(str(path)))
+
     try:
-        q = pl.scan_parquet(raw_path_list)
+        if len(scans) == 1:
+            q = scans[0]
+        else:
+            # Concatenate multiple LazyFrames
+            q = pl.concat(scans, how="vertical")
     except Exception as e:
         raise RuntimeError(f"Failed to load raw quotes from {raw_path_list}: {e}") from e
 

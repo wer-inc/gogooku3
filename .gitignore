@@ -164,6 +164,7 @@ secrets.zip
 gogooku5/data/models/
 gogooku5/data/output/cache/quotes_v2/
 gogooku5/data/output/ml_dataset_*_full_metadata.json
+gogooku5/data/output/cache/*.arrow
 gogooku5/data/src/builder/utils/gpu_utils.py
 gogooku5/data/src/builder/utils/quotes_l0.py
 gogooku5/models/apex_ranker/output/

@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, Iterator, Literal, Optional, Tuple
 import polars as pl
 
 from ..config import DatasetBuilderSettings, get_settings
+from .lazy_io import lazy_load
 from .logger import get_logger
 
 LOGGER = get_logger("cache")
@@ -102,13 +103,15 @@ class CacheManager:
             >>> df = cache_mgr.load_dataframe("features_2023")
             >>> # Tries: features_2023.arrow → features_2023.parquet
         """
+        # Use lazy_load for optimal performance (IPC-first with fallback)
         # Try IPC first (faster)
         if prefer_ipc:
             ipc_path = self.cache_file(key, format="ipc")
             if ipc_path.exists():
                 try:
                     LOGGER.debug("Loading from IPC cache (fast): %s", ipc_path)
-                    return pl.read_ipc(ipc_path)
+                    # Use lazy_load for predicate pushdown and column pruning support
+                    return lazy_load(ipc_path, prefer_ipc=True)
                 except Exception as exc:
                     LOGGER.warning("Failed to read IPC cache %s: %s. Trying Parquet.", ipc_path, exc)
 
@@ -116,7 +119,8 @@ class CacheManager:
         parquet_path = self.cache_file(key, format="parquet")
         if parquet_path.exists():
             LOGGER.debug("Loading from Parquet cache: %s", parquet_path)
-            return pl.read_parquet(parquet_path)
+            # Use lazy_load for optimal performance
+            return lazy_load(parquet_path, prefer_ipc=False)
 
         # Neither format exists
         return None
@@ -276,6 +280,7 @@ class CacheManager:
         prefer_ipc: bool = True,
         save_format: Literal["parquet", "ipc"] = "ipc",
         dual_format: bool = True,
+        allow_empty: bool = False,
     ) -> Tuple[pl.DataFrame, bool]:
         """Return cached dataframe or fetch and persist a fresh copy.
 
@@ -286,6 +291,7 @@ class CacheManager:
             prefer_ipc: Try IPC format first when loading. Defaults to True.
             save_format: Primary format for new cache. Defaults to "ipc".
             dual_format: Save both formats. Defaults to True.
+            allow_empty: If False, empty dataframes are treated as failures (no caching).
 
         Returns:
             Tuple of (dataframe, cache_hit).
@@ -312,11 +318,16 @@ class CacheManager:
         if self.is_valid(key, ttl):
             cached = self.load_dataframe(key, prefer_ipc=prefer_ipc)
             if cached is not None:
-                LOGGER.debug("Cache hit for %s (ttl=%d days)", key, ttl)
-                return cached, True
+                if not allow_empty and cached.height == 0:
+                    LOGGER.warning("Cache %s contained empty dataframe; treating as miss", key)
+                else:
+                    LOGGER.debug("Cache hit for %s (ttl=%d days)", key, ttl)
+                    return cached, True
 
         LOGGER.debug("Cache miss for %s (ttl=%d days); fetching...", key, ttl)
         df = fetch_fn()
+        if not allow_empty and df.height == 0:
+            raise ValueError(f"Cache key {key} produced empty dataframe")
         self.save_dataframe(key, df, format=save_format, dual_format=dual_format)
         return df, False
 

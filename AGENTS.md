@@ -51,6 +51,9 @@ python scripts/integrated_ml_training_pipeline.py
 
 # Dataset building
 python scripts/pipelines/run_full_dataset.py
+make build-chunks START=2020-01-01 END=2020-12-31 RESUME=1
+make merge-chunks
+make merge-chunks ALLOW_PARTIAL=1
 
 # GPU monitoring
 nvidia-smi

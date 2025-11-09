@@ -182,7 +182,7 @@ def build_index_core_features(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def build_index_spreads(
-    df: pl.DataFrame,
+    df: pl.DataFrame | pl.LazyFrame,
     allowlist: Optional[dict] = None,
 ) -> pl.DataFrame:
     """
@@ -195,6 +195,12 @@ def build_index_spreads(
     Returns:
         スプレッド特徴量DataFrame（date, idx_spread_* 列）
     """
+    if not isinstance(df, pl.DataFrame):
+        try:
+            df = df.collect()
+        except AttributeError:
+            df = pl.DataFrame(df)
+
     if df.is_empty():
         return df
 
@@ -207,11 +213,11 @@ def build_index_spreads(
         return pl.DataFrame(schema={"date": pl.Date})
 
     # 列名の正規化
-    if "Date" in df.columns:
+    if "Date" in df.columns and "date" not in df.columns:
         df = df.rename({"Date": "date"})
-    if "Code" in df.columns:
+    if "Code" in df.columns and "code" not in df.columns:
         df = df.rename({"Code": "code"})
-    if "Close" in df.columns:
+    if "Close" in df.columns and "close" not in df.columns:
         df = df.rename({"Close": "close"})
 
     if "date" not in df.columns or "code" not in df.columns or "close" not in df.columns:
@@ -302,27 +308,28 @@ def build_index_features(
         for code_val, group in core_features.group_by("code", maintain_order=True):
             if group.is_empty():
                 continue
+            code_str = code_val[0] if isinstance(code_val, tuple) else code_val
 
             # このcodeの特徴量を取得（code列を除く）
             code_features = group.drop("code")
 
             # 列名にcodeプレフィックスを追加（TOPIXは特別扱い）
-            if code_val == "0000":
+            if code_str == "0000":
                 prefix = "topix"
             else:
                 # allowlistからprefixを取得
                 if allowlist:
                     p0_indices = allowlist.get("p0_indices", {}).get("indices", [])
-                    idx_config = next((idx for idx in p0_indices if idx["code"] == code_val), None)
+                    idx_config = next((idx for idx in p0_indices if idx["code"] == code_str), None)
                     if idx_config:
-                        prefix = idx_config.get("prefix", f"idx_{code_val}")
+                        prefix = idx_config.get("prefix", f"idx_{code_str}")
                     else:
-                        prefix = f"idx_{code_val}"
+                        prefix = f"idx_{code_str}"
                 else:
-                    prefix = f"idx_{code_val}"
+                    prefix = f"idx_{code_str}"
 
             # 列名をリネーム（date以外）
-            rename_map = {col: f"idx_{prefix}_{col}" if col != "date" else col for col in code_features.columns}
+            rename_map = {col: f"{prefix}_{col}" if col != "date" else col for col in code_features.columns}
             code_features = code_features.rename(rename_map)
 
             if result_features is not None and not result_features.is_empty():
@@ -344,5 +351,12 @@ def build_index_features(
             result_features = result_features.join(spread_features, on="date", how="outer")
     elif result_features is None or result_features.is_empty():
         return pl.DataFrame(schema={"date": pl.Date})
+
+    if "date_right" in result_features.columns:
+        result_features = (
+            result_features.with_columns(
+                pl.when(pl.col("date").is_null()).then(pl.col("date_right")).otherwise(pl.col("date")).alias("date")
+            ).drop("date_right")
+        )
 
     return result_features

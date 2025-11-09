@@ -177,6 +177,12 @@
     "rows": 0,
     "updated_at": "2025-11-05T12:23:18.225692"
   },
+  "index_option_raw_2019-08-28_2025-10-31": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 6816184,
+    "updated_at": "2025-11-07T19:17:43.526242"
+  },
   "index_option_raw_2025-10-24_2025-10-31": {
     "dual_format": true,
     "format": "ipc",
@@ -192,6 +198,12 @@
   "indices_0101_2018-05-18_2025-01-31": {
     "rows": 0,
     "updated_at": "2025-11-03T02:54:21.225040"
+  },
+  "indices_0101_2019-08-28_2025-10-31": {
+    "dual_format": true,
+    "format": "ipc",
+    "rows": 0,
+    "updated_at": "2025-11-07T19:20:22.358189"
   },
   "indices_0101_2022-05-23_2025-01-31": {
     "rows": 0,
@@ -301,7 +313,7 @@
     "dual_format": true,
     "format": "ipc",
     "rows": 280367,
-    "updated_at": "2025-11-06T23:01:26.930938"
+    "updated_at": "2025-11-08T00:04:10.887003"
   },
   "margin_daily_2022-05-23_2025-01-31": {
     "rows": 136871,

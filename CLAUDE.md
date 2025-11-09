@@ -110,6 +110,9 @@ make dataset-check                 # Environment check (relaxed)
 make dataset-check-strict          # Environment check (strict GPU)
 make dataset-clean                 # Clean artifacts (keep raw/cache)
 make dataset-rebuild               # Clean + rebuild with defaults
+make build-chunks START=2020-01-01 END=2020-12-31 RESUME=1  # Quarterly chunks
+make merge-chunks                                         # Merge completed chunks
+make merge-chunks ALLOW_PARTIAL=1                         # Explicitly allow partial merges
 make cache-stats                   # Show cache statistics
 make cache-prune                   # Prune old cache (120d)
 

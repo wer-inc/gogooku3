@@ -3,17 +3,27 @@ from __future__ import annotations
 import asyncio
 import datetime as _dt
 import logging
+import json
 import math
 import os
+import random
+import threading
 import time
-from collections.abc import Iterable
-from contextlib import nullcontext
+from collections.abc import Iterable, Mapping
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import aiohttp
 import polars as pl
 
 from ..features.utils.lazy_io import lazy_load
+
+try:  # pragma: no cover - non-Unix
+    import fcntl
+except ImportError:  # pragma: no cover - non-Unix
+    fcntl = None
 
 """
 Asynchronous J-Quants API fetcher (extracted from legacy pipeline).
@@ -29,6 +39,168 @@ Notes:
  - Optionally filters listed_info via scripts.components.market_code_filter if available.
  - No dependency on scripts/_archive; safe when _archive is removed.
 """
+
+
+@dataclass
+class _TokenCacheEntry:
+    id_token: str | None
+    refresh_token: str | None
+    expiry: _dt.datetime | None
+
+
+_TOKEN_CACHE: dict[str, _TokenCacheEntry] = {}
+_TOKEN_CACHE_LOCK = threading.Lock()
+
+
+def _clone_entry(entry: _TokenCacheEntry | None) -> _TokenCacheEntry | None:
+    if entry is None:
+        return None
+    return _TokenCacheEntry(entry.id_token, entry.refresh_token, entry.expiry)
+
+
+def _default_token_cache_file() -> Path:
+    """Select a persistent cache path that survives process restarts."""
+
+    configured = os.getenv("JQUANTS_TOKEN_CACHE_FILE")
+    if configured:
+        return Path(configured).expanduser()
+
+    cache_dir = os.getenv("DATA_CACHE_DIR")
+    if cache_dir:
+        return Path(cache_dir).expanduser() / "jquants_tokens.json"
+
+    xdg_cache = os.getenv("XDG_CACHE_HOME")
+    if xdg_cache:
+        base = Path(xdg_cache).expanduser()
+    else:  # fallback to ~/.cache/gogooku/jquants_tokens.json
+        base = Path.home() / ".cache" / "gogooku"
+    return base / "jquants_tokens.json"
+
+
+def _is_persistent_cache_disabled() -> bool:
+    flag = os.getenv("JQUANTS_DISABLE_TOKEN_CACHE", "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
+@contextmanager
+def _thread_or_file_lock(lock_path: Path, thread_lock: threading.Lock):
+    """Provide a cross-process lock using fcntl when available."""
+
+    if fcntl is None:
+        thread_lock.acquire()
+        try:
+            yield
+        finally:
+            thread_lock.release()
+        return
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+class _PersistentTokenStore:
+    """Durable token cache shared across dataset-builder invocations."""
+
+    def __init__(self) -> None:
+        self._thread_lock = threading.Lock()
+
+    def load(self, key: str) -> _TokenCacheEntry | None:
+        if _is_persistent_cache_disabled():
+            return None
+
+        cache_path = _default_token_cache_file()
+        lock_path = cache_path.with_name(cache_path.name + ".lock")
+        with _thread_or_file_lock(lock_path, self._thread_lock):
+            payload = self._read_payload(cache_path)
+            entry = payload.get(key)
+            if not entry:
+                return None
+            expiry = entry.get("expiry")
+            expiry_dt = _dt.datetime.fromisoformat(expiry) if expiry else None
+            return _TokenCacheEntry(entry.get("id_token"), entry.get("refresh_token"), expiry_dt)
+
+    def save(self, key: str, entry: _TokenCacheEntry | None) -> None:
+        if _is_persistent_cache_disabled():
+            return
+
+        cache_path = _default_token_cache_file()
+        lock_path = cache_path.with_name(cache_path.name + ".lock")
+        with _thread_or_file_lock(lock_path, self._thread_lock):
+            payload = self._read_payload(cache_path)
+            if entry is None:
+                payload.pop(key, None)
+            else:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                payload[key] = {
+                    "id_token": entry.id_token,
+                    "refresh_token": entry.refresh_token,
+                    "expiry": entry.expiry.isoformat() if entry.expiry else None,
+                }
+            self._write_payload(cache_path, payload)
+
+    @staticmethod
+    def _read_payload(path: Path) -> dict[str, dict[str, Any]]:
+        try:
+            data = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {}
+        except OSError:
+            return {}
+        if not data.strip():
+            return {}
+        try:
+            return json.loads(data)
+        except json.JSONDecodeError:
+            return {}
+
+    @staticmethod
+    def _write_payload(path: Path, payload: dict[str, dict[str, Any]]) -> None:
+        if not payload:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            return
+
+        tmp_path = path.with_name(path.name + ".tmp")
+        tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp_path, path)
+
+
+_PERSISTENT_TOKEN_STORE = _PersistentTokenStore()
+
+
+def _cache_key(email: str, base_url: str) -> str:
+    return f"{base_url.strip().lower()}::{email.strip().lower()}"
+
+
+def _get_cached_tokens(key: str) -> _TokenCacheEntry | None:
+    with _TOKEN_CACHE_LOCK:
+        entry = _TOKEN_CACHE.get(key)
+        if entry is not None:
+            return _clone_entry(entry)
+
+    persistent = _PERSISTENT_TOKEN_STORE.load(key)
+    if persistent is not None:
+        with _TOKEN_CACHE_LOCK:
+            _TOKEN_CACHE[key] = persistent
+        return _clone_entry(persistent)
+    return None
+
+
+def _set_cached_tokens(key: str, entry: _TokenCacheEntry | None) -> None:
+    with _TOKEN_CACHE_LOCK:
+        if entry is None:
+            _TOKEN_CACHE.pop(key, None)
+        else:
+            _TOKEN_CACHE[key] = _clone_entry(entry)
+    _PERSISTENT_TOKEN_STORE.save(key, entry)
 
 
 def enforce_code_column_types(df: pl.DataFrame) -> pl.DataFrame:
@@ -134,6 +306,7 @@ class JQuantsAsyncFetcher:
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
         self._refresh_token: str | None = None
         self._token_expiry: _dt.datetime | None = None
+        self._cache_key = _cache_key(self.email, self.base_url)
 
         # Adaptive throttling configuration/state
         self._current_concurrency = self.max_concurrent
@@ -150,6 +323,11 @@ class JQuantsAsyncFetcher:
         self._throttle_recoveries = 0
         self._throttle_history: list[dict[str, Any]] = []
         self._logger = logging.getLogger(__name__)
+        self._hydrate_cached_tokens()
+        self._auth_max_attempts = max(1, int(os.getenv("JQUANTS_AUTH_MAX_RETRIES", "6")))
+        self._auth_retry_base_delay = float(os.getenv("JQUANTS_AUTH_RETRY_BASE_DELAY", "5"))
+        self._auth_retry_max_delay = float(os.getenv("JQUANTS_AUTH_RETRY_MAX_DELAY", "120"))
+        self._auth_retry_jitter = float(os.getenv("JQUANTS_AUTH_RETRY_JITTER", "0.75"))
 
     @staticmethod
     def _format_date_param(date_str: str | None) -> str | None:
@@ -182,6 +360,31 @@ class JQuantsAsyncFetcher:
             return not session.closed
         except Exception:
             return False
+
+    def _hydrate_cached_tokens(self) -> None:
+        entry = _get_cached_tokens(self._cache_key)
+        if not entry:
+            return
+        self.id_token = entry.id_token
+        self._refresh_token = entry.refresh_token
+        self._token_expiry = entry.expiry
+
+    def _persist_tokens(self) -> None:
+        if not self.id_token and not self._refresh_token:
+            _set_cached_tokens(self._cache_key, None)
+            return
+        snapshot = _TokenCacheEntry(
+            id_token=self.id_token,
+            refresh_token=self._refresh_token,
+            expiry=self._token_expiry,
+        )
+        _set_cached_tokens(self._cache_key, snapshot)
+
+    def _drop_cached_tokens(self) -> None:
+        self.id_token = None
+        self._refresh_token = None
+        self._token_expiry = None
+        _set_cached_tokens(self._cache_key, None)
 
     def _apply_concurrency(self, new_limit: int, *, reason: str) -> None:
         new_limit = max(self._min_concurrency, min(self._max_concurrency_ceiling, new_limit))
@@ -246,6 +449,75 @@ class JQuantsAsyncFetcher:
             delay,
         )
         await asyncio.sleep(delay)
+
+    def _compute_auth_retry_delay(self, attempt: int, headers: Mapping[str, str] | None) -> float:
+        base = self._auth_retry_base_delay * (2 ** max(0, attempt - 1))
+        if headers:
+            retry_after = headers.get("Retry-After")
+            if retry_after:
+                try:
+                    base = max(base, float(retry_after))
+                except (TypeError, ValueError):
+                    pass
+        jitter = random.uniform(0, self._auth_retry_jitter) if self._auth_retry_jitter > 0 else 0.0
+        return min(self._auth_retry_max_delay, base + jitter)
+
+    async def _handle_auth_rate_limit(
+        self,
+        *,
+        label: str,
+        attempt: int,
+        headers: Mapping[str, str] | None,
+    ) -> None:
+        delay = self._compute_auth_retry_delay(attempt, headers)
+        self._logger.warning(
+            "[AUTH] %s hit rate limit (attempt %s/%s); sleeping %.1fs",
+            label,
+            attempt,
+            self._auth_max_attempts,
+            delay,
+        )
+        await asyncio.sleep(delay)
+
+    async def _auth_post_json(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        *,
+        label: str,
+        params: dict[str, Any] | None = None,
+        payload: Any = None,
+    ) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(1, self._auth_max_attempts + 1):
+            try:
+                async with session.post(url, params=params, json=payload) as resp:
+                    if resp.status in self._retry_statuses and attempt < self._auth_max_attempts:
+                        await self._handle_auth_rate_limit(
+                            label=label,
+                            attempt=attempt,
+                            headers=resp.headers,
+                        )
+                        continue
+                    resp.raise_for_status()
+                    return await resp.json()
+            except aiohttp.ClientResponseError as exc:
+                last_error = exc
+                if exc.status in self._retry_statuses and attempt < self._auth_max_attempts:
+                    await self._handle_auth_rate_limit(
+                        label=label,
+                        attempt=attempt,
+                        headers=getattr(exc, "headers", None),
+                    )
+                    continue
+                raise
+            except aiohttp.ClientError as exc:
+                last_error = exc
+                break
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"{label} failed without response")
 
     async def _request_json(
         self,
@@ -336,15 +608,20 @@ class JQuantsAsyncFetcher:
             refresh_url = f"{self.base_url}/token/auth_refresh"
             params = {"refreshtoken": refresh_token}
             try:
-                async with session.post(refresh_url, params=params) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    token = data.get("idToken")
-                    if not token:
-                        raise RuntimeError("auth_refresh response missing idToken")
-                    self.id_token = token
-                    self._token_expiry = now + _dt.timedelta(seconds=ttl_seconds)
-                    return True
+                data = await self._auth_post_json(
+                    session,
+                    refresh_url,
+                    label="auth_refresh",
+                    params=params,
+                )
+                token = data.get("idToken")
+                if not token:
+                    raise RuntimeError("auth_refresh response missing idToken")
+                current_time = _dt.datetime.now(_dt.timezone.utc)
+                self.id_token = token
+                self._token_expiry = current_time + _dt.timedelta(seconds=ttl_seconds)
+                self._persist_tokens()
+                return True
             except aiohttp.ClientResponseError as exc:
                 if exc.status == 429 and self.id_token:
                     self._logger.warning("[AUTH] Received 429 during auth_refresh; reusing cached id_token")
@@ -352,6 +629,7 @@ class JQuantsAsyncFetcher:
                 if exc.status in (401, 403, 404):
                     # Refresh token expired; force full auth
                     self._logger.info("[AUTH] Refresh token expired; requesting new credentials")
+                    self._drop_cached_tokens()
                     return False
                 raise
             return False
@@ -362,23 +640,30 @@ class JQuantsAsyncFetcher:
             if refreshed:
                 return
             self._refresh_token = None  # force full re-auth
+            self._drop_cached_tokens()
 
         # Full authentication (obtain new refresh token + id token)
         auth_url = f"{self.base_url}/token/auth_user"
         payload = {"mailaddress": self.email, "password": self.password}
 
         try:
-            async with session.post(auth_url, json=payload) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                refresh_token = data.get("refreshToken")
-                if not refresh_token:
-                    raise RuntimeError("auth_user response missing refreshToken")
-                self._refresh_token = refresh_token
+            data = await self._auth_post_json(
+                session,
+                auth_url,
+                label="auth_user",
+                payload=payload,
+            )
+            refresh_token = data.get("refreshToken")
+            if not refresh_token:
+                raise RuntimeError("auth_user response missing refreshToken")
+            self._refresh_token = refresh_token
+            self._persist_tokens()
         except aiohttp.ClientResponseError as exc:
             if exc.status == 429 and self.id_token:
                 self._logger.warning("[AUTH] Received 429 during auth_user; reusing cached id_token")
                 return
+            if exc.status in (401, 403, 404):
+                self._drop_cached_tokens()
             raise
 
         success = await _refresh_id_token(self._refresh_token)
@@ -429,6 +714,9 @@ class JQuantsAsyncFetcher:
                 break
 
         if not rows:
+            logging.getLogger(__name__).warning(
+                "Dividend API returned no rows for range %s → %s", from_date, to_date
+            )
             return pl.DataFrame()
 
         df = pl.DataFrame(rows)
@@ -993,32 +1281,47 @@ class JQuantsAsyncFetcher:
         rows: list[dict] = []
         start = _parse(from_date)
         end = _parse(to_date)
-        cur = start
 
-        while cur <= end:
-            date_str = cur.strftime("%Y-%m-%d")
-            pagination_key: str | None = None
-            while True:
-                params = {"date": date_str}
-                if pagination_key:
-                    params["pagination_key"] = pagination_key
-                status, data = await self._request_json(
-                    session,
-                    "GET",
-                    base_url,
-                    label=f"dividend:{date_str}",
-                    params=params,
-                    headers=headers,
-                )
-                if status != 200 or not isinstance(data, dict):
-                    break
-                items = data.get("dividends") or data.get("data") or []
-                if items:
-                    rows.extend(items)
-                pagination_key = data.get("pagination_key")
-                if not pagination_key:
-                    break
-            cur += _dt.timedelta(days=1)
+        # Primary path: use RANGE query (newer API supports from/to params)
+        params = {"from": start.strftime("%Y-%m-%d"), "to": end.strftime("%Y-%m-%d")}
+        status, data = await self._request_json(
+            session,
+            "GET",
+            base_url,
+            label=f"dividend:{params['from']}:{params['to']}",
+            params=params,
+            headers=headers,
+        )
+        if status == 200 and isinstance(data, dict):
+            rows.extend(data.get("dividends") or data.get("data") or [])
+
+        # Fallback legacy path: daily pagination (older API behavior)
+        if not rows:
+            cur = start
+            while cur <= end:
+                date_str = cur.strftime("%Y-%m-%d")
+                pagination_key: str | None = None
+                while True:
+                    params = {"date": date_str}
+                    if pagination_key:
+                        params["pagination_key"] = pagination_key
+                    status, data = await self._request_json(
+                        session,
+                        "GET",
+                        base_url,
+                        label=f"dividend:{date_str}",
+                        params=params,
+                        headers=headers,
+                    )
+                    if status != 200 or not isinstance(data, dict):
+                        break
+                    items = data.get("dividends") or data.get("data") or []
+                    if items:
+                        rows.extend(items)
+                    pagination_key = data.get("pagination_key")
+                    if not pagination_key:
+                        break
+                cur += _dt.timedelta(days=1)
 
         if not rows:
             return pl.DataFrame()

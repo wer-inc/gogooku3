@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 import torch
 from _bootstrap import ensure_import_paths
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 
 ensure_import_paths()
 from apex_ranker.data import (  # noqa: E402
@@ -243,8 +244,9 @@ def prepare_features(
     )
 
     # Load data
+    # Use lazy_load for IPC cache support (3-5x faster reads) with column pruning
     required_columns = [date_col, code_col] + selection.features
-    frame = pl.read_parquet(data_path, columns=required_columns)
+    frame = lazy_load(data_path, columns=required_columns, prefer_ipc=True)
 
     # Determine target date
     if target_date is None:

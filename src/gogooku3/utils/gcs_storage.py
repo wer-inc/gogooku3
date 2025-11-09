@@ -334,17 +334,20 @@ def save_parquet_with_gcs(
     local_path: Path | str,
     gcs_path: str | None = None,
     auto_sync: bool = True,
+    create_ipc: bool = True,
 ) -> Path:
-    """Save parquet file locally and optionally upload to GCS.
+    """Save parquet file locally with optional IPC cache and GCS upload.
 
     This is a convenience function for raw data and cache files that need
-    both local storage and cloud backup.
+    both local storage and cloud backup. Optionally creates Arrow IPC cache
+    for 3-5x faster subsequent reads.
 
     Args:
         df: Polars or Pandas DataFrame to save
         local_path: Local file path to save to
         gcs_path: Optional GCS path (auto-generated if None)
         auto_sync: Upload to GCS if GCS_SYNC_AFTER_SAVE=1 (default: True)
+        create_ipc: Also create .arrow IPC cache for faster reads (default: True)
 
     Returns:
         Path to the saved local file
@@ -367,6 +370,16 @@ def save_parquet_with_gcs(
     except Exception as e:
         logger.error(f"Failed to save parquet locally: {e}")
         raise
+
+    # Create IPC cache for faster reads (3-5x speedup)
+    if create_ipc and hasattr(df, 'write_ipc'):
+        try:
+            ipc_path = local_path.with_suffix(".arrow")
+            df.write_ipc(ipc_path, compression="lz4")
+            ipc_size_mb = ipc_path.stat().st_size / (1024 * 1024)
+            logger.debug(f"Created IPC cache: {ipc_path} ({ipc_size_mb:.2f} MB, 3-5x faster reads)")
+        except Exception as e:
+            logger.warning(f"Failed to create IPC cache (non-blocking): {e}")
 
     # Upload to GCS if enabled and auto_sync is True
     if auto_sync and os.getenv("GCS_SYNC_AFTER_SAVE") == "1":

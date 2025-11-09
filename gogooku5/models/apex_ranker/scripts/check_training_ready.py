@@ -7,6 +7,7 @@ from pathlib import Path
 import polars as pl
 from apex_ranker.data import FeatureSelector
 from apex_ranker.utils import load_config
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,7 +69,8 @@ def main() -> None:
     )
     required_columns = list(dict.fromkeys(required_columns))
 
-    frame = pl.read_parquet(parquet_path, n_rows=1)
+    # Use lazy_load for IPC cache support (3-5x faster reads), then take 1 row for schema check
+    frame = lazy_load(parquet_path, prefer_ipc=True).head(1)
     available_columns = set(frame.columns)
 
     missing = [col for col in required_columns if col not in available_columns]

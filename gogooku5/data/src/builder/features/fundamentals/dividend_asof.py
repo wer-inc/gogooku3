@@ -159,6 +159,10 @@ def build_dividend_feature_frame(
 
     enriched = enriched.group_by("Code", maintain_order=True).map_groups(_calc_next_ex_date)
 
+    # Rename ExDate now that downstream logic expects div_ex_date
+    if "ExDate" in enriched.columns and "div_ex_date" not in enriched.columns:
+        enriched = enriched.rename({"ExDate": "div_ex_date"})
+
     # Add div_amount_12m (alias for div_sum_12m)
     enriched = enriched.with_columns(pl.col("div_sum_12m").alias("div_amount_12m"))
 
@@ -187,10 +191,10 @@ def build_dividend_feature_frame(
         "div_amount_12m",
         "is_div_valid",
         "div_staleness_days",
-        "ExDate",
+        "div_ex_date",
     ]
     available_cols = [col for col in keep_cols if col in enriched.columns]
-    result = enriched.select(available_cols).rename({"ExDate": "div_ex_date"})
+    result = enriched.select(available_cols)
     result = result.with_columns(
         pl.col("available_ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None).alias("available_ts")
     )

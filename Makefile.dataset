@@ -53,6 +53,7 @@ help-dataset:
 	@echo "  make dataset-cpu START=... END=...         CPU fallback"
 	@echo "  make dataset-prod START=... END=...        Production config"
 	@echo "  make dataset-research START=... END=...    Research features"
+	@echo "  make build-chunks START=... END=...        Quarterly chunk builder (--resume/--force)"
 	@echo ""
 	@echo "🛠️  Layer 3: Utilities"
 	@echo "  make dataset-check           Environment check (relaxed)"
@@ -64,6 +65,7 @@ help-dataset:
 	@echo "  make datasets-prune          Prune old ML datasets (keep latest 1)"
 	@echo "  make raw-prune               Prune duplicate raw data files"
 	@echo "  make output-clean            Full cleanup (datasets+raw+cache)"
+	@echo "  make merge-chunks            Merge chunk outputs into latest dataset"
 	@echo ""
 	@echo "🛡️  Memory-Safe Options (NEW)"
 	@echo "  make dataset-safe            Chunked generation with checkpointing"
@@ -82,6 +84,7 @@ help-dataset:
 	@echo "  make dataset-bg                                   # Background, last 5 years"
 	@echo "  make dataset-gpu START=2020-01-01 END=2024-12-31  # With smart cache"
 	@echo "  make dataset-gpu-refresh START=... END=...        # Force API refresh"
+	@echo "  make build-chunks START=2024-01-01 END=2024-12-31 RESUME=1  # Chunked build"
 	@echo "  make dataset-rebuild                              # Clean + rebuild defaults"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -210,7 +213,7 @@ dataset:
 # Layer 2: Detailed Control (Custom Parameters)
 # ============================================================================
 
-.PHONY: dataset-gpu dataset-cpu dataset-prod dataset-research dataset-fetch
+.PHONY: dataset-gpu dataset-cpu dataset-prod dataset-research dataset-fetch build-chunks merge-chunks
 
 # GPU-accelerated dataset generation (requires START/END parameters)
 # Usage: make dataset-gpu START=YYYY-MM-DD END=YYYY-MM-DD
@@ -274,6 +277,32 @@ dataset-gpu-refresh:
 	  --sector-onehot33 \
 	  --enable-sector-cs \
 	  --enable-daily-margin
+
+# Quarterly chunk builder (warmup handled automatically)
+# Usage: make build-chunks START=YYYY-MM-DD END=YYYY-MM-DD [RESUME=1] [FORCE=1] [DRY_RUN=1] [LATEST=1] [JOBS=N]
+build-chunks:
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make build-chunks START=YYYY-MM-DD END=YYYY-MM-DD [RESUME=1] [FORCE=1] [DRY_RUN=1]"; \
+	  exit 1; }
+	@cmd="./venv/bin/python gogooku5/data/scripts/build_chunks.py --start $(START) --end $(END)"; \
+	if [ "$(RESUME)" = "1" ]; then cmd="$$cmd --resume"; fi; \
+	if [ "$(FORCE)" = "1" ]; then cmd="$$cmd --force"; fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then cmd="$$cmd --dry-run"; fi; \
+	if [ "$(LATEST)" = "1" ]; then cmd="$$cmd --latest-only"; fi; \
+	if [ -n "$(JOBS)" ]; then cmd="$$cmd --jobs $(JOBS)"; elif [ -n "$(CHUNK_JOBS)" ]; then cmd="$$cmd --jobs $(CHUNK_JOBS)"; fi; \
+	echo "🚀 Chunk build command: $$cmd"; \
+	env $(SAFE_GPU_ENV) $$cmd
+
+# Merge completed chunks into latest dataset artifacts
+merge-chunks:
+	@cmd="./venv/bin/python gogooku5/data/tools/merge_chunks.py"; \
+	if [ -n "$(CHUNKS_DIR)" ]; then cmd="$$cmd --chunks-dir $(CHUNKS_DIR)"; fi; \
+	if [ -n "$(OUTPUT_DIR)" ]; then cmd="$$cmd --output-dir $(OUTPUT_DIR)"; fi; \
+	if [ "$(STRICT)" = "1" ]; then cmd="$$cmd --strict"; fi; \
+	if [ "$(ALLOW_PARTIAL)" = "1" ]; then cmd="$$cmd --allow-partial"; fi; \
+	echo "🔗 Merge command: $$cmd"; \
+	env $(SAFE_GPU_ENV) $$cmd
 
 # CPU-only dataset generation (fallback)
 dataset-cpu:

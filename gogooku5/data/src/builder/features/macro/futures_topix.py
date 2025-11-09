@@ -63,10 +63,11 @@ def load_futures(
 
     for col in numeric_cols:
         if col in df.columns:
+            cleaned = pl.col(col).cast(pl.Utf8, strict=False).str.strip_chars()
             df = df.with_columns(
-                pl.when(pl.col(col).cast(pl.Utf8, strict=False).str.strip() == "")
-                .then(None)
-                .otherwise(pl.col(col).cast(pl.Float64, strict=False))
+                pl.when(cleaned == "")
+                .then(pl.lit(None, dtype=pl.Float64))
+                .otherwise(cleaned.cast(pl.Float64, strict=False))
                 .alias(col)
             )
 

@@ -27,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from apex_ranker.backtest import WalkForwardSplitter
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 
 
 def _load_backtest_function() -> Callable[..., dict]:
@@ -258,7 +259,8 @@ def run_walk_forward_backtest_regime(
     import polars as pl
 
     # Load dataset
-    df = pl.read_parquet(data_path)
+    # Use lazy_load for IPC cache support (3-5x faster reads)
+    df = lazy_load(data_path, prefer_ipc=True)
     if date_column not in df.columns:
         raise ValueError(f"Date column '{date_column}' not found in dataset")
 

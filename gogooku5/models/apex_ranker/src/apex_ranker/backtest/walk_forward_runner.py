@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 
 from .walk_forward import WalkForwardFold, WalkForwardSplitter
 
@@ -47,7 +48,8 @@ def _ensure_path(value: str | Path | None) -> Path | None:
 
 
 def _load_unique_dates(data_path: Path, date_column: str) -> list[date]:
-    frame = pl.read_parquet(data_path, columns=[date_column])
+    # Use lazy_load for IPC cache support (3-5x faster reads)
+    frame = lazy_load(data_path, columns=[date_column], prefer_ipc=True)
     series = frame[date_column].unique().sort()
     return [d if isinstance(d, date) else d.date() for d in series.to_list()]
 

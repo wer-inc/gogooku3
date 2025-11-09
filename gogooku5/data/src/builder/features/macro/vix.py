@@ -83,7 +83,11 @@ def load_vix_history(
     if target_cache:
         try:
             target_cache.parent.mkdir(parents=True, exist_ok=True)
-            df.write_parquet(target_cache)
+            # Save with IPC cache for 3-5x faster reads
+            from ..utils.lazy_io import save_with_cache
+            _, ipc_path = save_with_cache(df, target_cache, create_ipc=True)
+            if ipc_path:
+                LOGGER.debug("Created VIX IPC cache: %s", ipc_path)
             LOGGER.info("Cached VIX history to %s", target_cache)
         except Exception as exc:  # pragma: no cover
             LOGGER.warning("Failed to cache VIX parquet (%s): %s", target_cache, exc)

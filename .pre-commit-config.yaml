@@ -3,8 +3,8 @@ repos:
     rev: v0.1.6
     hooks:
       - id: ruff
-        # 修正は許可するが「危険な自動修正」は無効化
-        args: [--fix, --no-unsafe-fixes]
+        # 修正は許可するが「危険な自動修正」は無効化し、修正が発生したら失敗させる
+        args: [--fix, --no-unsafe-fixes, --exit-non-zero-on-fix]
       - id: ruff-format
 
   - repo: https://github.com/pycqa/isort

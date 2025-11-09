@@ -13,6 +13,7 @@ import numpy as np
 import polars as pl
 import torch
 from apex_ranker.backtest.splitter import PurgedKFoldSplitter, PurgeParams
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 from apex_ranker.data import (
     DayPanelDataset,
     FeatureSelector,
@@ -336,7 +337,8 @@ def load_dataset(
     target_cols = [resolve_target(int(h)) for h in horizons]
 
     # Load ALL columns first (aliases may not exist in dataset yet)
-    frame = pl.read_parquet(parquet_path)
+    # Use lazy_load for IPC cache support (3-5x faster reads)
+    frame = lazy_load(parquet_path, prefer_ipc=True)
 
     # Apply feature aliases if configured (creates computed columns like dmi_z26_net)
     aliases_yaml = data_cfg.get("feature_aliases_yaml")

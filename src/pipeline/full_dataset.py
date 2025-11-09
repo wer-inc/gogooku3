@@ -16,6 +16,7 @@ from pathlib import Path
 import aiohttp
 import polars as pl
 
+from src.gogooku3.utils.lazy_io import lazy_load
 from src.features.calendar_utils import build_next_bday_expr_from_dates
 from src.features.macro import (
     load_btc_history,
@@ -229,6 +230,14 @@ def save_with_symlinks(
         logger.debug("Falling back to Polars parquet writer: %s", exc)
         polars_kwargs: dict[str, object] = {"compression": compression}
         df.write_parquet(parquet_path, **polars_kwargs)
+        # Create IPC cache for faster reads (3-5x speedup)
+        try:
+            from src.gogooku3.utils.lazy_io import save_with_cache
+            _, ipc_path = save_with_cache(df, parquet_path, create_ipc=True, parquet_kwargs=polars_kwargs)
+            if ipc_path:
+                logger.debug(f"Created IPC cache: {ipc_path} (3-5x faster reads)")
+        except Exception as ipc_exc:
+            logger.debug(f"IPC cache creation skipped (non-blocking): {ipc_exc}")
 
     # Build metadata json via builder (to keep consistent shape)
     from src.gogooku3.pipeline.builder import MLDatasetBuilder
@@ -421,7 +430,8 @@ async def enrich_and_save(
             resolved = Path(path)
             if not resolved.exists():
                 return pl.DataFrame()
-            return pl.read_parquet(resolved)
+            # Use lazy_load for IPC cache support (3-5x faster reads)
+            return lazy_load(resolved, prefer_ipc=True)
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning(f"Failed to read {label} parquet ({path}): {exc}")
             return pl.DataFrame()
@@ -442,7 +452,8 @@ async def enrich_and_save(
     topix_df = None
     if topix_parquet and Path(topix_parquet).exists():
         try:
-            topix_df = pl.read_parquet(topix_parquet)
+            # Use lazy_load for IPC cache support (3-5x faster reads)
+            topix_df = lazy_load(topix_parquet, prefer_ipc=True)
             logger.info(f"Loaded TOPIX from parquet: {topix_parquet}")
         except Exception as e:
             logger.warning(f"Failed to read TOPIX parquet: {e}")
@@ -487,7 +498,8 @@ async def enrich_and_save(
                     best_path = cand
             if best_path and best_path.exists():
                 try:
-                    topix_df = pl.read_parquet(best_path)
+                    # Use lazy_load for IPC cache support (3-5x faster reads)
+                    topix_df = lazy_load(best_path, prefer_ipc=True)
                     logger.info(f"Loaded TOPIX from local: {best_path}")
                 except Exception as e:
                     logger.warning(f"Failed to read local TOPIX parquet: {e}")
@@ -754,7 +766,8 @@ async def enrich_and_save(
         # Prefer provided parquet
         if indices_parquet and Path(indices_parquet).exists():
             try:
-                indices_df = pl.read_parquet(indices_parquet)
+                # Use lazy_load for IPC cache support (3-5x faster reads)
+                indices_df = lazy_load(indices_parquet, prefer_ipc=True)
                 logger.info(f"Loaded indices from parquet: {indices_parquet}")
             except Exception as e:
                 logger.warning(f"Failed to read indices parquet: {e}")
@@ -810,7 +823,8 @@ async def enrich_and_save(
                         best_score = score
                         best_path = cand
                 if best_path is not None:
-                    indices_df = pl.read_parquet(best_path)
+                    # Use lazy_load for IPC cache support (3-5x faster reads)
+                    indices_df = lazy_load(best_path, prefer_ipc=True)
                     logger.info(f"Loaded indices from local: {best_path}")
             except Exception as e:
                 logger.warning(f"Indices local selection failed: {e}")
@@ -839,7 +853,8 @@ async def enrich_and_save(
                 stm_path = _find_latest("event_raw_statements_*.parquet")
         if stm_path and stm_path.exists():
             try:
-                stm_df = pl.read_parquet(stm_path)
+                # Use lazy_load for IPC cache support (3-5x faster reads)
+                stm_df = lazy_load(stm_path, prefer_ipc=True)
                 df = builder.add_statements_features(df, stm_df)
                 logger.info("Statements features attached from parquet")
             except Exception as e:
@@ -857,7 +872,8 @@ async def enrich_and_save(
     listed_info_df = None
     if listed_info_parquet and Path(listed_info_parquet).exists():
         try:
-            listed_info_df = pl.read_parquet(listed_info_parquet)
+            # Use lazy_load for IPC cache support (3-5x faster reads)
+            listed_info_df = lazy_load(listed_info_parquet, prefer_ipc=True)
             df = builder.add_sector_features(df, listed_info_df)
             # Sector series (eq-median by level list)
             levels = sector_series_levels or ["33"]
@@ -1436,12 +1452,14 @@ async def enrich_and_save(
         # Resolve parquet first
         try:
             if futures_parquet and Path(futures_parquet).exists():
-                futures_df = pl.read_parquet(futures_parquet)
+                # Use lazy_load for IPC cache support (3-5x faster reads)
+                futures_df = lazy_load(futures_parquet, prefer_ipc=True)
             else:
                 # Auto-discover anywhere under output/
                 path = _find_latest("futures_daily_*.parquet")
                 if path:
-                    futures_df = pl.read_parquet(path)
+                    # Use lazy_load for IPC cache support (3-5x faster reads)
+                    futures_df = lazy_load(path, prefer_ipc=True)
         except Exception as e:
             logger.warning(f"Failed to read futures parquet: {e}")
 
@@ -1490,7 +1508,8 @@ async def enrich_and_save(
             def _load_spot(path: Path | None) -> pl.DataFrame | None:
                 if path and Path(path).exists():
                     try:
-                        return pl.read_parquet(path)
+                        # Use lazy_load for IPC cache support (3-5x faster reads)
+                        return lazy_load(path, prefer_ipc=True)
                     except Exception:
                         return None
                 return None
@@ -1554,7 +1573,8 @@ async def enrich_and_save(
     # Flow attach
     if trades_spec_path and Path(trades_spec_path).exists():
         try:
-            trades_spec_df = pl.read_parquet(trades_spec_path)
+            # Use lazy_load for IPC cache support (3-5x faster reads)
+            trades_spec_df = lazy_load(trades_spec_path, prefer_ipc=True)
             # Pass listed_info_df (if available) for accurate Section mapping
             df = builder.add_flow_features(df, trades_spec_df, listed_info_df=listed_info_df)
         except Exception as e:
@@ -1573,7 +1593,8 @@ async def enrich_and_save(
                 w_path = alt
         if enable_margin_weekly or (w_path and w_path.exists()):
             if w_path and w_path.exists():
-                wdf = pl.read_parquet(w_path)
+                # Use lazy_load for IPC cache support (3-5x faster reads)
+                wdf = lazy_load(w_path, prefer_ipc=True)
                 tmp_w = _ensure_code_utf8(wdf, source="weekly_margin")
                 if tmp_w is not None and not tmp_w.is_empty():
                     wdf = tmp_w
@@ -1609,7 +1630,8 @@ async def enrich_and_save(
                 d_path = alt
         if enable_daily_margin or (d_path and d_path.exists()):
             if d_path and d_path.exists():
-                ddf = pl.read_parquet(d_path)
+                # Use lazy_load for IPC cache support (3-5x faster reads)
+                ddf = lazy_load(d_path, prefer_ipc=True)
                 tmp_d = _ensure_code_utf8(ddf, source="daily_margin")
                 if tmp_d is not None and not tmp_d.is_empty():
                     ddf = tmp_d
@@ -1687,7 +1709,8 @@ async def enrich_and_save(
 
             if ss_path and ss_path.exists():
                 try:
-                    short_df = pl.read_parquet(ss_path)
+                    # Use lazy_load for IPC cache support (3-5x faster reads)
+                    short_df = lazy_load(ss_path, prefer_ipc=True)
                     result = _ensure_code_utf8(short_df, source="short_selling")
                     if result is not None:
                         short_df = result
@@ -1697,7 +1720,8 @@ async def enrich_and_save(
 
             if pos_path and pos_path.exists():
                 try:
-                    positions_df = pl.read_parquet(pos_path)
+                    # Use lazy_load for IPC cache support (3-5x faster reads)
+                    positions_df = lazy_load(pos_path, prefer_ipc=True)
                     result = _ensure_code_utf8(positions_df, source="short_positions")
                     if result is not None:
                         positions_df = result
@@ -1829,7 +1853,8 @@ async def enrich_and_save(
 
             if earnings_path and earnings_path.exists():
                 try:
-                    announcements_df = pl.read_parquet(earnings_path)
+                    # Use lazy_load for IPC cache support (3-5x faster reads)
+                    announcements_df = lazy_load(earnings_path, prefer_ipc=True)
                     logger.info(f"Loaded earnings announcements from: {earnings_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load earnings announcements: {e}")
@@ -1879,7 +1904,8 @@ async def enrich_and_save(
                 statements_df = None
                 if statements_parquet and Path(statements_parquet).exists():
                     try:
-                        statements_df = pl.read_parquet(statements_parquet)
+                        # Use lazy_load for IPC cache support (3-5x faster reads)
+                        statements_df = lazy_load(statements_parquet, prefer_ipc=True)
                         logger.info("Using statements data for EPS growth features")
                     except Exception as e:
                         logger.warning(f"Failed to load statements for earnings features: {e}")
@@ -1939,7 +1965,8 @@ async def enrich_and_save(
 
             if sector_short_path and sector_short_path.exists():
                 try:
-                    sector_short_df = pl.read_parquet(sector_short_path)
+                    # Use lazy_load for IPC cache support (3-5x faster reads)
+                    sector_short_df = lazy_load(sector_short_path, prefer_ipc=True)
                     logger.info(f"Loaded sector short selling data from: {sector_short_path}")
                 except Exception as e:
                     logger.warning(f"Failed to load sector short selling data: {e}")
@@ -2219,7 +2246,8 @@ async def enrich_and_save(
                 logger.warning(f"Assurance TOPIX fetch failed: {e}")
         if topo and Path(topo).exists():
             try:
-                topo_df2 = pl.read_parquet(topo)
+                # Use lazy_load for IPC cache support (3-5x faster reads)
+                topo_df2 = lazy_load(topo, prefer_ipc=True)
                 df = builder.add_topix_features(df, topix_df=topo_df2)
                 try:
                     df = builder.finalize_for_spec(df)

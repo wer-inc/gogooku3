@@ -128,7 +128,12 @@ def filter_uncertain(
         all_ranks.append(ranks)
 
     # Compute rank standard deviation
-    rank_std = np.std(all_ranks, axis=0, ddof=1)
+    num_folds = len(all_ranks)
+    if num_folds == 1:
+        # With a single fold there is no dispersion; keep all stocks
+        rank_std = np.zeros_like(all_ranks[0], dtype=np.float64)
+    else:
+        rank_std = np.std(all_ranks, axis=0, ddof=1)
 
     # Threshold: exclude top_pct most uncertain (high std)
     uncertain_threshold = np.percentile(rank_std, 100 * (1 - top_pct))
@@ -194,19 +199,18 @@ def hysteresis_selection(
         return rank_list[:entry_k]
 
     # Keep existing holdings that are still within exit_k threshold
-    new_holdings = []
-    for code_idx in current_holdings:
-        if code_idx in exit_set:
-            new_holdings.append(code_idx)
+    candidate_holdings = [code_idx for code_idx in current_holdings if code_idx in exit_set]
+    candidate_set = set(candidate_holdings)
 
-    # Fill up to entry_k with new stocks from entry_set
+    # Consider new entries up to entry_k threshold
     for code_idx in rank_list:
-        if len(new_holdings) >= entry_k:
-            break
-        if code_idx in entry_set and code_idx not in new_holdings:
-            new_holdings.append(code_idx)
+        if code_idx in entry_set and code_idx not in candidate_set:
+            candidate_holdings.append(code_idx)
+            candidate_set.add(code_idx)
 
-    return new_holdings
+    # Always cap to entry_k by prioritizing higher scores
+    candidate_holdings.sort(key=lambda idx: scores[idx], reverse=True)
+    return candidate_holdings[:entry_k]
 
 
 def risk_neutralize(

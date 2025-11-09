@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 import torch
 from _bootstrap import ensure_import_paths
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 
 ensure_import_paths()
 
@@ -109,11 +110,12 @@ def evaluate_model(
     selection = _select_features(config)
 
     # Load data
+    # Use lazy_load for IPC cache support (3-5x faster reads) with column pruning
     resolved_data_path = resolve_dataset_path(
         data_path, extra_bases=[Path(config["_config_dir"])]
     )
     required_columns = [date_col, code_col] + selection.features
-    frame = pl.read_parquet(str(resolved_data_path), columns=required_columns)
+    frame = lazy_load(str(resolved_data_path), columns=required_columns, prefer_ipc=True)
 
     # Filter by date range
     if start_date:

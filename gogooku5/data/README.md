@@ -38,6 +38,7 @@ PYTHONPATH=gogooku5/data/src pytest gogooku5/data/tests -q
 
 ## Data Fetchers
 - `builder.api.advanced_fetcher.AdvancedJQuantsFetcher` wraps legacy async clients so gogooku5 can download TOPIX, indices, trades spec, margin (daily/weekly), futures, options, short selling、dividends、earning statements, etc.
+- `data/tools/clean_empty_cache.py` can purge stale cache files (0-row Parquet/IPC) before a new build. Run `python data/tools/clean_empty_cache.py --dry-run` to inspect and without `--dry-run` to delete.
 - Use `AdvancedJQuantsFetcher` together with `builder.utils.asyncio.run_sync` when integrating new pipelines to avoid manual event loop handling.
 - `builder.features.core.flow.enhanced.FlowFeatureEngineer` converts cached trades-spec data into flow metrics (`foreign_sentiment`, `smart_flow_indicator`, etc.), driven by `DataSourceManager.trades_spec()`.
 - Parity check CLI: `python scripts/compare_parity.py <gogooku3 parquet> <gogooku5 parquet> [--output-json report.json]` to inspect schema and numeric differences. For automated runs, set `PARITY_BASELINE_PATH=/path/to/gogooku3_parquet` (and optionally `PARITY_CANDIDATE_PATH=/path/to/gogooku5_parquet`) before `python tools/project-health-check.sh`.
