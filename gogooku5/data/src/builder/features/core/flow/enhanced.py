@@ -1,11 +1,13 @@
 """Enhanced investor flow features adapted for gogooku5."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import polars as pl
 
 EPS = 1e-10
+LOGGER = logging.getLogger(__name__)
 
 
 def _ensure_date(frame: pl.DataFrame, column: str) -> pl.DataFrame:
@@ -63,14 +65,17 @@ class FlowFeatureEngineer:
         }
 
         if flows.is_empty():
+            LOGGER.warning("Flow features skipped: trades_spec dataframe is empty for requested window")
             return self._add_null_columns(df_base)
 
         df_flows = self._prepare_flows(flows)
         if df_flows.is_empty():
+            LOGGER.warning("Flow features skipped: trades_spec normalization produced empty dataframe")
             return self._add_null_columns(df_base)
 
         market_features = self._build_market_level_features(df_flows)
         if market_features.is_empty():
+            LOGGER.warning("Flow features skipped: market-level aggregation returned empty dataframe")
             return self._add_null_columns(df_base)
 
         if available_dates:

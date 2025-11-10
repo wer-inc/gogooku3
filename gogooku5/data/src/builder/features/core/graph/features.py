@@ -1,10 +1,10 @@
 """Simplified graph-based peer features."""
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import date, timedelta
-import math
 from typing import Deque, Dict, Iterable, Sequence
 
 import numpy as np
@@ -215,7 +215,7 @@ class GraphFeatureEngineer:
         centered = np.where(sub_mask, sub_matrix - means[:, None], 0.0).astype(np.float32)
 
         variance = np.divide(
-            np.sum(centered ** 2, axis=1),
+            np.sum(centered**2, axis=1),
             np.maximum(obs - 1.0, 1.0),
             out=np.zeros_like(obs),
         )
@@ -293,16 +293,12 @@ class GraphFeatureEngineer:
     def _shift_to_next_trading_day(self, base_df: pl.DataFrame, graph_df: pl.DataFrame) -> pl.DataFrame:
         cfg = self.config
         base_dates = (
-            base_df.select(cfg.date_column)
-            .drop_nulls()
-            .unique()
-            .sort(cfg.date_column)[cfg.date_column]
-            .to_list()
+            base_df.select(cfg.date_column).drop_nulls().unique().sort(cfg.date_column)[cfg.date_column].to_list()
         )
         if len(base_dates) < 2:
             return graph_df.head(0)
         next_map = {base_dates[i]: base_dates[i + 1] for i in range(len(base_dates) - 1)}
         shifted = graph_df.with_columns(
-            pl.col(cfg.date_column).map_dict(next_map, default=None).alias(cfg.date_column)
+            pl.col(cfg.date_column).replace(next_map, default=None).cast(pl.Date).alias(cfg.date_column)
         ).drop_nulls(subset=[cfg.date_column])
         return shifted

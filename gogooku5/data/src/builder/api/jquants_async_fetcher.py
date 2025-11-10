@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
-import logging
 import json
+import logging
 import math
 import os
 import random
@@ -329,6 +329,52 @@ class JQuantsAsyncFetcher:
         self._auth_retry_max_delay = float(os.getenv("JQUANTS_AUTH_RETRY_MAX_DELAY", "120"))
         self._auth_retry_jitter = float(os.getenv("JQUANTS_AUTH_RETRY_JITTER", "0.75"))
 
+    def _empty_frame(self, label: str, reason: str) -> pl.DataFrame:
+        """Emit a warning before returning an empty dataframe."""
+
+        self._logger.warning("[%s] %s", label.upper(), reason)
+        return pl.DataFrame()
+
+    async def _auth_post_with_backoff(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        *,
+        label: str,
+        payload: dict | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        """POST wrapper that retries on 429 with exponential backoff."""
+
+        attempt = 0
+        delay = self._auth_retry_base_delay
+        while True:
+            attempt += 1
+            try:
+                return await self._auth_post_json(
+                    session,
+                    url,
+                    label=label,
+                    payload=payload,
+                    params=params,
+                )
+            except aiohttp.ClientResponseError as exc:
+                if exc.status == 429 and attempt < self._auth_max_attempts:
+                    sleep_for = min(delay, self._auth_retry_max_delay)
+                    # add jitter to avoid sync retries across workers
+                    sleep_for += sleep_for * self._auth_retry_jitter * random.random()
+                    self._logger.warning(
+                        "[AUTH] %s received 429 (attempt %d/%d). Sleeping %.1fs before retry.",
+                        label,
+                        attempt,
+                        self._auth_max_attempts,
+                        sleep_for,
+                    )
+                    await asyncio.sleep(sleep_for)
+                    delay *= 2.0
+                    continue
+                raise
+
     @staticmethod
     def _format_date_param(date_str: str | None) -> str | None:
         """Normalize date tokens to the YYYYMMDD format required by J-Quants."""
@@ -608,7 +654,7 @@ class JQuantsAsyncFetcher:
             refresh_url = f"{self.base_url}/token/auth_refresh"
             params = {"refreshtoken": refresh_token}
             try:
-                data = await self._auth_post_json(
+                data = await self._auth_post_with_backoff(
                     session,
                     refresh_url,
                     label="auth_refresh",
@@ -647,7 +693,7 @@ class JQuantsAsyncFetcher:
         payload = {"mailaddress": self.email, "password": self.password}
 
         try:
-            data = await self._auth_post_json(
+            data = await self._auth_post_with_backoff(
                 session,
                 auth_url,
                 label="auth_user",
@@ -697,7 +743,10 @@ class JQuantsAsyncFetcher:
             )
 
             if status == 404:
-                return pl.DataFrame()
+                return self._empty_frame(
+                    "listed_info",
+                    f"HTTP 404 for date={date or 'unspecified'} (pagination_key={pagination_key})",
+                )
             if status != 200 or not isinstance(data, dict):
                 self._logger.error(
                     "J-Quants trades_spec failed",
@@ -714,10 +763,10 @@ class JQuantsAsyncFetcher:
                 break
 
         if not rows:
-            logging.getLogger(__name__).warning(
-                "Dividend API returned no rows for range %s → %s", from_date, to_date
+            return self._empty_frame(
+                "listed_info",
+                f"API returned no rows for date={date or 'unspecified'} (status=200)",
             )
-            return pl.DataFrame()
 
         df = pl.DataFrame(rows)
 
@@ -789,7 +838,10 @@ class JQuantsAsyncFetcher:
             )
 
             if status == 404:
-                return pl.DataFrame()
+                return self._empty_frame(
+                    "trades_spec",
+                    f"HTTP 404 for range {from_date}→{to_date} (pagination_key={pagination_key})",
+                )
             if status != 200 or not isinstance(data, dict):
                 body_preview = str(data)[:256]
                 self._logger.error(
@@ -808,7 +860,10 @@ class JQuantsAsyncFetcher:
                 break
 
         if not rows:
-            return pl.DataFrame()
+            return self._empty_frame(
+                "trades_spec",
+                f"API returned no rows for range {from_date}→{to_date}",
+            )
 
         df = pl.DataFrame(rows)
 
@@ -868,7 +923,10 @@ class JQuantsAsyncFetcher:
                 break
 
         if not all_rows:
-            return pl.DataFrame()
+            return self._empty_frame(
+                "weekly_margin_interest",
+                f"No weekly margin data found for range {from_date}→{to_date}",
+            )
         # Build as Utf8 first to avoid builder dtype conflicts; cast later via _float_col
         keys: set[str] = set()
         for r in all_rows:
@@ -982,7 +1040,10 @@ class JQuantsAsyncFetcher:
                 all_rows = []
 
         if not all_rows:
-            return pl.DataFrame()
+            return self._empty_frame(
+                "indices",
+                f"No index OHLC data for codes={codes or 'ALL'} range {from_date}→{to_date}",
+            )
 
         # Pre-sanitize raw payload to avoid schema conflicts during DataFrame construction
         # Replace known sentinels ("-", "*", "", "null") with None so that Polars can infer dtypes safely

@@ -1,7 +1,7 @@
 # Chunked Dataset Pipeline
 
-This document summarises the quarterly chunk workflow for the gogooku5 dataset
-builder.
+This document summarises the chunk workflow (quarterly by default, with an
+optional monthly safe mode) for the gogooku5 dataset builder.
 
 ## Overview
 
@@ -26,7 +26,9 @@ merge tool concatenates completed chunks into the canonical
 ## Building Chunks
 
 Use the planner-aware CLI to enumerate and build chunks. Warmup handling,
-status tracking, and resume semantics are managed automatically.
+status tracking, and resume semantics are managed automatically. When memory
+pressure is high, set `--chunk-months 1` to fall back to monthly chunks instead
+of the default quarterly span.
 
 ```bash
 # Dry-run planner output
@@ -45,6 +47,8 @@ Shortcuts are provided via `Makefile.dataset`:
 ```bash
 make build-chunks START=2020-01-01 END=2020-12-31 RESUME=1
 make build-chunks START=2024-01-01 END=2024-12-31 DRY_RUN=1
+# Monthly safe mode for heavy ranges
+make build-chunks START=2023-10-01 END=2023-12-31 RESUME=1 CHUNK_MONTHS=1
 ```
 
 Chunks write:
@@ -83,3 +87,24 @@ while skipping the incomplete ones (a warning is still emitted).
 For existing single-run workflows, `DatasetBuilder.build()` continues to work
 unchanged; chunks simply provide a failure-resilient alternative for large
 rebuilds or incremental updates.
+
+## CI / Automation Integration
+
+- **CI wrapper**: `scripts/ci/run_chunked_build.sh` wraps `make build-chunks`
+  + `make merge-chunks`, validates every `status.json`, and honours
+  environment variables such as `CHUNK_JOBS`, `CHUNK_RESUME`,
+  `CHUNK_ALLOW_PARTIAL`, and (now) `CHUNK_MONTHS`. It is designed for
+  Jenkins/GitHub runners where `.env` already contains J-Quants credentials.
+- **Workflow**: `.github/workflows/chunked-dataset.yml` exposes a
+  `workflow_dispatch` entry point that runs on `self-hosted` GPU runners. Pass
+  the required `start`/`end` inputs (and optional flags) to kick off a chunked
+  rebuild safely from the GitHub UI.
+- **Environment defaults**: `.env` / `.env.example` now include sane defaults
+  (`CHUNK_JOBS=1`, `CHUNK_RESUME=1`, etc.) so CI jobs do not have to repeat the
+  same arguments.
+- **Dry-run mode**: set `CHUNK_DRY_RUN=1` when invoking the script to perform a
+  planner-only pass (no dataset build) – useful for smoke tests on runners
+  without GPU/J-Quants access.
+- **Prefetch safety**: set `DATA_PREFETCH_THREADS=0` (default in `.env`) before
+  marathon runs to avoid holding fundamentals/dividends frames in memory while
+  the chunk build is already juggling millions of quote rows.

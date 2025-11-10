@@ -53,7 +53,7 @@ help-dataset:
 	@echo "  make dataset-cpu START=... END=...         CPU fallback"
 	@echo "  make dataset-prod START=... END=...        Production config"
 	@echo "  make dataset-research START=... END=...    Research features"
-	@echo "  make build-chunks START=... END=...        Quarterly chunk builder (--resume/--force)"
+	@echo "  make build-chunks START=... END=...        Chunk builder (--resume/--force, CHUNK_MONTHS=1 for monthly safe mode)"
 	@echo ""
 	@echo "🛠️  Layer 3: Utilities"
 	@echo "  make dataset-check           Environment check (relaxed)"
@@ -278,8 +278,8 @@ dataset-gpu-refresh:
 	  --enable-sector-cs \
 	  --enable-daily-margin
 
-# Quarterly chunk builder (warmup handled automatically)
-# Usage: make build-chunks START=YYYY-MM-DD END=YYYY-MM-DD [RESUME=1] [FORCE=1] [DRY_RUN=1] [LATEST=1] [JOBS=N]
+# Chunk builder (default quarterly, set CHUNK_MONTHS=1 for monthly safe mode)
+# Usage: make build-chunks START=YYYY-MM-DD END=YYYY-MM-DD [RESUME=1] [FORCE=1] [DRY_RUN=1] [LATEST=1] [JOBS=N] [CHUNK_MONTHS=M]
 build-chunks:
 	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
 	  echo "❌ Error: START and END dates required"; \
@@ -290,6 +290,7 @@ build-chunks:
 	if [ "$(FORCE)" = "1" ]; then cmd="$$cmd --force"; fi; \
 	if [ "$(DRY_RUN)" = "1" ]; then cmd="$$cmd --dry-run"; fi; \
 	if [ "$(LATEST)" = "1" ]; then cmd="$$cmd --latest-only"; fi; \
+	if [ -n "$(CHUNK_MONTHS)" ]; then cmd="$$cmd --chunk-months $(CHUNK_MONTHS)"; fi; \
 	if [ -n "$(JOBS)" ]; then cmd="$$cmd --jobs $(JOBS)"; elif [ -n "$(CHUNK_JOBS)" ]; then cmd="$$cmd --jobs $(CHUNK_JOBS)"; fi; \
 	echo "🚀 Chunk build command: $$cmd"; \
 	env $(SAFE_GPU_ENV) $$cmd

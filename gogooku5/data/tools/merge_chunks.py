@@ -5,16 +5,15 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 import polars as pl
-
-from builder.config.settings import DatasetBuilderSettings, get_settings
+from builder.config.settings import get_settings
 from builder.utils import ensure_env_loaded
+from builder.utils.artifacts import DatasetArtifactWriter
 from builder.utils.lazy_io import lazy_load
 from builder.utils.logger import get_logger
 from builder.utils.storage import StorageClient
-from builder.utils.artifacts import DatasetArtifactWriter
 
 LOGGER = get_logger("merge_chunks")
 
@@ -40,7 +39,7 @@ class ChunkRecord:
             return {}
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge dataset chunks into a full dataset")
     parser.add_argument(
         "--chunks-dir",
@@ -62,11 +61,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Allow merging even if some chunks are incomplete (default: fail).",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     ensure_env_loaded()
     settings = get_settings()
     chunks_root = args.chunks_dir or (settings.data_output_dir / "chunks")
@@ -115,6 +114,7 @@ def main() -> int:
     for record in completed:
         LOGGER.info("📦 Loading chunk %s", record.chunk_id)
         df = lazy_load(record.dataset_path, prefer_ipc=True)
+        df = _clip_chunk_to_range(df, record)
         dfs.append(df)
         chunk_summaries.append(
             {
@@ -123,7 +123,7 @@ def main() -> int:
                 "input_end": record.input_end,
                 "output_start": record.output_start,
                 "output_end": record.output_end,
-                "rows": record.rows,
+                "rows": df.height,
                 "dataset_path": str(record.dataset_path),
                 "metadata_path": str(record.metadata_path),
             }
@@ -133,7 +133,6 @@ def main() -> int:
         else:
             if df.schema != schema_reference:
                 raise ValueError(f"Schema mismatch for chunk {record.chunk_id}")
-        _validate_date_bounds(df, record)
 
     merged = pl.concat(dfs, how="vertical_relaxed", rechunk=True)
     LOGGER.info("✅ Concatenated dataset: %d rows × %d columns", merged.height, merged.width)
@@ -186,25 +185,49 @@ def _collect_chunks(root: Path) -> List[ChunkRecord]:
     return records
 
 
-def _validate_date_bounds(df: pl.DataFrame, record: ChunkRecord) -> None:
-    if "date" in df.columns:
-        date_col = "date"
-    elif "Date" in df.columns:
-        date_col = "Date"
-    else:
+def _clip_chunk_to_range(df: pl.DataFrame, record: ChunkRecord) -> pl.DataFrame:
+    """Ensure chunk rows align with the declared output range (inclusive)."""
+
+    date_col = next((col for col in ("date", "Date") if col in df.columns), None)
+    if date_col is None:
         LOGGER.warning("Chunk %s has no date column; skipping date validation", record.chunk_id)
-        return
+        return df
 
-    min_date = df.select(pl.col(date_col).min()).item()
-    max_date = df.select(pl.col(date_col).max()).item()
+    date_expr = pl.col(date_col).cast(pl.Utf8, strict=False)
+    try:
+        min_date, max_date = df.select([date_expr.min().alias("min_date"), date_expr.max().alias("max_date")]).row(0)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        LOGGER.warning("Failed to inspect date bounds for chunk %s: %s", record.chunk_id, exc)
+        return df
 
-    if str(min_date) != record.output_start or str(max_date) != record.output_end:
+    if min_date is None or max_date is None:
+        LOGGER.warning("Chunk %s date column %s contains nulls only; skipping trim", record.chunk_id, date_col)
+        return df
+
+    if min_date == record.output_start and max_date == record.output_end:
+        return df
+
+    LOGGER.warning(
+        "Chunk %s date range mismatch: expected %s→%s, actual %s→%s. Trimming to declared bounds.",
+        record.chunk_id,
+        record.output_start,
+        record.output_end,
+        min_date,
+        max_date,
+    )
+
+    trimmed = (
+        df.with_columns(date_expr.alias("__merge_date"))
+        .filter((pl.col("__merge_date") >= record.output_start) & (pl.col("__merge_date") <= record.output_end))
+        .drop("__merge_date")
+    )
+    if trimmed.is_empty():
         raise ValueError(
-            f"Chunk {record.chunk_id} date range mismatch: expected "
-            f"{record.output_start}→{record.output_end}, actual {min_date}→{max_date}"
+            f"Chunk {record.chunk_id} has no rows within declared range "
+            f"{record.output_start}→{record.output_end}. Rebuild the chunk."
         )
+    return trimmed
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

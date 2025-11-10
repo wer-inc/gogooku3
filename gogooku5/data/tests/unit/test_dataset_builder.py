@@ -7,7 +7,12 @@ from pathlib import Path
 import polars as pl
 import pytest
 from builder.config import get_settings
-from builder.pipelines.dataset_builder import DatasetBuilder
+from builder.pipelines.dataset_builder import (
+    LAZY_ALIGN_MIN_CALENDAR_ROWS,
+    LAZY_ALIGN_MIN_QUOTE_ROWS,
+    LAZY_ALIGN_MIN_RANGE_DAYS,
+    DatasetBuilder,
+)
 from builder.utils import business_date_range
 from builder.utils.artifacts import DatasetArtifactWriter
 
@@ -707,3 +712,29 @@ def test_shift_macro_features_respects_fx_columns(builder: DatasetBuilder) -> No
 
     assert shifted["macro_fx_usdjpy_close"][0] == pytest.approx(140.0)
     assert shifted["macro_fx_usdjpy_close"][1] == pytest.approx(141.0)
+
+
+def test_lazy_alignment_guard_thresholds(builder: DatasetBuilder) -> None:
+    builder.settings.enable_lazy_scans = True
+
+    assert not builder._should_use_lazy_alignment(span_days=10, calendar_rows=10, quotes_rows=1000)
+    assert builder._should_use_lazy_alignment(
+        span_days=LAZY_ALIGN_MIN_RANGE_DAYS + 1,
+        calendar_rows=10,
+        quotes_rows=1000,
+    )
+    assert builder._should_use_lazy_alignment(
+        span_days=10,
+        calendar_rows=LAZY_ALIGN_MIN_CALENDAR_ROWS,
+        quotes_rows=1000,
+    )
+    assert builder._should_use_lazy_alignment(
+        span_days=10,
+        calendar_rows=10,
+        quotes_rows=LAZY_ALIGN_MIN_QUOTE_ROWS + 1,
+    )
+
+
+def test_date_span_days_handles_invalid(builder: DatasetBuilder) -> None:
+    assert builder._date_span_days("2024-01-01", "2024-01-06") == 5
+    assert builder._date_span_days("bad-date", "2024-01-06") == 0

@@ -279,6 +279,11 @@ aligned = aligned.with_columns(
 | **メモリ** | ~500MB | ~5MB（99%削減） |
 | **NULL率** | ~99% (ほとんど NULL) | 0% (全て実データ) |
 
+- **Phase 2 Lazy Guard (新規)**: 範囲が1年以上 / 営業日250日超 / quotes行数が300万行超の
+  いずれかに該当すると、自動的に `_align_quotes_with_calendar_lazy()` を選択し、
+  LazyFrame + streaming collect でメモリ使用量を線形に抑制します。短期間は従来どおり
+  eager path を使うため、小さなジョブでもオーバーヘッドはありません。
+
 #### **Step 9-10: Margin Data 統合**
 
 ```python

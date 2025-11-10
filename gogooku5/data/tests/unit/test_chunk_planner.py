@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import polars as pl
 import pytest
-
-from builder.chunks import ChunkPlanner
-from builder.chunks import ChunkSpec
+from builder.chunks import ChunkPlanner, ChunkSpec
 from builder.pipelines.dataset_builder import DatasetBuilder
-from data.tests.helpers import make_settings
+
+from tests.helpers import make_settings
 
 
 def test_plan_quarter_chunks(monkeypatch, tmp_path):
@@ -52,7 +50,13 @@ def test_plan_invalid_range(tmp_path):
         planner.plan(start="2020-01-10", end="2020-01-05")
 
 
-def test_plan_warmup_fallback(monkeypatch, tmp_path, caplog):
+def test_chunk_planner_rejects_invalid_months(tmp_path):
+    settings = make_settings(tmp_path)
+    with pytest.raises(ValueError):
+        ChunkPlanner(settings=settings, months_per_chunk=0)
+
+
+def test_plan_warmup_fallback(monkeypatch, tmp_path):
     def raising_shift(date_str: str, days: int) -> str:
         raise RuntimeError("holiday calendar unavailable")
 
@@ -61,11 +65,41 @@ def test_plan_warmup_fallback(monkeypatch, tmp_path, caplog):
     settings = make_settings(tmp_path)
     planner = ChunkPlanner(settings=settings, warmup_days=85, output_root=settings.data_output_dir / "chunks")
 
-    with caplog.at_level("WARNING"):
-        specs = planner.plan(start="2019-01-15", end="2019-02-15")
+    captured: list[str] = []
+
+    original_warning = planner._logger.warning
+
+    def proxy_warning(message: str, *args, **kwargs):
+        formatted = message % args if args else message
+        captured.append(formatted)
+        return original_warning(message, *args, **kwargs)
+
+    monkeypatch.setattr(planner._logger, "warning", proxy_warning)
+
+    specs = planner.plan(start="2019-01-15", end="2019-02-15")
 
     assert specs[0].input_start == specs[0].output_start == "2019-01-15"
-    assert any("Falling back to chunk output start" in record.message for record in caplog.records)
+    assert any("Falling back to chunk output start" in msg for msg in captured)
+
+
+def test_plan_monthly_chunks(tmp_path):
+    settings = make_settings(tmp_path)
+    planner = ChunkPlanner(settings=settings, warmup_days=0, months_per_chunk=1)
+
+    specs = planner.plan(start="2023-10-15", end="2023-12-20")
+    assert [spec.chunk_id for spec in specs] == ["2023M10", "2023M11", "2023M12"]
+
+    october = specs[0]
+    assert october.output_start == "2023-10-15"
+    assert october.output_end == "2023-10-31"
+
+    november = specs[1]
+    assert november.output_start == "2023-11-01"
+    assert november.output_end == "2023-11-30"
+
+    december = specs[2]
+    assert december.output_start == "2023-12-01"
+    assert december.output_end == "2023-12-20"
 
 
 def test_persist_chunk_dataset(tmp_path):
@@ -100,4 +134,3 @@ def test_persist_chunk_dataset(tmp_path):
     status = json.loads(chunk_spec.status_path.read_text(encoding="utf-8"))
     assert status["state"] == "failed"
     assert status["error"] == "boom"
-

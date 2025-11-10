@@ -6,10 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import polars as pl
-
 from builder.chunks import ChunkPlanner
 from builder.pipelines.dataset_builder import DatasetBuilder
-from data.tests.helpers import make_settings
+
+from tests.helpers import make_settings
 
 
 def _fake_writer(settings: object, outputs: dict):
@@ -97,4 +97,3 @@ def test_chunk_pipeline_end_to_end(monkeypatch, tmp_path):
     metadata = json.loads(outputs["metadata"].read_text(encoding="utf-8"))
     assert len(metadata["chunks"]) == 2
     assert metadata["chunks"][0]["rows"] == 2
-

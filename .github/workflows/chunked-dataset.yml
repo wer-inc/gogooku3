@@ -1,0 +1,74 @@
+name: Chunked Dataset Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Chunk build start date (YYYY-MM-DD)"
+        required: true
+        type: string
+      end:
+        description: "Chunk build end date (YYYY-MM-DD)"
+        required: true
+        type: string
+      resume:
+        description: "Skip completed chunks"
+        required: false
+        default: true
+        type: boolean
+      force:
+        description: "Force rebuild even if chunk completed"
+        required: false
+        default: false
+        type: boolean
+      latest_only:
+        description: "Only build the chunk covering END"
+        required: false
+        default: false
+        type: boolean
+      allow_partial:
+        description: "Allow merge to skip incomplete chunks"
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: "Planner dry-run only (no dataset build)"
+        required: false
+        default: false
+        type: boolean
+      chunk_jobs:
+        description: "Chunk workers (JOBS)"
+        required: false
+        default: "1"
+        type: string
+
+jobs:
+  chunked-dataset:
+    runs-on: self-hosted
+    timeout-minutes: 720
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure virtual environment
+        run: |
+          if [ ! -x "venv/bin/python" ]; then
+            echo "venv not found. Run 'make setup' on the runner before invoking this workflow."
+            exit 1
+          fi
+
+      - name: Run chunked build
+        env:
+          CHUNK_START: ${{ inputs.start }}
+          CHUNK_END: ${{ inputs.end }}
+          CHUNK_RESUME: ${{ inputs.resume && '1' || '0' }}
+          CHUNK_FORCE: ${{ inputs.force && '1' || '0' }}
+          CHUNK_LATEST_ONLY: ${{ inputs.latest_only && '1' || '0' }}
+          CHUNK_ALLOW_PARTIAL: ${{ inputs.allow_partial && '1' || '0' }}
+          CHUNK_JOBS: ${{ inputs.chunk_jobs }}
+          CHUNK_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
+          chmod +x scripts/ci/run_chunked_build.sh
+          scripts/ci/run_chunked_build.sh

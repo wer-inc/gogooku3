@@ -109,6 +109,9 @@ INDEX_FEATURE_WHITELIST: dict[str, tuple[str, ...]] = {
     "topix": TOPIX_FEATURE_WHITELIST,
     "nk225": NK225_FEATURE_WHITELIST,
 }
+LAZY_ALIGN_MIN_CALENDAR_ROWS = 250
+LAZY_ALIGN_MIN_RANGE_DAYS = 365
+LAZY_ALIGN_MIN_QUOTE_ROWS = 3_000_000
 PrefetchResult = TypeVar("PrefetchResult")
 
 
@@ -189,6 +192,30 @@ class DatasetBuilder:
         self._rate_limit_checked = False
         self._schema_fp_cache = None  # Lazy initialization for L0 schema fingerprint
         self._run_meta: dict[str, Any] | None = None
+
+    @staticmethod
+    def _date_span_days(start: str, end: str) -> int:
+        """Return inclusive span in days between two ISO dates."""
+
+        try:
+            start_dt = datetime.fromisoformat(start)
+            end_dt = datetime.fromisoformat(end)
+        except ValueError:
+            return 0
+        return max((end_dt - start_dt).days, 0)
+
+    def _should_use_lazy_alignment(self, *, span_days: int, calendar_rows: int, quotes_rows: int) -> bool:
+        """Decide whether to switch to the lazy alignment path for quotes/listed joins."""
+
+        if not self.settings.enable_lazy_scans:
+            return False
+        if calendar_rows >= LAZY_ALIGN_MIN_CALENDAR_ROWS:
+            return True
+        if span_days >= LAZY_ALIGN_MIN_RANGE_DAYS:
+            return True
+        if quotes_rows >= LAZY_ALIGN_MIN_QUOTE_ROWS:
+            return True
+        return False
 
     def build(
         self,
@@ -282,8 +309,10 @@ class DatasetBuilder:
         LOGGER.info("[DEBUG] Step 5: Preparing listed dataframe...")
         # Use IPC cache for fast reuse (Pattern 1: small table mmap caching)
         listed_lf = self._load_small_table_cached("listed", lambda: self._prepare_listed_dataframe(listed))
+        listed_filter = pl.col("code").is_in(symbols)
+        listed_filtered_lf = listed_lf.filter(listed_filter)
         # Filter to symbols and materialize (small table, fast)
-        listed_df = listed_lf.filter(pl.col("code").is_in(symbols)).collect()
+        listed_df = listed_filtered_lf.collect()
 
         LOGGER.info("[DEBUG] Step 6: Building calendar...")
         # Use IPC cache for fast reuse (calendar is ~250 rows/year, perfect for caching)
@@ -295,7 +324,23 @@ class DatasetBuilder:
         LOGGER.info("[DEBUG] Step 7: Checking quotes cache (smart reuse enabled)...")
         quotes_df = self._load_or_fetch_quotes(symbols=symbols, start=start, end=end)
 
-        aligned_quotes = self._align_quotes_with_calendar(quotes_df, calendar_df, listed_df)
+        span_days = self._date_span_days(start, end)
+        use_lazy_alignment = self._should_use_lazy_alignment(
+            span_days=span_days,
+            calendar_rows=calendar_df.height,
+            quotes_rows=quotes_df.height,
+        )
+
+        if use_lazy_alignment:
+            LOGGER.info(
+                "[LAZY ALIGN] Using streaming quotes/listed alignment (span=%d days, calendar_rows=%d, quotes_rows=%d)",
+                span_days,
+                calendar_df.height,
+                quotes_df.height,
+            )
+            aligned_quotes = self._align_quotes_with_calendar_lazy(quotes_df, calendar_lf, listed_filtered_lf)
+        else:
+            aligned_quotes = self._align_quotes_with_calendar(quotes_df, calendar_df, listed_df)
 
         # Phase 2 Patch D: Add as-of timestamp for T+1 data availability
         # This enables proper temporal joins (e.g., weekly margin, statements)
@@ -545,18 +590,43 @@ class DatasetBuilder:
         )
 
         # Convert date strings to Date type for comparison
-        if "date" in enriched_df.columns:
+        date_col = "date" if "date" in enriched_df.columns else ("Date" if "Date" in enriched_df.columns else None)
+        if date_col:
             try:
                 start_bound = datetime.strptime(start_out, "%Y-%m-%d").date()
                 end_bound = datetime.strptime(end_out, "%Y-%m-%d").date()
             except ValueError as exc:  # pragma: no cover - defensive guard for misconfigured inputs
                 raise ValueError(f"Invalid output date bounds: start={start_out!r}, end={end_out!r}") from exc
-            enriched_df = enriched_df.filter(
-                (pl.col("date") >= pl.lit(start_bound)) & (pl.col("date") <= pl.lit(end_bound))
-            )
-            LOGGER.info("[WARMUP] After slicing: %d rows", enriched_df.height)
+
+            date_expr = pl.col(date_col)
+            temp_col = None
+            dtype = enriched_df.schema.get(date_col)
+            if dtype is None:
+                LOGGER.warning("[WARMUP] Date column %s missing from schema; skipping slice", date_col)
+            else:
+                if dtype == pl.Datetime:
+                    # Convert to Date for day-level filtering
+                    date_expr = date_expr.dt.date()
+                    temp_col = "__warmup_slice_date"
+                    enriched_df = enriched_df.with_columns(date_expr.alias(temp_col))
+                    filter_col = pl.col(temp_col)
+                    lower, upper = start_bound, end_bound
+                elif dtype == pl.Date:
+                    filter_col = date_expr
+                    lower, upper = start_bound, end_bound
+                else:
+                    # Fallback: compare ISO strings
+                    temp_col = "__warmup_slice_date"
+                    enriched_df = enriched_df.with_columns(date_expr.cast(pl.Utf8, strict=False).alias(temp_col))
+                    filter_col = pl.col(temp_col)
+                    lower, upper = start_out, end_out
+
+                enriched_df = enriched_df.filter((filter_col >= pl.lit(lower)) & (filter_col <= pl.lit(upper)))
+                if temp_col and temp_col in enriched_df.columns:
+                    enriched_df = enriched_df.drop(temp_col)
+                LOGGER.info("[WARMUP] After slicing: %d rows", enriched_df.height)
         else:
-            LOGGER.warning("[WARMUP] No 'date' column found, skipping slice")
+            LOGGER.warning("[WARMUP] No 'date' or 'Date' column found, skipping slice")
 
         # Phase 2 Patch D: T-leak detection (skeleton)
         # TODO: Implement when as-of joins are used for weekly/snapshot data
@@ -7025,6 +7095,14 @@ class DatasetBuilder:
 
         # Hotfix Step 2: Enforce unique columns (safety net for any remaining duplicates)
         df = enforce_unique_columns(df)
+
+        # Ensure trading-date column wins over legacy Date columns (some features inject their own Date)
+        if "date" in df.columns and "Date" in df.columns:
+            LOGGER.warning("[SCHEMA] Dropping pre-existing 'Date' column to preserve canonical trading dates")
+            df = df.drop("Date")
+            if isinstance(meta, dict):
+                schema_meta = meta.setdefault("schema_governance", {})
+                schema_meta["dropped_conflicting_date_column"] = True
 
         # Patch: Temporarily deny columns carrying `_right` suffix (ambiguous lag semantics)
         right_cols = [col for col in df.columns if col.lower().endswith("_right") or "_right_" in col.lower()]

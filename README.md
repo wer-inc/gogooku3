@@ -128,6 +128,11 @@ python data/tools/merge_chunks.py --chunks-dir output/chunks --allow-partial
 チャンクごとの `ml_dataset.parquet` / `metadata.json` / `status.json` は
 `output/chunks/<chunk_id>/` に保存されます。詳細は
 [docs/CHUNK_PIPELINE.md](docs/CHUNK_PIPELINE.md) を参照してください。
+CI や自動ジョブからは `scripts/ci/run_chunked_build.sh` もしくは
+`Chunked Dataset Build` ワークフロー（`workflow_dispatch`、self-hosted GPU）
+で同じ手順を実行できます。マルチイヤーの実行前に `.env` で
+`DATA_PREFETCH_THREADS=0` に切り替えておくと、余計なprefetchが抑制され
+ピークメモリをさらに削減できます（短期間ジョブでは任意に戻してください）。
 
 ### 4. モデルトレーニング
 
@@ -1030,3 +1035,19 @@ graph TB
 ---
 
 **🚀 gogooku3-standalone - 壊れず・強く・速く の実現**
+
+## 📜 Log Files Overview
+
+All dataset/logging output lives under `logs/`.
+
+```
+logs/
+  chunks/      # chunk builder runs (timestamped) + latest.log symlink
+  dataset/     # full-run logs + pid/pgid files per run (latest.log)
+  health/      # health-check JSON snapshots
+```
+
+Helpers:
+- `scripts/show_logs.sh chunk --tail 200`
+- `scripts/show_logs.sh dataset`
+- `scripts/show_logs.sh health`

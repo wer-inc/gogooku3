@@ -1,12 +1,11 @@
-"""Quarterly chunk planning utilities."""
+"""Chunk planning utilities."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
-from calendar import monthrange
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 
 from ..config import DatasetBuilderSettings, get_settings
 from ..utils.datetime import shift_trading_days
@@ -41,7 +40,7 @@ class ChunkSpec:
 
 
 class ChunkPlanner:
-    """Plan dataset builds over quarterly chunks with warmup handling."""
+    """Plan dataset builds over fixed-month chunks with warmup handling."""
 
     def __init__(
         self,
@@ -49,10 +48,14 @@ class ChunkPlanner:
         settings: DatasetBuilderSettings | None = None,
         warmup_days: int = DEFAULT_WARMUP_DAYS,
         output_root: Path | None = None,
+        months_per_chunk: int = 3,
     ) -> None:
+        if months_per_chunk <= 0:
+            raise ValueError("months_per_chunk must be >= 1")
         self.settings = settings or get_settings()
         self.warmup_days = warmup_days
         self.output_root = output_root or (self.settings.data_output_dir / "chunks")
+        self.months_per_chunk = months_per_chunk
         self._logger = get_logger("builder.chunks")
 
     def plan(self, *, start: str, end: str) -> List[ChunkSpec]:
@@ -64,26 +67,25 @@ class ChunkPlanner:
             raise ValueError("end date must be on or after start date")
 
         specs: List[ChunkSpec] = []
-        for quarter_start in _iterate_quarter_starts(start_date, end_date):
-            quarter_end = _quarter_end(quarter_start)
-            output_start = max(start_date, quarter_start)
-            output_end = min(end_date, quarter_end)
-            if output_start > output_end:
-                continue
-
-            chunk_id = _chunk_id_for_date(quarter_start)
-            output_dir = self.output_root / chunk_id
-
-            input_start = self._compute_input_start(output_start)
-            spec = ChunkSpec(
-                chunk_id=chunk_id,
-                input_start=input_start,
-                input_end=output_end.strftime("%Y-%m-%d"),
-                output_start=output_start.strftime("%Y-%m-%d"),
-                output_end=output_end.strftime("%Y-%m-%d"),
-                output_dir=output_dir,
-            )
-            specs.append(spec)
+        chunk_start = _align_chunk_start(start_date, self.months_per_chunk)
+        while chunk_start <= end_date:
+            chunk_end = _chunk_end(chunk_start, self.months_per_chunk)
+            output_start = max(start_date, chunk_start)
+            output_end = min(end_date, chunk_end)
+            if output_start <= output_end:
+                chunk_id = _chunk_id_for_span(chunk_start, chunk_end, self.months_per_chunk)
+                output_dir = self.output_root / chunk_id
+                input_start = self._compute_input_start(output_start)
+                spec = ChunkSpec(
+                    chunk_id=chunk_id,
+                    input_start=input_start,
+                    input_end=output_end.strftime("%Y-%m-%d"),
+                    output_start=output_start.strftime("%Y-%m-%d"),
+                    output_end=output_end.strftime("%Y-%m-%d"),
+                    output_dir=output_dir,
+                )
+                specs.append(spec)
+            chunk_start = _add_months(chunk_start, self.months_per_chunk)
 
         return specs
 
@@ -100,8 +102,7 @@ class ChunkPlanner:
             # Align with legacy DatasetBuilder fallback so environments without
             # holiday libraries can still produce a dataset (warmup equals output).
             self._logger.warning(
-                "Failed to shift trading days for %s (warmup=%d): %s. "
-                "Falling back to chunk output start.",
+                "Failed to shift trading days for %s (warmup=%d): %s. " "Falling back to chunk output start.",
                 iso_output,
                 self.warmup_days,
                 exc,
@@ -113,40 +114,37 @@ def _parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
-def _chunk_id_for_date(dt: date) -> str:
-    quarter = ((dt.month - 1) // 3) + 1
-    return f"{dt.year}Q{quarter}"
+def _align_chunk_start(dt: date, months_per_chunk: int) -> date:
+    """Return the first day of the chunk containing ``dt``."""
 
-
-def _iterate_quarter_starts(start: date, end: date) -> Iterable[date]:
-    """Yield the first day of each quarter overlapping the range."""
-
-    current = _quarter_start(start)
-    while current <= end:
-        yield current
-        # Advance to next quarter
-        month = current.month + 3
-        year = current.year
-        if month > 12:
-            month -= 12
-            year += 1
-        current = date(year, month, 1)
-
-
-def _quarter_start(dt: date) -> date:
-    month = ((dt.month - 1) // 3) * 3 + 1
+    month = ((dt.month - 1) // months_per_chunk) * months_per_chunk + 1
     return date(dt.year, month, 1)
 
 
-def _quarter_end(dt: date) -> date:
-    """Return the final day of the quarter for the quarter containing dt."""
+def _add_months(dt: date, months: int) -> date:
+    """Return the first day after advancing ``months`` months."""
 
-    start = _quarter_start(dt)
-    month = start.month + 2
-    year = start.year
-    if month > 12:
-        month -= 12
-        year += 1
-    last_day = monthrange(year, month)[1]
-    return date(year, month, last_day)
+    total = (dt.year * 12) + (dt.month - 1) + months
+    year = total // 12
+    month = total % 12 + 1
+    return date(year, month, 1)
 
+
+def _chunk_end(start: date, months_per_chunk: int) -> date:
+    """Return the final day included in a chunk starting at ``start``."""
+
+    next_start = _add_months(start, months_per_chunk)
+    return next_start - timedelta(days=1)
+
+
+def _chunk_id_for_span(start: date, end: date, months_per_chunk: int) -> str:
+    """Return a readable chunk identifier for the span."""
+
+    if months_per_chunk == 3:
+        quarter = ((start.month - 1) // 3) + 1
+        return f"{start.year}Q{quarter}"
+    if months_per_chunk == 1:
+        return f"{start.year}M{start.month:02d}"
+    if start.year == end.year:
+        return f"{start.year}M{start.month:02d}-{end.month:02d}"
+    return f"{start.year}M{start.month:02d}-{end.year}M{end.month:02d}"

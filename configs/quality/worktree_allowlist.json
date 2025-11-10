@@ -50,6 +50,7 @@
       "description": "Tooling, CI, and roadmap updates awaiting review",
       "patterns": [
         ".codex-env-info.md",
+        ".env.example",
         "CLAUDE.md",
         "CLEANUP_TASKS.json",
         "README.md",
@@ -59,6 +60,7 @@
         "configs/quality/",
         "scripts/ci/*",
         "scripts/maintenance/cleanup_markdown_files.sh",
+        "scripts/show_logs.sh",
         "src/gogooku3/cli.py",
         "tools/codex.sh",
         "tools/quality/*",
@@ -208,6 +210,19 @@
       "patterns": [
         "AUTONOMOUS_*.md",
         "codex-env-info.md"
+      ]
+    },
+    {
+      "name": "chunked_dataset_nov2025",
+      "description": "Chunked dataset pipeline CI/CD infrastructure",
+      "patterns": [
+        ".github/workflows/chunked-dataset.yml",
+        "docs/CHUNK_PIPELINE.md",
+        "Makefile.dataset",
+        "scripts/rebuild_and_merge.sh",
+        "gogooku5/data/scripts/build_chunks.py",
+        "gogooku5/data/src/builder/chunks/*",
+        "gogooku5/data/tools/merge_chunks.py"
       ]
     }
   ]

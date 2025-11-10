@@ -25,13 +25,15 @@ def load_futures(
         正規化された先物DataFrame
     """
     if df.is_empty():
+        LOGGER.warning("TOPIX futures loader received empty dataframe")
         return df
 
-    # カテゴリでフィルタ
-    if "ProductCategory" in df.columns:
-        df = df.filter(pl.col("ProductCategory") == category)
-    elif "DerivativesProductCategory" in df.columns:
-        df = df.filter(pl.col("DerivativesProductCategory") == category)
+    # カテゴリでフィルタ（DerivativesProductCategory を最優先）
+    category_columns = ("DerivativesProductCategory", "ProductCategory")
+    for col in category_columns:
+        if col in df.columns:
+            df = df.filter(pl.col(col).cast(pl.Utf8, strict=False) == category)
+            break
 
     # 日付列の正規化
     date_cols = ["Date", "date"]
@@ -228,6 +230,7 @@ def build_futures_features(
             front_next_list.append(fn_result)
 
     if not front_next_list:
+        LOGGER.warning("TOPIX futures features skipped: unable to determine front/next contracts")
         return pl.DataFrame(schema={"date": pl.Date, "available_ts": pl.Datetime("us", "Asia/Tokyo")})
 
     fn_df = pl.concat(front_next_list).sort("date")

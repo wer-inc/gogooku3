@@ -4,11 +4,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import site
+import subprocess
+import sys
 import sysconfig
+import tempfile
 from pathlib import Path
-from typing import Iterable, List
+from typing import Any, Iterable, List
 
 ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(ROOT) not in sys.path:
@@ -53,18 +55,21 @@ def _extend_system_site_packages() -> None:
 
 _extend_system_site_packages()
 
-from builder.chunks import ChunkPlanner, ChunkSpec
-from builder.pipelines.dataset_builder import DatasetBuilder
-from builder.utils import ensure_env_loaded
-from builder.utils.logger import get_logger
+from builder.chunks import ChunkPlanner, ChunkSpec  # noqa: E402
+from builder.pipelines.dataset_builder import DatasetBuilder  # noqa: E402
+from builder.utils import ensure_env_loaded  # noqa: E402
+from builder.utils.logger import get_logger  # noqa: E402
 
 LOGGER = get_logger("scripts.build_chunks")
 
 
+SCRIPT_PATH = Path(__file__).resolve()
+
+
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build dataset in quarterly chunks")
-    parser.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
+    parser = argparse.ArgumentParser(description="Build dataset in chunked batches")
+    parser.add_argument("--start", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end", help="End date (YYYY-MM-DD)")
     parser.add_argument(
         "--refresh-listed",
         action="store_true",
@@ -96,31 +101,112 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         default=int(os.getenv("CHUNK_JOBS", "1")),
         help="Number of parallel workers (currently limited to 1)",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--chunk-months",
+        type=int,
+        default=int(os.getenv("CHUNK_MONTHS", "3")),
+        help="Calendar months per chunk (default: 3; set to 1 for monthly safe mode)",
+    )
+    parser.add_argument(
+        "--no-isolation",
+        action="store_true",
+        help="Disable per-chunk process isolation (testing/debug only)",
+    )
+    parser.add_argument(
+        "--chunk-spec",
+        help=argparse.SUPPRESS,
+    )
+    args = parser.parse_args(argv)
+    if not args.chunk_spec and (args.start is None or args.end is None):
+        parser.error("--start and --end are required unless --chunk-spec is provided")
+    return args
+
+
+def _serialize_chunk_spec(spec: ChunkSpec) -> dict[str, Any]:
+    return {
+        "chunk_id": spec.chunk_id,
+        "input_start": spec.input_start,
+        "input_end": spec.input_end,
+        "output_start": spec.output_start,
+        "output_end": spec.output_end,
+        "output_dir": str(spec.output_dir),
+    }
+
+
+def _load_chunk_spec(path: Path) -> ChunkSpec:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return ChunkSpec(
+        chunk_id=payload["chunk_id"],
+        input_start=payload["input_start"],
+        input_end=payload["input_end"],
+        output_start=payload["output_start"],
+        output_end=payload["output_end"],
+        output_dir=Path(payload["output_dir"]),
+    )
+
+
+def _run_single_chunk(spec: ChunkSpec, refresh_listed: bool) -> None:
+    ensure_env_loaded()
+    builder = DatasetBuilder()
+    builder.build_chunk(spec, refresh_listed=refresh_listed)
+
+
+def _run_chunk_subprocess(spec: ChunkSpec, refresh_listed: bool) -> None:
+    """Execute chunk build via a fresh Python interpreter."""
+
+    payload = _serialize_chunk_spec(spec)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as tmp:
+        json.dump(payload, tmp)
+        tmp.flush()
+        spec_path = Path(tmp.name)
+
+    cmd = [sys.executable, str(SCRIPT_PATH), "--chunk-spec", str(spec_path)]
+    if refresh_listed:
+        cmd.append("--refresh-listed")
+
+    try:
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"Chunk {spec.chunk_id} failed (exit_code={result.returncode})")
+    finally:
+        try:
+            spec_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def main(argv: List[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.chunk_spec:
+        spec = _load_chunk_spec(Path(args.chunk_spec))
+        try:
+            _run_single_chunk(spec, refresh_listed=args.refresh_listed)
+        except Exception as exc:  # pragma: no cover - surfaced to CLI
+            LOGGER.error("Chunk %s failed: %s", spec.chunk_id, exc)
+            return 1
+        return 0
 
     if args.jobs != 1:
         print("⚠️  Parallel chunk builds (jobs>1) are not supported yet. Use --jobs 1.", file=sys.stderr)
         return 1
 
     ensure_env_loaded()
+    use_isolation = not args.no_isolation
 
-    planner = ChunkPlanner()
+    planner = ChunkPlanner(months_per_chunk=args.chunk_months)
     try:
         chunk_specs = planner.plan(start=args.start, end=args.end)
     except RuntimeError as exc:
         LOGGER.warning(
-            "Chunk planner failed to compute warmup (holiday calendar missing?). "
-            "Falling back to zero warmup: %s",
+            "Chunk planner failed to compute warmup (holiday calendar missing?). " "Falling back to zero warmup: %s",
             exc,
         )
         planner = ChunkPlanner(
             settings=planner.settings,
             warmup_days=0,
             output_root=planner.output_root,
+            months_per_chunk=planner.months_per_chunk,
         )
         chunk_specs = planner.plan(start=args.start, end=args.end)
     if args.latest_only and chunk_specs:
@@ -138,8 +224,15 @@ def main(argv: List[str] | None = None) -> int:
     refresh_flag = args.refresh_listed
     for spec in specs_to_run:
         print(f"🚧 Building chunk {spec.chunk_id}: {spec.output_start} → {spec.output_end}")
-        builder = DatasetBuilder()
-        builder.build_chunk(spec, refresh_listed=refresh_flag)
+        try:
+            if use_isolation:
+                _run_chunk_subprocess(spec, refresh_flag)
+            else:
+                builder = DatasetBuilder()
+                builder.build_chunk(spec, refresh_listed=refresh_flag)
+        except Exception as exc:  # pragma: no cover - surfaced to CLI
+            print(f"❌ Chunk {spec.chunk_id} failed: {exc}", file=sys.stderr)
+            return 1
         refresh_flag = False  # refresh listed at most once
         print(f"✅ Completed chunk {spec.chunk_id}")
 

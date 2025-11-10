@@ -64,7 +64,7 @@ class DataSourceManager:
             features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         except ValueError as exc:
             logging.getLogger(__name__).warning(
-                "TOPIX futures features unavailable for %s→%s (%s); returning empty frame",
+                "VIX features unavailable for %s→%s (%s); returning empty frame",
                 start,
                 end,
                 exc,
@@ -97,7 +97,7 @@ class DataSourceManager:
             features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
         except ValueError as exc:
             logging.getLogger(__name__).warning(
-                "TOPIX futures features unavailable for %s→%s (%s); returning empty frame",
+                "Global regime features unavailable for %s→%s (%s); returning empty frame",
                 start,
                 end,
                 exc,
@@ -241,7 +241,16 @@ class DataSourceManager:
             )
             return features
 
-        features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
+        try:
+            features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
+        except ValueError as exc:
+            logging.getLogger(__name__).warning(
+                "TOPIX futures features unavailable for %s→%s (%s); returning empty frame",
+                start,
+                end,
+                exc,
+            )
+            return pl.DataFrame()
         return features
 
     def options_daily(
