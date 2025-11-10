@@ -240,11 +240,7 @@ class TechnicalFeatureEngineer:
             cfg.high_column,
             cfg.low_column,
             cfg.volume_column,
-            # Phase 2: support both old and new return column names
-            "returns_1d",
-            "returns_5d",
-            "returns_10d",
-            "returns_20d",
+            # P0 FIX: Use only ret_prev_* (backward-looking) to avoid forward-looking bias
             "ret_prev_1d",
             "ret_prev_5d",
             "ret_prev_10d",

@@ -12,8 +12,8 @@ def test_sector_aggregation_features_add_features() -> None:
             "code": ["A", "B", "A", "B"],
             "sector_code": ["SEC1", "SEC1", "SEC1", "SEC1"],
             "date": [date(2024, 1, 1), date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 2)],
-            "returns_1d": [0.01, 0.015, 0.02, 0.01],
-            "returns_5d": [0.05, 0.04, 0.06, 0.03],
+            "ret_prev_1d": [0.01, 0.015, 0.02, 0.01],  # P0 FIX: Use ret_prev_* (backward-looking)
+            "ret_prev_5d": [0.05, 0.04, 0.06, 0.03],  # P0 FIX: Use ret_prev_* (backward-looking)
         }
     )
 

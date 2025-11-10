@@ -43,13 +43,9 @@ class SectorAggregationFeatures:
         cross_keys = [cfg.date_column, sector_col]
         out = df.sort([sector_col, cfg.date_column])
 
-        # Phase 2 compatibility: handle column name transitions
-        ret_1d_col = (
-            cfg.returns_1d if cfg.returns_1d in out.columns else ("returns_1d" if "returns_1d" in out.columns else None)
-        )
-        ret_5d_col = (
-            cfg.returns_5d if cfg.returns_5d in out.columns else ("returns_5d" if "returns_5d" in out.columns else None)
-        )
+        # P0 FIX: Use only ret_prev_* columns (no forward-looking bias)
+        ret_1d_col = cfg.returns_1d if cfg.returns_1d in out.columns else None
+        ret_5d_col = cfg.returns_5d if cfg.returns_5d in out.columns else None
 
         if ret_1d_col:
             out = out.with_columns(pl.col(ret_1d_col).median().over(cross_keys).alias("sec_ret_1d_eq"))

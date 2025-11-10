@@ -1481,16 +1481,12 @@ class DatasetBuilder:
         - Enrich with listed metadata (sector_code, market_code)
         - No cross-join → only rows with actual trading data
         """
-        # If no quotes, return empty DataFrame with correct schema
+        # P0 FIX: If no quotes, raise ValueError immediately (fail-fast)
         if quotes.is_empty():
-            return pl.DataFrame(
-                {
-                    "code": pl.Series([], dtype=pl.Utf8),
-                    "date": pl.Series([], dtype=pl.Utf8),
-                    "sector_code": pl.Series([], dtype=pl.Utf8),
-                    "market_code": pl.Series([], dtype=pl.Utf8),
-                    "close": pl.Series([], dtype=pl.Float64),
-                }
+            raise ValueError(
+                "Empty quotes DataFrame detected in _align_quotes_with_calendar. "
+                "This indicates a data fetching issue or incorrect date range. "
+                "Check that the date range has valid trading days and quote data is available."
             )
 
         # Prepare listed metadata
@@ -1551,15 +1547,12 @@ class DatasetBuilder:
         - Join with cached small tables (LazyFrame)
         - Use streaming collect to reduce memory footprint
         """
+        # P0 FIX: If no quotes, raise ValueError immediately (fail-fast)
         if quotes.is_empty():
-            return pl.DataFrame(
-                {
-                    "code": pl.Series([], dtype=pl.Utf8),
-                    "date": pl.Series([], dtype=pl.Utf8),
-                    "sector_code": pl.Series([], dtype=pl.Utf8),
-                    "market_code": pl.Series([], dtype=pl.Utf8),
-                    "close": pl.Series([], dtype=pl.Float64),
-                }
+            raise ValueError(
+                "Empty quotes DataFrame detected in _align_quotes_with_calendar_lazy. "
+                "This indicates a data fetching issue or incorrect date range. "
+                "Check that the date range has valid trading days and quote data is available."
             )
 
         # Convert quotes to LazyFrame for lazy evaluation
