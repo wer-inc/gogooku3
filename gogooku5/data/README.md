@@ -45,3 +45,21 @@ PYTHONPATH=gogooku5/data/src pytest gogooku5/data/tests -q
 - DatasetBuilder now materialises a full営業日×銘柄グリッド（日本の祝日カレンダーヒューリスティクス＋実観測日付）をベースに各特徴量を付与し、欠損日の可視化と gogooku3 とのパリティ確認を容易にしています。
 
 Detailed pipeline behavior, feature coverage, and validation routines will be documented as implementation progresses through the migration milestones.
+
+## Dagster Integration
+`gogooku5/data/src/dagster_gogooku5` ships reusable Dagster assets that wrap the dataset builder:
+
+```bash
+# Launch Dagster UI with the gogooku5 definitions
+DAGSTER_HOME=$PWD/gogooku5 PYTHONPATH=gogooku5/data/src dagster dev -f gogooku5/data/src/dagster_gogooku5/defs.py
+```
+
+- `g5_dataset_chunks`: builds DatasetBuilder chunks for a configurable date range. Configure `start`, `end`, `chunk_months`, etc. directly in Dagster.
+- `g5_dataset_full`: merges the latest completed chunks by invoking the existing `data/tools/merge_chunks.py` helper.
+- `dataset_builder_resource`: initializes `DatasetBuilder` with optional overrides (output dir, dataset tag, refresh behavior).
+
+These assets allow you to schedule recurring dataset builds via Dagster jobs or run ad‑hoc chunk builds/merges from the UI with full observability.
+
+> 🕒 **Timezone**
+> `gogooku5/dagster.yaml` sets `instance.local_timezone` to `Asia/Tokyo`.
+> Export `DAGSTER_HOME=$PWD/gogooku5` (or copy dagster.yaml into your DAGSTER_HOME) before running `dagster dev` / `dagster job …` to keep all Dagster timestamps in JST.

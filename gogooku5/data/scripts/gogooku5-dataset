@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""
+Executable entry point for gogooku5-dataset CLI.
+
+This script can be:
+1. Executed directly: ./scripts/gogooku5-dataset build --start 2020-01-01
+2. Installed as command: pip install -e . && gogooku5-dataset build ...
+3. Run as module: python -m gogooku5_data.cli build ...
+"""
+
+import sys
+from pathlib import Path
+
+# Add src to path for development mode
+src_dir = Path(__file__).parent.parent / "src"
+if src_dir.exists():
+    sys.path.insert(0, str(src_dir))
+
+from cli.main import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

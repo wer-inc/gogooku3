@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import copy
 import math
+import os
+import random
 from collections.abc import Iterable
 from datetime import date as Date
 from datetime import timedelta
@@ -13,7 +15,6 @@ import numpy as np
 import polars as pl
 import torch
 from apex_ranker.backtest.splitter import PurgedKFoldSplitter, PurgeParams
-from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 from apex_ranker.data import (
     DayPanelDataset,
     FeatureSelector,
@@ -35,6 +36,34 @@ from apex_ranker.utils import (
     wil_at_k,
 )
 from torch.utils.data import DataLoader
+
+from gogooku5.data.src.builder.utils.lazy_io import lazy_load
+
+DEFAULT_SEED = 42
+
+
+def configure_seed(seed: int, deterministic: bool = True) -> None:
+    """Configure global RNG state for reproducible training."""
+
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+    try:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        if deterministic:
+            if hasattr(torch, "use_deterministic_algorithms"):
+                torch.use_deterministic_algorithms(True, warn_only=True)
+            if hasattr(torch.backends, "cudnn"):
+                torch.backends.cudnn.deterministic = True
+                torch.backends.cudnn.benchmark = False
+        else:
+            if hasattr(torch.backends, "cudnn"):
+                torch.backends.cudnn.benchmark = True
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[WARN] Failed to configure PyTorch seed deterministically: {exc}")
 
 
 class EarlyStopping:
@@ -91,13 +120,15 @@ class EarlyStopping:
         else:
             self.counter += 1
             print(
-                f"[EarlyStopping] No improvement for {self.counter}/{self.patience} epochs (best: {self.best_score:.4f} at epoch {self.best_epoch})"
+                f"[EarlyStopping] No improvement for {self.counter}/{self.patience} epochs "
+                f"(best: {self.best_score:.4f} at epoch {self.best_epoch})"
             )
 
             if self.counter >= self.patience:
                 self.early_stop = True
                 print(
-                    f"[EarlyStopping] Stopping training! Best epoch: {self.best_epoch}, Best score: {self.best_score:.4f}"
+                    f"[EarlyStopping] Stopping training! Best epoch: {self.best_epoch}, "
+                    f"Best score: {self.best_score:.4f}"
                 )
                 return True
 
@@ -242,6 +273,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Purged K-Fold index (1-based). Defaults to config/1 when purged_kfold is used.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (defaults to config value or 42)",
     )
     parser.add_argument(
         "--embargo-days",
@@ -419,6 +456,11 @@ def main() -> None:
     loss_cfg = cfg["loss"]
     model_cfg = cfg["model"]
 
+    seed = int(args.seed if args.seed is not None else train_cfg.get("seed", DEFAULT_SEED))
+    deterministic_mode = bool(train_cfg.get("deterministic", True))
+    configure_seed(seed, deterministic_mode)
+    print(f"[INFO] Global seed set to {seed} (deterministic={deterministic_mode})")
+
     if args.max_epochs is not None:
         train_cfg["epochs"] = max(1, int(args.max_epochs))
     if args.log_interval is not None:
@@ -459,8 +501,8 @@ def main() -> None:
         index_array = np.arange(len(dates))
         try:
             train_idx, val_idx = next(splitter.split(index_array, fold_index=cv_fold))
-        except StopIteration:  # pragma: no cover - defensive
-            raise RuntimeError("PurgedKFoldSplitter produced no folds.")
+        except StopIteration as err:  # pragma: no cover - defensive
+            raise RuntimeError("PurgedKFoldSplitter produced no folds.") from err
 
         train_dates = [dates[i] for i in train_idx.tolist()]
         val_dates = [dates[i] for i in val_idx.tolist()]
@@ -479,7 +521,8 @@ def main() -> None:
             "[INFO] PurgedKFold split "
             f"{cv_fold}/{n_splits}: train {train_start} → {train_end} ({len(train_dates)} days) | "
             f"val {val_start} → {val_end} ({len(val_dates)} days) | "
-            f"purge_days={params.purge_days} (lookback={params.lookback_days}, max_h={params.max_horizon_days}, embargo={params.embargo_days})"
+            f"purge_days={params.purge_days} "
+            f"(lookback={params.lookback_days}, max_h={params.max_horizon_days}, embargo={params.embargo_days})"
         )
     else:
         if args.cv_type and args.cv_type.lower() == "purged_kfold":
@@ -531,21 +574,41 @@ def main() -> None:
     )
 
     num_workers = int(train_cfg.get("num_workers", 0))
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=num_workers,
-        collate_fn=collate_day_batch,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=num_workers,
-        collate_fn=collate_day_batch,
-    )
+    pin_memory = bool(train_cfg.get("pin_memory", True))
+    prefetch_factor = train_cfg.get("prefetch_factor")
+    persistent_workers = bool(train_cfg.get("persistent_workers", True))
+
+    def _loader_kwargs():
+        kwargs = {
+            "batch_size": 1,
+            "shuffle": False,
+            "num_workers": num_workers,
+            "collate_fn": collate_day_batch,
+        }
+        if pin_memory:
+            kwargs["pin_memory"] = True
+        if num_workers > 0 and persistent_workers:
+            kwargs["persistent_workers"] = True
+        if num_workers > 0 and prefetch_factor:
+            try:
+                pf = int(prefetch_factor)
+                if pf > 0:
+                    kwargs["prefetch_factor"] = pf
+            except (TypeError, ValueError):
+                pass
+        return kwargs
+
+    train_loader = DataLoader(train_dataset, **_loader_kwargs())
+    val_loader = DataLoader(val_dataset, **_loader_kwargs())
     train_total_steps = len(train_loader) if len(train_loader) > 0 else 0
+
+    prefetch_display = prefetch_factor if (num_workers > 0 and prefetch_factor) else "default"
+    persistent_display = persistent_workers if num_workers > 0 else False
+    print(
+        f"[INFO] DataLoader settings: num_workers={num_workers}, "
+        f"pin_memory={pin_memory}, prefetch_factor={prefetch_display}, "
+        f"persistent_workers={persistent_display}"
+    )
 
     horizons = [int(h) for h in train_cfg["horizons"]]
     loss_module = CompositeLoss(
@@ -1096,7 +1159,8 @@ def main() -> None:
                     break
             else:
                 print(
-                    f"[WARN] Early stopping metric '{monitor_metric}' not found in results. Available: {list(metric_results.keys())}"
+                    f"[WARN] Early stopping metric '{monitor_metric}' not found in results. "
+                    f"Available: {list(metric_results.keys())}"
                 )
 
     if early_stopping is not None and early_stopping.best_state is not None:

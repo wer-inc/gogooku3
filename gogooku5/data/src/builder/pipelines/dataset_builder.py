@@ -113,6 +113,16 @@ LAZY_ALIGN_MIN_CALENDAR_ROWS = 250
 LAZY_ALIGN_MIN_RANGE_DAYS = 365
 LAZY_ALIGN_MIN_QUOTE_ROWS = 3_000_000
 PrefetchResult = TypeVar("PrefetchResult")
+LISTED_MARKET_ALLOWLIST: tuple[str, ...] = (
+    "0101",
+    "0102",
+    "0104",
+    "0106",
+    "0107",
+    "0111",
+    "0112",
+    "0113",
+)
 
 
 def _compute_auto_warmup(
@@ -287,6 +297,7 @@ class DatasetBuilder:
         _prefetcher_finalizer = weakref.finalize(prefetcher, prefetcher.close)
         if prefetcher.enabled:
             self._schedule_prefetch_targets(prefetcher, start=start, end=end)
+        listed_info_df = self._fetch_listed_info_window(prefetcher, start=start, end=end)
         LOGGER.info("[DEBUG] Step 1: Creating ListedManager...")
         listed_manager = ListedManager(fetcher=self.fetcher)
         LOGGER.info("[DEBUG] Step 2: Fetching listed symbols...")
@@ -294,10 +305,9 @@ class DatasetBuilder:
         LOGGER.info("[DEBUG] Step 2 complete: Got %d symbols", len(listed) if listed else 0)
         if not listed:
             listed = listed_manager.refresh()
-        LOGGER.info("[DEBUG] Step 3: Creating AxisDecider...")
-        decider = AxisDecider.from_listed_symbols(listed)
-        LOGGER.info("[DEBUG] Step 4: Choosing symbols...")
-        symbols = decider.choose_symbols()
+        listed = self._merge_listed_metadata(listed, listed_info_df)
+        LOGGER.info("[DEBUG] Step 3: Resolving symbol universe...")
+        symbols = self._choose_symbol_universe(listed, listed_info_df, start=start, end=end)
         LOGGER.info("[DEBUG] Step 4 complete: Chose %d symbols", len(symbols) if symbols else 0)
 
         # Phase 1-2 Fix: Fail fast if no symbols available
@@ -460,6 +470,7 @@ class DatasetBuilder:
             start=start,
             end=end,
             calendar_df=calendar_df,
+            listed_info_df=listed_info_df,
         )
 
         combined_df = self._add_supply_shock_features(combined_df)
@@ -689,6 +700,7 @@ class DatasetBuilder:
             "trading_breakdown": lambda: self.data_sources.trading_breakdown(start=start, end=end),
             "earnings": lambda: self.data_sources.earnings(start=start, end=end),
             "short_positions": lambda: self.data_sources.short_positions(start=start, end=end),
+            "listed_info": lambda: self.data_sources.listed_info(start=start, end=end),
         }
         for key, factory in tasks.items():
             try:
@@ -709,6 +721,125 @@ class DatasetBuilder:
         if prefetcher is not None and prefetcher.enabled:
             return prefetcher.resolve(key, fallback_fn)
         return fallback_fn()
+
+    def _fetch_listed_info_window(
+        self,
+        prefetcher: DataSourcePrefetcher,
+        *,
+        start: str,
+        end: str,
+    ) -> pl.DataFrame:
+        """Fetch listed_info snapshots once and reuse across the pipeline."""
+
+        def _fallback() -> pl.DataFrame:
+            return self.data_sources.listed_info(start=start, end=end)
+
+        try:
+            payload = self._resolve_prefetched(prefetcher, "listed_info", _fallback)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("Failed to fetch listed_info snapshots (%s→%s): %s", start, end, exc)
+            return pl.DataFrame()
+
+        if isinstance(payload, pl.DataFrame):
+            return payload
+
+        if payload is None:
+            return pl.DataFrame()
+
+        try:
+            return pl.DataFrame(payload)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("Invalid listed_info payload (%s→%s): %s", start, end, exc)
+            return pl.DataFrame()
+
+    def _merge_listed_metadata(
+        self,
+        listed_entries: List[dict[str, Any]] | None,
+        listed_info_df: pl.DataFrame,
+    ) -> List[dict[str, Any]]:
+        """Augment ListedManager payload with as-of snapshots for delisted symbols."""
+
+        if not listed_entries:
+            listed_entries = []
+
+        merged: dict[str, dict[str, Any]] = {}
+        for entry in listed_entries:
+            code = entry.get("code")
+            if not code:
+                continue
+            merged[str(code)] = dict(entry)
+
+        if listed_info_df.is_empty() or "Code" not in listed_info_df.columns:
+            return list(merged.values())
+
+        # Keep the latest snapshot per code to fill missing metadata.
+        snapshot_cols = ["Code", "MarketCode", "Sector33Code", "Sector17Code", "Date"]
+        available_cols = [col for col in snapshot_cols if col in listed_info_df.columns]
+        snapshot_df = listed_info_df.select(available_cols)
+        if "Date" in snapshot_df.columns:
+            snapshot_df = snapshot_df.sort(["Code", "Date"]).group_by("Code").tail(1)
+        else:
+            snapshot_df = snapshot_df.group_by("Code").tail(1)
+
+        for row in snapshot_df.iter_rows(named=True):
+            code = row.get("Code")
+            if not code:
+                continue
+            code_str = str(code)
+            entry = merged.setdefault(code_str, {"code": code_str})
+            if not entry.get("sector_code"):
+                sector_code = row.get("Sector33Code") or row.get("Sector17Code")
+                if sector_code:
+                    entry["sector_code"] = str(sector_code)
+            if not entry.get("market_code") and row.get("MarketCode"):
+                entry["market_code"] = str(row["MarketCode"])
+            if "Date" in row and row.get("Date") is not None and not entry.get("listed_date"):
+                entry["listed_date"] = row["Date"]
+
+        return list(merged.values())
+
+    def _choose_symbol_universe(
+        self,
+        listed_entries: List[dict[str, Any]],
+        listed_info_df: pl.DataFrame,
+        *,
+        start: str,
+        end: str,
+    ) -> List[str]:
+        """Select symbol universe using as-of snapshots when available."""
+
+        symbols = self._extract_symbols_from_snapshots(listed_info_df)
+        if symbols:
+            LOGGER.info(
+                "[LISTED] Using listed_info snapshots for %s→%s (codes=%d)",
+                start,
+                end,
+                len(symbols),
+            )
+            return symbols
+
+        LOGGER.info("[LISTED] Falling back to ListedManager universe (%d codes)", len(listed_entries))
+        decider = AxisDecider.from_listed_symbols(listed_entries)
+        return decider.choose_symbols()
+
+    def _extract_symbols_from_snapshots(self, listed_info_df: pl.DataFrame) -> List[str]:
+        """Return union of codes observed in listed_info snapshots (filtered by market)."""
+
+        if listed_info_df.is_empty() or "Code" not in listed_info_df.columns:
+            return []
+
+        df = listed_info_df
+        if "MarketCode" in df.columns:
+            filtered = df.filter(pl.col("MarketCode").is_in(LISTED_MARKET_ALLOWLIST))
+            if not filtered.is_empty():
+                df = filtered
+
+        codes_df = (
+            df.select(pl.col("Code").cast(pl.Utf8, strict=False).alias("code")).drop_nulls().unique().sort("code")
+        )
+        if codes_df.is_empty():
+            return []
+        return codes_df.get_column("code").to_list()
 
     def _persist_chunk_dataset(self, df: pl.DataFrame, chunk_spec: ChunkSpec) -> Path:
         """Persist chunk outputs and metadata without touching global symlinks."""
@@ -2718,6 +2849,7 @@ class DatasetBuilder:
         start: str,
         end: str,
         calendar_df: pl.DataFrame,
+        listed_info_df: pl.DataFrame | None = None,
     ) -> pl.DataFrame:
         """Attach listed info features with as-of protection.
 
@@ -2728,11 +2860,14 @@ class DatasetBuilder:
         - Margin eligibility: is_margin_eligible
         - Market/sector change event flags
         """
-        try:
-            listed_raw = self.data_sources.listed_info(start=start, end=end)
-        except Exception as exc:
-            LOGGER.warning("Failed to fetch listed_info: %s", exc, exc_info=True)
-            return self._ensure_listed_info_columns(df)
+        if listed_info_df is not None:
+            listed_raw = listed_info_df
+        else:
+            try:
+                listed_raw = self.data_sources.listed_info(start=start, end=end)
+            except Exception as exc:
+                LOGGER.warning("Failed to fetch listed_info: %s", exc, exc_info=True)
+                return self._ensure_listed_info_columns(df)
 
         if listed_raw.is_empty():
             LOGGER.debug("Listed info is empty, skipping features")
