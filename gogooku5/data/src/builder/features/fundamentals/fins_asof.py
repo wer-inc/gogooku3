@@ -73,6 +73,26 @@ _CAPEX_COMPONENTS: tuple[str, ...] = (
     "PurchaseOfIntangibleAssets",
 )
 
+_ISSUED_SHARES_CANDIDATES: tuple[str, ...] = (
+    "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock",
+    "NumberOfIssuedShares",
+    "IssuedShares",
+    "IssuedShareNumber",
+    "IssuedShareNumberOfListing",
+    "SharesOutstanding",
+)
+_TREASURY_SHARES_CANDIDATES: tuple[str, ...] = (
+    "NumberOfTreasuryStockAtTheEndOfFiscalYear",
+    "TreasuryShares",
+    "TreasuryStock",
+    "TreasuryShareNumber",
+)
+_AVERAGE_SHARES_CANDIDATES: tuple[str, ...] = (
+    "AverageNumberOfShares",
+    "AverageNumberOfSharesDuringPeriod",
+    "AverageNumberOfSharesOutstanding",
+)
+
 
 def _normalise_numeric_columns(df: pl.DataFrame) -> pl.DataFrame:
     """Normalise column aliases coming from fs_details payload."""
@@ -369,37 +389,35 @@ def build_fs_feature_frame(snapshot: pl.DataFrame) -> pl.DataFrame:
             snapshot = snapshot.with_columns(pl.lit(None).cast(pl.Float64).alias(column))
 
     # Ensure share-related raw columns exist with consistent naming
+    def _resolve_share_column(candidates: tuple[str, ...]) -> str | None:
+        for column in candidates:
+            if column in snapshot.columns:
+                return column
+        return None
+
     share_preprocess_exprs: list[pl.Expr] = []
-    if _ISSUED_SHARES_COL in snapshot.columns:
-        share_preprocess_exprs.append(
-            pl.col(_ISSUED_SHARES_COL)
-            .cast(pl.Float64, strict=False)
-            .alias("_fs_issued_shares")
-        )
+    issued_col = _resolve_share_column(_ISSUED_SHARES_CANDIDATES)
+    treasury_col = _resolve_share_column(_TREASURY_SHARES_CANDIDATES)
+    average_col = _resolve_share_column(_AVERAGE_SHARES_CANDIDATES)
+
+    if issued_col:
+        share_preprocess_exprs.append(pl.col(issued_col).cast(pl.Float64, strict=False).alias("_fs_issued_shares"))
     else:
         share_preprocess_exprs.append(pl.lit(None).cast(pl.Float64).alias("_fs_issued_shares"))
-    if _TREASURY_SHARES_COL in snapshot.columns:
-        share_preprocess_exprs.append(
-            pl.col(_TREASURY_SHARES_COL)
-            .cast(pl.Float64, strict=False)
-            .alias("_fs_treasury_shares")
-        )
+
+    if treasury_col:
+        share_preprocess_exprs.append(pl.col(treasury_col).cast(pl.Float64, strict=False).alias("_fs_treasury_shares"))
     else:
         share_preprocess_exprs.append(pl.lit(None).cast(pl.Float64).alias("_fs_treasury_shares"))
-    if _AVERAGE_SHARES_COL in snapshot.columns:
-        share_preprocess_exprs.append(
-            pl.col(_AVERAGE_SHARES_COL)
-            .cast(pl.Float64, strict=False)
-            .alias("_fs_average_shares")
-        )
+
+    if average_col:
+        share_preprocess_exprs.append(pl.col(average_col).cast(pl.Float64, strict=False).alias("_fs_average_shares"))
     else:
         share_preprocess_exprs.append(pl.lit(None).cast(pl.Float64).alias("_fs_average_shares"))
 
     snapshot = snapshot.with_columns(share_preprocess_exprs)
     snapshot = snapshot.with_columns(
-        (
-            pl.col("_fs_issued_shares") - pl.col("_fs_treasury_shares").fill_null(0.0)
-        ).alias("_fs_shares_outstanding")
+        (pl.col("_fs_issued_shares") - pl.col("_fs_treasury_shares").fill_null(0.0)).alias("_fs_shares_outstanding")
     )
 
     if "fs_period_end_date" not in snapshot.columns:

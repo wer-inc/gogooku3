@@ -604,22 +604,43 @@ class DatasetBuilder:
             if dtype is None:
                 LOGGER.warning("[WARMUP] Date column %s missing from schema; skipping slice", date_col)
             else:
-                if dtype == pl.Datetime:
-                    # Convert to Date for day-level filtering
-                    date_expr = date_expr.dt.date()
+                if isinstance(dtype, PlDatetimeType):
+                    # Convert timezone-aware or naive datetimes to plain dates
                     temp_col = "__warmup_slice_date"
-                    enriched_df = enriched_df.with_columns(date_expr.alias(temp_col))
+                    enriched_df = enriched_df.with_columns(date_expr.dt.date().alias(temp_col))
                     filter_col = pl.col(temp_col)
                     lower, upper = start_bound, end_bound
-                elif dtype == pl.Date:
+                elif isinstance(dtype, PlDateType):
                     filter_col = date_expr
                     lower, upper = start_bound, end_bound
                 else:
-                    # Fallback: compare ISO strings
+                    # Fallback: coerce strings (or mixed types) to Date safely
                     temp_col = "__warmup_slice_date"
-                    enriched_df = enriched_df.with_columns(date_expr.cast(pl.Utf8, strict=False).alias(temp_col))
+                    normalized = (
+                        date_expr.cast(pl.Utf8, strict=False)
+                        .str.replace_all(r"[./]", "-")
+                        .str.slice(0, 10)
+                        .str.strptime(pl.Date, strict=False)
+                    )
+                    enriched_df = enriched_df.with_columns(normalized.alias(temp_col))
                     filter_col = pl.col(temp_col)
-                    lower, upper = start_out, end_out
+                    lower, upper = start_bound, end_bound
+
+                try:
+                    stats = enriched_df.select(
+                        filter_col.min().alias("slice_min"),
+                        filter_col.max().alias("slice_max"),
+                        pl.len().alias("rows_before_slice"),
+                    ).row(0)
+                    LOGGER.info(
+                        "[WARMUP] Slice stats before filter: rows=%s, min=%s, max=%s (dtype=%s)",
+                        stats[2],
+                        stats[0],
+                        stats[1],
+                        dtype,
+                    )
+                except Exception as slice_exc:  # pragma: no cover - defensive
+                    LOGGER.warning("[WARMUP] Failed to inspect slice stats: %s", slice_exc)
 
                 enriched_df = enriched_df.filter((filter_col >= pl.lit(lower)) & (filter_col <= pl.lit(upper)))
                 if temp_col and temp_col in enriched_df.columns:

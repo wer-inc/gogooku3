@@ -78,6 +78,11 @@ source venv/bin/activate
 
 > ℹ️ `make setup`（内部では `scripts/setup_env.sh`）は、`gcloud` / `gsutil` が未導入の場合に Google Cloud SDK をローカルへダウンロードします。生成される `google-cloud-sdk/` フォルダとアーカイブは `.gitignore` 済みなので Git には追加しないでください。すでにシステムに `gcloud` が入っている環境ではダウンロード処理は自動的にスキップされます。
 
+### 2. PyTorch で「速く・安定して・再現可能」に学習する
+
+- Check list: [docs/PYTORCH_TRAINING_FAST_STABLE.md](docs/PYTORCH_TRAINING_FAST_STABLE.md)
+- テンプレ: `scripts/templates/pytorch_fast_training_template.py`
+
 ### 2. システム検証
 
 ```bash
@@ -1051,3 +1056,12 @@ Helpers:
 - `scripts/show_logs.sh chunk --tail 200`
 - `scripts/show_logs.sh dataset`
 - `scripts/show_logs.sh health`
+
+### Cache Prewarm
+
+J-Quants/yfinance キャッシュをまとめて温めたい場合は:
+
+```bash
+scripts/cache_prewarm.py 2019-08-28 2020-03-31 --targets futures options trades_spec
+```
+※ targets は必要なものだけ指定できます。

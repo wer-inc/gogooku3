@@ -30,7 +30,7 @@ case "$mode" in
     target="$LOG_ROOT/dataset/latest.log"
     ;;
   health)
-    ls -1 "$LOG_ROOT/health" | sort
+    ls -1 "$LOG_ROOT/health-checks" | sort
     exit 0
     ;;
   *)
