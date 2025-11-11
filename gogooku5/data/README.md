@@ -44,6 +44,20 @@ PYTHONPATH=gogooku5/data/src pytest gogooku5/data/tests -q
 - Parity check CLI: `python scripts/compare_parity.py <gogooku3 parquet> <gogooku5 parquet> [--output-json report.json]` to inspect schema and numeric differences. For automated runs, set `PARITY_BASELINE_PATH=/path/to/gogooku3_parquet` (and optionally `PARITY_CANDIDATE_PATH=/path/to/gogooku5_parquet`) before `python tools/project-health-check.sh`.
 - DatasetBuilder now materialises a full営業日×銘柄グリッド（日本の祝日カレンダーヒューリスティクス＋実観測日付）をベースに各特徴量を付与し、欠損日の可視化と gogooku3 とのパリティ確認を容易にしています。
 
+### Source cache controls
+
+APIソース（財務・配当・空売り・マージン・決算など）は `output/cache` にスナップショットされます。以下の環境変数 or Dagster resource 設定で挙動を切り替えられます。
+
+| 設定 | 説明 |
+| --- | --- |
+| `SOURCE_CACHE_MODE` | `read_write` (既定) / `read` / `off` |
+| `SOURCE_CACHE_FORCE_REFRESH` | `true` で TTL を無視して常に API から再取得 |
+| `SOURCE_CACHE_ASOF` | `YYYY-MM-DD` や `today`。キャッシュキーに `asof-<date>` が付与され、同一スナップショットを再利用可能 |
+| `SOURCE_CACHE_TAG` | 任意タグ（例 `backfill`）。キャッシュキーとメタ情報に記録 |
+| `SOURCE_CACHE_TTL_OVERRIDE_DAYS` | データ種別ごとの TTL をまとめて上書き |
+
+Dagster では `dataset_builder` resource に `source_cache_*` を渡すことで run 単位でこれらを指定できます。
+
 Detailed pipeline behavior, feature coverage, and validation routines will be documented as implementation progresses through the migration milestones.
 
 ## Dagster Integration
@@ -51,7 +65,8 @@ Detailed pipeline behavior, feature coverage, and validation routines will be do
 
 ```bash
 # Launch Dagster UI with the gogooku5 definitions
-DAGSTER_HOME=$PWD/gogooku5 PYTHONPATH=gogooku5/data/src dagster dev -f gogooku5/data/src/dagster_gogooku5/defs.py
+export DAGSTER_HOME=/workspace/gogooku3/gogooku5   # use absolute path
+PYTHONPATH=gogooku5/data/src dagster dev -m dagster_gogooku5.defs
 ```
 
 - `g5_dataset_chunks`: builds DatasetBuilder chunks for a configurable date range. Configure `start`, `end`, `chunk_months`, etc. directly in Dagster.
@@ -61,5 +76,4 @@ DAGSTER_HOME=$PWD/gogooku5 PYTHONPATH=gogooku5/data/src dagster dev -f gogooku5/
 These assets allow you to schedule recurring dataset builds via Dagster jobs or run ad‑hoc chunk builds/merges from the UI with full observability.
 
 > 🕒 **Timezone**
-> `gogooku5/dagster.yaml` sets `instance.local_timezone` to `Asia/Tokyo`.
-> Export `DAGSTER_HOME=$PWD/gogooku5` (or copy dagster.yaml into your DAGSTER_HOME) before running `dagster dev` / `dagster job …` to keep all Dagster timestamps in JST.
+> Export `TZ=Asia/Tokyo` together with `DAGSTER_HOME=/absolute/path/to/gogooku5` （絶対パス） before running `dagster dev` / `dagster job …` to keep Dagster timestamps in JST.

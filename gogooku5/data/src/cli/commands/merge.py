@@ -6,13 +6,19 @@ completed chunks into a final dataset artifact.
 """
 
 import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     from ..config import Config
 
-from tools import merge_chunks
+# Add tools directory to path for merge_chunks import
+tools_dir = Path(__file__).parents[3] / "tools"
+if str(tools_dir) not in sys.path:
+    sys.path.insert(0, str(tools_dir))
+
+import merge_chunks  # noqa: E402 - dynamic path addition required
 
 logger = logging.getLogger(__name__)
 

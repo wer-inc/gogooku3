@@ -1,2 +1,5 @@
-instance:
-  local_timezone: Asia/Tokyo
+# Dagster instance configuration for gogooku5 dataset builds.
+# Uses default ephemeral storage; export TZ=Asia/Tokyo before running Dagster CLIs
+# to keep run timestamps in JST.
+python_logs:
+  python_log_level: INFO

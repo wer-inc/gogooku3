@@ -131,6 +131,7 @@ class CacheManager:
         df: pl.DataFrame,
         format: Literal["parquet", "ipc"] = "ipc",
         dual_format: bool = True,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Path:
         """Store a dataframe in the cache.
 
@@ -185,6 +186,8 @@ class CacheManager:
                 "dual_format": dual_format,
                 "updated_at": datetime.utcnow().isoformat(),
             }
+            if metadata:
+                idx[key]["metadata"] = metadata
 
         self._update_index(_mutator)
         return primary_path
@@ -281,6 +284,10 @@ class CacheManager:
         save_format: Literal["parquet", "ipc"] = "ipc",
         dual_format: bool = True,
         allow_empty: bool = False,
+        force_refresh: bool = False,
+        enable_read: bool = True,
+        enable_write: bool = True,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Tuple[pl.DataFrame, bool]:
         """Return cached dataframe or fetch and persist a fresh copy.
 
@@ -315,7 +322,7 @@ class CacheManager:
             >>> print(f"Cache hit: {hit}")
         """
         ttl = self.settings.cache_ttl_days_default if ttl_days is None else ttl_days
-        if self.is_valid(key, ttl):
+        if enable_read and not force_refresh and self.is_valid(key, ttl):
             cached = self.load_dataframe(key, prefer_ipc=prefer_ipc)
             if cached is not None:
                 if not allow_empty and cached.height == 0:
@@ -328,7 +335,8 @@ class CacheManager:
         df = fetch_fn()
         if not allow_empty and df.height == 0:
             raise ValueError(f"Cache key {key} produced empty dataframe")
-        self.save_dataframe(key, df, format=save_format, dual_format=dual_format)
+        if enable_write:
+            self.save_dataframe(key, df, format=save_format, dual_format=dual_format, metadata=metadata)
         return df, False
 
     @contextmanager

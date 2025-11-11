@@ -452,11 +452,11 @@ def test_dataset_builder_writes_parquet(builder: DatasetBuilder) -> None:
     assert "gap_ov_today" not in df.columns and "gap_id_today" not in df.columns
 
     gap_view = df.select(["gap_ov_prev1", "gap_id_prev1", "ret_prev_1d"]).drop_nulls()
-    if not gap_view.is_empty():
-        lhs = 1 + gap_view["ret_prev_1d"]
-        rhs = (1 + gap_view["gap_ov_prev1"]) * (1 + gap_view["gap_id_prev1"])
-        diff = (lhs - rhs).abs()
-        assert diff.max() < 1e-4
+    assert not gap_view.is_empty(), "gap decomposition columns should contain non-null values"
+    lhs = 1 + gap_view["ret_prev_1d"]
+    rhs = (1 + gap_view["gap_ov_prev1"]) * (1 + gap_view["gap_id_prev1"])
+    diff = (lhs - rhs).abs()
+    assert diff.max() < 1e-4
 
     metadata_path = resolved.with_name(resolved.stem + "_metadata.json")
     assert metadata_path.exists()

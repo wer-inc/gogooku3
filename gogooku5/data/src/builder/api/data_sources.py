@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import polars as pl
 
@@ -22,6 +22,7 @@ from ..features.macro.options_asof import build_option_signals, load_options
 from ..features.macro.vix import load_vix_history, prepare_vix_features
 from ..utils import CacheManager
 from .advanced_fetcher import AdvancedJQuantsFetcher
+from .cache_policy import SourceCachePolicy
 
 
 @dataclass
@@ -32,24 +33,30 @@ class DataSourceManager:
     cache: CacheManager = field(default_factory=CacheManager)
     fetcher: AdvancedJQuantsFetcher = field(default_factory=AdvancedJQuantsFetcher)
 
+    def __post_init__(self) -> None:
+        self._cache_mode = self.settings.source_cache_mode
+        self._cache_force_refresh = self.settings.source_cache_force_refresh
+        self._cache_asof_value = self.settings.source_cache_asof
+        self._cache_tag = self.settings.source_cache_tag
+        self._cache_ttl_override = self.settings.source_cache_ttl_override_days
+
     def margin_daily(self, *, start: str, end: str) -> pl.DataFrame:
         """Return normalized daily margin balances."""
-
-        cache_key = f"margin_daily_{start}_{end}"
-        ttl = self.settings.margin_daily_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
             raw = self.fetcher.fetch_margin_daily(start=start, end=end)
             return self._normalize_margin_daily(raw)
 
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
-        return df
+        return self._cached_dataframe(
+            dataset="margin_daily",
+            cache_key=f"margin_daily_{start}_{end}",
+            ttl_days=self.settings.margin_daily_cache_ttl_days,
+            fetch_fn=_fetch,
+            allow_empty=False,
+        )
 
     def macro_vix(self, *, start: str, end: str, force_refresh: bool = False) -> pl.DataFrame:
         """Return VIX-based macro features."""
-
-        cache_key = f"macro_vix_{start}_{end}"
-        ttl = self.settings.macro_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
             history = load_vix_history(
@@ -61,7 +68,13 @@ class DataSourceManager:
             return prepare_vix_features(history)
 
         try:
-            features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
+            features, _ = self.cache.get_or_fetch_dataframe(
+                f"macro_vix_{start}_{end}",
+                _fetch,
+                ttl_days=self.settings.macro_cache_ttl_days,
+                allow_empty=False,
+                force_refresh=force_refresh,
+            )
         except ValueError as exc:
             logging.getLogger(__name__).warning(
                 "VIX features unavailable for %s→%s (%s); returning empty frame",
@@ -81,8 +94,6 @@ class DataSourceManager:
         - DXY (US Dollar) z-score
         - BTC relative momentum and volatility
         """
-        cache_key = f"macro_global_regime_{start}_{end}"
-        ttl = self.settings.macro_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
             history = load_global_regime_data(
@@ -94,7 +105,13 @@ class DataSourceManager:
             return prepare_vvmd_features(history)
 
         try:
-            features, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
+            features, _ = self.cache.get_or_fetch_dataframe(
+                f"macro_global_regime_{start}_{end}",
+                _fetch,
+                ttl_days=self.settings.macro_cache_ttl_days,
+                allow_empty=False,
+                force_refresh=force_refresh,
+            )
         except ValueError as exc:
             logging.getLogger(__name__).warning(
                 "Global regime features unavailable for %s→%s (%s); returning empty frame",
@@ -108,20 +125,16 @@ class DataSourceManager:
     def margin_weekly(self, *, start: str, end: str) -> pl.DataFrame:
         """Return cached weekly margin interest."""
 
-        cache_key = f"margin_weekly_{start}_{end}"
-        ttl = self.settings.margin_weekly_cache_ttl_days
-
-        def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_margin_weekly(start=start, end=end)
-
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
-        return df
+        return self._cached_dataframe(
+            dataset="margin_weekly",
+            cache_key=f"margin_weekly_{start}_{end}",
+            ttl_days=self.settings.margin_weekly_cache_ttl_days,
+            fetch_fn=lambda: self.fetcher.fetch_margin_weekly(start=start, end=end),
+            allow_empty=False,
+        )
 
     def dividends(self, *, start: str, end: str) -> pl.DataFrame:
         """Return dividend announcements enriched with availability metadata."""
-
-        cache_key = f"dividend_{start}_{end}"
-        ttl = self.settings.macro_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
             df = self.fetcher.fetch_dividends(start=start, end=end)
@@ -135,20 +148,24 @@ class DataSourceManager:
 
             return df
 
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
-        return df
+        return self._cached_dataframe(
+            dataset="dividends",
+            cache_key=f"dividend_{start}_{end}",
+            ttl_days=self.settings.macro_cache_ttl_days,
+            fetch_fn=_fetch,
+            allow_empty=False,
+        )
 
     def fs_details(self, *, start: str, end: str) -> pl.DataFrame:
         """Return financial statement details."""
 
-        cache_key = f"fs_details_{start}_{end}"
-        ttl = self.settings.macro_cache_ttl_days
-
-        def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_fs_details(start=start, end=end)
-
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl, allow_empty=False)
-        return df
+        return self._cached_dataframe(
+            dataset="fs_details",
+            cache_key=f"fs_details_{start}_{end}",
+            ttl_days=self.settings.macro_cache_ttl_days,
+            fetch_fn=lambda: self.fetcher.fetch_fs_details(start=start, end=end),
+            allow_empty=False,
+        )
 
     def listed_info(self, *, start: str, end: str) -> pl.DataFrame:
         """Return listed info daily snapshots (日次スナップショット).
@@ -406,14 +423,12 @@ class DataSourceManager:
     def earnings(self, *, start: str, end: str) -> pl.DataFrame:
         """Return earnings announcement schedule."""
 
-        cache_key = f"earnings_{start}_{end}"
-        ttl = self.settings.cache_ttl_days_default
-
-        def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_earnings(start=start, end=end)
-
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
-        return df
+        return self._cached_dataframe(
+            dataset="earnings",
+            cache_key=f"earnings_{start}_{end}",
+            ttl_days=self.settings.cache_ttl_days_default,
+            fetch_fn=lambda: self.fetcher.fetch_earnings(start=start, end=end),
+        )
 
     def short_selling(
         self,
@@ -424,14 +439,12 @@ class DataSourceManager:
     ) -> pl.DataFrame:
         """Return short selling aggregates."""
 
-        cache_key = f"short_{start}_{end}"
-        ttl = self.settings.short_selling_cache_ttl_days
-
-        def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_short_selling(start=start, end=end)
-
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
-        return df
+        return self._cached_dataframe(
+            dataset="short_selling",
+            cache_key=f"short_{start}_{end}",
+            ttl_days=self.settings.short_selling_cache_ttl_days,
+            fetch_fn=lambda: self.fetcher.fetch_short_selling(start=start, end=end),
+        )
 
     def short_positions(
         self,
@@ -445,14 +458,12 @@ class DataSourceManager:
         Published on day T at 17:30/18:00/19:00 JST, available at T+1 09:00 JST.
         """
 
-        cache_key = f"short_positions_{start}_{end}"
-        ttl = self.settings.short_selling_cache_ttl_days
-
-        def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_short_positions(start=start, end=end)
-
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
-        return df
+        return self._cached_dataframe(
+            dataset="short_positions",
+            cache_key=f"short_positions_{start}_{end}",
+            ttl_days=self.settings.short_selling_cache_ttl_days,
+            fetch_fn=lambda: self.fetcher.fetch_short_positions(start=start, end=end),
+        )
 
     def sector_short_selling(
         self,
@@ -463,18 +474,16 @@ class DataSourceManager:
     ) -> pl.DataFrame:
         """Return sector-level short selling metrics."""
 
-        cache_key = f"sector_short_{start}_{end}"
-        ttl = self.settings.sector_short_cache_ttl_days
-
-        def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_sector_short_selling(
+        return self._cached_dataframe(
+            dataset="sector_short",
+            cache_key=f"sector_short_{start}_{end}",
+            ttl_days=self.settings.sector_short_cache_ttl_days,
+            fetch_fn=lambda: self.fetcher.fetch_sector_short_selling(
                 start=start,
                 end=end,
                 business_days=business_days,
-            )
-
-        df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
-        return df
+            ),
+        )
 
     def prices_am(self, *, start: str, end: str) -> pl.DataFrame:
         """Return morning session (AM) price snapshots."""
@@ -487,6 +496,44 @@ class DataSourceManager:
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
+
+    # ------------------------------------------------------------------
+    # Cache helpers
+    # ------------------------------------------------------------------
+    def _cached_dataframe(
+        self,
+        *,
+        dataset: str,
+        cache_key: str,
+        ttl_days: Optional[int],
+        fetch_fn: Callable[[], pl.DataFrame],
+        allow_empty: bool = False,
+        extra_force_refresh: bool = False,
+    ) -> pl.DataFrame:
+        policy = self._build_policy(dataset=dataset, ttl_days=ttl_days)
+        key = policy.decorate_key(cache_key)
+        df, _ = self.cache.get_or_fetch_dataframe(
+            key,
+            fetch_fn,
+            ttl_days=policy.ttl_days,
+            allow_empty=allow_empty,
+            force_refresh=policy.force_refresh or extra_force_refresh,
+            enable_read=policy.enable_read,
+            enable_write=policy.enable_write,
+            metadata=policy.metadata(),
+        )
+        return df
+
+    def _build_policy(self, *, dataset: str, ttl_days: Optional[int]) -> SourceCachePolicy:
+        return SourceCachePolicy.from_settings(
+            dataset=dataset,
+            ttl_days=ttl_days,
+            mode=self._cache_mode,
+            force_refresh=self._cache_force_refresh,
+            asof_value=self._cache_asof_value,
+            tag=self._cache_tag,
+            ttl_override=self._cache_ttl_override,
+        )
 
     # ------------------------------------------------------------------
     # Normalization helpers

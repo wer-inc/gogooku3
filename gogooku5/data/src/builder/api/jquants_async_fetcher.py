@@ -297,7 +297,14 @@ def read_parquet_with_consistent_code_types(file_path: str | os.PathLike) -> pl.
 class JQuantsAsyncFetcher:
     """Asynchronous J-Quants API fetcher with basic pagination handling."""
 
-    def __init__(self, email: str, password: str, max_concurrent: int | None = None):
+    def __init__(
+        self,
+        email: str,
+        password: str,
+        max_concurrent: int | None = None,
+        *,
+        enable_parallel_fetch: bool = False,
+    ):
         self.email = email
         self.password = password
         self.base_url = "https://api.jquants.com/v1"
@@ -323,6 +330,10 @@ class JQuantsAsyncFetcher:
         self._throttle_recoveries = 0
         self._throttle_history: list[dict[str, Any]] = []
         self._logger = logging.getLogger(__name__)
+        env_parallel = os.getenv("JQUANTS_ENABLE_PARALLEL_FETCH")
+        self.enable_parallel_fetch = enable_parallel_fetch or (env_parallel == "1")
+        self._parallel_max_concurrency = max(1, int(os.getenv("JQUANTS_PARALLEL_CONCURRENCY", "4")))
+        self._index_option_log_percent = max(1, int(os.getenv("JQUANTS_INDEX_OPTION_PROGRESS_SPLITS", "10")))
         self._hydrate_cached_tokens()
         self._auth_max_attempts = max(1, int(os.getenv("JQUANTS_AUTH_MAX_RETRIES", "6")))
         self._auth_retry_base_delay = float(os.getenv("JQUANTS_AUTH_RETRY_BASE_DELAY", "5"))
@@ -2223,11 +2234,7 @@ class JQuantsAsyncFetcher:
 
         start = _parse(from_date)
         end = _parse(to_date)
-        rows: list[dict] = []
-
         total_days = (end - start).days + 1
-        log_every = max(1, total_days // 10)
-        processed_days = 0
         self._logger.info(
             "Fetching index option data %s → %s (%d calendar days)",
             start.isoformat(),
@@ -2235,55 +2242,24 @@ class JQuantsAsyncFetcher:
             total_days,
         )
 
-        cur = start
-        while cur <= end:
-            date_str = cur.strftime("%Y-%m-%d")
-            pagination_key: str | None = None
-            while True:
-                params = {"date": date_str}
-                if pagination_key:
-                    params["pagination_key"] = pagination_key
-                status, data = await self._request_json(
-                    session,
-                    "GET",
-                    base_url,
-                    label=f"index_option:{date_str}",
-                    params=params,
-                    headers=headers,
-                )
-                if status == 404:
-                    break
-                if status != 200 or not isinstance(data, dict):
-                    break
-                items = data.get("index_option") or data.get("data") or []
-                if items:
-                    # Normalize sentinels before adding to rows
-                    for item in items:
-                        for key, value in item.items():
-                            if isinstance(value, str) and value in (
-                                "-",
-                                "*",
-                                "",
-                                "null",
-                                "NULL",
-                                "None",
-                            ):
-                                item[key] = None
-                    rows.extend(items)
-                pagination_key = data.get("pagination_key")
-                if not pagination_key:
-                    break
-            cur += _dt.timedelta(days=1)
+        date_list = [(start + _dt.timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(total_days)]
 
-            processed_days += 1
-            if processed_days == 1 or processed_days == total_days or processed_days % log_every == 0:
-                self._logger.info(
-                    "Index option progress: %d/%d days processed (latest=%s, rows=%d)",
-                    processed_days,
-                    total_days,
-                    date_str,
-                    len(rows),
-                )
+        if self.enable_parallel_fetch and total_days > 1:
+            rows = await self._fetch_index_option_parallel(session, headers, base_url, date_list)
+        else:
+            rows = []
+            processed = 0
+            log_every = max(1, total_days // self._index_option_log_percent)
+            for date_str in date_list:
+                rows.extend(await self._fetch_index_option_single_day(session, headers, base_url, date_str))
+                processed += 1
+                if processed == 1 or processed == total_days or processed % log_every == 0:
+                    self._logger.info(
+                        "Index option progress: %d/%d days processed (latest=%s)",
+                        processed,
+                        total_days,
+                        date_str,
+                    )
 
         if not rows:
             self._logger.warning(
@@ -2312,6 +2288,93 @@ class JQuantsAsyncFetcher:
             total_days,
         )
         return self._normalize_index_option_data(df)
+
+    async def _fetch_index_option_single_day(
+        self,
+        session: aiohttp.ClientSession,
+        headers: dict[str, str],
+        base_url: str,
+        date_str: str,
+    ) -> list[dict]:
+        rows: list[dict] = []
+        pagination_key: str | None = None
+        while True:
+            params = {"date": date_str}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+            status, data = await self._request_json(
+                session,
+                "GET",
+                base_url,
+                label=f"index_option:{date_str}",
+                params=params,
+                headers=headers,
+            )
+            if status == 404:
+                break
+            if status != 200 or not isinstance(data, dict):
+                self._logger.warning("Index option fetch failed for %s (status=%s)", date_str, status)
+                break
+            items = data.get("index_option") or data.get("data") or []
+            if items:
+                for item in items:
+                    for key, value in item.items():
+                        if isinstance(value, str) and value in ("-", "*", "", "null", "NULL", "None"):
+                            item[key] = None
+                rows.extend(items)
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+        return rows
+
+    async def _fetch_index_option_parallel(
+        self,
+        session: aiohttp.ClientSession,
+        headers: dict[str, str],
+        base_url: str,
+        date_list: list[str],
+    ) -> list[dict]:
+        semaphore = asyncio.Semaphore(self._parallel_max_concurrency)
+        total = len(date_list)
+        log_every = max(1, total // self._index_option_log_percent)
+        counter = {"done": 0}
+        lock = asyncio.Lock()
+
+        async def runner(date_str: str) -> list[dict]:
+            async with semaphore:
+                rows = await self._fetch_index_option_single_day(session, headers, base_url, date_str)
+            async with lock:
+                counter["done"] += 1
+                done = counter["done"]
+                if done == 1 or done == total or done % log_every == 0:
+                    self._logger.info(
+                        "Index option progress: %d/%d days processed (latest=%s)",
+                        done,
+                        total,
+                        date_str,
+                    )
+            return rows
+
+        tasks = [runner(date_str) for date_str in date_list]
+        results = await asyncio.gather(*tasks)
+
+        # flatten
+        combined: list[dict] = []
+        for chunk in results:
+            combined.extend(chunk)
+
+        # persist to cache if configured
+        cache_dir = os.getenv("INDEX_OPTION_CACHE_DIR")
+        if cache_dir:
+            cache_path = Path(cache_dir).expanduser()
+            cache_path.mkdir(parents=True, exist_ok=True)
+            out_path = cache_path / f"index_option_{date_list[0]}_{date_list[-1]}.json"
+            try:
+                out_path.write_text(json.dumps(combined), encoding="utf-8")
+            except Exception as exc:  # pragma: no cover - best effort
+                self._logger.warning("Failed to write index option cache %s: %s", out_path, exc)
+
+        return combined
 
     def _normalize_index_option_data(self, df: pl.DataFrame) -> pl.DataFrame:
         """Normalize index option data structure and types for downstream processing."""

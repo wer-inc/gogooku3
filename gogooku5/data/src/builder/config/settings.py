@@ -60,6 +60,13 @@ class DatasetBuilderSettings(BaseSettings):
 
     quotes_schema_tag: str = Field("limits_v1", env="QUOTES_SCHEMA_TAG")
 
+    # Source cache controls
+    source_cache_mode: str = Field("read_write", env="SOURCE_CACHE_MODE")
+    source_cache_force_refresh: bool = Field(False, env="SOURCE_CACHE_FORCE_REFRESH")
+    source_cache_asof: str | None = Field(None, env="SOURCE_CACHE_ASOF")
+    source_cache_tag: str | None = Field(None, env="SOURCE_CACHE_TAG")
+    source_cache_ttl_override_days: int | None = Field(None, ge=0, env="SOURCE_CACHE_TTL_OVERRIDE_DAYS")
+
     # Phase 2 Patch E: ADV filter configuration
     min_adv_yen: int | None = Field(None, ge=0, env="MIN_ADV_YEN")
     adv_min_periods: int = Field(20, ge=1, env="ADV_MIN_PERIODS")

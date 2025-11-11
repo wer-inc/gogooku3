@@ -12,7 +12,7 @@ from typing import Dict, List
 from builder.chunks import ChunkPlanner, ChunkSpec
 from builder.config.settings import DatasetBuilderSettings
 from builder.pipelines.dataset_builder import DatasetBuilder
-from dagster import AssetExecutionContext, Config, Failure, asset
+from dagster import Failure, Field, asset
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -31,50 +31,45 @@ class _ChunkIds:
         }
 
 
-class ChunkBuildConfig(Config):
-    start: str
-    end: str
-    chunk_months: int = 3
-    latest_only: bool = False
-    resume: bool = False
-    force: bool = False
-    refresh_listed: bool = False
-
-
-class MergeConfig(Config):
-    allow_partial: bool = False
-    strict: bool = False
-
-
 @asset(
     name="g5_dataset_chunks",
     group_name="gogooku5_dataset",
     compute_kind="DatasetBuilder",
     io_manager_key="io_manager",
+    required_resource_keys={"dataset_builder"},
+    config_schema={
+        "start": Field(str, description="Chunk build start date (YYYY-MM-DD)"),
+        "end": Field(str, description="Chunk build end date (YYYY-MM-DD)"),
+        "chunk_months": Field(int, default_value=3, description="Number of calendar months per chunk"),
+        "latest_only": Field(bool, default_value=False, description="Only build the latest chunk"),
+        "resume": Field(bool, default_value=False, description="Skip completed chunks based on status.json"),
+        "force": Field(bool, default_value=False, description="Force rebuild chunks even if completed"),
+        "refresh_listed": Field(bool, default_value=False, description="Refresh listed metadata before first chunk"),
+    },
 )
 def build_dataset_chunks(
-    context: AssetExecutionContext,
-    dataset_builder: DatasetBuilder,
-    config: ChunkBuildConfig,
-) -> Dict[str, str | List[str]]:
+    context,
+):
     """
     Build dataset chunks for the requested date range.
     """
 
+    config = context.op_config or {}
+    dataset_builder: DatasetBuilder = context.resources.dataset_builder
     settings: DatasetBuilderSettings = dataset_builder.settings
     planner = ChunkPlanner(
-        months_per_chunk=config.chunk_months,
+        months_per_chunk=int(config["chunk_months"]),
         output_root=settings.data_output_dir / "chunks",
     )
 
-    chunk_specs: List[ChunkSpec] = planner.plan(start=config.start, end=config.end)
-    if config.latest_only and chunk_specs:
+    chunk_specs: List[ChunkSpec] = planner.plan(start=config["start"], end=config["end"])
+    if config.get("latest_only") and chunk_specs:
         chunk_specs = [chunk_specs[-1]]
 
     executed: List[ChunkSpec] = []
-    refresh_flag = config.refresh_listed or getattr(dataset_builder, "_dagster_refresh_listed", False)
+    refresh_flag = bool(config.get("refresh_listed")) or getattr(dataset_builder, "_dagster_refresh_listed", False)
     for idx, spec in enumerate(chunk_specs, start=1):
-        if _should_skip_chunk(spec, config.resume, config.force):
+        if _should_skip_chunk(spec, bool(config.get("resume")), bool(config.get("force"))):
             context.log.info("⏭️  Skipping completed chunk %s", spec.chunk_id)
             continue
 
@@ -118,19 +113,23 @@ def build_dataset_chunks(
     group_name="gogooku5_dataset",
     compute_kind="merge",
     deps=[build_dataset_chunks],
+    config_schema={
+        "allow_partial": Field(bool, default_value=False, description="Allow merge even if some chunks incomplete"),
+        "strict": Field(bool, default_value=False, description="Fail if any chunk is missing"),
+    },
 )
 def merge_latest_dataset(
-    context: AssetExecutionContext,
-    config: MergeConfig,
-    build_dataset_chunks: Dict[str, str | List[str]],
-) -> Dict[str, str]:
+    context,
+    g5_dataset_chunks,
+):
     """
     Merge completed chunks into the latest dataset artifacts.
     """
 
-    chunks_dir = Path(build_dataset_chunks["chunks_dir"])  # type: ignore[arg-type]
-    output_dir = Path(build_dataset_chunks["output_dir"])  # type: ignore[arg-type]
-    chunk_ids = build_dataset_chunks.get("chunk_ids", [])
+    chunks_dir = Path(g5_dataset_chunks["chunks_dir"])  # type: ignore[arg-type]
+    output_dir = Path(g5_dataset_chunks["output_dir"])  # type: ignore[arg-type]
+    config = context.op_config or {}
+    chunk_ids = g5_dataset_chunks.get("chunk_ids", [])
 
     if not chunk_ids:
         context.log.warning("merge_latest_dataset: no new chunks detected, running merge anyway")
@@ -144,9 +143,9 @@ def merge_latest_dataset(
         "--output-dir",
         str(output_dir),
     ]
-    if config.allow_partial:
+    if config.get("allow_partial"):
         cmd.append("--allow-partial")
-    if config.strict:
+    if config.get("strict"):
         cmd.append("--strict")
 
     context.log.info("🔗 Running merge command: %s", " ".join(cmd))
