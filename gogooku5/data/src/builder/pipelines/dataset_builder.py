@@ -8,7 +8,8 @@ import time
 import weakref
 from calendar import monthrange
 from dataclasses import dataclass, field
-from datetime import datetime
+
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, TypeVar
 
@@ -1072,6 +1073,7 @@ class DatasetBuilder:
 
         # Categorical optimization: Convert low-cardinality string columns to Categorical
         # This reduces memory by 50-70% and improves parquet compression by 5-10%
+        # NOTE: SecId is Int32, not String - categorical encoding would corrupt it (null/wrong values)
         categorical_columns = ["Code", "sector_code", "market_code"]
 
         parquet_path, ipc_path = save_with_cache(
@@ -1102,7 +1104,10 @@ class DatasetBuilder:
         validation_error: str | None = None
         if self.schema_validator is not None:
             try:
-                validation_result = self.schema_validator.validate_dataframe(df)
+                # FIX: Validate the saved parquet file (with categorical types applied)
+                # instead of the in-memory df (before categorical conversion)
+                # Issue: save_with_cache() modifies df locally, caller's df remains unchanged
+                validation_result = self.schema_validator.validate_parquet(parquet_path)
                 metadata["feature_schema_version"] = self.schema_validator.manifest_version
                 metadata["feature_schema_hash"] = validation_result.schema_hash
                 metadata["schema_validation"] = validation_result.to_dict()
@@ -1371,6 +1376,16 @@ class DatasetBuilder:
         # Apply all casts
         if cast_exprs:
             df = df.select(cast_exprs)
+
+        # DEBUG: Log final schema before returning
+        LOGGER.debug("[SCHEMA_FIX] Final schema after normalization: %s", df.schema)
+        for col_name in df.columns:
+            sample_vals = df.select(pl.col(col_name)).head(3)
+            LOGGER.debug(
+                "[SCHEMA_FIX] Column '%s' sample types: %s",
+                col_name,
+                [type(v).__name__ for v in sample_vals[col_name].to_list()],
+            )
 
         return df
 
@@ -1959,7 +1974,34 @@ class DatasetBuilder:
                 }
             )
 
-        df = pl.DataFrame(listed)
+        def _normalize_python_value(value: object) -> object:
+            """Normalize Python values from listed records for DataFrame creation.
+
+            Polars requires consistent dtypes when building from list[dict]. Some API
+            responses return datetime.date objects for fields like ListedDate while
+            others provide strings. This helper coerces date/datetime objects to
+            ISO strings so that schema inference stays consistent.
+            """
+
+            if isinstance(value, datetime):
+                return value.date().isoformat()
+            if isinstance(value, date):
+                return value.isoformat()
+            return value
+
+        normalized_listed = [
+            {key: _normalize_python_value(val) for key, val in entry.items()} for entry in listed
+        ]
+
+        # DEBUG: Log sample of normalized data before DataFrame creation
+        if normalized_listed:
+            LOGGER.debug("[LISTED_DF] Creating DataFrame from %d entries", len(normalized_listed))
+            sample_entry = normalized_listed[0]
+            LOGGER.debug("[LISTED_DF] Sample entry keys: %s", list(sample_entry.keys()))
+            for key, val in list(sample_entry.items())[:5]:  # First 5 fields
+                LOGGER.debug("[LISTED_DF]   %s: %s (type: %s)", key, val, type(val).__name__)
+
+        df = pl.DataFrame(normalized_listed)
         # Normalize column names, keeping only lowercase version if duplicates exist
         lower_cols = {}
         for col in df.columns:
@@ -7647,6 +7689,7 @@ class DatasetBuilder:
 
         Phase 2 Patch B+I: Comprehensive leak defense with deny list.
         Phase 2 Hotfix: Duplicate column handling (canonicalize OHLC, safe rename)
+        Phase 3.2: Re-attach sec_id from dim_security for final output
         """
         import re
 
@@ -7656,6 +7699,21 @@ class DatasetBuilder:
             safe_rename,
             validate_unique_columns,
         )
+
+        # Phase 3.2: Ensure sec_id exists by joining with dim_security
+        # This handles cases where sec_id was lost during feature engineering
+        code_col = None
+        for col in df.columns:
+            if col.lower() == "code":
+                code_col = col
+                break
+
+        if code_col and "sec_id" not in df.columns:
+            dim_security_path = self.settings.data_cache_dir / "dim_security.parquet"
+            if dim_security_path.exists():
+                dim_security = pl.read_parquet(dim_security_path).select(["code", "sec_id"])
+                df = df.join(dim_security, left_on=code_col, right_on="code", how="left")
+                LOGGER.info("[PHASE 3.2] Re-attached sec_id from dim_security (%d rows)", len(df))
 
         # Phase 2 Patch I: Comprehensive feature deny list (regex-based)
         # Denies: forward returns, metadata columns, published dates, as-of timestamps
@@ -7777,6 +7835,7 @@ class DatasetBuilder:
         # Hotfix Step 3: Safe rename (handles collision when rename target already exists)
         rename_map = {
             "code": "Code",
+            "sec_id": "SecId",
             "date": "Date",
             "turnovervalue": "TurnoverValue",
             "adjustmentclose": "AdjustmentClose",
