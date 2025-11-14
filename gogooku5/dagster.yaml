@@ -1,5 +1,21 @@
 # Dagster instance configuration for gogooku5 dataset builds.
-# Uses default ephemeral storage; export TZ=Asia/Tokyo before running Dagster CLIs
-# to keep run timestamps in JST.
-python_logs:
-  python_log_level: INFO
+# Uses default ephemeral storage.
+
+telemetry:
+  enabled: false
+
+run_launcher:
+  module: dagster.core.launcher
+  class: DefaultRunLauncher
+
+run_storage:
+  module: dagster.core.storage.runs
+  class: SqliteRunStorage
+  config:
+    base_dir: /workspace/gogooku3/gogooku5/storage
+
+event_log_storage:
+  module: dagster.core.storage.event_log
+  class: SqliteEventLogStorage
+  config:
+    base_dir: /workspace/gogooku3/gogooku5/storage

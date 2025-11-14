@@ -273,6 +273,7 @@ dev = [
 - `FlowFeatureEngineer`（trades_spec ベースの強化フロー特徴量）を移植し、`DataSourceManager.trades_spec()` と連携。`foreign_sentiment` や `smart_flow_indicator` など主要フロー指標が gogooku5 パイプラインで生成されるようになった。
 - `builder.validation.parity` と `scripts/compare_parity.py` を追加し、gogooku3 と gogooku5 のデータセットを自動比較できるようにした（列差分・数値差分レポート）。Phase4 parity 検証のための基盤が整備済み。
 - `tools/project-health-check.sh` が `PARITY_BASELINE_PATH` を検知して parity 比較を自動実行するように拡張。`docs/parity_check.md` に比較手順とレポート解釈をまとめた。
+- **NEW**: `data/docs/dataset_quality_pipeline.md` に非リーク＋高品質データ構築の 10 ステップを体系化し、`data/tools/check_dataset_quality.py` で主キー重複・ターゲット欠損・as-of 逸脱を自動検知できるようにした。今後の dataset ビルド／health-check へ順次組み込み予定。
 
 #### 追加アップデート（Phase5, 2024-11-01）
 

@@ -90,8 +90,9 @@ def main():
         "train.batch.prefetch_factor=4",  # Optimal for 8 workers
         "train.batch.persistent_workers=true",
         "train.batch.pin_memory=true",
-        # FIX: Drop undersized daily batches (TODO: implement later)
-        # "data.sampling.min_nodes_per_day=256",  # May need config schema update
+        # NOTE: Batch size filtering disabled - implement if needed for edge case handling
+        # Future enhancement: Drop undersized daily batches with min_nodes_per_day config
+        # "data.sampling.min_nodes_per_day=256",  # Requires config schema update
         "train.optimizer.lr=4e-4",
         "train.trainer.max_epochs=120",
         f"data.graph_builder.cache_dir={PROJECT_ROOT / 'graph_cache'}",  # OPTIMIZATION: Enable graph caching

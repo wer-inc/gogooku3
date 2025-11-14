@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 import weakref
 from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, TypeVar
+from typing import Any, Callable, Dict, Iterable, List, TypeVar
 
 import polars as pl
 from polars.datatypes import Date as PlDateType
@@ -59,13 +61,10 @@ from ..features.macro.trading_calendar import build_trading_calendar_features
 from ..features.margin.asof import prepare_margin_daily_asof, prepare_margin_weekly_asof
 from ..features.session import SessionFeatureEngineer
 from ..features.utils import (
-    add_asof_timestamp,
     apply_adv_filter,
     compute_adv60_from_raw,
     ensure_sector_dimensions,
     get_raw_quotes_paths,
-    interval_join_pl,
-    prepare_snapshot_pl,
 )
 from ..features.utils.rolling import roll_mean_safe, roll_std_safe
 from ..utils import (
@@ -73,17 +72,44 @@ from ..utils import (
     DatasetArtifact,
     QuoteShardIndex,
     QuoteShardStore,
+    RawDataStore,
     StorageClient,
+    add_asof_timestamp,
     business_date_range,
     configure_logger,
+    forward_fill_after_publication,
+    interval_join_pl,
     month_key,
+    prepare_snapshot_pl,
     month_range,
     shift_trading_days,
 )
+from ..utils.schema_validator import SchemaValidator
+from ..utils.mlflow_tracker import MLflowTracker
 from ..utils.lazy_io import save_with_cache
 from ..utils.prefetch import DataSourcePrefetcher
+from ..validation.quality import parse_asof_specs, run_quality_checks
 
 LOGGER = configure_logger("builder.pipeline")
+
+
+QUALITY_SPLIT_RE = re.compile(r"[,\s]+")
+
+
+class SchemaMismatchError(RuntimeError):
+    """Raised when chunk outputs violate the schema manifest."""
+
+
+class DatasetQualityError(RuntimeError):
+    """Raised when dataset quality checks fail."""
+
+
+def _tokenize_quality_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [token for token in QUALITY_SPLIT_RE.split(value) if token]
+
+
 BETA_EPS = 1e-12
 SUPPLY_SHOCK_THRESHOLD = 0.01
 TOPIX_FEATURE_WHITELIST: tuple[str, ...] = (
@@ -154,6 +180,7 @@ class DatasetBuilder:
     settings: DatasetBuilderSettings = field(default_factory=get_settings)
     fetcher: JQuantsFetcher = field(default_factory=JQuantsFetcher)
     cache: CacheManager = field(default_factory=CacheManager)
+    raw_store: RawDataStore | None = None
     storage: StorageClient = field(default_factory=StorageClient)
     data_sources: DataSourceManager = field(default_factory=DataSourceManager)
     calendar_fetcher: TradingCalendarFetcher = field(default_factory=TradingCalendarFetcher)
@@ -175,6 +202,7 @@ class DatasetBuilder:
     shard_index: QuoteShardIndex = field(init=False)
     shard_store: QuoteShardStore = field(init=False)
     _cache_stats_path: Path = field(init=False)
+    mlflow_tracker: MLflowTracker | None = field(default=None)
 
     def __post_init__(self) -> None:
         """Initialize GPU-ETL if enabled."""
@@ -198,10 +226,39 @@ class DatasetBuilder:
         self.shard_index = QuoteShardIndex(self.settings.quote_index_path)
         self.shard_store = QuoteShardStore(self.settings.quote_cache_dir, self.shard_index)
         self._cache_stats_path = self.settings.quote_stats_path
+        if self.mlflow_tracker is None:
+            self.mlflow_tracker = MLflowTracker.from_settings(self.settings)
         self._cache_stats_path.parent.mkdir(parents=True, exist_ok=True)
         self._rate_limit_checked = False
         self._schema_fp_cache = None  # Lazy initialization for L0 schema fingerprint
         self._run_meta: dict[str, Any] | None = None
+        raw_manifest = getattr(self.settings, "raw_manifest_path", None)
+        if raw_manifest:
+            try:
+                self.raw_store = RawDataStore(Path(raw_manifest))
+                LOGGER.info("[RAW] RawDataStore initialized from %s", raw_manifest)
+            except FileNotFoundError:
+                LOGGER.warning("[RAW] Manifest %s not found; raw store disabled", raw_manifest)
+                self.raw_store = None
+        else:
+            self.raw_store = None
+
+        if hasattr(self.data_sources, "attach_raw_store"):
+            self.data_sources.attach_raw_store(self.raw_store)
+
+        try:
+            self.schema_validator: SchemaValidator | None = SchemaValidator()
+            LOGGER.info(
+                "[SCHEMA] Manifest loaded (version=%s hash=%s)",
+                self.schema_validator.manifest_version,
+                self.schema_validator.manifest_hash,
+            )
+        except FileNotFoundError:
+            LOGGER.warning("[SCHEMA] Manifest not found; chunk builds will skip validation")
+            self.schema_validator = None
+        except Exception as exc:
+            LOGGER.warning("[SCHEMA] Failed to initialize validator: %s", exc)
+            self.schema_validator = None
 
     @staticmethod
     def _date_span_days(start: str, end: str) -> int:
@@ -234,11 +291,21 @@ class DatasetBuilder:
         end: str,
         refresh_listed: bool = False,
         chunk_spec: ChunkSpec | None = None,
+        start_time: float | None = None,
     ) -> Path:
-        """Build the dataset for the given date range or chunk."""
+        """Build the dataset for the given date range or chunk.
 
+        Args:
+            start: Start date (YYYY-MM-DD)
+            end: End date (YYYY-MM-DD)
+            refresh_listed: Force refresh listed companies data
+            chunk_spec: Chunk specification for output paths
+            start_time: Build start timestamp (for duration tracking)
+        """
         # Phase 2 Patch A: Warmup period + final slice
         self._run_meta = {}
+        if start_time is None:
+            start_time = time.time()
 
         if chunk_spec is not None:
             start_out, end_out = chunk_spec.output_start, chunk_spec.output_end
@@ -841,6 +908,39 @@ class DatasetBuilder:
             return []
         return codes_df.get_column("code").to_list()
 
+    def _maybe_run_quality_checks(self, dataset_path: Path, *, context: str) -> dict[str, Dict[str, object]] | None:
+        if not self.settings.enable_dataset_quality_check:
+            return None
+
+        targets = _tokenize_quality_list(self.settings.dataset_quality_targets)
+        asof_specs = _tokenize_quality_list(self.settings.dataset_quality_asof_checks)
+        try:
+            asof_pairs = parse_asof_specs(asof_specs)
+        except ValueError as exc:
+            raise DatasetQualityError(f"{context}: invalid as-of spec - {exc}") from exc
+
+        try:
+            summary, errors, warnings = run_quality_checks(
+                dataset_path,
+                date_col=self.settings.dataset_quality_date_col,
+                code_col=self.settings.dataset_quality_code_col,
+                targets=targets,
+                asof_pairs=asof_pairs,
+                allow_future_days=self.settings.dataset_quality_allow_future_days,
+                sample_rows=self.settings.dataset_quality_sample_rows,
+            )
+        except Exception as exc:
+            raise DatasetQualityError(f"{context}: quality check failed ({exc})") from exc
+
+        if errors:
+            raise DatasetQualityError(f"{context}: {'; '.join(errors)}")
+        if warnings:
+            if self.settings.dataset_quality_fail_on_warning:
+                raise DatasetQualityError(f"{context}: {'; '.join(warnings)}")
+            LOGGER.warning("[QUALITY] %s warnings: %s", context, warnings)
+        LOGGER.info("[QUALITY] %s passed dataset quality checks (%d stages)", context, len(summary))
+        return summary
+
     def _persist_chunk_dataset(self, df: pl.DataFrame, chunk_spec: ChunkSpec) -> Path:
         """Persist chunk outputs and metadata without touching global symlinks."""
 
@@ -869,11 +969,80 @@ class DatasetBuilder:
         if isinstance(self._run_meta, dict):
             metadata["builder_meta"] = self._run_meta
 
+        validation_error: str | None = None
+        if self.schema_validator is not None:
+            try:
+                validation_result = self.schema_validator.validate_dataframe(df)
+                metadata["feature_schema_version"] = self.schema_validator.manifest_version
+                metadata["feature_schema_hash"] = validation_result.schema_hash
+                metadata["schema_validation"] = validation_result.to_dict()
+                if validation_result.column_order_mismatch:
+                    LOGGER.debug(
+                        "[SCHEMA] Column order differs from manifest for %s (hash=%s)",
+                        chunk_spec.chunk_id,
+                        validation_result.schema_hash,
+                    )
+                if not validation_result.is_valid:
+                    validation_error = str(validation_result)
+            except Exception as exc:
+                LOGGER.warning(
+                    "[SCHEMA] Validation failed for %s (skipping schema enforcement): %s",
+                    chunk_spec.chunk_id,
+                    exc,
+                )
+
+        quality_summary = None
+        try:
+            quality_summary = self._maybe_run_quality_checks(
+                parquet_path,
+                context=f"chunk:{chunk_spec.chunk_id}",
+            )
+        except DatasetQualityError as exc:
+            build_duration = time.time() - start_time
+            self._write_chunk_status(
+                chunk_spec,
+                state="failed_quality_check",
+                rows=df.height,
+                error=str(exc),
+                build_duration=build_duration,
+            )
+            raise
+
+        if quality_summary:
+            metadata["quality_checks"] = quality_summary
+
         chunk_spec.output_dir.mkdir(parents=True, exist_ok=True)
         with chunk_spec.metadata_path.open("w", encoding="utf-8") as meta_fp:
             json.dump(metadata, meta_fp, indent=2, ensure_ascii=False, sort_keys=True)
 
-        self._write_chunk_status(chunk_spec, state="completed", rows=df.height)
+        # Compute build duration
+        build_duration = time.time() - start_time
+
+        # Prepare schema metadata for status.json
+        schema_metadata = {}
+        if "feature_schema_version" in metadata:
+            schema_metadata["feature_schema_version"] = metadata["feature_schema_version"]
+        if "feature_schema_hash" in metadata:
+            schema_metadata["feature_schema_hash"] = metadata["feature_schema_hash"]
+
+        if validation_error:
+            self._write_chunk_status(
+                chunk_spec,
+                state="failed_schema_mismatch",
+                rows=df.height,
+                error=validation_error,
+                schema_metadata=schema_metadata if schema_metadata else None,
+                build_duration=build_duration,
+            )
+            raise SchemaMismatchError(validation_error)
+
+        self._write_chunk_status(
+            chunk_spec,
+            state="completed",
+            rows=df.height,
+            schema_metadata=schema_metadata if schema_metadata else None,
+            build_duration=build_duration,
+        )
         return parquet_path
 
     def _write_chunk_status(
@@ -883,38 +1052,83 @@ class DatasetBuilder:
         state: str,
         rows: int | None = None,
         error: str | None = None,
+        schema_metadata: dict[str, Any] | None = None,
+        build_duration: float | None = None,
     ) -> None:
-        """Write status.json for a chunk build."""
+        """Write status.json for a chunk build with atomic writes and enhanced metadata.
+
+        Args:
+            chunk_spec: Chunk specification
+            state: Build state (running, completed, failed, failed_schema_mismatch)
+            rows: Number of rows in final dataset (optional)
+            error: Error message if failed (optional)
+            schema_metadata: Schema validation metadata (version, hash) (optional)
+            build_duration: Build duration in seconds (optional)
+        """
 
         payload: dict[str, Any] = {
             "chunk_id": chunk_spec.chunk_id,
             "state": state,
             "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
+            "output_start": chunk_spec.output_start,
+            "output_end": chunk_spec.output_end,
         }
+
         if rows is not None:
             payload["rows"] = rows
         if error:
             payload["error"] = error
+        if build_duration is not None:
+            payload["build_duration_seconds"] = round(build_duration, 2)
+
+        # Add schema metadata if provided
+        if schema_metadata:
+            if "feature_schema_version" in schema_metadata:
+                payload["feature_schema_version"] = schema_metadata["feature_schema_version"]
+            if "feature_schema_hash" in schema_metadata:
+                payload["feature_schema_hash"] = schema_metadata["feature_schema_hash"]
 
         chunk_spec.output_dir.mkdir(parents=True, exist_ok=True)
-        with chunk_spec.status_path.open("w", encoding="utf-8") as status_fp:
-            json.dump(payload, status_fp, indent=2, ensure_ascii=False, sort_keys=True)
+
+        # Atomic write: temp file + rename to prevent corruption
+        temp_path = chunk_spec.status_path.with_suffix(".json.tmp")
+        try:
+            with temp_path.open("w", encoding="utf-8") as status_fp:
+                json.dump(payload, status_fp, indent=2, ensure_ascii=False, sort_keys=True)
+            temp_path.rename(chunk_spec.status_path)
+        except Exception as exc:
+            # Clean up temp file on failure
+            if temp_path.exists():
+                temp_path.unlink()
+            LOGGER.error("Failed to write status.json for %s: %s", chunk_spec.chunk_id, exc)
+            raise
 
     def build_chunk(self, chunk_spec: ChunkSpec, *, refresh_listed: bool = False) -> Path:
-        """Build a single chunk described by ``chunk_spec``."""
-
+        """Build a single chunk described by ``chunk_spec`` with enhanced status tracking."""
         chunk_spec.output_dir.mkdir(parents=True, exist_ok=True)
         self._write_chunk_status(chunk_spec, state="running")
 
+        start_time = time.time()
         try:
-            return self.build(
+            result = self.build(
                 start=chunk_spec.output_start,
                 end=chunk_spec.output_end,
                 refresh_listed=refresh_listed,
                 chunk_spec=chunk_spec,
+                start_time=start_time,
             )
+            # Note: build() writes "completed" status with metadata and duration
+            return result
+        except SchemaMismatchError as exc:
+            build_duration = time.time() - start_time
+            LOGGER.error("Schema mismatch detected for chunk %s: %s", chunk_spec.chunk_id, exc)
+            # Status already written by build() with "failed_schema_mismatch" state
+            raise
         except Exception as exc:
-            self._write_chunk_status(chunk_spec, state="failed", error=str(exc))
+            build_duration = time.time() - start_time
+            self._write_chunk_status(
+                chunk_spec, state="failed", error=str(exc), build_duration=build_duration
+            )
             raise
 
     def _load_small_table_cached(self, table_name: str, generator_fn) -> pl.LazyFrame:
@@ -958,6 +1172,41 @@ class DatasetBuilder:
         """Load quotes using L0 month shards with selective API backfill."""
 
         symbols_list = [str(symbol) for symbol in symbols]
+
+        if self.settings.use_raw_store and self.raw_store is not None:
+            try:
+                raw_df = self.raw_store.load_range(source="prices", start=start, end=end)
+            except FileNotFoundError:
+                LOGGER.warning(
+                    "[RAW] Missing prices data for %s→%s in raw store. Falling back to cache/API.",
+                    start,
+                    end,
+                )
+            else:
+                normalized = self._normalize_from_shards(raw_df)
+                if not normalized.is_empty():
+                    start_date = datetime.fromisoformat(start).date()
+                    end_date = datetime.fromisoformat(end).date()
+                    normalized = normalized.filter(
+                        (pl.col("date") >= start_date) & (pl.col("date") <= end_date)
+                    )
+                    if symbols_list:
+                        normalized = normalized.filter(pl.col("code").is_in(symbols_list))
+                if not normalized.is_empty():
+                    LOGGER.info(
+                        "[RAW] Returning %d rows of prices from raw store for %s→%s",
+                        normalized.height,
+                        start,
+                        end,
+                    )
+                    return normalized
+                LOGGER.warning(
+                    "[RAW] Raw store returned no prices for requested window (codes=%s %s→%s); fallback to cache/API",
+                    symbols_list[:5],
+                    start,
+                    end,
+                )
+
         codes_fp = self._symbols_digest(symbols_list)
         window_id = self._quotes_cache_key(symbols=symbols_list, start=start, end=end)
         start_month = month_key(start)
@@ -3849,52 +4098,31 @@ class DatasetBuilder:
             joined = joined.drop(cleanup_list, strict=False)
             return self._ensure_margin_weekly_columns(joined)
 
-        # P1: 週次データを日次にforward fill（前方保持）
-        # 週次スナップショットを銘柄ごとにソートしてforward fill
-        joined = joined.sort(["code", "date"]).with_columns(
-            [
-                # ベース特徴量（株数）
-                pl.col(long_volume_col).cast(pl.Float64, strict=False).forward_fill().over("code").alias("wm_long"),
-                pl.col(short_volume_col).cast(pl.Float64, strict=False).forward_fill().over("code").alias("wm_short"),
-            ]
-        )
+        ff_targets: list[str] = []
+        cast_plan = [
+            ("wm_long", long_volume_col, pl.Float64),
+            ("wm_short", short_volume_col, pl.Float64),
+            ("wm_long_gen", long_gen_col, pl.Float64),
+            ("wm_short_gen", short_gen_col, pl.Float64),
+            ("wm_long_std", long_std_col, pl.Float64),
+            ("wm_short_std", short_std_col, pl.Float64),
+            ("wm_issue_type", issue_type_col, pl.Int8),
+        ]
 
-        # P1: 内訳（一般/制度）を追加（存在する場合）
-        if long_gen_col is not None:
-            joined = joined.with_columns(
-                pl.col(long_gen_col).cast(pl.Float64, strict=False).forward_fill().over("code").alias("wm_long_gen")
-            )
-        else:
-            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("wm_long_gen"))
+        for alias, source, dtype in cast_plan:
+            if source is None:
+                joined = joined.with_columns(pl.lit(None).cast(dtype).alias(alias))
+            else:
+                ff_targets.append(alias)
+                joined = joined.with_columns(pl.col(source).cast(dtype, strict=False).alias(alias))
 
-        if short_gen_col is not None:
-            joined = joined.with_columns(
-                pl.col(short_gen_col).cast(pl.Float64, strict=False).forward_fill().over("code").alias("wm_short_gen")
+        if ff_targets:
+            joined = forward_fill_after_publication(
+                joined,
+                group_cols="code",
+                sort_col="date",
+                columns=ff_targets,
             )
-        else:
-            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("wm_short_gen"))
-
-        if long_std_col is not None:
-            joined = joined.with_columns(
-                pl.col(long_std_col).cast(pl.Float64, strict=False).forward_fill().over("code").alias("wm_long_std")
-            )
-        else:
-            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("wm_long_std"))
-
-        if short_std_col is not None:
-            joined = joined.with_columns(
-                pl.col(short_std_col).cast(pl.Float64, strict=False).forward_fill().over("code").alias("wm_short_std")
-            )
-        else:
-            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("wm_short_std"))
-
-        # P1: IssueType
-        if issue_type_col is not None:
-            joined = joined.with_columns(
-                pl.col(issue_type_col).cast(pl.Int8, strict=False).forward_fill().over("code").alias("wm_issue_type")
-            )
-        else:
-            joined = joined.with_columns(pl.lit(None).cast(pl.Int8).alias("wm_issue_type"))
 
         # P1: ベース特徴量の計算
         eps = 1e-9
@@ -5467,32 +5695,25 @@ class DatasetBuilder:
         # MarketCodeをSectionに変換
         df_with_section = map_market_code_to_section(df, market_code_col="market_code")
 
-        # Section別のas-of結合（手動実装）
+        # Section別のas-of結合
         if "available_ts" in trades_spec_features.columns and "asof_ts" in df_with_section.columns:
-            # Sectionとtimestampでソート
-            df_sorted = df_with_section.sort(["section", "asof_ts"])
-            trades_spec_sorted = trades_spec_features.sort(["section", "available_ts"])
-
-            # Section別のas-of結合（backward）
-            joined = df_sorted.join_asof(
-                trades_spec_sorted,
-                left_on="asof_ts",
-                right_on="available_ts",
-                by="section",
-                strategy="backward",
-                suffix="_tspec",
-            )
-
-            # T-leak検出（available_ts <= asof_ts）
-            if "available_ts_tspec" in joined.columns:
-                leak_check = joined.filter(
-                    pl.col("available_ts_tspec").is_not_null() & (pl.col("available_ts_tspec") > pl.col("asof_ts"))
+            try:
+                joined = interval_join_pl(
+                    df_with_section,
+                    trades_spec_features,
+                    on_code="section",
+                    backbone_ts="asof_ts",
+                    snapshot_ts="available_ts",
+                    suffix="_tspec",
                 )
-                if not leak_check.is_empty():
-                    LOGGER.warning(
-                        "T-leak detected in trades_spec join: %d rows",
-                        leak_check.height,
-                    )
+            except ValueError as exc:
+                LOGGER.warning("Trades spec interval join failed (%s), falling back to date join", exc)
+                joined = df_with_section.join(
+                    trades_spec_features,
+                    left_on=["section", "date"],
+                    right_on=["section", "date"],
+                    how="left",
+                )
         else:
             # フォールバック: 日付とSectionで直接結合
             if "date" in trades_spec_features.columns:
@@ -7634,6 +7855,26 @@ class DatasetBuilder:
             extra_metadata=extra_meta,
         )
         LOGGER.info("Dataset stored at %s (metadata=%s)", artifact.parquet_path.name, artifact.metadata_path.name)
+
+        quality_summary = None
+        try:
+            quality_summary = self._maybe_run_quality_checks(
+                artifact.parquet_path,
+                context=f"dataset:{artifact.parquet_path.name}",
+            )
+        except DatasetQualityError as exc:
+            LOGGER.error("Dataset quality check failed: %s", exc)
+            raise
+
+        if quality_summary:
+            try:
+                payload = json.loads(artifact.metadata_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                LOGGER.warning("Failed to read metadata for quality annotation: %s", exc)
+            else:
+                payload["quality_checks"] = quality_summary
+                artifact.metadata_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
         return artifact
 
     _L0_RENAME = {

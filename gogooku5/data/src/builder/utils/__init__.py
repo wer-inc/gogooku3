@@ -2,10 +2,18 @@
 
 from .artifacts import DatasetArtifact, DatasetArtifactWriter, resolve_latest_dataset
 from .asyncio import gather_limited, run_sync
+from .asof import (
+    add_asof_timestamp,
+    forward_fill_after_publication,
+    interval_join_pl,
+    prepare_snapshot_pl,
+)
 from .cache import CacheManager, ensure_cache_dir
 from .datetime import business_date_range, date_range, shift_trading_days
+from .raw_store import RawDataStore
 from .env import ensure_env_loaded, load_local_env, require_env_var
 from .logger import configure_logger, get_logger
+from .mlflow_tracker import MLflowTracker
 from .storage import StorageClient
 
 # GPU-ETL utilities (optional, may not be present in clean checkout)
@@ -91,6 +99,10 @@ __all__ = [
     "business_date_range",
     "date_range",
     "shift_trading_days",
+    "add_asof_timestamp",
+    "prepare_snapshot_pl",
+    "interval_join_pl",
+    "forward_fill_after_publication",
     "ensure_cache_dir",
     "ensure_env_loaded",
     "gather_limited",
@@ -112,4 +124,5 @@ __all__ = [
     "apply_gpu_transform",
     "gpu_rolling_mean",
     "gpu_rolling_std",
+    "MLflowTracker",
 ]

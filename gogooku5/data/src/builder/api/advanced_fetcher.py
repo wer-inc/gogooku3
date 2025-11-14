@@ -28,7 +28,8 @@ class AdvancedJQuantsFetcher:
         return JQuantsAsyncFetcher(
             email=self.settings.jquants_auth_email,
             password=self.settings.jquants_auth_password,
-            max_concurrent=self.max_concurrent,
+            max_concurrent=self.max_concurrent or self.settings.index_option_parallel_concurrency,
+            enable_parallel_fetch=self.settings.index_option_parallel_fetch,
         )
 
     async def _run_with_session(self, coro_builder):

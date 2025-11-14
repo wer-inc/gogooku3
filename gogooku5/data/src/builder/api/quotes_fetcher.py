@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from threading import Lock
 from time import perf_counter
 from typing import Iterable, List, Literal
 
@@ -43,7 +45,7 @@ class QuotesFetcher:
         return result
 
     def fetch_by_date(self, *, dates: Iterable[str], codes: set[str] | None = None) -> List[dict[str, str]]:
-        """Fetch quotes by date axis (営業日ごと取得)."""
+        """Fetch quotes by date axis (営業日ごと取得) with parallel execution."""
 
         date_list = list(dates)
         total = len(date_list)
@@ -51,8 +53,22 @@ class QuotesFetcher:
             LOGGER.warning("fetch_by_date called with empty date list")
             return []
 
+        # Check for parallel mode (default: enabled for >1 date)
+        enable_parallel = os.getenv("QUOTES_PARALLEL_FETCH", "1") == "1"
+        max_workers = int(os.getenv("QUOTES_PARALLEL_WORKERS", "16"))
+
+        if enable_parallel and total > 1:
+            return self._fetch_by_date_parallel(date_list, codes, max_workers)
+        else:
+            # Sequential fallback (original behavior)
+            return self._fetch_by_date_sequential(date_list, codes)
+
+    def _fetch_by_date_sequential(self, date_list: List[str], codes: set[str] | None) -> List[dict[str, str]]:
+        """Sequential fetch (original implementation)."""
         result: List[dict[str, str]] = []
         timer_start = perf_counter()
+        total = len(date_list)
+
         for idx, date in enumerate(date_list, start=1):
             if idx == 1 or idx == total or idx % 20 == 0:
                 elapsed = perf_counter() - timer_start
@@ -67,6 +83,59 @@ class QuotesFetcher:
             if codes:
                 rows = [row for row in rows if row.get("Code") in codes]
             result.extend(rows)
+        return result
+
+    def _fetch_by_date_parallel(self, date_list: List[str], codes: set[str] | None, max_workers: int) -> List[dict[str, str]]:
+        """Parallel fetch using ThreadPoolExecutor."""
+        total = len(date_list)
+        timer_start = perf_counter()
+        result: List[dict[str, str]] = []
+        result_lock = Lock()
+        counter = {"done": 0}
+        counter_lock = Lock()
+
+        def fetch_single_date(date: str) -> List[dict[str, str]]:
+            """Fetch quotes for a single date."""
+            date_api = date.replace("-", "")
+            rows = self.client.fetch_quotes_by_date_paginated(date=date_api)
+            if codes:
+                rows = [row for row in rows if row.get("Code") in codes]
+
+            # Update progress
+            with counter_lock:
+                counter["done"] += 1
+                done = counter["done"]
+                if done == 1 or done == total or done % 10 == 0:
+                    elapsed = perf_counter() - timer_start
+                    LOGGER.info(
+                        "[QUOTES] Parallel fetch by-date progress %d/%d (%.1fs elapsed)",
+                        done,
+                        total,
+                        elapsed,
+                    )
+            return rows
+
+        LOGGER.info("[QUOTES] Parallel fetch enabled: %d dates with %d workers", total, max_workers)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_single_date, date): date for date in date_list}
+
+            for future in as_completed(futures):
+                try:
+                    rows = future.result()
+                    with result_lock:
+                        result.extend(rows)
+                except Exception as e:
+                    date = futures[future]
+                    LOGGER.warning("Failed to fetch quotes for date %s: %s", date, e)
+
+        elapsed = perf_counter() - timer_start
+        LOGGER.info(
+            "[QUOTES] Parallel fetch completed: %d records from %d dates in %.1fs",
+            len(result),
+            total,
+            elapsed,
+        )
         return result
 
     def fetch_batch_optimized(

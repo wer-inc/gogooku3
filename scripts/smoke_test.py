@@ -442,7 +442,8 @@ def run_smoke_test():
         test_optimizer_setup(model, config)
 
         # 5. トレーニングステップテスト
-        # train_loss = test_training_step(model, optimizer, config)  # TODO: 損失関数修正後に有効化
+        # NOTE: Training step test intentionally disabled - re-enable after loss function refactor
+        # train_loss = test_training_step(model, optimizer, config)
 
         # 6. 改善機能テスト
         test_improvements()

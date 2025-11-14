@@ -17,7 +17,15 @@ def merge_module():
     return import_module("tools.merge_chunks")
 
 
-def _write_chunk(directory: Path, *, chunk_id: str, start: str, end: str, rows: int = 2) -> None:
+def _write_chunk(
+    directory: Path,
+    *,
+    chunk_id: str,
+    start: str,
+    end: str,
+    rows: int = 2,
+    schema_hash: str = "hashA",
+) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     if rows <= 2:
         dates = [start, end]
@@ -47,6 +55,7 @@ def _write_chunk(directory: Path, *, chunk_id: str, start: str, end: str, rows: 
         "output_end": end,
         "rows": len(dates),
         "paths": {"parquet": str(directory / "ml_dataset.parquet"), "ipc": None},
+        "feature_schema_hash": schema_hash,
     }
     (directory / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
     (directory / "status.json").write_text(json.dumps({"state": "completed", "rows": len(dates)}), encoding="utf-8")
@@ -229,3 +238,97 @@ def test_merge_chunks_allow_partial(monkeypatch, tmp_path, merge_module):
     merged = pl.read_parquet(outputs["parquet"])
     # Only one completed chunk should be merged.
     assert merged.height == 2
+
+
+def test_merge_chunks_detects_schema_hash_mismatch(monkeypatch, tmp_path, merge_module):
+    settings = make_settings(tmp_path)
+    chunks_root = settings.data_output_dir / "chunks"
+    _write_chunk(
+        chunks_root / "2019Q1",
+        chunk_id="2019Q1",
+        start="2019-01-01",
+        end="2019-03-31",
+        schema_hash="hashA",
+    )
+    _write_chunk(
+        chunks_root / "2019Q2",
+        chunk_id="2019Q2",
+        start="2019-04-01",
+        end="2019-06-30",
+        schema_hash="hashB",
+    )
+
+    monkeypatch.setattr(merge_module, "ensure_env_loaded", lambda: None)
+    monkeypatch.setattr(merge_module, "get_settings", lambda: settings)
+
+    rc = merge_module.main(["--chunks-dir", str(chunks_root)])
+    assert rc == 1
+
+
+def test_merge_chunks_respects_required_schema_hash(monkeypatch, tmp_path, merge_module):
+    settings = make_settings(tmp_path)
+    chunks_root = settings.data_output_dir / "chunks"
+    _write_chunk(
+        chunks_root / "2019Q1",
+        chunk_id="2019Q1",
+        start="2019-01-01",
+        end="2019-03-31",
+        rows=2,
+        schema_hash="hashA",
+    )
+    _write_chunk(
+        chunks_root / "2019Q2",
+        chunk_id="2019Q2",
+        start="2019-04-01",
+        end="2019-06-30",
+        rows=2,
+        schema_hash="hashB",
+    )
+
+    outputs: dict[str, Path] = {}
+
+    class FakeWriter:
+        def __init__(self, *, settings):
+            self.settings = settings
+
+        def write(self, df: pl.DataFrame, *, start_date: str | None, end_date: str | None, extra_metadata: dict | None):
+            parquet_path = self.settings.data_output_dir / "merged.parquet"
+            metadata_path = self.settings.data_output_dir / "merged_metadata.json"
+            df.write_parquet(parquet_path)
+            meta_payload = {"start": start_date, "end": end_date, **(extra_metadata or {})}
+            metadata_path.write_text(json.dumps(meta_payload), encoding="utf-8")
+            outputs["parquet"] = parquet_path
+            return SimpleNamespace(
+                parquet_path=parquet_path,
+                metadata_path=metadata_path,
+                latest_symlink=parquet_path,
+                tagged_symlink=parquet_path,
+                latest_feature_index_symlink=parquet_path,
+                feature_index_path=metadata_path,
+            )
+
+    class FakeStorage:
+        def __init__(self, *_, **__):
+            pass
+
+        def ensure_remote_symlink(self, *, target: str):
+            outputs["symlink_target"] = Path(target)
+
+    monkeypatch.setattr(merge_module, "ensure_env_loaded", lambda: None)
+    monkeypatch.setattr(merge_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(merge_module, "DatasetArtifactWriter", FakeWriter)
+    monkeypatch.setattr(merge_module, "StorageClient", FakeStorage)
+
+    rc = merge_module.main(
+        [
+            "--chunks-dir",
+            str(chunks_root),
+            "--output-dir",
+            str(settings.data_output_dir),
+            "--require-schema-hash",
+            "hashA",
+        ]
+    )
+    assert rc == 0
+    merged = pl.read_parquet(outputs["parquet"])
+    assert merged.height == 2  # only one chunk merged

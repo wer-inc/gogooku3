@@ -30,6 +30,7 @@ class ChunkRecord:
     metadata_path: Path
     status_path: Path
     directory: Path
+    feature_schema_hash: str | None = None
 
     @property
     def status(self) -> dict:
@@ -61,6 +62,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Allow merging even if some chunks are incomplete (default: fail).",
     )
+    parser.add_argument(
+        "--require-schema-hash",
+        type=str,
+        help="Only merge chunks whose feature_schema_hash matches the provided value.",
+    )
     return parser.parse_args(argv)
 
 
@@ -81,8 +87,28 @@ def main(argv: list[str] | None = None) -> int:
         LOGGER.error("No chunk metadata found in %s", chunks_root)
         return 1
 
-    completed = [record for record in chunks if record.status.get("state") == "completed"]
-    incomplete = [record for record in chunks if record.status.get("state") != "completed"]
+    completed: list[ChunkRecord] = []
+    incomplete: list[ChunkRecord] = []
+    schema_failed: list[ChunkRecord] = []
+    for record in chunks:
+        state = record.status.get("state")
+        if state == "completed":
+            completed.append(record)
+        elif state == "failed_schema_mismatch":
+            schema_failed.append(record)
+        else:
+            incomplete.append(record)
+
+    if schema_failed:
+        failed_list = ", ".join(record.chunk_id for record in schema_failed)
+        if not args.allow_partial:
+            LOGGER.error(
+                "Schema-mismatched chunks detected (%s). Resolve validation errors before merging.",
+                failed_list,
+            )
+            return 1
+        LOGGER.warning("Skipping schema-mismatched chunks: %s", failed_list)
+
     if incomplete and not args.allow_partial:
         missing = ", ".join(record.chunk_id for record in incomplete)
         LOGGER.error(
@@ -90,8 +116,8 @@ def main(argv: list[str] | None = None) -> int:
             missing,
         )
         return 1
-    if args.strict and incomplete:
-        missing = ", ".join(record.chunk_id for record in incomplete)
+    if args.strict and (incomplete or schema_failed):
+        missing = ", ".join(record.chunk_id for record in (incomplete + schema_failed))
         LOGGER.error("Strict mode: incomplete chunks detected: %s", missing)
         return 1
     if incomplete:
@@ -102,6 +128,32 @@ def main(argv: list[str] | None = None) -> int:
 
     if not completed:
         LOGGER.error("No completed chunks to merge in %s", chunks_root)
+        return 1
+
+    if args.require_schema_hash:
+        filtered = [r for r in completed if r.feature_schema_hash == args.require_schema_hash]
+        skipped = [r for r in completed if r.feature_schema_hash != args.require_schema_hash]
+        if not filtered:
+            LOGGER.error(
+                "No completed chunks matched --require-schema-hash=%s (available hashes: %s)",
+                args.require_schema_hash,
+                sorted({rec.feature_schema_hash for rec in completed}),
+            )
+            return 1
+        if skipped:
+            LOGGER.warning(
+                "Skipping %d chunks due to schema hash mismatch: %s",
+                len(skipped),
+                ", ".join(rec.chunk_id for rec in skipped),
+            )
+        completed = filtered
+
+    hashes_in_completed = {rec.feature_schema_hash for rec in completed if rec.feature_schema_hash}
+    if len(hashes_in_completed) > 1:
+        LOGGER.error(
+            "Multiple schema hashes detected among completed chunks: %s. Refusing to merge mixed schemas.",
+            ", ".join(sorted(hashes_in_completed)),
+        )
         return 1
 
     completed.sort(key=lambda record: (record.output_start, record.chunk_id))
@@ -115,7 +167,8 @@ def main(argv: list[str] | None = None) -> int:
         LOGGER.info("📦 Loading chunk %s", record.chunk_id)
         df = lazy_load(record.dataset_path, prefer_ipc=True)
         df = _clip_chunk_to_range(df, record)
-        dfs.append(df)
+
+        # Build chunk summary (before schema normalization)
         chunk_summaries.append(
             {
                 "id": record.chunk_id,
@@ -126,15 +179,57 @@ def main(argv: list[str] | None = None) -> int:
                 "rows": df.height,
                 "dataset_path": str(record.dataset_path),
                 "metadata_path": str(record.metadata_path),
+                "feature_schema_hash": record.feature_schema_hash,
             }
         )
-        if schema_reference is None:
-            schema_reference = df.schema
-        else:
-            if df.schema != schema_reference:
-                raise ValueError(f"Schema mismatch for chunk {record.chunk_id}")
 
-    merged = pl.concat(dfs, how="vertical_relaxed", rechunk=True)
+        # Schema normalization
+        if schema_reference is None:
+            # First chunk: establish reference schema
+            schema_reference = df.schema
+            column_order = df.columns
+        else:
+            # Subsequent chunks: align to reference schema
+            ref_cols = set(schema_reference.names())
+            chunk_cols = set(df.columns)
+            if ref_cols != chunk_cols:
+                missing = ref_cols - chunk_cols
+                extra = chunk_cols - ref_cols
+                if missing:
+                    LOGGER.warning(
+                        "Chunk %s missing %d columns (will be filled with nulls): %s",
+                        record.chunk_id,
+                        len(missing),
+                        list(missing)[:5],
+                    )
+                if extra:
+                    LOGGER.warning(
+                        "Chunk %s has %d extra columns: %s",
+                        record.chunk_id,
+                        len(extra),
+                        list(extra)[:5],
+                    )
+
+            # Add missing columns with nulls
+            for col in ref_cols - chunk_cols:
+                ref_dtype = schema_reference[col]
+                df = df.with_columns(pl.lit(None, dtype=ref_dtype).alias(col))
+
+            # Reorder columns to match reference order + cast types
+            select_exprs = []
+            for col in column_order:
+                if col in df.columns:
+                    # Cast to reference type if different
+                    ref_dtype = schema_reference[col]
+                    select_exprs.append(pl.col(col).cast(ref_dtype, strict=False))
+                # Missing columns already added above
+            df = df.select(select_exprs)
+
+        # Append normalized dataframe (once per chunk)
+        dfs.append(df)
+
+    # All dataframes now have identical schema (columns + types + order)
+    merged = pl.concat(dfs, how="vertical", rechunk=True)
     LOGGER.info("✅ Concatenated dataset: %d rows × %d columns", merged.height, merged.width)
 
     start_date = chunk_summaries[0]["output_start"]
@@ -154,6 +249,15 @@ def main(argv: list[str] | None = None) -> int:
     storage.ensure_remote_symlink(target=str(artifact.latest_symlink))
 
     LOGGER.info("📄 Latest metadata: %s", artifact.metadata_path)
+    try:
+        metadata_payload = json.loads(artifact.metadata_path.read_text(encoding="utf-8"))
+        LOGGER.info(
+            "dataset_hash=%s feature_schema_version=%s",
+            metadata_payload.get("dataset_hash"),
+            metadata_payload.get("feature_schema_version"),
+        )
+    except json.JSONDecodeError:
+        LOGGER.warning("Failed to parse metadata for dataset hash.")
     return 0
 
 
@@ -180,6 +284,7 @@ def _collect_chunks(root: Path) -> List[ChunkRecord]:
             metadata_path=metadata_path,
             status_path=status_path,
             directory=path,
+            feature_schema_hash=metadata.get("feature_schema_hash"),
         )
         records.append(record)
     return records

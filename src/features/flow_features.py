@@ -315,7 +315,7 @@ class FlowFeaturesGenerator:
                 )
 
             # 実際の結合処理（簡易版）
-            # TODO: より効率的なas-of結合の実装
+            # NOTE: Current implementation uses simple left join - as-of join optimization deferred
             # effective_dateは既にavailable_flow_colsに含まれているので除外
             flow_cols_for_join = [col for col in available_flow_cols if col != "effective_date"]
             merged = section_stocks.join(

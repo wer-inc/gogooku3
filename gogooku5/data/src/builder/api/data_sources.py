@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -20,7 +21,7 @@ from ..features.macro.index_option_225 import (
 )
 from ..features.macro.options_asof import build_option_signals, load_options
 from ..features.macro.vix import load_vix_history, prepare_vix_features
-from ..utils import CacheManager
+from ..utils import CacheManager, RawDataStore
 from .advanced_fetcher import AdvancedJQuantsFetcher
 from .cache_policy import SourceCachePolicy
 
@@ -32,6 +33,7 @@ class DataSourceManager:
     settings: DatasetBuilderSettings = field(default_factory=get_settings)
     cache: CacheManager = field(default_factory=CacheManager)
     fetcher: AdvancedJQuantsFetcher = field(default_factory=AdvancedJQuantsFetcher)
+    raw_store: RawDataStore | None = None
 
     def __post_init__(self) -> None:
         self._cache_mode = self.settings.source_cache_mode
@@ -39,9 +41,24 @@ class DataSourceManager:
         self._cache_asof_value = self.settings.source_cache_asof
         self._cache_tag = self.settings.source_cache_tag
         self._cache_ttl_override = self.settings.source_cache_ttl_override_days
+        self._logger = logging.getLogger(__name__)
+
+    def attach_raw_store(self, raw_store: RawDataStore | None) -> None:
+        """Attach (or detach) a RawDataStore backing."""
+
+        self.raw_store = raw_store
 
     def margin_daily(self, *, start: str, end: str) -> pl.DataFrame:
         """Return normalized daily margin balances."""
+
+        raw_df = self._load_raw_source(
+            "margin_daily",
+            start,
+            end,
+            date_columns=("ApplicationDate", "Date", "application_date"),
+        )
+        if raw_df is not None:
+            return self._normalize_margin_daily(raw_df)
 
         def _fetch() -> pl.DataFrame:
             raw = self.fetcher.fetch_margin_daily(start=start, end=end)
@@ -125,6 +142,15 @@ class DataSourceManager:
     def margin_weekly(self, *, start: str, end: str) -> pl.DataFrame:
         """Return cached weekly margin interest."""
 
+        raw_df = self._load_raw_source(
+            "margin_weekly",
+            start,
+            end,
+            date_columns=("Date", "PublishedDate", "published_date"),
+        )
+        if raw_df is not None:
+            return raw_df
+
         return self._cached_dataframe(
             dataset="margin_weekly",
             cache_key=f"margin_weekly_{start}_{end}",
@@ -159,6 +185,15 @@ class DataSourceManager:
     def fs_details(self, *, start: str, end: str) -> pl.DataFrame:
         """Return financial statement details."""
 
+        raw_df = self._load_raw_source(
+            "statements",
+            start,
+            end,
+            date_columns=("DisclosedDate", "Date"),
+        )
+        if raw_df is not None:
+            return raw_df
+
         return self._cached_dataframe(
             dataset="fs_details",
             cache_key=f"fs_details_{start}_{end}",
@@ -173,6 +208,17 @@ class DataSourceManager:
         Note: J-Quants API supports date parameter for daily snapshots.
         This method fetches listed info for each date in the range.
         """
+        raw_df = self._load_raw_source(
+            "jquants_listed",
+            start,
+            end,
+            date_columns=("Date",),
+        )
+        if raw_df is not None:
+            if "Date" in raw_df.columns:
+                raw_df = raw_df.with_columns(pl.col("Date").cast(pl.Date, strict=False))
+            return raw_df
+
         cache_key = f"listed_info_{start}_{end}"
         ttl = self.settings.macro_cache_ttl_days
 
@@ -213,6 +259,15 @@ class DataSourceManager:
 
     def topix(self, *, start: str, end: str) -> pl.DataFrame:
         """Return TOPIX history for the given range."""
+
+        raw_df = self._load_raw_source(
+            "indices_topix",
+            start,
+            end,
+            date_columns=("Date",),
+        )
+        if raw_df is not None:
+            return raw_df
 
         cache_key = f"topix_{start}_{end}"
         ttl = self.settings.topix_cache_ttl_days
@@ -344,9 +399,11 @@ class DataSourceManager:
         - First fetch: ~2h42m (6+ years of data)
         - Subsequent fetches: <5s (cache hit)
         """
-        # Cache raw API response separately (expensive operation)
-        raw_cache_key = f"index_option_raw_{start}_{end}"
-        ttl = self.settings.macro_cache_ttl_days
+        policy = self._build_policy(
+            dataset="index_option",
+            ttl_days=self.settings.index_option_cache_ttl_days,
+        )
+        raw_cache_key = policy.decorate_key(f"index_option_raw_{start}_{end}")
 
         def _fetch_raw() -> pl.DataFrame:
             logger = logging.getLogger(__name__)
@@ -356,17 +413,20 @@ class DataSourceManager:
             )
             return self.fetcher.fetch_options(start=start, end=end)
 
-        # Get or fetch raw options data (cached with IPC for 5x speedup)
         raw_options, cache_hit = self.cache.get_or_fetch_dataframe(
             raw_cache_key,
             _fetch_raw,
-            ttl_days=ttl,
-            prefer_ipc=True,  # Use Arrow IPC for faster reads (Quick Wins Task 1)
+            ttl_days=policy.ttl_days,
+            prefer_ipc=True,
             allow_empty=False,
+            force_refresh=policy.force_refresh or force_refresh,
+            enable_read=policy.enable_read,
+            enable_write=policy.enable_write,
+            metadata=policy.metadata(),
         )
 
+        logger = logging.getLogger(__name__)
         if cache_hit:
-            logger = logging.getLogger(__name__)
             logger.info(
                 "[INDEX OPTION] ✅ Cache hit for %s, loaded %d rows in <5s (saved ~2h42m)",
                 raw_cache_key,
@@ -411,6 +471,15 @@ class DataSourceManager:
     def trades_spec(self, *, start: str, end: str) -> pl.DataFrame:
         """Return investor flow (trades spec) data."""
 
+        raw_df = self._load_raw_source(
+            "flow_trades_spec",
+            start,
+            end,
+            date_columns=("EndDate", "PublishedDate"),
+        )
+        if raw_df is not None:
+            return raw_df
+
         cache_key = f"trades_spec_{start}_{end}"
         ttl = self.settings.trades_spec_cache_ttl_days
 
@@ -438,6 +507,15 @@ class DataSourceManager:
         business_days: Optional[list[str]] = None,
     ) -> pl.DataFrame:
         """Return short selling aggregates."""
+
+        raw_df = self._load_raw_source(
+            "short_selling",
+            start,
+            end,
+            date_columns=("Date", "PublishedDate"),
+        )
+        if raw_df is not None:
+            return raw_df
 
         return self._cached_dataframe(
             dataset="short_selling",
@@ -474,6 +552,15 @@ class DataSourceManager:
     ) -> pl.DataFrame:
         """Return sector-level short selling metrics."""
 
+        raw_df = self._load_raw_source(
+            "short_selling_sector",
+            start,
+            end,
+            date_columns=("Date", "PublishedDate"),
+        )
+        if raw_df is not None:
+            return raw_df
+
         return self._cached_dataframe(
             dataset="sector_short",
             cache_key=f"sector_short_{start}_{end}",
@@ -487,6 +574,15 @@ class DataSourceManager:
 
     def prices_am(self, *, start: str, end: str) -> pl.DataFrame:
         """Return morning session (AM) price snapshots."""
+
+        raw_df = self._load_raw_source(
+            "prices_am",
+            start,
+            end,
+            date_columns=("Date",),
+        )
+        if raw_df is not None:
+            return raw_df
 
         cache_key = f"prices_am_{start}_{end}"
         ttl = self.settings.cache_ttl_days_default
@@ -523,6 +619,83 @@ class DataSourceManager:
             metadata=policy.metadata(),
         )
         return df
+
+    # ------------------------------------------------------------------
+    # Raw-store helpers
+    # ------------------------------------------------------------------
+    def _raw_enabled(self) -> bool:
+        return bool(self.raw_store is not None and self.settings.use_raw_store)
+
+    def _load_raw_source(
+        self,
+        source: str,
+        start: str,
+        end: str,
+        *,
+        date_columns: Sequence[str],
+    ) -> pl.DataFrame | None:
+        if not self._raw_enabled():
+            return None
+        assert self.raw_store is not None  # mypy hint
+        try:
+            df = self.raw_store.load_range(source=source, start=start, end=end)
+        except FileNotFoundError:
+            return None
+        except Exception as exc:  # pragma: no cover - defensive
+            self._logger.warning("[RAW] Failed to load %s from manifest: %s", source, exc)
+            return None
+
+        if df.is_empty():
+            return pl.DataFrame()
+
+        filtered = self._filter_raw_dates(df, date_columns, start, end)
+        self._logger.debug(
+            "[RAW] %s served from manifest (%d rows, %s→%s)",
+            source,
+            filtered.height,
+            start,
+            end,
+        )
+        return filtered
+
+    def _filter_raw_dates(
+        self,
+        df: pl.DataFrame,
+        columns: Sequence[str],
+        start: str,
+        end: str,
+    ) -> pl.DataFrame:
+        if not columns:
+            return df
+        start_dt = self._safe_iso_date(start)
+        end_dt = self._safe_iso_date(end)
+        if start_dt is None and end_dt is None:
+            return df
+
+        for column in columns:
+            if column not in df.columns:
+                continue
+            expr = pl.col(column).cast(pl.Date, strict=False).alias(column)
+            df = df.with_columns(expr)
+            mask: pl.Expr | None = None
+            if start_dt is not None:
+                mask = pl.col(column) >= start_dt
+            if end_dt is not None:
+                cond = pl.col(column) <= end_dt
+                mask = cond if mask is None else (mask & cond)
+            if mask is not None:
+                df = df.filter(mask)
+            return df
+        return df
+
+    @staticmethod
+    def _safe_iso_date(value: str | None) -> date | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            return None
 
     def _build_policy(self, *, dataset: str, ttl_days: Optional[int]) -> SourceCachePolicy:
         return SourceCachePolicy.from_settings(

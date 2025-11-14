@@ -37,6 +37,12 @@ class DatasetBuilderSettings(BaseSettings):
     macro_cache_ttl_days: int = Field(14, ge=0, env="CACHE_TTL_DAYS_MACRO")
     calendar_cache_ttl_days: int = Field(7, ge=0, env="CACHE_TTL_DAYS_CALENDAR")
     data_prefetch_threads: int = Field(2, ge=0, env="DATA_PREFETCH_THREADS")
+    index_option_cache_ttl_days: int = Field(14, ge=0, env="CACHE_TTL_DAYS_INDEX_OPTION")
+    index_option_parallel_fetch: bool = Field(True, env="INDEX_OPTION_PARALLEL_FETCH")
+    index_option_parallel_concurrency: int = Field(8, ge=1, env="INDEX_OPTION_PARALLEL_CONCURRENCY")
+    enable_mlflow_logging: bool = Field(False, env="ENABLE_MLFLOW_LOGGING")
+    mlflow_experiment_name: str | None = Field("tse-forecasting", env="MLFLOW_EXPERIMENT_NAME")
+    mlflow_tracking_uri: str | None = Field(None, env="MLFLOW_TRACKING_URI")
 
     # Arrow IPC cache optimization settings
     cache_format: str = Field("auto", env="CACHE_FORMAT")
@@ -67,6 +73,9 @@ class DatasetBuilderSettings(BaseSettings):
     source_cache_tag: str | None = Field(None, env="SOURCE_CACHE_TAG")
     source_cache_ttl_override_days: int | None = Field(None, ge=0, env="SOURCE_CACHE_TTL_OVERRIDE_DAYS")
 
+    raw_manifest_path: Path | None = Field(default=None, env="RAW_MANIFEST_PATH")
+    use_raw_store: bool = Field(default=True, env="USE_RAW_STORE")
+
     # Phase 2 Patch E: ADV filter configuration
     min_adv_yen: int | None = Field(None, ge=0, env="MIN_ADV_YEN")
     adv_min_periods: int = Field(20, ge=1, env="ADV_MIN_PERIODS")
@@ -75,6 +84,16 @@ class DatasetBuilderSettings(BaseSettings):
     use_gpu_etl: bool = Field(True, env="USE_GPU_ETL")
     force_gpu: bool = Field(True, env="FORCE_GPU")
     rmm_pool_size: str = Field("40GB", env="RMM_POOL_SIZE")
+
+    # Dataset quality checker
+    enable_dataset_quality_check: bool = Field(False, env="ENABLE_DATASET_QUALITY_CHECK")
+    dataset_quality_targets: str | None = Field(None, env="DATASET_QUALITY_TARGETS")
+    dataset_quality_asof_checks: str | None = Field(None, env="DATASET_QUALITY_ASOF_CHECKS")
+    dataset_quality_date_col: str = Field("date", env="DATASET_QUALITY_DATE_COL")
+    dataset_quality_code_col: str = Field("code", env="DATASET_QUALITY_CODE_COL")
+    dataset_quality_allow_future_days: int = Field(0, ge=0, env="DATASET_QUALITY_ALLOW_FUTURE_DAYS")
+    dataset_quality_sample_rows: int = Field(5, ge=1, env="DATASET_QUALITY_SAMPLE_ROWS")
+    dataset_quality_fail_on_warning: bool = Field(False, env="DATASET_QUALITY_FAIL_ON_WARNING")
 
     @model_validator(mode="after")
     def _ensure_directories(self) -> "DatasetBuilderSettings":

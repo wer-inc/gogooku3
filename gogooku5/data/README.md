@@ -44,6 +44,8 @@ PYTHONPATH=gogooku5/data/src pytest gogooku5/data/tests -q
 - Parity check CLI: `python scripts/compare_parity.py <gogooku3 parquet> <gogooku5 parquet> [--output-json report.json]` to inspect schema and numeric differences. For automated runs, set `PARITY_BASELINE_PATH=/path/to/gogooku3_parquet` (and optionally `PARITY_CANDIDATE_PATH=/path/to/gogooku5_parquet`) before `python tools/project-health-check.sh`.
 - DatasetBuilder now materialises a full営業日×銘柄グリッド（日本の祝日カレンダーヒューリスティクス＋実観測日付）をベースに各特徴量を付与し、欠損日の可視化と gogooku3 とのパリティ確認を容易にしています。
 
+Index option fetches (/option/index_option) respect `INDEX_OPTION_PARALLEL_FETCH=true`（既定）と `INDEX_OPTION_PARALLEL_CONCURRENCY`（既定:8）で並列取得でき、`SOURCE_CACHE_*` 設定と組み合わせてスナップショットを再利用できます。
+
 ### Source cache controls
 
 APIソース（財務・配当・空売り・マージン・決算など）は `output/cache` にスナップショットされます。以下の環境変数 or Dagster resource 設定で挙動を切り替えられます。
@@ -58,7 +60,66 @@ APIソース（財務・配当・空売り・マージン・決算など）は `
 
 Dagster では `dataset_builder` resource に `source_cache_*` を渡すことで run 単位でこれらを指定できます。
 
+### MLflow 連携
+
+`ENABLE_MLFLOW_LOGGING=1` を設定すると、Dagster 資産（チャンク構築・マージ）と Apex Ranker 学習スクリプトが MLflow にパラメータ／メトリクス／アーティファクトを記録します。
+
+| 変数 | 説明 |
+| --- | --- |
+| `ENABLE_MLFLOW_LOGGING` | `1` でロギング有効化 |
+| `MLFLOW_EXPERIMENT_NAME` | 実験名（既定: `tse-forecasting`） |
+| `MLFLOW_TRACKING_URI` | トラッキングサーバ URI |
+| `dagster_run_id` (タグ) | Dagster run と MLflow run を紐付けるため自動付与 |
+
+Dagster の resource config でも `enable_mlflow_logging`, `mlflow_experiment_name`, `mlflow_tracking_uri` を上書きできます。
+
 Detailed pipeline behavior, feature coverage, and validation routines will be documented as implementation progresses through the migration milestones.
+
+### Chunkヘルスチェック
+
+チャンク出力の整合性は `data/tools/check_chunks.py` で確認できます:
+
+```bash
+python gogooku5/data/tools/check_chunks.py \
+  --chunks-dir /workspace/gogooku3/output/chunks \
+  --fail-on-warning
+```
+
+`status.json`/`metadata.json`/Parquet の欠落や `rows=0`、`state!="completed"` などを一覧化し、`--fail-on-warning` を付けると異常時に終了コード1を返します。
+
+### Dataset hash / schema fingerprint
+
+`merge_chunks.py` は最終 Parquet を書き出す際に
+
+- `dataset_hash`（Parquet本体のSHA256）
+- `feature_schema_version`（列名+dtype hash）
+
+をメタデータへ埋め込み、Dagster asset／学習スクリプトはこの情報を MLflow タグに記録します。  
+`metadata.json` に両方の値が無い場合は学習を開始できないので、常に最新のデータビルダーでチャンクを作成してください。
+
+### Dataset quality checker
+
+`data/tools/check_dataset_quality.py` は完成済みデータセット（チャンク単位 / フルマージ）に対して
+
+- `(date, code)` 主キー重複
+- 指定ターゲット列の欠損
+- 未来日データ混入
+- as-of 順序（例: `fs_disclosed_date <= date`）
+
+を一括検査します。JSON レポート出力にも対応しているため、`tools/project-health-check.sh` や CI に組み込んで品質を自動監視してください。
+
+環境変数で DatasetBuilder 実行時に自動チェックを有効化できます:
+
+| 変数 | 説明 |
+| --- | --- |
+| `ENABLE_DATASET_QUALITY_CHECK=1` | チャンク/フル書き出し直後にチェックを実行（失敗でビルド停止） |
+| `DATASET_QUALITY_TARGETS` | ターゲット列（スペース or カンマ区切り） |
+| `DATASET_QUALITY_ASOF_CHECKS` | `col<=reference_col` 形式の as-of 制約（スペース or カンマ区切り） |
+
+`.env.example` では `ret_prev_1d/5d/20d/60d` をターゲット列、`DisclosedDate` と `earnings_event_date` を as-of 制約として定義しています。別の列／閾値を使いたい場合は上記の変数を上書きしてください。
+| `DATASET_QUALITY_FAIL_ON_WARNING` | `1` で警告も失敗扱い |
+| `DATASET_QUALITY_DATE_COL` / `DATASET_QUALITY_CODE_COL` | 主キー列名（既定: `date` / `code`） |
+| `DATASET_QUALITY_ALLOW_FUTURE_DAYS` | 未来日許容日数（既定: 0） |
 
 ## Dagster Integration
 `gogooku5/data/src/dagster_gogooku5` ships reusable Dagster assets that wrap the dataset builder:
@@ -76,4 +137,5 @@ PYTHONPATH=gogooku5/data/src dagster dev -m dagster_gogooku5.defs
 These assets allow you to schedule recurring dataset builds via Dagster jobs or run ad‑hoc chunk builds/merges from the UI with full observability.
 
 > 🕒 **Timezone**
-> Export `TZ=Asia/Tokyo` together with `DAGSTER_HOME=/absolute/path/to/gogooku5` （絶対パス） before running `dagster dev` / `dagster job …` to keep Dagster timestamps in JST.
+> `gogooku5/dagster.yaml` sets `instance.local_timezone` to `Asia/Tokyo` to ensure all Dagster run timestamps are in JST.
+> Export `DAGSTER_HOME=/absolute/path/to/gogooku5` （絶対パス） before running `dagster dev` / `dagster job …` to use this configuration.

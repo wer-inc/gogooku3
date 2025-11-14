@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
 import polars as pl
@@ -332,7 +332,12 @@ class JQuantsAsyncFetcher:
         self._logger = logging.getLogger(__name__)
         env_parallel = os.getenv("JQUANTS_ENABLE_PARALLEL_FETCH")
         self.enable_parallel_fetch = enable_parallel_fetch or (env_parallel == "1")
-        self._parallel_max_concurrency = max(1, int(os.getenv("JQUANTS_PARALLEL_CONCURRENCY", "4")))
+        # Index Options並列度: 新変数名を優先、旧変数名をフォールバック（互換性維持）
+        concurrency_str = (
+            os.getenv("INDEX_OPTION_PARALLEL_CONCURRENCY")
+            or os.getenv("JQUANTS_PARALLEL_CONCURRENCY", "8")
+        )
+        self._parallel_max_concurrency = max(1, int(concurrency_str))
         self._index_option_log_percent = max(1, int(os.getenv("JQUANTS_INDEX_OPTION_PROGRESS_SPLITS", "10")))
         self._hydrate_cached_tokens()
         self._auth_max_attempts = max(1, int(os.getenv("JQUANTS_AUTH_MAX_RETRIES", "6")))
@@ -1422,6 +1427,99 @@ class JQuantsAsyncFetcher:
             df = df.with_columns(cast_exprs)
         return df.sort(["Code", "AnnouncementDate"])
 
+    async def _get_fs_details_parallel(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        headers: dict[str, str],
+        date_list: list[str],
+        extract_fn: Callable[[dict], dict],
+    ) -> list[dict]:
+        """
+        Parallel fetch of financial statement details for multiple dates.
+
+        Args:
+            session: aiohttp session
+            base_url: API endpoint URL
+            headers: Authorization headers
+            date_list: List of dates (YYYY-MM-DD format)
+            extract_fn: Function to extract financial fields from FinancialStatement dict
+
+        Returns:
+            Aggregated list of record dicts
+        """
+        semaphore = asyncio.Semaphore(self._parallel_max_concurrency)
+        total = len(date_list)
+        log_every = max(1, total // 10)
+        counter = {"done": 0}
+        lock = asyncio.Lock()
+
+        async def fetch_single_date(date_str: str) -> list[dict]:
+            rows: list[dict] = []
+            pagination_key: str | None = None
+
+            while True:
+                params = {"date": date_str}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+
+                status, data = await self._request_json(
+                    session,
+                    "GET",
+                    base_url,
+                    label=f"fs_details:{date_str}",
+                    params=params,
+                    headers=headers,
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
+
+                items = data.get("fs_details") or data.get("data") or []
+                for item in items:
+                    base = {
+                        "Code": item.get("Code"),
+                        "TypeOfDocument": item.get("TypeOfDocument"),
+                        "FiscalYear": item.get("FiscalYear"),
+                        "AccountingStandard": item.get("AccountingStandard"),
+                        "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
+                        "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
+                    }
+                    fs = item.get("FinancialStatement") or {}
+                    flat = extract_fn(fs)
+                    base.update(flat)
+                    rows.append(base)
+
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+
+            return rows
+
+        async def fetch_with_progress(date_str: str) -> list[dict]:
+            async with semaphore:
+                rows = await fetch_single_date(date_str)
+            async with lock:
+                counter["done"] += 1
+                done = counter["done"]
+                if done == 1 or done == total or done % log_every == 0:
+                    self._logger.info(
+                        "FS details parallel progress: %d/%d days processed (latest=%s)",
+                        done,
+                        total,
+                        date_str,
+                    )
+            return rows
+
+        self._logger.info("Parallel fetch enabled: FS details for %d days", total)
+        tasks = [fetch_with_progress(date_str) for date_str in date_list]
+        results = await asyncio.gather(*tasks)
+
+        # Flatten results
+        all_rows = []
+        for rows in results:
+            all_rows.extend(rows)
+        return all_rows
+
     async def get_fs_details(self, session: aiohttp.ClientSession, from_date: str, to_date: str) -> pl.DataFrame:
         """Fetch financial statement details (/fins/fs_details) for a date range."""
         if not self.id_token:
@@ -1494,46 +1592,72 @@ class JQuantsAsyncFetcher:
                         flat[target] = value
             return flat
 
-        rows: list[dict] = []
         start = _parse(from_date)
         end = _parse(to_date)
-        cur = start
+        total_days = (end - start).days + 1
 
+        # Generate date list
+        date_list = []
+        cur = start
         while cur <= end:
-            date_str = cur.strftime("%Y-%m-%d")
-            pagination_key: str | None = None
-            while True:
-                params = {"date": date_str}
-                if pagination_key:
-                    params["pagination_key"] = pagination_key
-                status, data = await self._request_json(
-                    session,
-                    "GET",
-                    base_url,
-                    label=f"fs_details:{date_str}",
-                    params=params,
-                    headers=headers,
-                )
-                if status != 200 or not isinstance(data, dict):
-                    break
-                items = data.get("fs_details") or data.get("data") or []
-                for item in items:
-                    base = {
-                        "Code": item.get("Code"),
-                        "TypeOfDocument": item.get("TypeOfDocument"),
-                        "FiscalYear": item.get("FiscalYear"),
-                        "AccountingStandard": item.get("AccountingStandard"),
-                        "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
-                        "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
-                    }
-                    fs = item.get("FinancialStatement") or {}
-                    flat = _extract_financials(fs)
-                    base.update(flat)
-                    rows.append(base)
-                pagination_key = data.get("pagination_key")
-                if not pagination_key:
-                    break
+            date_list.append(cur.strftime("%Y-%m-%d"))
             cur += _dt.timedelta(days=1)
+
+        self._logger.info(
+            "Fetching FS details %s → %s (%d calendar days)",
+            from_date,
+            to_date,
+            total_days,
+        )
+
+        # Use parallel fetch if enabled and multiple dates
+        if self.enable_parallel_fetch and len(date_list) > 1:
+            rows = await self._get_fs_details_parallel(
+                session, base_url, headers, date_list, _extract_financials
+            )
+        else:
+            # Sequential fallback (original behavior)
+            rows: list[dict] = []
+            for idx, date_str in enumerate(date_list, start=1):
+                pagination_key: str | None = None
+                while True:
+                    params = {"date": date_str}
+                    if pagination_key:
+                        params["pagination_key"] = pagination_key
+                    status, data = await self._request_json(
+                        session,
+                        "GET",
+                        base_url,
+                        label=f"fs_details:{date_str}",
+                        params=params,
+                        headers=headers,
+                    )
+                    if status != 200 or not isinstance(data, dict):
+                        break
+                    items = data.get("fs_details") or data.get("data") or []
+                    for item in items:
+                        base = {
+                            "Code": item.get("Code"),
+                            "TypeOfDocument": item.get("TypeOfDocument"),
+                            "FiscalYear": item.get("FiscalYear"),
+                            "AccountingStandard": item.get("AccountingStandard"),
+                            "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
+                            "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
+                        }
+                        fs = item.get("FinancialStatement") or {}
+                        flat = _extract_financials(fs)
+                        base.update(flat)
+                        rows.append(base)
+                    pagination_key = data.get("pagination_key")
+                    if not pagination_key:
+                        break
+
+                if idx == 1 or idx == len(date_list) or idx % max(1, len(date_list) // 10) == 0:
+                    self._logger.info(
+                        "FS details sequential progress: %d/%d days processed",
+                        idx,
+                        len(date_list),
+                    )
 
         if not rows:
             return pl.DataFrame()
@@ -1756,6 +1880,73 @@ class JQuantsAsyncFetcher:
 
         return enforce_code_column_types(out)
 
+    async def _get_futures_daily_parallel(
+        self,
+        session: aiohttp.ClientSession,
+        business_dates: list[str],
+    ) -> list[pl.DataFrame]:
+        """
+        Parallel fetch of futures data for multiple dates.
+
+        Args:
+            session: aiohttp session
+            business_dates: List of business dates (YYYY-MM-DD format)
+
+        Returns:
+            List of DataFrames (one per date)
+        """
+        semaphore = asyncio.Semaphore(self._parallel_max_concurrency)
+        total = len(business_dates)
+        log_every = max(1, total // 10)
+        counter = {"done": 0}
+        lock = asyncio.Lock()
+
+        async def fetch_single_date(date_str: str) -> pl.DataFrame | None:
+            async with semaphore:
+                try:
+                    url = f"{self.base_url}/derivatives/futures"
+                    params = {"date": date_str}
+                    headers = {"Authorization": f"Bearer {self.id_token}"}
+
+                    status, data = await self._request_json(
+                        session,
+                        "GET",
+                        url,
+                        label=f"futures_single_date:{date_str}",
+                        params=params,
+                        headers=headers,
+                    )
+                    if status == 200 and isinstance(data, dict):
+                        for key in ["futures", "derivatives", "data", "derivatives_futures"]:
+                            if key in data and data[key]:
+                                batch = data[key]
+                                df_batch = pl.DataFrame(batch)
+                                if not df_batch.is_empty():
+                                    async with lock:
+                                        counter["done"] += 1
+                                        done = counter["done"]
+                                        if done == 1 or done == total or done % log_every == 0:
+                                            self._logger.info(
+                                                "Futures parallel progress: %d/%d days processed (latest=%s)",
+                                                done,
+                                                total,
+                                                date_str,
+                                            )
+                                    return df_batch
+                except Exception as e:
+                    self._logger.warning("Failed to fetch futures for %s: %s", date_str, e)
+
+                async with lock:
+                    counter["done"] += 1
+                return None
+
+        self._logger.info("Parallel fetch enabled: futures data for %d business days", total)
+        tasks = [fetch_single_date(date_str) for date_str in business_dates]
+        results = await asyncio.gather(*tasks)
+
+        # Filter out None results
+        return [df for df in results if df is not None]
+
     async def get_futures_daily(self, session: aiohttp.ClientSession, from_date: str, to_date: str) -> pl.DataFrame:
         """
         Fetch derivatives futures daily data from J-Quants API.
@@ -1932,20 +2123,32 @@ class JQuantsAsyncFetcher:
 
             start = _parse(from_date)
             end = _parse(to_date)
-            cur = start
             total_days = (end - start).days + 1
-            log_every = max(1, total_days // 10)
-            processed_days = 0
+
+            # Generate business days only
+            business_dates = []
+            cur = start
+            while cur <= end and len(business_dates) < 100:  # Limit to prevent excessive API calls
+                if cur.weekday() < 5:  # Business days only
+                    business_dates.append(cur.strftime("%Y-%m-%d"))
+                cur += _dt.timedelta(days=1)
+
             self._logger.info(
-                "Futures date-by-date fallback: %s → %s (%d calendar days)",
+                "Futures date-by-date fallback: %s → %s (%d calendar days, %d business days)",
                 start.isoformat(),
                 end.isoformat(),
                 total_days,
+                len(business_dates),
             )
 
-            while cur <= end and len(all_futures) < 100:  # Limit to prevent excessive API calls
-                if cur.weekday() < 5:  # Business days only
-                    date_str = cur.strftime("%Y-%m-%d")
+            # Use parallel fetch if enabled and multiple dates
+            if self.enable_parallel_fetch and len(business_dates) > 1:
+                all_futures = await self._get_futures_daily_parallel(session, business_dates)
+            else:
+                # Sequential fallback (original behavior)
+                log_every = max(1, len(business_dates) // 10)
+                processed_days = 0
+                for date_str in business_dates:
                     try:
                         url = f"{self.base_url}/derivatives/futures"
                         params = {"date": date_str}
@@ -1981,16 +2184,15 @@ class JQuantsAsyncFetcher:
                     except Exception as e:
                         self._logger.warning("Failed to fetch futures for %s: %s", date_str, e)
 
-                cur += _dt.timedelta(days=1)
-                processed_days += 1
-                if processed_days == 1 or processed_days == total_days or processed_days % log_every == 0:
-                    self._logger.info(
-                        "Futures fallback progress: %d/%d days processed (latest=%s, batches=%d)",
-                        processed_days,
-                        total_days,
-                        date_str,
-                        len(all_futures),
-                    )
+                    processed_days += 1
+                    if processed_days == 1 or processed_days == len(business_dates) or processed_days % log_every == 0:
+                        self._logger.info(
+                            "Futures fallback progress: %d/%d days processed (latest=%s, batches=%d)",
+                            processed_days,
+                            len(business_dates),
+                            date_str,
+                            len(all_futures),
+                        )
 
         if not all_futures:
             self._logger.warning(

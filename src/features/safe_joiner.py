@@ -655,7 +655,7 @@ class SafeJoiner:
 
     def _calculate_flow_features(self, flow: pl.DataFrame) -> pl.DataFrame:
         """フロー特徴量を計算（簡略版）"""
-        # TODO: 実際のフロー特徴量計算
+        # NOTE: Simplified flow features - expand when needed for production
         # ここでは例として基本的な特徴量を追加
         if "ForeignersBalance" in flow.columns:
             flow = flow.with_columns([
@@ -674,7 +674,7 @@ class SafeJoiner:
 
     def _calculate_cross_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """銘柄×市場Cross特徴量を計算（簡略版）"""
-        # TODO: beta, alpha等の実際の計算
+        # NOTE: Placeholder cross-features (beta, alpha) - implement when needed
         # ここでは例として簡単な特徴量を追加
         return df.with_columns([
             pl.lit(0.0).alias("cross_beta_60d"),

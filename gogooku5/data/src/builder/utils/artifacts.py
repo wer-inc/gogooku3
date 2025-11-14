@@ -12,6 +12,7 @@ from typing import Optional
 import polars as pl
 
 from ..config import DatasetBuilderSettings, get_settings
+from .hash_utils import file_sha256, schema_hash
 from .lazy_io import save_with_cache
 from .logger import get_logger
 
@@ -100,12 +101,22 @@ class DatasetArtifactWriter:
             "column_hash": feature_index_payload["column_hash"],
             "feature_hash": feature_index_payload.get("feature_hash"),
             "target_hash": feature_index_payload.get("target_hash"),
+            "schema_hash": feature_index_payload.get("schema_hash"),
             "total_columns": len(feature_index_payload["columns"]),
             "feature_columns": len(feature_index_payload["feature_columns"]),
             "target_columns": len(feature_index_payload["target_columns"]),
             "metadata_columns": len(feature_index_payload["metadata_columns"]),
         }
         metadata = self._merge_metadata(metadata, {"feature_index": feature_index_summary})
+        dataset_hash = file_sha256(parquet_path)
+        metadata = self._merge_metadata(
+            metadata,
+            {
+                "dataset_hash": dataset_hash,
+                "dataset_hash_algorithm": "sha256",
+                "feature_schema_version": feature_index_payload.get("schema_hash"),
+            },
+        )
         if extra_metadata:
             metadata = self._merge_metadata(metadata, extra_metadata)
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -272,6 +283,8 @@ class DatasetArtifactWriter:
         column_hash = hashlib.sha256("||".join(columns).encode("utf-8")).hexdigest()
         feature_hash = hashlib.sha1("||".join(feature_columns).encode("utf-8")).hexdigest() if feature_columns else None
         target_hash = hashlib.sha1("||".join(target_columns).encode("utf-8")).hexdigest() if target_columns else None
+        schema_pairs = [(name, str(schema[name])) for name in columns]
+        schema_fingerprint = schema_hash(schema_pairs)
 
         payload = {
             "version": "1.0",
@@ -289,6 +302,7 @@ class DatasetArtifactWriter:
             "column_hash": column_hash,
             "feature_hash": feature_hash,
             "target_hash": target_hash,
+            "schema_hash": schema_fingerprint,
             "strict": True,
         }
         return payload

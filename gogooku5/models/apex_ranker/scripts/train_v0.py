@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import math
 import os
 import random
@@ -10,6 +11,7 @@ from collections.abc import Iterable
 from datetime import date as Date
 from datetime import timedelta
 from pathlib import Path
+from typing import Any, Dict
 
 import numpy as np
 import polars as pl
@@ -38,6 +40,7 @@ from apex_ranker.utils import (
 from torch.utils.data import DataLoader
 
 from gogooku5.data.src.builder.utils.lazy_io import lazy_load
+from gogooku5.data.src.builder.utils.mlflow_tracker import MLflowTracker
 
 DEFAULT_SEED = 42
 
@@ -269,6 +272,26 @@ def parse_args() -> argparse.Namespace:
         help="Number of folds when using Purged K-Fold (defaults to config).",
     )
     parser.add_argument(
+        "--enable-mlflow-logging",
+        action="store_true",
+        help="Enable MLflow logging for this training run.",
+    )
+    parser.add_argument(
+        "--mlflow-experiment",
+        default=None,
+        help="Override MLflow experiment name.",
+    )
+    parser.add_argument(
+        "--mlflow-tracking-uri",
+        default=None,
+        help="Override MLflow tracking URI.",
+    )
+    parser.add_argument(
+        "--dagster-run-id",
+        default=None,
+        help="Optional Dagster run_id used for cross-run correlation.",
+    )
+    parser.add_argument(
         "--cv-fold",
         type=int,
         default=None,
@@ -429,9 +452,91 @@ def load_dataset(
     return cache, z_features, target_cols, mask_columns
 
 
+def _create_mlflow_tracker(args) -> MLflowTracker | None:
+    enabled = args.enable_mlflow_logging or bool(os.getenv("APEX_ENABLE_MLFLOW"))
+    if not enabled:
+        return None
+    return MLflowTracker(
+        enabled=True,
+        experiment_name=args.mlflow_experiment or os.getenv("MLFLOW_EXPERIMENT_NAME"),
+        tracking_uri=args.mlflow_tracking_uri or os.getenv("MLFLOW_TRACKING_URI"),
+    )
+
+
+def _collect_training_run_params(args, cfg) -> Dict[str, Any]:
+    train_cfg = cfg.get("train", {})
+    data_cfg = cfg.get("data", {})
+    horizons = train_cfg.get("horizons", [])
+    return {
+        "config_path": args.config,
+        "epochs": train_cfg.get("epochs"),
+        "horizons": ",".join(str(h) for h in horizons),
+        "lookback_days": data_cfg.get("lookback") or data_cfg.get("lookback_days"),
+    }
+
+
+def _extract_dataset_tags(data_cfg: dict) -> Dict[str, str]:
+    parquet_path = Path(data_cfg["parquet_path"])
+    metadata_path = data_cfg.get("metadata_path")
+    if not metadata_path:
+        metadata_path = parquet_path.with_name(parquet_path.stem + "_metadata.json")
+    meta_path = Path(metadata_path)
+    if not meta_path.exists():
+        raise FileNotFoundError(f"Dataset metadata not found: {meta_path}")
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    dataset_hash = payload.get("dataset_hash")
+    schema_version = payload.get("feature_schema_version") or payload.get("feature_index", {}).get("schema_hash")
+    if not dataset_hash or not schema_version:
+        raise ValueError(
+            f"Metadata {meta_path} is missing dataset_hash/feature_schema_version. "
+            "Ensure the dataset was built with the latest gogooku5 data tooling."
+        )
+    return {
+        "dataset_hash": dataset_hash,
+        "feature_schema_version": schema_version,
+    }
+
+
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
+    dataset_tags = _extract_dataset_tags(cfg["data"])
+    print(
+        f"[Dataset] dataset_hash={dataset_tags['dataset_hash']} "
+        f"feature_schema_version={dataset_tags['feature_schema_version']}"
+    )
+    tracker = _create_mlflow_tracker(args)
+    mlflow_cm = None
+    try:
+        if tracker and tracker.enabled:
+            run_params = _collect_training_run_params(args, cfg)
+            mlflow_cm = tracker.start_run(
+                stage="train",
+                dagster_run_id=args.dagster_run_id,
+                params=run_params,
+                tags={
+                    "script": "apex_ranker_v0",
+                    "dataset_hash": dataset_tags["dataset_hash"],
+                    "feature_schema_version": dataset_tags["feature_schema_version"],
+                },
+            )
+            mlflow_cm.__enter__()
+
+        if tracker and tracker.enabled:
+            tracker.set_tags(
+                {
+                    "dataset_hash": dataset_tags["dataset_hash"],
+                    "feature_schema_version": dataset_tags["feature_schema_version"],
+                }
+            )
+
+        _run_training(args, cfg, tracker)
+    finally:
+        if mlflow_cm is not None:
+            mlflow_cm.__exit__(None, None, None)
+
+
+def _run_training(args, cfg, tracker) -> None:
     snapshot_epochs = {int(epoch) for epoch in args.ema_snapshot_epochs or [] if int(epoch) > 0}
     warned_snapshot_no_output = False
     eval_cfg = cfg.get("eval", {}) or {}
@@ -558,6 +663,14 @@ def main() -> None:
         print(f"[WARN] No validation dates after filtering; falling back to the last training day {fallback}")
         val_dates = [fallback]
 
+    if tracker and tracker.enabled:
+        tracker.log_metrics(
+            {
+                "train_days": float(len(train_dates)),
+                "val_days": float(len(val_dates)),
+            }
+        )
+
     train_dataset = DayPanelDataset(
         cache,
         feature_cols=feature_cols,
@@ -601,6 +714,9 @@ def main() -> None:
     train_loader = DataLoader(train_dataset, **_loader_kwargs())
     val_loader = DataLoader(val_dataset, **_loader_kwargs())
     train_total_steps = len(train_loader) if len(train_loader) > 0 else 0
+
+    if tracker and tracker.enabled:
+        tracker.log_metrics({"train_total_steps": float(train_total_steps)})
 
     prefetch_display = prefetch_factor if (num_workers > 0 and prefetch_factor) else "default"
     persistent_display = persistent_workers if num_workers > 0 else False
@@ -1114,6 +1230,8 @@ def main() -> None:
         if total_weight > 0:
             print(f"[Val] Short-term score (5/10/20d weighted) = {short_term_score:.4f}")
             metric_results["short_term_score"] = short_term_score
+        if tracker and tracker.enabled and metric_results:
+            tracker.log_metrics(metric_results)
 
         if args.output:
             output_path = Path(args.output)
@@ -1178,6 +1296,8 @@ def main() -> None:
         else:
             torch.save(model.state_dict(), out_path)
         print(f"Saved model to {out_path}")
+        if tracker and tracker.enabled:
+            tracker.log_artifact(str(out_path), artifact_path="models")
     else:
         print("[WARN] --output not set; best model weights were not saved to disk.")
 
