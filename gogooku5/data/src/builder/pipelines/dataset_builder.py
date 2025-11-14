@@ -740,7 +740,7 @@ class DatasetBuilder:
         finalized = self._finalize_for_output(enriched_df)
         finalized = self._ensure_ret_prev_columns(finalized)
         if chunk_spec is not None:
-            return self._persist_chunk_dataset(finalized, chunk_spec)
+            return self._persist_chunk_dataset(finalized, chunk_spec, start_time=start_time)
 
         artifact = self._persist_dataset(finalized, start=start_out, end=end_out)
         self.storage.ensure_remote_symlink(target=str(artifact.latest_symlink))
@@ -941,7 +941,7 @@ class DatasetBuilder:
         LOGGER.info("[QUALITY] %s passed dataset quality checks (%d stages)", context, len(summary))
         return summary
 
-    def _persist_chunk_dataset(self, df: pl.DataFrame, chunk_spec: ChunkSpec) -> Path:
+    def _persist_chunk_dataset(self, df: pl.DataFrame, chunk_spec: ChunkSpec, *, start_time: float) -> Path:
         """Persist chunk outputs and metadata without touching global symlinks."""
 
         parquet_kwargs = {"compression": self.settings.dataset_parquet_compression}
@@ -1159,6 +1159,13 @@ class DatasetBuilder:
             # Cache miss: Generate and save as Arrow IPC
             LOGGER.info("[SMALL TABLE] Cache miss for %s, generating...", table_name)
             df = generator_fn()
+
+            # FIX: Normalize schema before writing to IPC
+            # Arrow IPC requires consistent types - convert any mixed-type columns explicitly
+            # This prevents "could not append value: YYYY-MM-DD of type: date" errors
+            # when Polars infers inconsistent types from dict data
+            df = self._normalize_schema_for_ipc(df)
+
             df.write_ipc(cache_path, compression="lz4")
             LOGGER.info("[SMALL TABLE] Saved %s to IPC cache: %d rows, %d cols", table_name, df.height, df.width)
         else:
@@ -1167,6 +1174,75 @@ class DatasetBuilder:
         # Load with lazy scan (mmap) + cache in memory
         lf = pl.scan_ipc(str(cache_path))
         return lf.cache()  # In-memory cache for repeated use
+
+    def _normalize_schema_for_ipc(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Normalize DataFrame schema for Arrow IPC write compatibility.
+
+        Arrow IPC requires strict schema consistency. This method ensures:
+        - Date columns are properly typed (not mixed String/Date)
+        - All columns have consistent types across all rows
+
+        Args:
+            df: DataFrame to normalize
+
+        Returns:
+            DataFrame with normalized schema safe for IPC write
+
+        Note:
+            This fixes the "could not append value: YYYY-MM-DD of type: date" error
+            that occurs when Polars infers mixed types from dict/JSON data.
+        """
+        if df.is_empty():
+            return df
+
+        # Strategy: For each column, check if it needs explicit type casting
+        # Common issue: Date-like strings being inconsistently inferred
+        cast_exprs = []
+
+        for col_name in df.columns:
+            dtype = df[col_name].dtype
+
+            # Check for Utf8 columns that might contain date strings
+            if dtype == pl.Utf8:
+                # Try to detect if this is a date column by sampling non-null values
+                sample = df.select(pl.col(col_name)).filter(pl.col(col_name).is_not_null()).head(10)
+                if not sample.is_empty():
+                    # Check if values look like dates (YYYY-MM-DD pattern)
+                    first_val = sample[col_name][0]
+                    if isinstance(first_val, str) and len(first_val) == 10 and first_val.count("-") == 2:
+                        # Likely a date column - try explicit cast
+                        try:
+                            # Test cast on sample
+                            _ = sample.select(pl.col(col_name).str.strptime(pl.Date, "%Y-%m-%d", strict=False))
+                            # If successful, add to cast expressions
+                            cast_exprs.append(
+                                pl.col(col_name).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias(col_name)
+                            )
+                            LOGGER.debug(
+                                "[SCHEMA_FIX] Casting column '%s' from Utf8 to Date for IPC compatibility", col_name
+                            )
+                            continue
+                        except Exception:
+                            # Cast failed - keep as string
+                            pass
+
+            # For Object/Struct types, convert to string for IPC compatibility
+            elif dtype in (pl.Object, pl.Struct):
+                LOGGER.debug(
+                    "[SCHEMA_FIX] Converting column '%s' from %s to Utf8 for IPC compatibility", col_name, dtype
+                )
+                cast_exprs.append(pl.col(col_name).cast(pl.Utf8, strict=False).alias(col_name))
+                continue
+
+            # Keep column as-is if no casting needed
+            if col_name not in [expr.meta.output_name() for expr in cast_exprs]:
+                cast_exprs.append(pl.col(col_name))
+
+        # Apply all casts
+        if cast_exprs:
+            df = df.select(cast_exprs)
+
+        return df
 
     def _load_or_fetch_quotes(self, *, symbols: Iterable[str], start: str, end: str) -> pl.DataFrame:
         """Load quotes using L0 month shards with selective API backfill."""
