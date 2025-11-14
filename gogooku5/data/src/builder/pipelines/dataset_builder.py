@@ -284,6 +284,52 @@ class DatasetBuilder:
             return True
         return False
 
+    def _load_dim_security(self) -> pl.DataFrame:
+        """
+        Load global security dimension table.
+
+        Returns:
+            DataFrame with sec_id mapping
+
+        Raises:
+            FileNotFoundError: If dim_security.parquet not found
+
+        Notes:
+            - dim_security must be generated before dataset build
+            - Run: python gogooku5/data/scripts/build_dim_security.py
+            - Location: {data_cache_dir}/dim_security.parquet
+        """
+        dim_path = self.settings.data_cache_dir / "dim_security.parquet"
+
+        if not dim_path.exists():
+            raise FileNotFoundError(
+                f"dim_security not found: {dim_path}\n"
+                f"\n"
+                f"Please generate dim_security first:\n"
+                f"  python gogooku5/data/scripts/build_dim_security.py\n"
+                f"\n"
+                f"This will create a global security master table with stable sec_id."
+            )
+
+        LOGGER.info("[DIM_SECURITY] Loading from %s", dim_path)
+        dim = pl.read_parquet(dim_path)
+
+        # Validation
+        if "sec_id" not in dim.columns or "code" not in dim.columns:
+            raise ValueError(
+                f"Invalid dim_security schema: missing required columns (sec_id, code)\n"
+                f"Found columns: {dim.columns}"
+            )
+
+        LOGGER.info(
+            "[DIM_SECURITY] Loaded %d securities (sec_id range: %d-%d)",
+            len(dim),
+            dim["sec_id"].min(),
+            dim["sec_id"].max(),
+        )
+
+        return dim
+
     def build(
         self,
         *,
@@ -357,6 +403,9 @@ class DatasetBuilder:
 
         # Use context dates for data fetching
         start, end = start_ctx, end_out
+
+        # Load dim_security (global security master table)
+        dim_security = self._load_dim_security()
 
         LOGGER.info("Starting dataset build from %s to %s", start, end)
 
@@ -8027,6 +8076,7 @@ class DatasetBuilder:
 
     _L0_SCHEMA = {
         "Code": pl.Utf8,
+        "sec_id": pl.Int32,  # NEW: Integer join key (グローバルに安定な証券ID)
         "Date": pl.Utf8,
         "Open": pl.Float64,
         "High": pl.Float64,
