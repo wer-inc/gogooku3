@@ -233,15 +233,17 @@ class DatasetBuilder:
         self._rate_limit_checked = False
         self._schema_fp_cache = None  # Lazy initialization for L0 schema fingerprint
         self._run_meta: dict[str, Any] | None = None
-        raw_manifest = getattr(self.settings, "raw_manifest_path", None)
-        if raw_manifest:
+        raw_manifest_path = self.settings.raw_manifest_path
+        if raw_manifest_path and Path(raw_manifest_path).exists():
             try:
-                self.raw_store = RawDataStore(Path(raw_manifest))
-                LOGGER.info("[RAW] RawDataStore initialized from %s", raw_manifest)
+                self.raw_store = RawDataStore(Path(raw_manifest_path))
+                LOGGER.info("[RAW] RawDataStore initialized from %s", raw_manifest_path)
             except FileNotFoundError:
-                LOGGER.warning("[RAW] Manifest %s not found; raw store disabled", raw_manifest)
+                LOGGER.warning("[RAW] Manifest %s not found; raw store disabled", raw_manifest_path)
                 self.raw_store = None
         else:
+            if raw_manifest_path:
+                LOGGER.info("[RAW] Manifest %s missing; raw store disabled", raw_manifest_path)
             self.raw_store = None
 
         if hasattr(self.data_sources, "attach_raw_store"):
@@ -1072,9 +1074,8 @@ class DatasetBuilder:
         parquet_kwargs = {"compression": self.settings.dataset_parquet_compression}
 
         # Categorical optimization: Convert low-cardinality string columns to Categorical
-        # This reduces memory by 50-70% and improves parquet compression by 5-10%
-        # NOTE: SecId is Int32, not String - categorical encoding would corrupt it (null/wrong values)
-        categorical_columns = ["Code", "sector_code", "market_code"]
+        # Keep only Code as categorical; Sector/Market stay strings to satisfy schema manifest
+        categorical_columns = ["Code"]
 
         parquet_path, ipc_path = save_with_cache(
             df,
@@ -1536,6 +1537,8 @@ class DatasetBuilder:
         payload = fetcher.fetch_by_date(dates=trading_days, codes=None)
         LOGGER.info("[CACHE] Month %s fetched %d records", month, len(payload))
         quotes_df = self._format_quotes(payload)
+        if not quotes_df.is_empty():
+            self._save_raw_snapshot("prices", quotes_df, filename=f"daily_quotes_{month}.parquet")
         if quotes_df.is_empty():
             return pl.DataFrame()
         return self._normalize_for_shard(quotes_df)
@@ -7683,6 +7686,155 @@ class DatasetBuilder:
 
         return hashlib.md5(digest_input).hexdigest()  # nosec: cache key only
 
+    def _save_raw_snapshot(
+        self,
+        source: str,
+        df: pl.DataFrame,
+        *,
+        filename: str | None = None,
+        suffix: str | None = None,
+        overwrite: bool = True,
+    ) -> Path | None:
+        """Persist raw API responses when enabled."""
+
+        if not self.settings.save_raw_data or df.is_empty():
+            return None
+
+        target_dir = self.settings.raw_data_dir / source
+        target_dir.mkdir(parents=True, exist_ok=True)
+        if suffix is None:
+            suffix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        if filename is None:
+            filename = f"{source}_{suffix}.parquet"
+        path = target_dir / filename
+        parquet_kwargs = {"compression": self.settings.dataset_parquet_compression}
+        if path.exists() and not overwrite:
+            return path
+        try:
+            save_with_cache(df, path, create_ipc=False, parquet_kwargs=parquet_kwargs)
+            LOGGER.debug("[RAW] Saved snapshot %s (%d rows)", path, df.height)
+            return path
+        except Exception as exc:  # pragma: no cover - defensive logging
+            LOGGER.warning("[RAW] Failed to save snapshot %s: %s", path, exc)
+            return None
+
+    def _parse_raw_chunk_sources(self) -> list[str]:
+        configured = (self.settings.raw_chunk_sources or "").strip()
+        if not configured:
+            return ["prices"]
+        tokens = [token.strip() for token in configured.split(",")]
+        return [token for token in tokens if token]
+
+    def _ensure_raw_manifest_path(self) -> Path:
+        path = self.settings.raw_manifest_path
+        if path is None:
+            path = self.settings.data_output_dir / "raw_manifest.json"
+        return Path(path)
+
+    def _file_sha256(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def _chunk_prices_quarter(self, chunk_spec: ChunkSpec) -> dict[str, Any] | None:
+        raw_root = self.settings.raw_data_dir
+        source_dir = raw_root / "prices"
+        chunk_dir = source_dir / "chunks"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        start_month = month_key(chunk_spec.output_start)
+        end_month = month_key(chunk_spec.output_end)
+        months = month_range(start_month, end_month) or [start_month]
+        frames: list[pl.DataFrame] = []
+        for month in months:
+            path = source_dir / f"daily_quotes_{month}.parquet"
+            if path.exists():
+                frames.append(pl.read_parquet(path))
+        if not frames:
+            LOGGER.debug("[RAW] No price snapshots available for %s", chunk_spec.chunk_id)
+            return None
+        combined = pl.concat(frames, how="vertical")
+        if combined.is_empty():
+            LOGGER.debug("[RAW] Combined price snapshot empty for %s", chunk_spec.chunk_id)
+            return None
+        date_col = "Date" if "Date" in combined.columns else ("date" if "date" in combined.columns else None)
+        if date_col is not None:
+            combined = combined.with_columns(pl.col(date_col).cast(pl.Date, strict=False).alias(date_col))
+            stats = combined.select(
+                pl.col(date_col).min().alias("start"),
+                pl.col(date_col).max().alias("end"),
+                pl.len().alias("rows"),
+            )
+            start_val = stats["start"][0]
+            end_val = stats["end"][0]
+            row_count = int(stats["rows"][0])
+        else:
+            start_val = end_val = None
+            row_count = combined.height
+        out_path = chunk_dir / f"daily_quotes_{chunk_spec.chunk_id}.parquet"
+        combined.write_parquet(out_path, compression=self.settings.dataset_parquet_compression)
+        rel_path = out_path.relative_to(raw_root).as_posix()
+        record: dict[str, Any] = {
+            "source": "prices",
+            "file": rel_path,
+            "start": start_val.isoformat() if isinstance(start_val, date) else None,
+            "end": end_val.isoformat() if isinstance(end_val, date) else None,
+            "chunk_id": chunk_spec.chunk_id,
+            "rows": row_count,
+            "hash": self._file_sha256(out_path),
+            "format": "parquet",
+        }
+        LOGGER.info("[RAW] Wrote price chunk %s (%s)", chunk_spec.chunk_id, out_path)
+        return record
+
+    def _update_raw_manifest(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        manifest_path = self._ensure_raw_manifest_path()
+        if manifest_path.exists():
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        else:
+            payload = {"generated_at": None, "raw_root": str(self.settings.raw_data_dir), "sources": {}}
+        sources = payload.setdefault("sources", {})
+        for record in records:
+            source_entries = sources.setdefault(record["source"], [])
+            source_entries = [item for item in source_entries if item.get("chunk_id") != record["chunk_id"]]
+            source_entries.append(record)
+            source_entries.sort(key=lambda item: item.get("chunk_id") or "")
+            sources[record["source"]] = source_entries
+        payload["generated_at"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        LOGGER.info("[RAW] Updated manifest at %s", manifest_path)
+
+    def _reload_raw_store(self) -> None:
+        manifest_path = self._ensure_raw_manifest_path()
+        if not manifest_path.exists():
+            return
+        try:
+            self.raw_store = RawDataStore(manifest_path)
+            LOGGER.info("[RAW] Reloaded RawDataStore from %s", manifest_path)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("[RAW] Failed to reload RawDataStore: %s", exc)
+            self.raw_store = None
+        if hasattr(self.data_sources, "attach_raw_store"):
+            self.data_sources.attach_raw_store(self.raw_store)
+
+    def _auto_chunk_and_manifest(self, chunk_spec: ChunkSpec) -> None:
+        sources = self._parse_raw_chunk_sources()
+        produced: list[dict[str, Any]] = []
+        for source in sources:
+            if source == "prices":
+                record = self._chunk_prices_quarter(chunk_spec)
+                if record:
+                    produced.append(record)
+            else:
+                LOGGER.debug("[RAW] Auto chunking not yet implemented for source=%s", source)
+        if not produced:
+            return
+        self._update_raw_manifest(produced)
+        self._reload_raw_store()
+
     def _finalize_for_output(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         Normalize schema before persistence.
@@ -7901,8 +8053,8 @@ class DatasetBuilder:
             return df
 
         try:
-            # Extract only numeric columns needed for GPU processing + join keys
-            gpu_cols = ["code", "date", "close", "volume", "open", "high", "low"]
+            # Extract only columns needed for GPU processing + join keys
+            gpu_cols = ["sec_id", "code", "date", "close", "volume", "open", "high", "low"]
             gpu_cols = [c for c in gpu_cols if c in df.columns]
 
             LOGGER.info("Converting %d numeric columns to cuDF for GPU processing...", len(gpu_cols) - 2)
@@ -7945,7 +8097,14 @@ class DatasetBuilder:
             LOGGER.info("✅ GPU rolling features computed successfully")
 
             # Convert only GPU-computed feature columns back to Polars
-            gpu_result_cols = ["code", "date", "close_roll_mean_20d", "close_roll_std_20d", "close_zscore_20d"]
+            gpu_result_cols = [
+                "sec_id",
+                "code",
+                "date",
+                "close_roll_mean_20d",
+                "close_roll_std_20d",
+                "close_zscore_20d",
+            ]
             gdf_result = gdf[gpu_result_cols]
             result_features = cudf_to_pl(gdf_result)
 
