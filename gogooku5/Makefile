@@ -76,6 +76,14 @@ build-2025:
 		--resume
 	@echo "✅ 2025年ビルド完了"
 
+build-2024:
+	@echo "🔨 Building 2024年全四半期 (Q1-Q4)..."
+	@python3 $(_scripts_dir)/build_chunks.py \
+		--start 2024-01-01 \
+		--end 2024-12-31 \
+		--resume
+	@echo "✅ 2024年ビルド完了"
+
 build-2020-2024:
 	@echo "🔨 Building 2020-2024年全期間..."
 	@python3 $(_scripts_dir)/build_chunks.py \

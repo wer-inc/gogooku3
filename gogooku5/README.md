@@ -40,6 +40,9 @@ make build-2020-2024
 
 # Build all periods (2020-2025)
 make build-all
+
+# Chunk raw snapshots and refresh raw_manifest (optional)
+make build-raw
 ```
 
 ### Validation
@@ -85,3 +88,11 @@ make status
 ```
 
 > **Status:** Core infrastructure complete. Dataset building and validation targets fully implemented. Model training targets delegated to respective packages.
+
+## Recommended Simple Workflow
+
+- 日常運用では、基本的に次のコマンドだけを使います:
+  - データセット構築: `make build-2020-2024`, `make build-2025`, または `make build-all`
+  - 検証: `make validate`（必要に応じて `make validate-meta`, `make validate-quality`）
+  - Raw スナップショットの集約と manifest 更新: `make build-raw`（ときどき実行）
+- それ以外のスクリプトや内部モジュール（Dagster, 個別の fetch スクリプトなど）は、特殊な調査や改善時のみ触る想定です。

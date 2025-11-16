@@ -200,12 +200,30 @@ def load_global_regime_data(
             target_cache.parent.mkdir(parents=True, exist_ok=True)
             # Save with IPC cache for 3-5x faster reads
             from ..utils.lazy_io import save_with_cache
+
             _, ipc_path = save_with_cache(base_df, target_cache, create_ipc=True)
             if ipc_path:
                 LOGGER.debug("Created global regime IPC cache: %s", ipc_path)
             LOGGER.info("Cached global regime data to %s", target_cache)
         except Exception as exc:  # pragma: no cover
             LOGGER.warning("Failed to cache global regime parquet (%s): %s", target_cache, exc)
+
+    # Optional raw snapshot for reproducibility (controlled by SAVE_RAW_DATA)
+    try:
+        from ..config import get_settings
+        from ..utils import save_raw_snapshot
+
+        settings = get_settings()
+        if settings.save_raw_data:
+            save_raw_snapshot(
+                root=settings.raw_data_dir,
+                source="macro_global_regime",
+                df=base_df,
+                start=start,
+                end=end,
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        LOGGER.debug("Skipping raw snapshot for macro_global_regime: %s", exc)
 
     return base_df
 

@@ -10,9 +10,11 @@ from .asof import (
 )
 from .cache import CacheManager, ensure_cache_dir
 from .datetime import business_date_range, date_range, shift_trading_days
-from .raw_store import RawDataStore
 from .env import ensure_env_loaded, load_local_env, require_env_var
+from .git_metadata import get_git_metadata
 from .logger import configure_logger, get_logger
+from .raw_snapshot import save_raw_snapshot
+from .raw_store import RawDataStore
 from .mlflow_tracker import MLflowTracker
 from .storage import StorageClient
 
@@ -103,6 +105,8 @@ __all__ = [
     "prepare_snapshot_pl",
     "interval_join_pl",
     "forward_fill_after_publication",
+    "get_git_metadata",
+    "save_raw_snapshot",
     "ensure_cache_dir",
     "ensure_env_loaded",
     "gather_limited",

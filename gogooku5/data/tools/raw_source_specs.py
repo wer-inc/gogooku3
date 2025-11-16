@@ -39,7 +39,7 @@ RAW_SOURCE_SPECS: dict[str, RawSourceSpec] = {
     "prices": RawSourceSpec(
         name="prices",
         input_glob="prices/daily_quotes_*.parquet",
-        date_column="Date",
+        date_column="date",
         output_dir=Path("prices/chunks"),
         description="Daily price quotes (all sessions).",
     ),
@@ -115,5 +115,21 @@ RAW_SOURCE_SPECS: dict[str, RawSourceSpec] = {
         output_dir=Path("jquants/chunks"),
         description="J-Quants listed company master snapshots.",
         sort_by=("Date", "Code"),
+    ),
+    "macro_vix": RawSourceSpec(
+        name="macro_vix",
+        input_glob="macro_vix/macro_vix_*.parquet",
+        date_column="Date",
+        output_dir=Path("macro_vix/chunks"),
+        description="VIX-based macro history (yfinance).",
+        sort_by=("Date",),
+    ),
+    "macro_global_regime": RawSourceSpec(
+        name="macro_global_regime",
+        input_glob="macro_global_regime/macro_global_regime_*.parquet",
+        date_column="Date",
+        output_dir=Path("macro_global_regime/chunks"),
+        description="VVMD global regime macro history (yfinance).",
+        sort_by=("Date",),
     ),
 }

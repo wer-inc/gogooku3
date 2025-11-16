@@ -21,7 +21,7 @@ from ..features.macro.index_option_225 import (
 )
 from ..features.macro.options_asof import build_option_signals, load_options
 from ..features.macro.vix import load_vix_history, prepare_vix_features
-from ..utils import CacheManager, RawDataStore
+from ..utils import CacheManager, RawDataStore, save_raw_snapshot
 from .advanced_fetcher import AdvancedJQuantsFetcher
 from .cache_policy import SourceCachePolicy
 
@@ -62,6 +62,14 @@ class DataSourceManager:
 
         def _fetch() -> pl.DataFrame:
             raw = self.fetcher.fetch_margin_daily(start=start, end=end)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="margin_daily",
+                    df=raw,
+                    start=start,
+                    end=end,
+                )
             return self._normalize_margin_daily(raw)
 
         return self._cached_dataframe(
@@ -155,9 +163,21 @@ class DataSourceManager:
             dataset="margin_weekly",
             cache_key=f"margin_weekly_{start}_{end}",
             ttl_days=self.settings.margin_weekly_cache_ttl_days,
-            fetch_fn=lambda: self.fetcher.fetch_margin_weekly(start=start, end=end),
+            fetch_fn=lambda: self._fetch_margin_weekly_raw(start=start, end=end),
             allow_empty=False,
         )
+
+    def _fetch_margin_weekly_raw(self, *, start: str, end: str) -> pl.DataFrame:
+        df = self.fetcher.fetch_margin_weekly(start=start, end=end)
+        if self.settings.save_raw_data:
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="margin_weekly",
+                df=df,
+                start=start,
+                end=end,
+            )
+        return df
 
     def dividends(self, *, start: str, end: str) -> pl.DataFrame:
         """Return dividend announcements enriched with availability metadata."""
@@ -172,6 +192,14 @@ class DataSourceManager:
             if "RecordDate" in df.columns:
                 df = df.with_columns(pl.col("RecordDate").cast(pl.Date, strict=False))
 
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="dividends",
+                    df=df,
+                    start=start,
+                    end=end,
+                )
             return df
 
         return self._cached_dataframe(
@@ -198,9 +226,21 @@ class DataSourceManager:
             dataset="fs_details",
             cache_key=f"fs_details_{start}_{end}",
             ttl_days=self.settings.macro_cache_ttl_days,
-            fetch_fn=lambda: self.fetcher.fetch_fs_details(start=start, end=end),
+            fetch_fn=lambda: self._fetch_fs_details_raw(start=start, end=end),
             allow_empty=False,
         )
+
+    def _fetch_fs_details_raw(self, *, start: str, end: str) -> pl.DataFrame:
+        df = self.fetcher.fetch_fs_details(start=start, end=end)
+        if self.settings.save_raw_data:
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="statements",
+                df=df,
+                start=start,
+                end=end,
+            )
+        return df
 
     def listed_info(self, *, start: str, end: str) -> pl.DataFrame:
         """Return listed info daily snapshots (日次スナップショット).
@@ -273,7 +313,16 @@ class DataSourceManager:
         ttl = self.settings.topix_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_topix(start=start, end=end)
+            df = self.fetcher.fetch_topix(start=start, end=end)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="indices_topix",
+                    df=df,
+                    start=start,
+                    end=end,
+                )
+            return df
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
@@ -351,6 +400,14 @@ class DataSourceManager:
 
         def _fetch() -> pl.DataFrame:
             raw_options = self.fetcher.fetch_options(start=start, end=end)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="options_daily",
+                    df=raw_options,
+                    start=start,
+                    end=end,
+                )
             normalized = load_options(raw_options, categories=["TOPIXE", "NK225E"])
             features = build_option_signals(
                 normalized,
@@ -411,7 +468,16 @@ class DataSourceManager:
                 "[INDEX OPTION] Cache miss for %s, fetching from API (this may take 2-3 hours for 6+ years)",
                 raw_cache_key,
             )
-            return self.fetcher.fetch_options(start=start, end=end)
+            df = self.fetcher.fetch_options(start=start, end=end)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="index_option_225_raw",
+                    df=df,
+                    start=start,
+                    end=end,
+                )
+            return df
 
         raw_options, cache_hit = self.cache.get_or_fetch_dataframe(
             raw_cache_key,
@@ -451,7 +517,16 @@ class DataSourceManager:
         ttl = self.settings.topix_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_indices(start=start, end=end, codes=codes)
+            df = self.fetcher.fetch_indices(start=start, end=end, codes=codes)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="indices",
+                    df=df,
+                    start=start,
+                    end=end,
+                )
+            return df
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
@@ -463,7 +538,16 @@ class DataSourceManager:
         ttl = self.settings.trades_spec_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_trading_breakdown(start=start, end=end)
+            df = self.fetcher.fetch_trading_breakdown(start=start, end=end)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="trading_breakdown",
+                    df=df,
+                    start=start,
+                    end=end,
+                )
+            return df
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
@@ -484,7 +568,16 @@ class DataSourceManager:
         ttl = self.settings.trades_spec_cache_ttl_days
 
         def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_trades_spec(start=start, end=end)
+            df = self.fetcher.fetch_trades_spec(start=start, end=end)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="flow_trades_spec",
+                    df=df,
+                    start=start,
+                    end=end,
+                )
+            return df
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df
@@ -496,8 +589,20 @@ class DataSourceManager:
             dataset="earnings",
             cache_key=f"earnings_{start}_{end}",
             ttl_days=self.settings.cache_ttl_days_default,
-            fetch_fn=lambda: self.fetcher.fetch_earnings(start=start, end=end),
+            fetch_fn=lambda: self._fetch_earnings_raw(start=start, end=end),
         )
+
+    def _fetch_earnings_raw(self, *, start: str, end: str) -> pl.DataFrame:
+        df = self.fetcher.fetch_earnings(start=start, end=end)
+        if self.settings.save_raw_data:
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="earnings",
+                df=df,
+                start=start,
+                end=end,
+            )
+        return df
 
     def short_selling(
         self,
@@ -521,7 +626,7 @@ class DataSourceManager:
             dataset="short_selling",
             cache_key=f"short_{start}_{end}",
             ttl_days=self.settings.short_selling_cache_ttl_days,
-            fetch_fn=lambda: self.fetcher.fetch_short_selling(start=start, end=end),
+            fetch_fn=lambda: self._fetch_short_selling_raw(start=start, end=end, business_days=business_days),
         )
 
     def short_positions(
@@ -540,8 +645,20 @@ class DataSourceManager:
             dataset="short_positions",
             cache_key=f"short_positions_{start}_{end}",
             ttl_days=self.settings.short_selling_cache_ttl_days,
-            fetch_fn=lambda: self.fetcher.fetch_short_positions(start=start, end=end),
+            fetch_fn=lambda: self._fetch_short_positions_raw(start=start, end=end),
         )
+
+    def _fetch_short_positions_raw(self, *, start: str, end: str) -> pl.DataFrame:
+        df = self.fetcher.fetch_short_positions(start=start, end=end)
+        if self.settings.save_raw_data:
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="short_positions",
+                df=df,
+                start=start,
+                end=end,
+            )
+        return df
 
     def sector_short_selling(
         self,
@@ -565,12 +682,44 @@ class DataSourceManager:
             dataset="sector_short",
             cache_key=f"sector_short_{start}_{end}",
             ttl_days=self.settings.sector_short_cache_ttl_days,
-            fetch_fn=lambda: self.fetcher.fetch_sector_short_selling(
+            fetch_fn=lambda: self._fetch_sector_short_selling_raw(start=start, end=end, business_days=business_days),
+        )
+
+    def _fetch_short_selling_raw(
+        self,
+        *,
+        start: str,
+        end: str,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        df = self.fetcher.fetch_short_selling(start=start, end=end, business_days=business_days)
+        if self.settings.save_raw_data:
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="short_selling",
+                df=df,
                 start=start,
                 end=end,
-                business_days=business_days,
-            ),
-        )
+            )
+        return df
+
+    def _fetch_sector_short_selling_raw(
+        self,
+        *,
+        start: str,
+        end: str,
+        business_days: Optional[list[str]] = None,
+    ) -> pl.DataFrame:
+        df = self.fetcher.fetch_sector_short_selling(start=start, end=end, business_days=business_days)
+        if self.settings.save_raw_data:
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="short_selling_sector",
+                df=df,
+                start=start,
+                end=end,
+            )
+        return df
 
     def prices_am(self, *, start: str, end: str) -> pl.DataFrame:
         """Return morning session (AM) price snapshots."""
@@ -588,7 +737,16 @@ class DataSourceManager:
         ttl = self.settings.cache_ttl_days_default
 
         def _fetch() -> pl.DataFrame:
-            return self.fetcher.fetch_prices_am(start=start, end=end)
+            df = self.fetcher.fetch_prices_am(start=start, end=end)
+            if self.settings.save_raw_data:
+                save_raw_snapshot(
+                    root=self.settings.raw_data_dir,
+                    source="prices_am",
+                    df=df,
+                    start=start,
+                    end=end,
+                )
+            return df
 
         df, _ = self.cache.get_or_fetch_dataframe(cache_key, _fetch, ttl_days=ttl)
         return df

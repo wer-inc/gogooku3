@@ -109,11 +109,27 @@ class AdvancedJQuantsFetcher:
 
         return run_sync(self._run_with_session(_runner))
 
-    def fetch_short_selling(self, *, start: str, end: str) -> pl.DataFrame:
-        """Fetch daily short selling aggregates."""
+    def fetch_short_selling(
+        self,
+        *,
+        start: str,
+        end: str,
+        business_days: Sequence[str] | None = None,
+    ) -> pl.DataFrame:
+        """Fetch daily short selling aggregates.
+
+        When business_days is provided, the underlying async client will
+        restrict API calls to those dates (to honour trading calendar
+        filters and avoid unnecessary requests).
+        """
 
         async def _runner(fetcher, session):
-            return await fetcher.get_short_selling(session, start, end)
+            return await fetcher.get_short_selling(
+                session,
+                from_date=start,
+                to_date=end,
+                business_days=list(business_days) if business_days is not None else None,
+            )
 
         return run_sync(self._run_with_session(_runner))
 

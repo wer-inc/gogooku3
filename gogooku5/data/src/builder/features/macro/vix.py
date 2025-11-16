@@ -85,12 +85,30 @@ def load_vix_history(
             target_cache.parent.mkdir(parents=True, exist_ok=True)
             # Save with IPC cache for 3-5x faster reads
             from ..utils.lazy_io import save_with_cache
+
             _, ipc_path = save_with_cache(df, target_cache, create_ipc=True)
             if ipc_path:
                 LOGGER.debug("Created VIX IPC cache: %s", ipc_path)
             LOGGER.info("Cached VIX history to %s", target_cache)
         except Exception as exc:  # pragma: no cover
             LOGGER.warning("Failed to cache VIX parquet (%s): %s", target_cache, exc)
+
+    # Optional raw snapshot for reproducibility (controlled by SAVE_RAW_DATA)
+    try:
+        from ..config import get_settings
+        from ..utils import save_raw_snapshot
+
+        settings = get_settings()
+        if settings.save_raw_data:
+            save_raw_snapshot(
+                root=settings.raw_data_dir,
+                source="macro_vix",
+                df=df,
+                start=start,
+                end=end,
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        LOGGER.debug("Skipping raw snapshot for macro_vix: %s", exc)
 
     return df
 

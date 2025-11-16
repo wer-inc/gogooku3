@@ -3142,7 +3142,19 @@ class JQuantsAsyncFetcher:
             return pl.DataFrame()
 
         df = pl.DataFrame(all_data)
+
+        # First apply strict structural checks for sector-level payload
         df = self._normalize_sector_short_selling_data(df)
+        if df.is_empty():
+            # Normalization already logged any missing/invalid columns
+            return df
+
+        # Re-use generic short selling normalizer so that sector payloads
+        # get the same PublishedDate / Section / type handling as the
+        # issue-level short_selling endpoint. This ensures that downstream
+        # as-of joins, which expect `PublishedDate` (→ `publisheddate`),
+        # can treat sector_short_selling frames identically.
+        df = self._normalize_short_selling_data(df)
 
         print(f"Retrieved {len(df)} sector short selling records")
         return df

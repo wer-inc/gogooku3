@@ -79,6 +79,7 @@ from ..utils import (
     business_date_range,
     configure_logger,
     forward_fill_after_publication,
+    get_git_metadata,
     interval_join_pl,
     month_key,
     prepare_snapshot_pl,
@@ -679,6 +680,7 @@ class DatasetBuilder:
         combined_df = self.macro_features.add_global_regime(combined_df, global_regime_features)
 
         combined_df = self._shift_macro_features(combined_df)
+        combined_df = self._ensure_macro_columns(combined_df)
 
         combined_df = self.volatility_features.add_features(combined_df)
         combined_df = self.graph_features.add_features(combined_df)
@@ -1101,6 +1103,9 @@ class DatasetBuilder:
         }
         if isinstance(self._run_meta, dict):
             metadata["builder_meta"] = self._run_meta
+
+        # Phase 1.4: Add Git metadata for reproducibility
+        metadata.update(get_git_metadata())
 
         validation_error: str | None = None
         if self.schema_validator is not None:
@@ -1538,7 +1543,17 @@ class DatasetBuilder:
         LOGGER.info("[CACHE] Month %s fetched %d records", month, len(payload))
         quotes_df = self._format_quotes(payload)
         if not quotes_df.is_empty():
-            self._save_raw_snapshot("prices", quotes_df, filename=f"daily_quotes_{month}.parquet")
+            from ..utils import save_raw_snapshot
+
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="prices",
+                df=quotes_df,
+                start=start_date,
+                end=end_date,
+                filename=f"daily_quotes_{month}.parquet",
+                overwrite=True,
+            )
         if quotes_df.is_empty():
             return pl.DataFrame()
         return self._normalize_for_shard(quotes_df)
@@ -3576,6 +3591,61 @@ class DatasetBuilder:
             if col in df.columns:
                 df = df.drop(col)
 
+        return df
+
+    def _ensure_macro_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure macro VIX / VVMD feature columns exist with correct dtypes.
+
+        This prevents schema validation failures when upstream macro loaders
+        return empty frames (e.g., yfinance unavailable or cache missing).
+        """
+        specs: dict[str, pl.DataType] = {
+            # VIX-based features
+            "macro_vix_close": pl.Float64,
+            "macro_vix_log_close": pl.Float64,
+            "macro_vix_ret_1d": pl.Float64,
+            "macro_vix_ret_5d": pl.Float64,
+            "macro_vix_ret_10d": pl.Float64,
+            "macro_vix_ret_20d": pl.Float64,
+            "macro_vix_vol_20": pl.Float64,
+            "macro_vix_sma_ratio_5_20": pl.Float64,
+            "macro_vix_vol_z": pl.Float64,
+            "macro_vix_spike": pl.Int8,
+            # VVMD global regime features (schematized from feature_schema_summary.txt)
+            "macro_vvmd_vol_spy_rv20": pl.Float64,
+            "macro_vvmd_vol_spy_drv_20_63": pl.Float64,
+            "macro_vvmd_vol_qqq_rv20": pl.Float64,
+            "macro_vvmd_vol_vix_z_252d": pl.Float64,
+            "macro_vvmd_vlm_spy_surge20": pl.Float64,
+            "macro_vvmd_vlm_qqq_surge20": pl.Float64,
+            "macro_vvmd_mom_spy_63d": pl.Float64,
+            "macro_vvmd_mom_qqq_63d": pl.Float64,
+            "macro_vvmd_trend_spy_ma_gap_20_100": pl.Float64,
+            "macro_vvmd_trend_qqq_ma_gap_20_100": pl.Float64,
+            "macro_vvmd_breakout_spy_bo52": pl.Float64,
+            "macro_vvmd_demand_dxy_z_252d": pl.Float64,
+            "macro_vvmd_demand_btc_rel_63d": pl.Float64,
+            "macro_vvmd_vol_btc_rv20": pl.Float64,
+            "macro_vvmd_vrp_spy": pl.Float64,
+            "macro_vvmd_vrp_spy_z_252d": pl.Float64,
+            "macro_vvmd_vrp_spy_high_flag": pl.Int8,
+            "macro_vvmd_credit_spread_ratio": pl.Float64,
+            "macro_vvmd_credit_spread_z_63d": pl.Float64,
+            "macro_vvmd_rates_term_ratio": pl.Float64,
+            "macro_vvmd_rates_term_z_63d": pl.Float64,
+            "macro_vvmd_vix_term_slope": pl.Float64,
+            "macro_vvmd_vix_term_ratio": pl.Float64,
+            "macro_vvmd_vix_term_z_126d": pl.Float64,
+            "macro_vvmd_spy_overnight_ret": pl.Float64,
+            "macro_vvmd_spy_intraday_ret": pl.Float64,
+            "macro_vvmd_fx_usdjpy_ret_1d": pl.Float64,
+            "macro_vvmd_fx_usdjpy_ret_5d": pl.Float64,
+            "macro_vvmd_fx_usdjpy_ret_20d": pl.Float64,
+            "macro_vvmd_fx_usdjpy_z_20d": pl.Float64,
+        }
+        for name, dtype in specs.items():
+            if name not in df.columns:
+                df = df.with_columns(pl.lit(None, dtype=dtype).alias(name))
         return df
 
     def _ensure_listed_info_columns(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -6653,21 +6723,45 @@ class DatasetBuilder:
             )
 
             # As-of join market-wide ratios (no code, just by timestamp)
-            result = df.join(
+            result = df.join_asof(
                 market.sort("available_ts"),
                 left_on="asof_ts",
                 right_on="available_ts",
-                how="left",
+                strategy="backward",
             ).drop(["available_ts"], strict=False)
 
-            LOGGER.info("[PATCH D] Joined short selling market features with T+1 as-of join")
+            # Validate join success (detect timestamp mismatches)
+            if "short_selling_ratio_market" in result.columns:
+                null_rate = result.select(
+                    pl.col("short_selling_ratio_market").is_null().mean()
+                ).item()
+                if null_rate > 0.95:
+                    LOGGER.error(
+                        f"High NULL rate ({null_rate:.1%}) after short_selling join - "
+                        f"possible timestamp mismatch or data availability issue"
+                    )
+                else:
+                    LOGGER.info(
+                        f"[PATCH D] Joined short selling market features with T+1 as-of join "
+                        f"(NULL rate: {null_rate:.1%})"
+                    )
+            else:
+                LOGGER.info("[PATCH D] Joined short selling market features with T+1 as-of join")
 
             # Phase 2 Bug #12 fix: Continue to sector-level processing instead of early return
             # Try to add sector-level short selling ratios
             try:
                 sector_short_df = self.data_sources.sector_short_selling(start=start, end=end)
-                if not sector_short_df.is_empty() and "publisheddate" in sector_short_df.columns:
-                    # Prepare sector short selling with T+1 availability
+                if not sector_short_df.is_empty():
+                    # Normalize column names (align with short_selling path)
+                    # - New fetcher returns PublishedDate / Sector33Code
+                    # - Older cached data may only have Date / Sector33Code
+                    sector_short_df = sector_short_df.rename({col: col.lower() for col in sector_short_df.columns})
+
+                    # Prepare sector short selling with T+1 availability.
+                    # `prepare_snapshot_pl` will fall back to "date" when
+                    # "publisheddate" is absent, so both new and legacy shapes
+                    # are supported.
                     sector_prepared = prepare_snapshot_pl(
                         sector_short_df,
                         published_date_col="publisheddate",
@@ -6937,6 +7031,17 @@ class DatasetBuilder:
                         )
 
                         # P0: セクター別にT+1 as-of結合（セクターコードとタイムスタンプで結合）
+                        # メインDataFrameにsector_codeカラムを追加（Sector33Codeまたはsector33_codeから）
+                        sector_col = next(
+                            (c for c in result.columns if c.lower() in ["sector33code", "sector_33code", "sectorcode"]),
+                            None
+                        )
+                        if sector_col:
+                            result = result.with_columns(
+                                pl.col(sector_col).cast(pl.Utf8).alias("sector_code")
+                            )
+                            self.logger.info(f"[SHORT_SELLING] Mapped '{sector_col}' → 'sector_code' for sector join")
+
                         if "sector_code" in result.columns:
                             # セクター別の結合: sector_codeとavailable_tsで結合
                             # まず、resultとsector_featuresをソート
@@ -7686,38 +7791,6 @@ class DatasetBuilder:
 
         return hashlib.md5(digest_input).hexdigest()  # nosec: cache key only
 
-    def _save_raw_snapshot(
-        self,
-        source: str,
-        df: pl.DataFrame,
-        *,
-        filename: str | None = None,
-        suffix: str | None = None,
-        overwrite: bool = True,
-    ) -> Path | None:
-        """Persist raw API responses when enabled."""
-
-        if not self.settings.save_raw_data or df.is_empty():
-            return None
-
-        target_dir = self.settings.raw_data_dir / source
-        target_dir.mkdir(parents=True, exist_ok=True)
-        if suffix is None:
-            suffix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        if filename is None:
-            filename = f"{source}_{suffix}.parquet"
-        path = target_dir / filename
-        parquet_kwargs = {"compression": self.settings.dataset_parquet_compression}
-        if path.exists() and not overwrite:
-            return path
-        try:
-            save_with_cache(df, path, create_ipc=False, parquet_kwargs=parquet_kwargs)
-            LOGGER.debug("[RAW] Saved snapshot %s (%d rows)", path, df.height)
-            return path
-        except Exception as exc:  # pragma: no cover - defensive logging
-            LOGGER.warning("[RAW] Failed to save snapshot %s: %s", path, exc)
-            return None
-
     def _parse_raw_chunk_sources(self) -> list[str]:
         configured = (self.settings.raw_chunk_sources or "").strip()
         if not configured:
@@ -8000,6 +8073,48 @@ class DatasetBuilder:
             "market_code": "MarketCode",
         }
         out = safe_rename(df, rename_map)
+
+        # Phase 1.3: Missing-value and event flags
+        # flag_price_limit_hit: price limits reached (upper or lower)
+        if "upper_limit" in out.columns or "lower_limit" in out.columns:
+            upper = pl.col("upper_limit") if "upper_limit" in out.columns else pl.lit(0, dtype=pl.Int8)
+            lower = pl.col("lower_limit") if "lower_limit" in out.columns else pl.lit(0, dtype=pl.Int8)
+            out = out.with_columns(
+                ((upper.fill_null(0) == 1) | (lower.fill_null(0) == 1))
+                .cast(pl.Int8)
+                .alias("flag_price_limit_hit")
+            )
+        else:
+            out = out.with_columns(pl.lit(0, dtype=pl.Int8).alias("flag_price_limit_hit"))
+
+        # flag_adjustment_event: any change in AdjustmentFactor within a code
+        if "AdjustmentFactor" in out.columns and "Code" in out.columns:
+            out = out.sort(["Code", "Date"]).with_columns(
+                (
+                    pl.col("AdjustmentFactor")
+                    != pl.col("AdjustmentFactor").shift(1).over("Code")
+                )
+                .fill_null(False)
+                .cast(pl.Int8)
+                .alias("flag_adjustment_event")
+            )
+        else:
+            out = out.with_columns(pl.lit(0, dtype=pl.Int8).alias("flag_adjustment_event"))
+
+        # flag_delisted: SecId missing (historical/delisted or unknown securities)
+        if "SecId" in out.columns:
+            out = out.with_columns(pl.col("SecId").is_null().cast(pl.Int8).alias("flag_delisted"))
+        else:
+            out = out.with_columns(pl.lit(0, dtype=pl.Int8).alias("flag_delisted"))
+
+        # flag_halted: prefer explicit trading suspension flags when present
+        if "TradingSuspensionFlag" in out.columns:
+            halted_expr = pl.col("TradingSuspensionFlag").cast(pl.Int8)
+        elif "trading_suspension_flag" in out.columns:
+            halted_expr = pl.col("trading_suspension_flag").cast(pl.Int8)
+        else:
+            halted_expr = pl.lit(0, dtype=pl.Int8)
+        out = out.with_columns(halted_expr.alias("flag_halted"))
 
         # Hotfix Step 4: Validate no duplicates remain (fail-fast)
         validate_unique_columns(out)
