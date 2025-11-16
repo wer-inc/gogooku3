@@ -1,0 +1,23 @@
+resources:
+  dataset_builder:
+    config:
+      refresh_listed: true
+      enable_dataset_quality_check: true
+      dataset_quality_targets: "ret_prev_1d ret_prev_5d ret_prev_20d ret_prev_60d"
+      dataset_quality_asof_checks: "DisclosedDate<=Date earnings_event_date<=Date"
+      dataset_quality_fail_on_warning: false
+
+ops:
+  g5_dataset_chunks:
+    config:
+      start: "2015-01-01"
+      end: "2024-12-31"
+      chunk_months: 3
+      latest_only: false
+      resume: true
+      force: false
+      refresh_listed: false
+  g5_dataset_full:
+    config:
+      allow_partial: false
+      strict: false

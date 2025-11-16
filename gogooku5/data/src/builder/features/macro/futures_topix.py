@@ -164,6 +164,9 @@ def select_front_next(df: pl.DataFrame) -> pl.DataFrame:
             "front_oi": [front_oi],
             "front_last_trading_day": [front_last_trading_day],
         }
+    ).with_columns(
+        # FIX: Ensure date is pl.Date, not Object (prevents join type mismatch)
+        pl.col("date").cast(pl.Date, strict=False)
     )
 
     # セッション価格も追加（front限月から）

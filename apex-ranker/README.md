@@ -34,8 +34,9 @@ apex-ranker/
 
 1. Ensure the latest dataset artifacts exist:
 
-   - `output/ml_dataset_latest_full.parquet`
+   - `output_g5/ml_dataset_full_with_targets.parquet` （`add_future_returns.py` でターゲット付与後）
    - `dataset_features_detail.json`
+   - 詳細: [`docs/DATA_PREPARATION.md`](docs/DATA_PREPARATION.md)
 
 2. Review `configs/v0_base.yaml` and adjust:
 

@@ -1,8 +1,49 @@
-# Python
+# ============================================================================
+# .gitignore for ATFT-GAT-FAN Project
+# Last updated: 2025-11-15
+# ============================================================================
+
+# === SECURITY (CRITICAL - NEVER COMMIT) ===================================
+secrets/
+.env
+.env.*
+!.env.example
+gogooku-*.json
+*.pat
+credentials.json
+
+# === BUILD ARTIFACTS & OUTPUT (LARGE) =====================================
+output/
+output_g5/
+models/
+*.parquet
+*.arrow
+*.h5
+*.pkl
+*.pickle
+
+# === LOGS & TEMPORARY FILES ===============================================
+_logs/
+logs/
+*.log
+tmp_*
+*.tmp
+*.bak
+*_backup_*/
+chunks_backup_*/
+run_configs/
+
+# Dagster runtime artifacts (job execution logs, UUID-based run storage)
+gogooku5/storage/
+
+# === PYTHON ===============================================================
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -16,190 +57,194 @@ parts/
 sdist/
 var/
 wheels/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual Environment
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
 venv/
 ENV/
-env/
-.venv
+env.bak/
+venv.bak/
 
-# IDE
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# === IDE & EDITORS ========================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
-# Auto-generated environment info
-.codex-env-info.md
-
-# Project specific (anchor runtime dirs to repo root)
-/output/
-/output_smoke/
-/output_offline_full*/
-/runs/
-/tuning_results/
-
-# Research/design documents (prefix with ! to exclude from tracking)
-/!QuantumFlow/
-/!*/
-!/apex-ranker/
-
-# Data artifacts (narrow scope; allow configs/tests fixtures)
-/data/
-/cache/
-/graph_cache/
-/artifacts/
-*.npz
-*.parquet
-*.csv
-!tests/fixtures/**/*.csv
-!tests/fixtures/**/*.parquet
-!tests/fixtures/**/*.npz
-!configs/**/*.csv
-
-# Environment files
-/.env*
-!/.env
-!/.env.example
-!/.env.*.example
-
-# Credentials and secrets (CRITICAL: Never commit!)
-*.key
-*.pem
-*service-account*.json
-*service_account*.json
-gogooku*.json
-github.pat
-*.pat
-*credentials*.json
-!*example*credentials*.json
-
-# Models and checkpoints
-/models/
+# === MACHINE LEARNING =====================================================
+# Checkpoints
+checkpoints/
+checkpoint_*/
+*.ckpt
 *.pth
 *.pt
-*.pkl
-*.joblib
+
+# TensorBoard
+runs/
+tensorboard/
+lightning_logs/
+
+# Weights & Biases
+wandb/
 
 # MLflow
-/mlruns/
+mlruns/
 
-# Monitoring
-monitoring.db
-*.db
+# DVC
+.dvc/
+*.dvc
 
-# Logs (unified structure)
-/_logs/**
-/logs
-/logs/
-**/subprojects/**/_logs/
-**/subprojects/**/logs/
-**/subprojects/**/output/
-*.log
-*.out
-*.err
+# === DATA FILES ===========================================================
+# Large data files (keep sample files for testing)
+*.csv
+*.tsv
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!**/configs/*.json
+!**/config/*.json
 
-# Google Cloud SDK (downloaded locally by setup scripts)
-/google-cloud-sdk/
-/google-cloud-cli-*.tar.gz
+# === CLOUD & DEPLOYMENT ===================================================
+.gcloudignore
+.terraform/
+*.tfstate
+*.tfstate.backup
 
-# Legacy log locations (deprecated)
-/dagster_home/logs/
-/mlruns/**/logs/
-/output/**/logs/
+# === SYSTEM FILES =========================================================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
+# === PROJECT SPECIFIC =====================================================
+# Benchmark outputs
+benchmark_output/
 
-# Testing
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
+# Archives and compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
 
-# Dagster
-/dagster_home/
-/.dagster/
+# Cache directories
+.cache/
+cache/
 
-# Weights & Biases local run artifacts
-/wandb/
+# Compiled documentation
+docs/_build/
+docs/build/
 
-# Archive and cleanup
-/_archive/**
-*.backup
-*_backup.*
-*_backup_*/
-backup/
-temp/
-tmp/
-backup_*.tar.gz
-
-# Inventory and analysis files
-repo_inventory.csv
-duplicates.csv
-DISPOSITION.csv
-*_inventory.csv
-*_report.md
-cleanup_execution_report.md
-logs/
-outputs/
-results/
-.env
-
-# Archive files (experimental data, logs, old code)
-archive/
-archive/*.tar.gz
-archive/*/
-
-# Secrets directory (credentials, API keys)
-secrets/
-secrets.zip
-
-# gogooku5 migration workspace (work-in-progress)
-gogooku5/data/models/
-gogooku5/data/output/cache/quotes_v2/
-gogooku5/data/output/ml_dataset_*_full_metadata.json
-gogooku5/data/output/cache/*.arrow
-gogooku5/data/output/cache/macro/
-gogooku5/data/output/cache/small_tables/
-gogooku5/data/output/ml_dataset_*.arrow
-gogooku5/data/output/ml_dataset_*_feature_index.json
-gogooku5/data/src/builder/utils/gpu_utils.py
-gogooku5/data/src/builder/utils/quotes_l0.py
-gogooku5/data/configs/
-gogooku5/data/tools/lazy_dataset_utils.py
-gogooku5/models/apex_ranker/output/
-gogooku5/models/apex_ranker/configs/feature_*_compat.yaml
-gogooku5/models/apex_ranker/configs/feature_groups_*.yaml
-gogooku5/models/apex_ranker/configs/*_cleanADV.yaml
-gogooku5/models/apex_ranker/configs/v0_*.yaml
-gogooku5/models/apex_ranker/src/apex_ranker/backtest/
-gogooku5/models/apex_ranker/src/apex_ranker/models/feature_gate.py
-gogooku5/models/apex_ranker/src/apex_ranker/utils/statistics.py
-gogooku5/models/apex_ranker/*_PURGED_*.md
-gogooku5/models/apex_ranker/QUICKSTART_*.md
-gogooku5/models/apex_ranker/TRAINING_*.md
-gogooku5/models/apex_ranker/VERIFICATION_*.md
-gogooku5/.telemetry/
-gogooku5/dagster.yaml.bak
-gogooku5/storage/
-gogooku5/data/src/builder/api/*.bak
-gogooku5/data/src/builder/api/cache_policy.py
-
-# apex-ranker legacy (use gogooku5/models/apex_ranker instead)
-apex-ranker/apex_ranker/models/feature_gate.py
-
-# MCP filesystem temporary directories
-tmp_fs_cache/
-tmp_fs_output/
-
-# Temporary utility scripts (data merging, analysis)
-/add_future_returns.py
-/merge_*.py
-/run_configs/
+# === EXCEPTIONS (WHITELIST) ===============================================
+# Keep certain config files
+!configs/**/*.json
+!configs/**/*.yaml
+!.claude/
+!.github/

@@ -1,0 +1,8 @@
+{
+  "enabledMcpjsonServers": [
+    "playwright",
+    "filesystem",
+    "git",
+    "brave-search"
+  ]
+}

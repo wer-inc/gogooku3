@@ -20,11 +20,11 @@ from pathlib import Path
 
 # Base directories
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-OUTPUT_DIR = PROJECT_ROOT.parent / "output"  # gogooku3/output/
+OUTPUT_DIR = PROJECT_ROOT.parent / "output_g5"  # SecId対応データセット配置先
 
-# Dataset paths (3-step quality pipeline)
-DATASET_RAW = str(OUTPUT_DIR / "ml_dataset_latest_full.parquet")
-DATASET_CLEAN = str(OUTPUT_DIR / "ml_dataset_clean.parquet")
+# Dataset paths (raw + quality pipeline). Raw must include target_* columns.
+DATASET_RAW = str(OUTPUT_DIR / "ml_dataset_full_with_targets.parquet")
+DATASET_CLEAN = str(OUTPUT_DIR / "ml_dataset_full_with_targets_clean.parquet")
 
 # Backtest output paths
 BACKTEST_OUTPUT_DIR = OUTPUT_DIR / "backtest"
