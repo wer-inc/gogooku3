@@ -167,6 +167,93 @@ def _check_asof_pairs(
     )
 
 
+def _check_feature_missingness(
+    lf: pl.LazyFrame,
+    date_col: str,
+    code_col: str,
+    targets: Sequence[str],
+    sample_rows: int,
+) -> CheckResult:
+    """Lightweight feature-level missingness check.
+
+    Excludes primary key and target columns and reports:
+      - per-feature missing rates (top-N offenders)
+      - maximum missing rate across all features
+      - total feature count and row count
+
+    This is intentionally non-fatal by default (status is "ok" or "warning"),
+    so that pipelines can surface quality information without breaking
+    existing runs. Callers who want to gate on warnings can enable the
+    `dataset_quality_fail_on_warning` flag in settings.
+    """
+
+    available = set(lf.columns)
+    exclude: set[str] = {date_col, code_col}
+    exclude.update(targets)
+
+    feature_cols = [col for col in lf.columns if col not in exclude]
+    if not feature_cols:
+        return CheckResult(
+            status="ok",
+            details={"feature_count": 0, "total_rows": 0},
+        )
+
+    # Compute total row count once.
+    total_rows = int(lf.select(pl.len().alias("n_rows")).collect()["n_rows"][0])
+    if total_rows == 0:
+        return CheckResult(
+            status="warning",
+            message="Dataset is empty; skipping feature missingness checks",
+            details={"feature_count": len(feature_cols), "total_rows": 0},
+        )
+
+    # Compute null counts for all feature columns in a single pass.
+    null_exprs = [pl.col(col).is_null().sum().alias(col) for col in feature_cols]
+    null_counts_row = lf.select(null_exprs).collect().row(0)
+
+    missing_stats: List[Dict[str, object]] = []
+    max_rate = 0.0
+    for idx, col in enumerate(feature_cols):
+        null_count = int(null_counts_row[idx])
+        if null_count == 0:
+            continue
+        rate = float(null_count) / float(total_rows)
+        max_rate = max(max_rate, rate)
+        missing_stats.append(
+            {
+                "feature": col,
+                "null_count": null_count,
+                "missing_rate": rate,
+            }
+        )
+
+    # Sort offenders by missing_rate desc and keep a small sample for logging.
+    missing_stats.sort(key=lambda d: float(d["missing_rate"]), reverse=True)
+    top_missing = missing_stats[: max(sample_rows, 10)]
+
+    # Thresholds are conservative; we only produce warnings so callers can
+    # choose whether to fail on warnings.
+    warn_threshold = 0.05  # 5%
+    error_threshold = 0.25  # 25%+
+
+    status = "ok"
+    message: Optional[str] = None
+    if max_rate >= error_threshold:
+        status = "warning"
+        message = f"Some features have missing_rate >= {error_threshold:.0%}"
+    elif max_rate >= warn_threshold:
+        status = "warning"
+        message = f"Some features have missing_rate >= {warn_threshold:.0%}"
+
+    details: Dict[str, object] = {
+        "total_rows": total_rows,
+        "feature_count": len(feature_cols),
+        "max_missing_rate": max_rate,
+        "top_missing_features": top_missing,
+    }
+    return CheckResult(status=status, message=message, details=details)
+
+
 def run_quality_checks(
     dataset_path: Path | str,
     *,
@@ -212,6 +299,14 @@ def run_quality_checks(
         errors.append(asof_res.message or "as-of ordering violation")
     elif asof_res.status == "warning":
         warnings.append(asof_res.message or "as-of warning")
+
+    # Light per-feature missingness check (excludes primary key and targets).
+    feature_res = _check_feature_missingness(lf, date_col, code_col, targets or [], sample_rows)
+    results["features"] = feature_res
+    if feature_res.status == "error":
+        errors.append(feature_res.message or "feature-level quality violation")
+    elif feature_res.status == "warning":
+        warnings.append(feature_res.message or "feature-level quality warning")
 
     summary = {name: result.to_dict() for name, result in results.items()}
     return summary, errors, warnings

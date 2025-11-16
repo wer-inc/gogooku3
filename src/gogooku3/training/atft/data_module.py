@@ -13,6 +13,7 @@ import pickle
 import threading
 import time
 from bisect import bisect_right
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -404,9 +405,8 @@ class StreamingParquetDataset(Dataset):
         # numpy datetime64[D] に統一して軽量に保持する
         self.sequence_dates: np.ndarray | None = None
 
-        # Initialize cache (int -> sample dict)
-        self._cache: dict[int, dict[str, Any]] = {}
-        self._cache_indices: list[int] = []
+        # Initialize cache (OrderedDict for O(1) FIFO eviction)
+        self._cache: OrderedDict[int, dict[str, Any]] = OrderedDict()
 
         # Lazy cache for pyarrow row-group metadata per file (file_idx -> (offsets, lengths))
         self._rg_meta: dict[int, tuple[list[int], list[int]]] = {}
@@ -803,14 +803,12 @@ class StreamingParquetDataset(Dataset):
         # Load sample
         sample = self._load_sample(idx)
 
-        # Update cache
+        # Update cache with O(1) FIFO eviction
         if len(self._cache) >= self.cache_size:
-            # Remove oldest cached item
-            oldest_idx = self._cache_indices.pop(0)
-            del self._cache[oldest_idx]
+            # Remove oldest item (first inserted) - O(1) with OrderedDict
+            self._cache.popitem(last=False)
 
         self._cache[idx] = sample
-        self._cache_indices.append(idx)
 
         return sample
 

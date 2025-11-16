@@ -760,6 +760,10 @@ class DatasetBuilder:
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.warning("Failed to attach TOPIX futures features: %s", exc, exc_info=True)
 
+        # スキーマ整合性のため、先物特徴量列が存在しない場合でも
+        # fut_topix_* 列を必ず追加しておく（値はNull/False埋め）。
+        combined_df = self._ensure_futures_topix_columns(combined_df)
+
         # オプション特徴量の追加（P0: 最小構成）
         try:
             # 日経225データも取得（VRP計算用、現在は未実装）
@@ -6249,6 +6253,38 @@ class DatasetBuilder:
 
         return df
 
+    def _ensure_futures_topix_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure all TOPIX futures feature columns exist with proper defaults.
+
+        These columns are part of the v1.4.0 schema even when futures data is
+        unavailable (API outage, historical gaps). When the upstream loader
+        cannot build futures features, we still materialize the columns as
+        nullable with appropriate dtypes to satisfy the schema gate.
+        """
+        specs: dict[str, pl.DataType] = {
+            "fut_topix_front_ret_1d": pl.Float64,
+            "fut_topix_intraday": pl.Float64,
+            "fut_topix_overnight": pl.Float64,
+            "fut_topix_range_pct": pl.Float64,
+            "fut_topix_oi_chg_1d": pl.Float64,
+            "fut_topix_term_slope": pl.Float64,
+            "fut_topix_basis": pl.Float64,
+            "fut_topix_days_to_roll": pl.Int64,
+            "fut_topix_roll_soon_3": pl.Boolean,
+            "fut_topix_roll_soon_5": pl.Boolean,
+            "fut_topix_roll_soon_10": pl.Boolean,
+            "fut_topix_carry_ann": pl.Float64,
+        }
+
+        for col_name, dtype in specs.items():
+            if col_name not in df.columns:
+                if dtype == pl.Boolean:
+                    df = df.with_columns(pl.lit(False).cast(dtype).alias(col_name))
+                else:
+                    df = df.with_columns(pl.lit(None).cast(dtype).alias(col_name))
+
+        return df
+
     def _add_index_features_legacy(self, df: pl.DataFrame, *, start: str, end: str) -> pl.DataFrame:
         """Legacy index features (deprecated, kept for backward compatibility)."""
         index_requests: list[tuple[str, pl.DataFrame]] = []
@@ -6723,8 +6759,10 @@ class DatasetBuilder:
             )
 
             # As-of join market-wide ratios (no code, just by timestamp)
-            result = df.join_asof(
-                market.sort("available_ts"),
+            market_sorted = market.sort("available_ts")
+            df_sorted = df.sort("asof_ts")
+            result = df_sorted.join_asof(
+                market_sorted,
                 left_on="asof_ts",
                 right_on="available_ts",
                 strategy="backward",
@@ -7044,39 +7082,35 @@ class DatasetBuilder:
 
                         if "sector_code" in result.columns:
                             # セクター別の結合: sector_codeとavailable_tsで結合
-                            # まず、resultとsector_featuresをソート
-                            result_sorted = result.sort(["sector_code", "asof_ts"])
-                            sector_sorted = sector_features.sort(["sector_code", "available_ts"])
-
-                            # セクターコードごとにas-of joinを実行
-                            # 各セクターでbackward joinを実行
-                            result = result_sorted.join_asof(
-                                sector_sorted,
-                                left_on="asof_ts",
-                                right_on="available_ts",
-                                by="sector_code",
+                            # interval_join_plを使用して、コードごとのT+1 as-of joinを実施
+                            result = interval_join_pl(
+                                backbone=result,
+                                snapshot=sector_features,
+                                on_code="sector_code",
+                                backbone_ts="asof_ts",
+                                snapshot_ts="available_ts",
                                 strategy="backward",
                                 suffix="_ss",
                             )
 
                             # staleness計算: 現在の日付と公表日の差
-                            if "date" in result.columns and "_ss_publish_date" in result.columns:
+                            publish_col = "_ss_publish_date_ss" if "_ss_publish_date_ss" in result.columns else "_ss_publish_date"
+                            if "date" in result.columns and publish_col in result.columns:
                                 result = result.with_columns(
                                     [
                                         pl.col("date").cast(pl.Date, strict=False).alias("_current_date"),
-                                        pl.col("_ss_publish_date").cast(pl.Date, strict=False),
+                                        pl.col(publish_col).cast(pl.Date, strict=False),
                                     ]
                                 )
                                 result = result.with_columns(
-                                    (pl.col("_current_date").cast(pl.Int64) - pl.col("_ss_publish_date").cast(pl.Int64))
+                                    (pl.col("_current_date").cast(pl.Int64) - pl.col(publish_col).cast(pl.Int64))
                                     .cast(pl.Int32)
                                     .alias("ss_staleness_bd")
                                 )
-                                result = result.drop(["_current_date", "_ss_publish_date"], strict=False)
+                                result = result.drop(["_current_date", publish_col], strict=False)
 
                             # 一時列をクリーンアップ
-                            cleanup_cols = ["available_ts", "available_ts_ss"]
-                            cleanup_cols = [col for col in cleanup_cols if col in result.columns]
+                            cleanup_cols = [c for c in ["available_ts_ss", "available_ts"] if c in result.columns]
                             if cleanup_cols:
                                 result = result.drop(cleanup_cols, strict=False)
 

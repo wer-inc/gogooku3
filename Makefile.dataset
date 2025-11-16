@@ -32,6 +32,13 @@ SAFE_GPU_ENV ?= REQUIRE_GPU=1 USE_GPU_ETL=1 \
 	RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=40GB CUDF_SPILL=1 \
 	CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src
 
+# Override SAFE_GPU_ENV to always enable lightweight dataset quality checks
+# (primary key / future dates / targets / per-feature missingness) for
+# dataset builds invoked via this Makefile.
+override SAFE_GPU_ENV := REQUIRE_GPU=1 USE_GPU_ETL=1 ENABLE_DATASET_QUALITY_CHECK=1 \
+	RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=40GB CUDF_SPILL=1 \
+	CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src
+
 # ============================================================================
 # Help
 # ============================================================================
