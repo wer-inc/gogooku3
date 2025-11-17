@@ -13,14 +13,12 @@ EPS = 1e-9
 _BUY_COLUMNS: tuple[str, ...] = (
     "LongBuyValue",
     "MarginBuyNewValue",
-    "MarginBuyCloseValue",
     "BuyValue",
 )
 
 _SELL_COLUMNS: tuple[str, ...] = (
     "LongSellValue",
     "MarginSellNewValue",
-    "MarginSellCloseValue",
     "ShortSellWithoutMarginValue",
     "SellValue",
 )

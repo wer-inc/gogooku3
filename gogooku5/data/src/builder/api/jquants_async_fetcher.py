@@ -1370,7 +1370,7 @@ class JQuantsAsyncFetcher:
             headers=headers,
         )
         if status == 200 and isinstance(data, dict):
-            rows.extend(data.get("dividends") or data.get("data") or [])
+            rows.extend(data.get("dividend") or data.get("dividends") or data.get("data") or [])
 
         # Fallback legacy path: daily pagination (older API behavior)
         if not rows:
@@ -1392,7 +1392,7 @@ class JQuantsAsyncFetcher:
                     )
                     if status != 200 or not isinstance(data, dict):
                         break
-                    items = data.get("dividends") or data.get("data") or []
+                    items = data.get("dividend") or data.get("dividends") or data.get("data") or []
                     if items:
                         rows.extend(items)
                     pagination_key = data.get("pagination_key")
@@ -1434,6 +1434,7 @@ class JQuantsAsyncFetcher:
         headers: dict[str, str],
         date_list: list[str],
         extract_fn: Callable[[dict], dict],
+        share_candidates: tuple[str, ...] = (),
     ) -> list[dict]:
         """
         Parallel fetch of financial statement details for multiple dates.
@@ -1474,10 +1475,10 @@ class JQuantsAsyncFetcher:
                 if status != 200 or not isinstance(data, dict):
                     break
 
-                items = data.get("fs_details") or data.get("data") or []
+                items = data.get("statements") or data.get("fs_details") or data.get("data") or []
                 for item in items:
                     base = {
-                        "Code": item.get("Code"),
+                        "Code": item.get("LocalCode") or item.get("Code"),
                         "TypeOfDocument": item.get("TypeOfDocument"),
                         "FiscalYear": item.get("FiscalYear"),
                         "AccountingStandard": item.get("AccountingStandard"),
@@ -1486,6 +1487,10 @@ class JQuantsAsyncFetcher:
                     }
                     fs = item.get("FinancialStatement") or {}
                     flat = extract_fn(fs)
+                    # Extract share columns from top level (not nested in FinancialStatement)
+                    for candidate in share_candidates:
+                        if candidate in item:
+                            flat[candidate] = item[candidate]
                     base.update(flat)
                     rows.append(base)
 
@@ -1521,12 +1526,12 @@ class JQuantsAsyncFetcher:
         return all_rows
 
     async def get_fs_details(self, session: aiohttp.ClientSession, from_date: str, to_date: str) -> pl.DataFrame:
-        """Fetch financial statement details (/fins/fs_details) for a date range."""
+        """Fetch financial statement details (/fins/statements) for a date range."""
         if not self.id_token:
             raise RuntimeError("authenticate() must be called first")
 
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        base_url = f"{self.base_url}/fins/fs_details"
+        base_url = f"{self.base_url}/fins/statements"
 
         import datetime as _dt
 
@@ -1571,6 +1576,35 @@ class JQuantsAsyncFetcher:
             ),
         }
 
+        issued_share_candidates: tuple[str, ...] = (
+            "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock",
+            "NumberOfIssuedShares",
+            "IssuedShares",
+            "IssuedShareNumber",
+            "IssuedShareNumberOfListing",
+            "SharesOutstanding",
+        )
+        treasury_share_candidates: tuple[str, ...] = (
+            "NumberOfTreasuryStockAtTheEndOfFiscalYear",
+            "NumberOfTreasuryStockAtFiscalYearEnd",
+            "NumberOfTreasuryStock",
+            "TreasuryShares",
+            "TreasuryStock",
+            "TreasuryShareNumber",
+        )
+        average_share_candidates: tuple[str, ...] = (
+            "AverageNumberOfShares",
+            "AverageNumberOfSharesDuringPeriod",
+            "AverageNumberOfSharesOutstanding",
+        )
+
+        share_alias_map: dict[str, str] = {}
+        share_cast_columns: set[str] = set()
+        for candidate in issued_share_candidates + treasury_share_candidates + average_share_candidates:
+            key = candidate.strip().lower()
+            share_alias_map[key] = candidate
+            share_cast_columns.add(candidate)
+
         def _iter_items(node: Any) -> Iterable[tuple[str, Any]]:
             if isinstance(node, dict):
                 for k, v in node.items():
@@ -1590,6 +1624,9 @@ class JQuantsAsyncFetcher:
                 for target, aliases in lower_map.items():
                     if norm_key in aliases and target not in flat:
                         flat[target] = value
+                alias = share_alias_map.get(norm_key)
+                if alias and alias not in flat:
+                    flat[alias] = value
             return flat
 
         start = _parse(from_date)
@@ -1612,8 +1649,9 @@ class JQuantsAsyncFetcher:
 
         # Use parallel fetch if enabled and multiple dates
         if self.enable_parallel_fetch and len(date_list) > 1:
+            all_share_candidates = issued_share_candidates + treasury_share_candidates + average_share_candidates
             rows = await self._get_fs_details_parallel(
-                session, base_url, headers, date_list, _extract_financials
+                session, base_url, headers, date_list, _extract_financials, all_share_candidates
             )
         else:
             # Sequential fallback (original behavior)
@@ -1634,10 +1672,10 @@ class JQuantsAsyncFetcher:
                     )
                     if status != 200 or not isinstance(data, dict):
                         break
-                    items = data.get("fs_details") or data.get("data") or []
+                    items = data.get("statements") or data.get("fs_details") or data.get("data") or []
                     for item in items:
                         base = {
-                            "Code": item.get("Code"),
+                            "Code": item.get("LocalCode") or item.get("Code"),
                             "TypeOfDocument": item.get("TypeOfDocument"),
                             "FiscalYear": item.get("FiscalYear"),
                             "AccountingStandard": item.get("AccountingStandard"),
@@ -1646,6 +1684,10 @@ class JQuantsAsyncFetcher:
                         }
                         fs = item.get("FinancialStatement") or {}
                         flat = _extract_financials(fs)
+                        # Extract share columns from top level (not nested in FinancialStatement)
+                        for candidate in issued_share_candidates + treasury_share_candidates + average_share_candidates:
+                            if candidate in item:
+                                flat[candidate] = item[candidate]
                         base.update(flat)
                         rows.append(base)
                     pagination_key = data.get("pagination_key")
@@ -1684,7 +1726,7 @@ class JQuantsAsyncFetcher:
                 "InterestBearingDebt",
                 "NetCashProvidedByOperatingActivities",
                 "PurchaseOfPropertyPlantAndEquipment",
-            }:
+            } or col in share_cast_columns:
                 cast_exprs.append(pl.col(col).cast(pl.Float64, strict=False).alias(col))
             else:
                 cast_exprs.append(

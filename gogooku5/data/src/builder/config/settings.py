@@ -89,15 +89,21 @@ class DatasetBuilderSettings(BaseSettings):
     force_gpu: bool = Field(True, env="FORCE_GPU")
     rmm_pool_size: str = Field("40GB", env="RMM_POOL_SIZE")
 
+    # Graph feature configuration
+    enable_graph_features: bool = Field(True, env="ENABLE_GRAPH_FEATURES")
+
     # Dataset quality checker
     enable_dataset_quality_check: bool = Field(False, env="ENABLE_DATASET_QUALITY_CHECK")
     dataset_quality_targets: str | None = Field(None, env="DATASET_QUALITY_TARGETS")
     dataset_quality_asof_checks: str | None = Field(None, env="DATASET_QUALITY_ASOF_CHECKS")
     dataset_quality_date_col: str = Field("date", env="DATASET_QUALITY_DATE_COL")
     dataset_quality_code_col: str = Field("code", env="DATASET_QUALITY_CODE_COL")
+    dataset_quality_exclude_columns: str | None = Field(None, env="DATASET_QUALITY_EXCLUDE_COLUMNS")
     dataset_quality_allow_future_days: int = Field(0, ge=0, env="DATASET_QUALITY_ALLOW_FUTURE_DAYS")
     dataset_quality_sample_rows: int = Field(5, ge=1, env="DATASET_QUALITY_SAMPLE_ROWS")
     dataset_quality_fail_on_warning: bool = Field(False, env="DATASET_QUALITY_FAIL_ON_WARNING")
+    share_forward_fill_days: int = Field(250, ge=1, env="SHARE_FORWARD_FILL_DAYS")
+    share_master_path: Path | None = Field(default=None, env="SHARE_MASTER_PATH")
 
     @model_validator(mode="after")
     def _ensure_directories(self) -> "DatasetBuilderSettings":

@@ -163,7 +163,8 @@ class QualityFinancialFeaturesGeneratorPolars:
     # Feature helpers
     # ------------------------------------------------------------------
     def _add_cross_sectional_quantiles(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        features_to_process = list(self._limit(self.numeric_features, 25))
+        # Process ALL numeric features (no limit) to ensure idx_*, topix_*, graph_* get quality stats
+        features_to_process = list(self.numeric_features)
         if not features_to_process:
             return df
 

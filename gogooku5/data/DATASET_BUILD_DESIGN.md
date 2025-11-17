@@ -340,6 +340,16 @@ for name, horizon in horizons.items():
 - GraphFeatures: returns_1d 使用（look-ahead leak）
 - AdvancedFeatures: returns_5d 使用（look-ahead leak）
 
+##### GraphFeatures の新しい扱い（Phase 2+）
+
+- **チャンクビルド時**  
+  - `DatasetBuilderSettings.enable_graph_features`（環境変数 `ENABLE_GRAPH_FEATURES`）で制御。  
+  - 学習用の標準フローでは `ENABLE_GRAPH_FEATURES=0` とし、`graph_*` 21列は `_create_null_graph_columns()` による **NULL プレースホルダ** のみを出力する。  
+  - これにより、2025Q4 のような短期チャンクでもスキーマを崩さずにビルド可能（グラフ計算はスキップ）。
+- **フル期間データセット時**  
+  - チャンクを `merge_chunks.py` でマージした後、`gogooku5/data/tools/add_graph_features_full.py` を使って **フル期間 Parquet**（例: `output_g5/datasets/ml_dataset_2020_2025_full.parquet`）に対して `GraphFeatureEngineer` を一括適用する。  
+  - このステップで NULL プレースホルダ列が実値の `graph_*` 特徴量に置き換わり、最終的な学習用データセットでのみグラフ特徴量が必須となる。
+
 #### **Step 19: Quality Features**
 
 ```python

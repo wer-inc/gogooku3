@@ -48,7 +48,12 @@ def update_symlink(target: Path, link_path: Path) -> None:
         return
     if link_path.exists() or link_path.is_symlink():
         link_path.unlink()
-    link_path.symlink_to(target.name)
+    # Use relative path for symlink to work across different directories
+    import os
+    if link_path.parent == target.parent:
+        link_path.symlink_to(target.name)
+    else:
+        link_path.symlink_to(os.path.relpath(target, start=link_path.parent))
 
 
 def main() -> None:

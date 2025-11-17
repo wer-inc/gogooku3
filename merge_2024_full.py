@@ -111,8 +111,12 @@ def update_symlink(target: Path, link_path: Path | None) -> None:
     link_path.parent.mkdir(parents=True, exist_ok=True)
     if link_path.exists() or link_path.is_symlink():
         link_path.unlink()
-    # Use relative filename so the symlink stays local to the output directory.
-    link_path.symlink_to(target.name)
+    # Use relative path for symlink to work across different directories
+    import os
+    if link_path.parent == target.parent:
+        link_path.symlink_to(target.name)
+    else:
+        link_path.symlink_to(os.path.relpath(target, start=link_path.parent))
 
 
 def merge_chunks(

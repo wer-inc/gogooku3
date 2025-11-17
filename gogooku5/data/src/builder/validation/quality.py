@@ -173,6 +173,8 @@ def _check_feature_missingness(
     code_col: str,
     targets: Sequence[str],
     sample_rows: int,
+    *,
+    exclude_columns: Optional[Sequence[str]] = None,
 ) -> CheckResult:
     """Lightweight feature-level missingness check.
 
@@ -187,11 +189,30 @@ def _check_feature_missingness(
     `dataset_quality_fail_on_warning` flag in settings.
     """
 
-    available = set(lf.columns)
     exclude: set[str] = {date_col, code_col}
     exclude.update(targets)
 
-    feature_cols = [col for col in lf.columns if col not in exclude]
+    explicit_excludes: set[str] = set()
+    prefix_excludes: list[str] = []
+    if exclude_columns:
+        for name in exclude_columns:
+            if not name:
+                continue
+            if name.endswith("*"):
+                prefix = name[:-1].strip()
+                if prefix:
+                    prefix_excludes.append(prefix)
+            else:
+                explicit_excludes.add(name)
+
+    exclude.update(explicit_excludes)
+
+    def _is_excluded(col_name: str) -> bool:
+        if col_name in exclude:
+            return True
+        return any(col_name.startswith(prefix) for prefix in prefix_excludes)
+
+    feature_cols = [col for col in lf.columns if not _is_excluded(col)]
     if not feature_cols:
         return CheckResult(
             status="ok",
@@ -263,6 +284,7 @@ def run_quality_checks(
     asof_pairs: Optional[Sequence[Tuple[str, str]]] = None,
     allow_future_days: int = 0,
     sample_rows: int = 5,
+    exclude_columns: Optional[Sequence[str]] = None,
 ) -> Tuple[Dict[str, Dict[str, object]], List[str], List[str]]:
     """Run all dataset quality checks and return summary + errors + warnings."""
 
@@ -300,8 +322,15 @@ def run_quality_checks(
     elif asof_res.status == "warning":
         warnings.append(asof_res.message or "as-of warning")
 
-    # Light per-feature missingness check (excludes primary key and targets).
-    feature_res = _check_feature_missingness(lf, date_col, code_col, targets or [], sample_rows)
+    # Light per-feature missingness check (excludes primary key, targets, and explicit exclusions).
+    feature_res = _check_feature_missingness(
+        lf,
+        date_col,
+        code_col,
+        targets or [],
+        sample_rows,
+        exclude_columns=exclude_columns,
+    )
     results["features"] = feature_res
     if feature_res.status == "error":
         errors.append(feature_res.message or "feature-level quality violation")

@@ -1,6 +1,169 @@
 version: 1
 
 groups:
+  g5_core:
+    include:
+      # gogooku5-style price/volume columns
+      - AdjustmentOpen
+      - AdjustmentHigh
+      - AdjustmentLow
+      - AdjustmentClose
+      - AdjustmentVolume
+      - TurnoverValue
+      # gogooku5 return columns
+      - ret_prev_1d
+      - ret_prev_5d
+      - ret_prev_10d
+      - ret_prev_20d
+      # liquidity / volatility
+      - dollar_volume
+      - volatility_20d
+      - volume_ma_5
+      - volume_ma_20
+      # TOPIX beta/alpha
+      - beta60_topix
+      - alpha60_topix
+      # graph features
+      - graph_degree
+      - graph_peer_corr_mean
+      - graph_peer_corr_max
+      - graph_degree_roll_mean_20d
+      - graph_degree_roll_std_20d
+      - graph_degree_zscore_20d
+      - graph_peer_corr_mean_roll_mean_20d
+      - graph_peer_corr_mean_roll_std_20d
+      - graph_peer_corr_mean_zscore_20d
+      - graph_peer_corr_max_roll_mean_20d
+      - graph_peer_corr_max_roll_std_20d
+      - graph_peer_corr_max_zscore_20d
+
+  g5_top_corr:
+    include:
+      # Macro / TOPIX volatility and drawdown
+      - topix_vol_z_252d
+      - topix_drawdown_60d
+      - topix_drawdown_60d_roll_mean_20d
+      - topix_atr14_zscore_20d
+      - topix_natr14_zscore_20d
+      - topix_rsi_14_zscore_20d
+      # Index option (skew / IV / SQ timing)
+      - idxopt_days_to_sq_sector_mean
+      - idxopt_days_to_sq_roll_mean_20d
+      - idxopt_days_to_sq_zscore_20d
+      - idxopt_iv_atm_30d
+      - idxopt_iv_atm_30d_sector_mean
+      - idxopt_iv_atm_30d_roll_mean_20d
+      - idxopt_skew_25
+      - idxopt_skew_25_sector_mean
+      - idxopt_skew_25_zscore_20d
+      - idxopt_underlying_price_zscore_20d
+      # Foreign / retail flow divergence signals
+      - retail_institutional_divergence
+      - retail_institutional_divergence_sector_mean
+      - foreign_persistence
+      - foreign_persistence_sector_mean
+      - foreign_sentiment
+      - foreign_sentiment_sector_mean
+      # Macro VIX / VVMD regime
+      - macro_vix_ret_10d
+      - macro_vix_close
+      - macro_vix_log_close
+      - macro_vvmd_mom_qqq_63d
+      # Sector / cross-sectional momentum
+      - log_returns_10d_sector_mean
+      - sec_ret_5d_eq
+      - sec_ret_5d_eq_sector_mean
+      - sec_ret_5d_eq_roll_mean_20d
+      - sec_ret_5d_eq_rolling_sharpe
+      - idx_ret_prev_10d_sector_mean
+      - topix_time_since_peak_60d_sector_mean
+      - topix_ret_prev_20d_topix
+      - topix_ret_prev_20d_topix_sector_mean
+      - topix_ret_prev_5d_zscore_20d
+      - price_to_sma20_sector_mean
+  g5_short_term:
+    # Short-term (1d+5d) optimized features
+    # Criteria: NULL <10%, high signal for short-term prediction
+    include:
+      # Core price/volume features (NULL <5%)
+      - AdjustmentOpen
+      - AdjustmentHigh
+      - AdjustmentLow
+      - AdjustmentClose
+      - AdjustmentVolume
+      - TurnoverValue
+
+      # Short-term returns (NULL <10%)
+      - ret_prev_1d      # 3.0% NULL
+      - ret_prev_5d      # 10.0% NULL
+
+      # Liquidity features (NULL <5%)
+      - dollar_volume    # 0.7% NULL
+      - volatility_20d   # 5.1% NULL
+      - volume_ma_5      # 0.3% NULL
+      - volume_ma_20     # 0.1% NULL
+
+      # Graph features (NULL <1%)
+      - graph_degree                     # 0.6% NULL
+      - graph_peer_corr_mean             # 0.6% NULL
+      - graph_peer_corr_max              # 0.6% NULL
+      - graph_degree_roll_mean_20d
+      - graph_degree_roll_std_20d
+      - graph_degree_zscore_20d
+      - graph_peer_corr_mean_roll_mean_20d
+      - graph_peer_corr_mean_roll_std_20d
+      - graph_peer_corr_mean_zscore_20d
+      - graph_peer_corr_max_roll_mean_20d
+      - graph_peer_corr_max_roll_std_20d
+      - graph_peer_corr_max_zscore_20d
+
+      # Macro regime features (NULL <4%)
+      - topix_drawdown_60d               # 0.0% NULL
+      - topix_drawdown_60d_roll_mean_20d
+      - topix_atr14_zscore_20d
+      - topix_natr14_zscore_20d
+      - topix_rsi_14_zscore_20d
+      - macro_vix_ret_10d                # 3.7% NULL
+      - macro_vix_close                  # 3.7% NULL
+      - macro_vix_log_close
+
+      # Index options (NULL 0%)
+      - idxopt_iv_atm_30d                # 0.0% NULL
+      - idxopt_iv_atm_30d_sector_mean
+      - idxopt_iv_atm_30d_roll_mean_20d
+      - idxopt_skew_25                   # 0.0% NULL
+      - idxopt_skew_25_sector_mean
+      - idxopt_skew_25_zscore_20d
+      - idxopt_underlying_price_zscore_20d
+
+      # Sector momentum (NULL varies, generally <10%)
+      - log_returns_10d_sector_mean
+      - sec_ret_5d_eq
+      - sec_ret_5d_eq_sector_mean
+      - sec_ret_5d_eq_roll_mean_20d
+      - sec_ret_5d_eq_rolling_sharpe
+      - idx_ret_prev_10d_sector_mean
+      - topix_ret_prev_5d_zscore_20d
+      - price_to_sma20_sector_mean
+
+      # Technical indicators for short-term
+      # NOTE: gogooku5 dataset uses ret_prev_* and idr_atr / bb_bw / bb_pct_b
+      # instead of returns_* / atr_14 / bb_width / bb_position.
+      - log_returns_5d
+      - sma_5
+      - sma_20
+      - ema_5
+      - ema_20
+      - price_to_sma5
+      - price_to_sma20
+      - volume_ratio_5
+      - volume_ratio_20
+      - rsi_2
+      - rsi_14
+      - idr_atr
+      - bb_bw
+      - bb_pct_b
+
   all_features:
     include:
       - shares_outstanding

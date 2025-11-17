@@ -70,9 +70,17 @@ export QUOTES_PARALLEL_WORKERS := 200
 
 build-2025:
 	@echo "🔨 Building 2025年全四半期 (Q1-Q4)..."
-	@python3 $(_scripts_dir)/build_chunks.py \
+	@CURRENT_YEAR=$$(date +%Y); \
+	CURRENT_MONTH=$$(date +%m); \
+	if [ "$$CURRENT_YEAR" = "2025" ]; then \
+		END_DATE=$$(date -d "$$(date +%Y-%m-01) +1 month -1 day" +%Y-%m-%d); \
+	else \
+		END_DATE="2025-12-31"; \
+	fi; \
+	echo "📅 Using end date: $$END_DATE (current: $$(date +%Y-%m-%d))"; \
+	python3 $(_scripts_dir)/build_chunks.py \
 		--start 2025-01-01 \
-		--end 2025-11-15 \
+		--end $$END_DATE \
 		--resume
 	@echo "✅ 2025年ビルド完了"
 

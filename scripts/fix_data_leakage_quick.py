@@ -128,7 +128,13 @@ def remove_leaked_features(input_path: str, output_path: str, dry_run: bool = Fa
     symlink_path = Path(output_path).parent / "ml_dataset_latest_no_leak.parquet"
     if symlink_path.exists() or symlink_path.is_symlink():
         symlink_path.unlink()
-    symlink_path.symlink_to(Path(output_path).name)
+    # Use relative path for symlink
+    import os
+    output_path_obj = Path(output_path)
+    if symlink_path.parent == output_path_obj.parent:
+        symlink_path.symlink_to(output_path_obj.name)
+    else:
+        symlink_path.symlink_to(os.path.relpath(output_path_obj, start=symlink_path.parent))
     print(f"   Symlink created: {symlink_path}")
 
     print("\n" + "=" * 80)

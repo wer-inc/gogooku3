@@ -28,14 +28,9 @@ CACHE_SHARD ?= $(shell date -u -d "$(END)" +%Y%m 2>/dev/null || date -u +%Y%m)
 CACHE_DIR   ?= output/graph_cache/$(CACHE_SHARD)/w$(GRAPH_WINDOW)-t$(GRAPH_THRESHOLD)-k$(GRAPH_MAX_K)
 
 # GPU environment (safe settings for dataset generation)
-SAFE_GPU_ENV ?= REQUIRE_GPU=1 USE_GPU_ETL=1 \
-	RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=40GB CUDF_SPILL=1 \
-	CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src
-
-# Override SAFE_GPU_ENV to always enable lightweight dataset quality checks
-# (primary key / future dates / targets / per-feature missingness) for
-# dataset builds invoked via this Makefile.
-override SAFE_GPU_ENV := REQUIRE_GPU=1 USE_GPU_ETL=1 ENABLE_DATASET_QUALITY_CHECK=1 \
+# Includes dataset quality checks by default, but can be overridden via command line
+# e.g., make dataset SAFE_GPU_ENV="REQUIRE_GPU=1 USE_GPU_ETL=1 ..."
+SAFE_GPU_ENV ?= REQUIRE_GPU=1 USE_GPU_ETL=1 ENABLE_DATASET_QUALITY_CHECK=1 \
 	RMM_ALLOCATOR=cuda_async RMM_POOL_SIZE=40GB CUDF_SPILL=1 \
 	CUDA_VISIBLE_DEVICES=$${CUDA_VISIBLE_DEVICES:-0} PYTHONPATH=src
 
@@ -61,6 +56,7 @@ help-dataset:
 	@echo "  make dataset-prod START=... END=...        Production config"
 	@echo "  make dataset-research START=... END=...    Research features"
 	@echo "  make build-chunks START=... END=...        Chunk builder (--resume/--force, CHUNK_MONTHS=1 for monthly safe mode)"
+	@echo "  make build-chunks-no-graph START=... END=...  Chunk builder with graph_* disabled (post-merge graph)"
 	@echo ""
 	@echo "🛠️  Layer 3: Utilities"
 	@echo "  make dataset-check           Environment check (relaxed)"
@@ -73,6 +69,7 @@ help-dataset:
 	@echo "  make raw-prune               Prune duplicate raw data files"
 	@echo "  make output-clean            Full cleanup (datasets+raw+cache)"
 	@echo "  make merge-chunks            Merge chunk outputs into latest dataset"
+	@echo "  make add-graph-features INPUT=... OUTPUT=...  Add graph_* features to merged dataset"
 	@echo ""
 	@echo "🛡️  Memory-Safe Options (NEW)"
 	@echo "  make dataset-safe            Chunked generation with checkpointing"
@@ -220,7 +217,7 @@ dataset:
 # Layer 2: Detailed Control (Custom Parameters)
 # ============================================================================
 
-.PHONY: dataset-gpu dataset-cpu dataset-prod dataset-research dataset-fetch build-chunks merge-chunks
+.PHONY: dataset-gpu dataset-cpu dataset-prod dataset-research dataset-fetch build-chunks build-chunks-no-graph merge-chunks add-graph-features
 
 # GPU-accelerated dataset generation (requires START/END parameters)
 # Usage: make dataset-gpu START=YYYY-MM-DD END=YYYY-MM-DD
@@ -302,6 +299,24 @@ build-chunks:
 	echo "🚀 Chunk build command: $$cmd"; \
 	env $(SAFE_GPU_ENV) $$cmd
 
+# Chunk builder with graph features disabled (ENABLE_GRAPH_FEATURES=0).
+# Intended for training datasets where graph_* is added post-merge.
+# Usage: make build-chunks-no-graph START=YYYY-MM-DD END=YYYY-MM-DD [RESUME=1] [FORCE=1] [DRY_RUN=1] [LATEST=1] [JOBS=N] [CHUNK_MONTHS=M]
+build-chunks-no-graph:
+	@[ -n "$(START)" ] && [ -n "$(END)" ] || { \
+	  echo "❌ Error: START and END dates required"; \
+	  echo "Usage: make build-chunks-no-graph START=YYYY-MM-DD END=YYYY-MM-DD [RESUME=1] [FORCE=1] [DRY_RUN=1]"; \
+	  exit 1; }
+	@cmd="./venv/bin/python gogooku5/data/scripts/build_chunks.py --start $(START) --end $(END)"; \
+	if [ "$(RESUME)" = "1" ]; then cmd="$$cmd --resume"; fi; \
+	if [ "$(FORCE)" = "1" ]; then cmd="$$cmd --force"; fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then cmd="$$cmd --dry-run"; fi; \
+	if [ "$(LATEST)" = "1" ]; then cmd="$$cmd --latest-only"; fi; \
+	if [ -n "$(CHUNK_MONTHS)" ]; then cmd="$$cmd --chunk-months $(CHUNK_MONTHS)"; fi; \
+	if [ -n "$(JOBS)" ]; then cmd="$$cmd --jobs $(JOBS)"; elif [ -n "$(CHUNK_JOBS)" ]; then cmd="$$cmd --jobs $(CHUNK_JOBS)"; fi; \
+	echo "🚀 Chunk build (graph disabled) command: $$cmd"; \
+	env ENABLE_GRAPH_FEATURES=0 $(SAFE_GPU_ENV) $$cmd
+
 # Merge completed chunks into latest dataset artifacts
 merge-chunks:
 	@cmd="./venv/bin/python gogooku5/data/tools/merge_chunks.py"; \
@@ -310,6 +325,22 @@ merge-chunks:
 	if [ "$(STRICT)" = "1" ]; then cmd="$$cmd --strict"; fi; \
 	if [ "$(ALLOW_PARTIAL)" = "1" ]; then cmd="$$cmd --allow-partial"; fi; \
 	echo "🔗 Merge command: $$cmd"; \
+	env $(SAFE_GPU_ENV) $$cmd
+
+# Add graph_* features to a merged dataset as a post-processing step.
+# Requires INPUT and OUTPUT paths; typically run after merge-chunks.
+# Example:
+#   make add-graph-features INPUT=output_g5/datasets/ml_dataset_2025_full.parquet \
+#       OUTPUT=output_g5/datasets/ml_dataset_2025_full_with_graph.parquet
+add-graph-features:
+	@[ -n "$(INPUT)" ] && [ -n "$(OUTPUT)" ] || { \
+	  echo "❌ Error: INPUT and OUTPUT are required"; \
+	  echo "Usage: make add-graph-features INPUT=path/to/input.parquet OUTPUT=path/to/output.parquet"; \
+	  exit 1; }
+	@cmd="./venv/bin/python gogooku5/data/tools/add_graph_features_full.py --input $(INPUT) --output $(OUTPUT)"; \
+	if [ -n "$(GRAPH_WINDOW)" ]; then cmd="$$cmd --window-days $(GRAPH_WINDOW)"; fi; \
+	if [ -n "$(GRAPH_THRESHOLD)" ]; then cmd="$$cmd --correlation-threshold $(GRAPH_THRESHOLD)"; fi; \
+	echo "🔗 Add graph features command: $$cmd"; \
 	env $(SAFE_GPU_ENV) $$cmd
 
 # CPU-only dataset generation (fallback)

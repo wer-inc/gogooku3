@@ -95,7 +95,12 @@ def main() -> int:
             latest.unlink()
     except Exception:
         pass
-    latest.symlink_to(pq.name)
+    # Use relative path for symlink
+    import os
+    if latest.parent == pq.parent:
+        latest.symlink_to(pq.name)
+    else:
+        latest.symlink_to(os.path.relpath(pq, start=latest.parent))
 
     # Metadata
     meta = builder.create_metadata(df)
@@ -108,7 +113,12 @@ def main() -> int:
             latest_meta.unlink()
     except Exception:
         pass
-    latest_meta.symlink_to(meta_path.name)
+    # Use relative path for symlink
+    import os
+    if latest_meta.parent == meta_path.parent:
+        latest_meta.symlink_to(meta_path.name)
+    else:
+        latest_meta.symlink_to(os.path.relpath(meta_path, start=latest_meta.parent))
 
     print("Wrote:", pq)
     print("Metadata:", meta_path)

@@ -640,6 +640,8 @@ class DatasetBuilder:
             raw_fs=fs_df,
             calendar_df=calendar_df,
         )
+        combined_df = self._attach_share_master_features(combined_df)
+        combined_df = self._add_market_cap_features(combined_df)
 
         combined_df = self._attach_dividend_features(
             combined_df,
@@ -730,6 +732,7 @@ class DatasetBuilder:
 
         # β/α (60日, 対TOPIX) の追加（P0: 市場曝露の除去と残差の抽出）
         combined_df = self._add_beta_alpha_features(combined_df, start=start, end=end)
+        combined_df = self._add_beta_alpha_derivatives(combined_df)
 
         # trades_spec（投資部門別売買状況）特徴量の追加（MVP）
         combined_df = self._add_trades_spec_features(combined_df, calendar_df=calendar_df, start=start, end=end)
@@ -2543,6 +2546,56 @@ class DatasetBuilder:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
 
+    def _ensure_adv60_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure liquidity baseline columns exist."""
+        specs = {
+            "adv60_yen": (pl.Float64, None),
+            "adv60_obs_count": (pl.Int32, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _persist_adv60_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Promote internal ADV calculations to publicly visible columns.
+
+        Many feature blocks compute `_adv60_yen` for their own normalization,
+        but downstream ratios (breakdown, beta) also require the raw series.
+        """
+        if "_adv60_yen" not in df.columns:
+            return self._ensure_adv60_columns(df)
+
+        min_obs = max(1, int(self.settings.adv_min_periods))
+        obs_available = "_adv60_obs_count" in df.columns
+
+        if obs_available:
+            adv_expr = (
+                pl.when(pl.col("_adv60_obs_count").fill_null(0) >= min_obs)
+                .then(pl.col("_adv60_yen"))
+                .otherwise(None)
+            )
+        else:
+            adv_expr = pl.col("_adv60_yen")
+
+        df = df.with_columns(adv_expr.alias("_adv60_materialized"))
+        if "adv60_yen" in df.columns:
+            df = df.with_columns(
+                pl.coalesce([pl.col("_adv60_materialized"), pl.col("adv60_yen")]).alias("adv60_yen")
+            )
+        else:
+            df = df.with_columns(pl.col("_adv60_materialized").alias("adv60_yen"))
+        df = df.drop(["_adv60_materialized"], strict=False)
+
+        if obs_available:
+            df = df.with_columns(pl.col("_adv60_obs_count").cast(pl.Int32).alias("adv60_obs_count"))
+        else:
+            df = self._ensure_adv60_columns(df)
+
+        df = df.drop(["_adv60_obs_count"], strict=False)
+        return self._ensure_adv60_columns(df)
+
     def _ensure_supply_shock_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
             "fs_shares_outstanding": (pl.Float64, None),
@@ -2557,6 +2610,60 @@ class DatasetBuilder:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
 
+    def _ensure_market_cap_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "market_cap": (pl.Float64, None),
+            "market_cap_total": (pl.Float64, None),
+            "market_cap_free_float": (pl.Float64, None),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_market_cap_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_market_cap_columns(df)
+
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+        shares_total_col = (
+            self._resolve_column_name(df, "shares_total")
+            or self._resolve_column_name(df, "fs_shares_outstanding")
+        )
+        float_candidates = [
+            self._resolve_column_name(df, "shares_free_float"),
+            self._resolve_column_name(df, "fs_free_float_shares"),
+            self._resolve_column_name(df, "fs_float_shares"),
+        ]
+        float_candidates = [col for col in float_candidates if col]
+
+        exprs: list[pl.Expr] = []
+        if price_col and shares_total_col:
+            exprs.append((pl.col(price_col) * pl.col(shares_total_col)).alias("market_cap_total"))
+
+        float_exprs: list[pl.Expr] = []
+        if float_candidates:
+            float_exprs.append(pl.col(float_candidates[0]))
+        if shares_total_col:
+            float_exprs.append(pl.col(shares_total_col))
+        float_shares_expr: pl.Expr | None = None
+        if float_exprs:
+            if len(float_exprs) == 1:
+                float_shares_expr = float_exprs[0]
+            else:
+                float_shares_expr = pl.coalesce(float_exprs)
+
+        if price_col and float_shares_expr is not None:
+            exprs.append((pl.col(price_col) * float_shares_expr).alias("market_cap_free_float"))
+
+        if exprs:
+            df = df.with_columns(exprs)
+
+        if "market_cap_total" in df.columns:
+            df = df.with_columns(pl.col("market_cap_total").alias("market_cap"))
+
+        return self._ensure_market_cap_columns(df)
+
     def _add_supply_shock_features(self, df: pl.DataFrame) -> pl.DataFrame:
         if df.is_empty():
             return self._ensure_supply_shock_columns(df)
@@ -2566,11 +2673,31 @@ class DatasetBuilder:
             LOGGER.debug("[SUPPLY] No fs_shares_outstanding column available")
             return self._ensure_supply_shock_columns(df)
 
-        df = df.sort(["code", "date"])
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+        if date_col is None:
+            LOGGER.debug("[SUPPLY] No date column available for supply shock computation")
+            return self._ensure_supply_shock_columns(df)
+
+        max_ffill_days = max(1, int(self.settings.share_forward_fill_days))
+        df = df.sort(["code", date_col])
         prev_col = "__prev_shares"
-        df = df.with_columns(pl.col(shares_col).shift(1).over("code").alias(prev_col))
+        prev_date_col = "__prev_share_date"
         df = df.with_columns(
-            pl.when(pl.col(prev_col).is_not_null() & (pl.col(prev_col).abs() > 1e-3))
+            [
+                pl.col(shares_col).shift(1).over("code").alias(prev_col),
+                pl.col(date_col).shift(1).over("code").alias(prev_date_col),
+            ]
+        )
+        date_diff_expr = (
+            (pl.col(date_col).cast(pl.Int64, strict=False) - pl.col(prev_date_col).cast(pl.Int64, strict=False)).abs()
+        )
+        df = df.with_columns(
+            pl.when(
+                pl.col(prev_col).is_not_null()
+                & (pl.col(prev_col).abs() > 1e-3)
+                & pl.col(prev_date_col).is_not_null()
+                & (date_diff_expr <= max_ffill_days)
+            )
             .then((pl.col(shares_col) - pl.col(prev_col)) / (pl.col(prev_col) + 1e-12))
             .otherwise(None)
             .alias("shares_out_delta_pct")
@@ -2582,8 +2709,77 @@ class DatasetBuilder:
             (pl.col("shares_out_delta_pct").is_not_null()).cast(pl.Int8).alias("is_supply_shock_valid"),
         )
         df = df.with_columns((pl.col("buyback_flag") - pl.col("dilution_flag")).alias("supply_shock"))
-        df = df.drop([prev_col], strict=False)
+        df = df.drop([prev_col, prev_date_col], strict=False)
         return self._ensure_supply_shock_columns(df)
+
+    def _share_master_path(self) -> Path | None:
+        if self.settings.share_master_path is not None:
+            return Path(self.settings.share_master_path)
+        return self.settings.data_cache_dir / "shares_master.parquet"
+
+    def _load_share_master(self) -> pl.DataFrame | None:
+        path = self._share_master_path()
+        if path is None or not path.exists():
+            return None
+        try:
+            share_df = pl.read_parquet(path)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("[SHARES] Failed to read shares master %s: %s", path, exc)
+            return None
+        if share_df.is_empty():
+            LOGGER.warning("[SHARES] Shares master %s is empty", path)
+            return None
+        required = {"code", "available_ts"}
+        missing = required - set(share_df.columns)
+        if missing:
+            LOGGER.warning("[SHARES] Shares master missing required columns: %s", sorted(missing))
+            return None
+        return share_df
+
+    def _attach_share_master_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        share_df = self._load_share_master()
+        if share_df is None or df.is_empty():
+            return df
+        if "code" not in df.columns or "asof_ts" not in df.columns:
+            return df
+
+        share_snapshot = (
+            share_df.select(
+                [
+                    pl.col("code").cast(pl.Utf8, strict=False).alias("code"),
+                    pl.col("available_ts").cast(pl.Int64).alias("_share_ts"),
+                    pl.col("shares_total").cast(pl.Float64, strict=False),
+                    pl.col("shares_free_float").cast(pl.Float64, strict=False),
+                ]
+            )
+            .drop_nulls("code")
+            .sort(["code", "_share_ts"])
+        )
+        working = df.with_columns(pl.col("asof_ts").cast(pl.Int64).alias("_share_asof"))
+
+        joined = interval_join_pl(
+            backbone=working,
+            snapshot=share_snapshot,
+            on_code="code",
+            backbone_ts="_share_asof",
+            snapshot_ts="_share_ts",
+            strategy="backward",
+            suffix="_share",
+        )
+
+        cleanup_cols = [col for col in joined.columns if col.endswith("_share")]
+        cleanup_cols.extend(["_share_asof", "_share_ts"])
+        joined = joined.drop([col for col in cleanup_cols if col in joined.columns], strict=False)
+
+        if "shares_total" in joined.columns:
+            joined = joined.with_columns(pl.col("shares_total").alias("fs_shares_outstanding"))
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("shares_total"))
+
+        if "shares_free_float" not in joined.columns:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("shares_free_float"))
+
+        return joined
 
     def _ensure_float_crowding_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
@@ -3010,6 +3206,12 @@ class DatasetBuilder:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
             "gap_predictor": (pl.Float64, None),
             "basis_gate": (pl.Float64, None),
+            "basis_gate_roll_mean_20d": (pl.Float64, None),
+            "basis_gate_roll_std_20d": (pl.Float64, None),
+            "basis_gate_zscore_20d": (pl.Float64, None),
+            "basis_gate_outlier_flag": (pl.Int8, 0),
+            "basis_gate_sector_mean": (pl.Float64, None),
+            "basis_gate_sector_rel": (pl.Float64, None),
             "is_gap_basis_valid": (pl.Int8, 0),
         }
         for col, (dtype, default) in specs.items():
@@ -3047,8 +3249,47 @@ class DatasetBuilder:
             .cast(pl.Int8)
             .alias("is_gap_basis_valid"),
         )
-
+        df = self._add_basis_gate_derivatives(df)
         return self._ensure_gap_basis_columns(df)
+
+    def _add_basis_gate_derivatives(self, df: pl.DataFrame) -> pl.DataFrame:
+        if "basis_gate" not in df.columns:
+            return df
+
+        window = 20
+        min_periods = max(window // 2, 5)
+        sigma = getattr(self.quality_features, "sigma_threshold", 2.0)
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+        sector_col = next(
+            (col for col in ("sector_code", "SectorCode", "sector33_code", "Sector33Code") if col in df.columns),
+            None,
+        )
+
+        mean_col = f"basis_gate_roll_mean_{window}d"
+        std_col = f"basis_gate_roll_std_{window}d"
+        z_col = f"basis_gate_zscore_{window}d"
+        flag_col = "basis_gate_outlier_flag"
+
+        df = df.with_columns(
+            roll_mean_safe(pl.col("basis_gate"), window, min_periods=min_periods, by="code").alias(mean_col),
+            roll_std_safe(pl.col("basis_gate"), window, min_periods=min_periods, by="code").alias(std_col),
+        )
+        df = df.with_columns(((pl.col("basis_gate") - pl.col(mean_col)) / (pl.col(std_col) + 1e-8)).alias(z_col))
+        df = df.with_columns((pl.col(z_col).abs() > sigma).cast(pl.Int8).alias(flag_col))
+
+        if sector_col and date_col:
+            df = df.with_columns(
+                pl.col("basis_gate").mean().over([date_col, sector_col]).alias("basis_gate_sector_mean")
+            )
+            df = df.with_columns(
+                (pl.col("basis_gate") - pl.col("basis_gate_sector_mean")).alias("basis_gate_sector_rel")
+            )
+        else:
+            if "basis_gate_sector_mean" not in df.columns:
+                df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("basis_gate_sector_mean"))
+            if "basis_gate_sector_rel" not in df.columns:
+                df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("basis_gate_sector_rel"))
+        return df
 
     def _ensure_liquidity_impact_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
@@ -3275,6 +3516,14 @@ class DatasetBuilder:
             if "_vol_ma20" in df.columns:
                 df = df.drop("_vol_ma20")
 
+        if "am_vol_share" not in df.columns:
+            df = df.with_columns(
+                pl.when(pl.col("volume").abs() > eps)
+                .then(mv / (pl.col("volume") + eps))
+                .otherwise(None)
+                .alias("am_vol_share")
+            )
+
         df = self._ensure_am_pm_columns(df)
 
         if isinstance(self._run_meta, dict):
@@ -3295,6 +3544,7 @@ class DatasetBuilder:
         specs = {
             "am_pos": (pl.Float64, None),
             "am_vol_ratio_20": (pl.Float64, None),
+            "am_vol_share": (pl.Float64, None),
         }
         for col, (dtype, default) in specs.items():
             if col not in df.columns:
@@ -3792,6 +4042,7 @@ class DatasetBuilder:
             "fs_is_recent": (pl.Int8, 0),
             "fs_staleness_bd": (pl.Int32, None),
             "is_fs_valid": (pl.Int8, 0),
+            "DisclosedDate": (pl.Date, None),
             "fs_shares_outstanding": (pl.Float64, None),
             "fs_average_shares": (pl.Float64, None),
             # P0新特徴量
@@ -3928,7 +4179,8 @@ class DatasetBuilder:
     ) -> pl.DataFrame:
         if raw_daily.is_empty():
             LOGGER.info("[MARGIN] Daily margin dataset empty, skipping features")
-            return self._ensure_margin_daily_columns(df)
+            df = self._ensure_margin_daily_columns(df)
+            return self._ensure_adv60_columns(df)
 
         snapshot = prepare_margin_daily_asof(
             raw_daily,
@@ -4070,6 +4322,15 @@ class DatasetBuilder:
                 ),
                 (pl.col("_dv_base_yen").shift(1).rolling_mean(window_size=60, min_periods=10).over("code")).alias(
                     "_adv60_yen"
+                ),
+                (
+                    pl.col("_dv_base_yen")
+                    .shift(1)
+                    .is_not_null()
+                    .cast(pl.Int32)
+                    .rolling_sum(window_size=60, min_periods=1)
+                    .over("code")
+                    .alias("_adv60_obs_count")
                 ),
             ]
         )
@@ -4224,6 +4485,8 @@ class DatasetBuilder:
             .alias("is_margin_daily_valid"),
         )
 
+        joined = self._persist_adv60_columns(joined)
+
         cleanup_cols: set[str] = {col for col in joined.columns if col.endswith("_dmi")}
         cleanup_cols.update(actual for actual in (margin_long_col, margin_short_col) if actual is not None)
         for base in ("available_ts", "application_date", "published_date", "date"):
@@ -4239,6 +4502,7 @@ class DatasetBuilder:
                 "_dv_base_yen",
                 "_adv20_yen",
                 "_adv60_yen",
+                "_adv60_obs_count",
                 "_dmi_long_shares",
                 "_dmi_short_shares",
                 "_dmi_long_yen",
@@ -4673,6 +4937,15 @@ class DatasetBuilder:
                 (pl.col("_dv_base_yen").shift(1).rolling_mean(window_size=60, min_periods=10).over("code")).alias(
                     "_adv60_yen"
                 ),
+                (
+                    pl.col("_dv_base_yen")
+                    .shift(1)
+                    .is_not_null()
+                    .cast(pl.Int32)
+                    .rolling_sum(window_size=60, min_periods=1)
+                    .over("code")
+                    .alias("_adv60_obs_count")
+                ),
             ]
         )
 
@@ -4710,6 +4983,8 @@ class DatasetBuilder:
             ]
         )
 
+        joined = self._persist_adv60_columns(joined)
+
         # 一時列をクリーンアップ
         cleanup_cols: set[str] = {col for col in joined.columns if col.endswith("_wmi")}
         cleanup_cols.update(
@@ -4737,6 +5012,7 @@ class DatasetBuilder:
             [
                 "_dv_base_yen",
                 "_adv60_yen",
+                "_adv60_obs_count",
                 "_adv20_shares",
                 "_wmi_long_shares",
                 "_wmi_short_shares",
@@ -4952,6 +5228,9 @@ class DatasetBuilder:
             joined = joined.with_columns(pl.lit(None).cast(pl.Int32).alias("fs_staleness_bd"))
         if "fs_lag_days" not in joined.columns:
             joined = joined.with_columns(pl.lit(None).cast(pl.Int32).alias("fs_lag_days"))
+
+        if "_fs_disclosed_date" in joined.columns:
+            joined = joined.with_columns(pl.col("_fs_disclosed_date").alias("DisclosedDate"))
 
         cleanup_cols = [col for col in joined.columns if col.endswith("_fs")]
         if "fs_period_end_date" in joined.columns:
@@ -5546,6 +5825,8 @@ class DatasetBuilder:
             (
                 c
                 for c in (
+                    "market_cap_free_float",
+                    "market_cap_total",
                     "market_cap",
                     "market_capitalization",
                     "float_market_cap",
@@ -5955,11 +6236,64 @@ class DatasetBuilder:
         specs = {
             "beta60_topix": pl.Float64,
             "alpha60_topix": pl.Float64,
+            "beta60_topix_roll_mean_20d": pl.Float64,
+            "beta60_topix_roll_std_20d": pl.Float64,
+            "beta60_topix_zscore_20d": pl.Float64,
+            "beta60_topix_outlier_flag": pl.Int8,
+            "beta60_topix_sector_mean": pl.Float64,
+            "beta60_topix_sector_rel": pl.Float64,
+            "alpha60_topix_roll_mean_20d": pl.Float64,
+            "alpha60_topix_roll_std_20d": pl.Float64,
+            "alpha60_topix_zscore_20d": pl.Float64,
+            "alpha60_topix_outlier_flag": pl.Int8,
+            "alpha60_topix_sector_mean": pl.Float64,
+            "alpha60_topix_sector_rel": pl.Float64,
         }
         for col, dtype in specs.items():
             if col not in df.columns:
                 df = df.with_columns(pl.lit(None).cast(dtype).alias(col))
         return df
+
+    def _add_beta_alpha_derivatives(self, df: pl.DataFrame) -> pl.DataFrame:
+        features = [feature for feature in ("beta60_topix", "alpha60_topix") if feature in df.columns]
+        if not features:
+            return self._ensure_beta_alpha_columns(df)
+
+        window = 20
+        min_periods = max(window // 2, 5)
+        sigma = getattr(self.quality_features, "sigma_threshold", 2.0)
+        sector_candidates = ("sector_code", "SectorCode", "sector33_code", "Sector33Code")
+        sector_col = next((col for col in sector_candidates if col in df.columns), None)
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+
+        enriched = df
+        for feature in features:
+            mean_col = f"{feature}_roll_mean_{window}d"
+            std_col = f"{feature}_roll_std_{window}d"
+            z_col = f"{feature}_zscore_{window}d"
+            flag_col = f"{feature}_outlier_flag"
+
+            enriched = enriched.with_columns(
+                roll_mean_safe(pl.col(feature), window, min_periods=min_periods, by="code").alias(mean_col),
+                roll_std_safe(pl.col(feature), window, min_periods=min_periods, by="code").alias(std_col),
+            )
+            enriched = enriched.with_columns(((pl.col(feature) - pl.col(mean_col)) / (pl.col(std_col) + 1e-8)).alias(z_col))
+            enriched = enriched.with_columns((pl.col(z_col).abs() > sigma).cast(pl.Int8).alias(flag_col))
+
+            sector_mean_col = f"{feature}_sector_mean"
+            sector_rel_col = f"{feature}_sector_rel"
+            if sector_col and date_col:
+                enriched = enriched.with_columns(
+                    pl.col(feature).mean().over([date_col, sector_col]).alias(sector_mean_col)
+                )
+                enriched = enriched.with_columns((pl.col(feature) - pl.col(sector_mean_col)).alias(sector_rel_col))
+            else:
+                if sector_mean_col not in enriched.columns:
+                    enriched = enriched.with_columns(pl.lit(None).cast(pl.Float64).alias(sector_mean_col))
+                if sector_rel_col not in enriched.columns:
+                    enriched = enriched.with_columns(pl.lit(None).cast(pl.Float64).alias(sector_rel_col))
+
+        return self._ensure_beta_alpha_columns(enriched)
 
     def _add_trades_spec_features(
         self,

@@ -1,13 +1,14 @@
 version: 0
 data:
-  parquet_path: output/ml_dataset_latest_full_filled.parquet
+  parquet_path: output_g5/ml_dataset_full_with_targets.parquet
   metadata_path: null
   feature_groups_config: apex-ranker/configs/feature_groups_dataset145.yaml
   feature_groups:
-  - all_features
+  - g5_core
+  - g5_top_corr
   optional_groups: []
   use_plus30: false
-  lookback: 180
+  lookback: 90
   min_stocks_per_day: 80
   date_column: Date
   code_column: Code
@@ -34,6 +35,10 @@ train:
   amp: true
   device: auto
   num_workers: 0
+  # DataLoader optimization flags
+  pin_memory: true
+  prefetch_factor: 4
+  persistent_workers: true
   warmup_epochs: 3
   warmup_start_factor: 0.1
   early_stopping:
