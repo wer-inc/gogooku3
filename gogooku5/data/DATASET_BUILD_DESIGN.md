@@ -350,6 +350,13 @@ for name, horizon in horizons.items():
   - チャンクを `merge_chunks.py` でマージした後、`gogooku5/data/tools/add_graph_features_full.py` を使って **フル期間 Parquet**（例: `output_g5/datasets/ml_dataset_2020_2025_full.parquet`）に対して `GraphFeatureEngineer` を一括適用する。  
   - このステップで NULL プレースホルダ列が実値の `graph_*` 特徴量に置き換わり、最終的な学習用データセットでのみグラフ特徴量が必須となる。
 
+###### 2025以降の実運用ポリシー（決定事項）
+
+- 2025年チャンクビルドでは、`ENABLE_GRAPH_FEATURES=0` を基本とし、**チャンクには graph_* 列を一切含めない**。  
+- 年次もしくは複数年のフルデータセットは `merge_chunks.py` で構築し、その **マージ済みデータセットに対してのみ** `add_graph_features_full.py` で `GraphFeatureEngineer` を一括適用する。  
+- これにより、短期チャンク（例: 2025Q4）のように単独では観測日数が不足する期間でも、通年の履歴を用いた安定した graph_* 特徴量を得られる。  
+- 学習・評価は「マージ済み + graph 付与済み」の最終データセット（例: `ml_dataset_2025_full_with_graph.parquet`）を入力とすることを推奨する。
+
 #### **Step 19: Quality Features**
 
 ```python

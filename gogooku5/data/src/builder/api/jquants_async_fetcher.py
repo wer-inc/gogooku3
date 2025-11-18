@@ -1485,12 +1485,10 @@ class JQuantsAsyncFetcher:
                         "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
                         "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
                     }
-                    fs = item.get("FinancialStatement") or {}
-                    flat = extract_fn(fs)
-                    # Extract share columns from top level (not nested in FinancialStatement)
-                    for candidate in share_candidates:
-                        if candidate in item:
-                            flat[candidate] = item[candidate]
+                    # FIX (2025-11-18): JQuants API no longer nests financial data under "FinancialStatement" key
+                    # All financial fields (NetSales, Profit, etc.) are now at top level of item dict
+                    # Pass full item dict to extract_fn - it will match only financial fields via aliases
+                    flat = extract_fn(item)
                     base.update(flat)
                     rows.append(base)
 
@@ -1682,12 +1680,10 @@ class JQuantsAsyncFetcher:
                             "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
                             "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
                         }
-                        fs = item.get("FinancialStatement") or {}
-                        flat = _extract_financials(fs)
-                        # Extract share columns from top level (not nested in FinancialStatement)
-                        for candidate in issued_share_candidates + treasury_share_candidates + average_share_candidates:
-                            if candidate in item:
-                                flat[candidate] = item[candidate]
+                        # FIX (2025-11-18): JQuants API no longer nests financial data under "FinancialStatement" key
+                        # All financial fields (NetSales, Profit, etc.) are now at top level of item dict
+                        # Pass full item dict to _extract_financials - it will match only financial fields via aliases
+                        flat = _extract_financials(item)
                         base.update(flat)
                         rows.append(base)
                     pagination_key = data.get("pagination_key")

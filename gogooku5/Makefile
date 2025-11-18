@@ -1,5 +1,6 @@
 .PHONY: help dataset train-atft train-apex health-check status \
-        build-2025 build-2020-2024 build-all \
+        build-2025 build-2024 build-2020-2024 build-all \
+        build-2025-year-with-graph \
         build-raw \
         validate validate-meta validate-quality validate-phase1 \
         clean-chunks list-chunks
@@ -107,6 +108,32 @@ build-all:
 		--end 2025-11-15 \
 		--resume
 	@echo "✅ 全期間ビルド完了"
+
+# Year-level dataset with graph features (2025)
+#  1) Disable graph_* at chunk build (ENABLE_GRAPH_FEATURES=0)
+#  2) Merge 2025Q1–Q4 into a single dataset (using merge_chunks)
+#  3) Add graph_* features once over the merged 2025 dataset
+build-2025-year-with-graph:
+	@echo "🔨 [2025] Step 1/3: Building chunks without graph features (ENABLE_GRAPH_FEATURES=0)..."
+	@ENABLE_GRAPH_FEATURES=0 python3 $(_scripts_dir)/build_chunks.py \
+		--start 2025-01-01 \
+		--end 2025-12-31 \
+		--resume
+	@echo "✅ [2025] Chunk build without graph features completed"
+	@echo "🔗 [2025] Step 2/3: Merging completed chunks into a full dataset..."
+	@PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/merge_chunks.py \
+		--chunks-dir $(_output_dir)/chunks \
+		--output-dir $(_output_dir)/datasets \
+		--allow-partial
+	@echo "✅ [2025] Chunk merge completed (see $(_output_dir)/datasets)"
+	@echo "📈 [2025] Step 3/3: Adding graph_* features to merged dataset..."
+	@../venv/bin/python $(_data_dir)/tools/add_graph_features_full.py \
+		--input  $(_output_dir)/datasets/ml_dataset_latest.parquet \
+		--output $(_output_dir)/datasets/ml_dataset_latest_with_graph.parquet \
+		--date-col Date --code-col Code
+	@echo "✅ [2025] Year-level dataset with graph features ready:"
+	@echo "   Input:  $(_output_dir)/datasets/ml_dataset_latest.parquet"
+	@echo "   Output: $(_output_dir)/datasets/ml_dataset_latest_with_graph.parquet"
 
 # Raw snapshot chunking + manifest -----------------------------------------
 

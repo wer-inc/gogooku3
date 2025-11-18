@@ -685,7 +685,12 @@ class DatasetBuilder:
         combined_df = self._ensure_macro_columns(combined_df)
 
         combined_df = self.volatility_features.add_features(combined_df)
-        combined_df = self.graph_features.add_features(combined_df)
+        if self.settings.enable_graph_features:
+            combined_df = self.graph_features.add_features(combined_df)
+        else:
+            LOGGER.info(
+                "[GRAPH] ENABLE_GRAPH_FEATURES=0 detected; skipping graph_* feature generation for chunk build"
+            )
         combined_df = self.advanced_features.add_features(combined_df)
         combined_df = self.technical_features.add_features(combined_df)
 
@@ -1595,7 +1600,18 @@ class DatasetBuilder:
         reverse = {dst: src for src, dst in self._L0_RENAME.items() if dst in shard_df.columns}
         normalized = shard_df.rename(reverse)
         if "date" in normalized.columns:
-            normalized = normalized.with_columns(pl.col("date").str.strptime(pl.Date, strict=False))
+            date_dtype = normalized.schema.get("date")
+            # Old shards may persist `date` as a native Date type, while newer
+            # shards store it as Utf8. Guard `.str.strptime` to avoid applying
+            # string methods on non-string columns when mixing cache generations.
+            if date_dtype == pl.Utf8:
+                normalized = normalized.with_columns(
+                    pl.col("date").str.strptime(pl.Date, strict=False).alias("date")
+                )
+            elif date_dtype != pl.Date:
+                normalized = normalized.with_columns(
+                    pl.col("date").cast(pl.Date, strict=False).alias("date")
+                )
         if "code" in normalized.columns:
             normalized = normalized.with_columns(pl.col("code").cast(pl.Utf8, strict=False))
 
@@ -2077,7 +2093,15 @@ class DatasetBuilder:
             if not days:
                 days = business_date_range(start, end)
             df = pl.DataFrame({"date": days})
-            return df.with_columns(pl.col("date").str.strptime(pl.Date, strict=False))
+            # Guard .str.strptime to handle mixed cache generations
+            # Old cache files may have date: Date, new ones have date: Utf8
+            date_dtype = df.schema.get("date")
+            if date_dtype == pl.Utf8:
+                return df.with_columns(pl.col("date").str.strptime(pl.Date, strict=False))
+            elif date_dtype != pl.Date:
+                return df.with_columns(pl.col("date").cast(pl.Date, strict=False))
+            # Already Date type, return as-is
+            return df
 
         calendar_df, _ = self.cache.get_or_fetch_dataframe(
             cache_key,

@@ -13,8 +13,8 @@ import polars as pl
 
 @dataclass
 class GraphFeatureConfig:
-    code_column: str = "code"
-    date_column: str = "date"
+    code_column: str = "Code"  # Fixed: Use uppercase to match dataset schema
+    date_column: str = "Date"  # Fixed: Use uppercase to match dataset schema
     return_column: str = "ret_prev_1d"  # Phase 2: changed from returns_1d
     window_days: int = 60
     min_observations: int = 20
