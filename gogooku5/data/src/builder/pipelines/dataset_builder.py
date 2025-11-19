@@ -8,7 +8,6 @@ import time
 import weakref
 from calendar import monthrange
 from dataclasses import dataclass, field
-
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, TypeVar
@@ -82,14 +81,14 @@ from ..utils import (
     get_git_metadata,
     interval_join_pl,
     month_key,
-    prepare_snapshot_pl,
     month_range,
+    prepare_snapshot_pl,
     shift_trading_days,
 )
-from ..utils.schema_validator import SchemaValidator
-from ..utils.mlflow_tracker import MLflowTracker
 from ..utils.lazy_io import save_with_cache
+from ..utils.mlflow_tracker import MLflowTracker
 from ..utils.prefetch import DataSourcePrefetcher
+from ..utils.schema_validator import SchemaValidator
 from ..validation.quality import parse_asof_specs, run_quality_checks
 
 LOGGER = configure_logger("builder.pipeline")
@@ -114,6 +113,8 @@ def _tokenize_quality_list(value: str | None) -> list[str]:
 
 BETA_EPS = 1e-12
 SUPPLY_SHOCK_THRESHOLD = 0.01
+# Typical gap between financial statement events in days (approx. quarterly cadence).
+FS_TYPICAL_GAP_DAYS = 90
 TOPIX_FEATURE_WHITELIST: tuple[str, ...] = (
     "close",
     "r_prev_1d",
@@ -354,6 +355,7 @@ class DatasetBuilder:
             - Categorical encoding improves join performance by 20-40% (4.6M rows benchmark)
         """
         import time
+
         from builder.utils.join_helpers import prepare_join_keys
 
         # Normalize code column name (handle both 'Code' and 'code')
@@ -371,26 +373,13 @@ class DatasetBuilder:
 
         # Categorize join keys in both DataFrames
         df_cat = prepare_join_keys(df, [code_col], lazy=False)
-        dim_cat = prepare_join_keys(
-            dim_security.select(["code", "sec_id"]),
-            ["code"],
-            lazy=False
-        )
+        dim_cat = prepare_join_keys(dim_security.select(["code", "sec_id"]), ["code"], lazy=False)
 
         # Perform categorical join
-        df_with_sec_id = df_cat.join(
-            dim_cat,
-            left_on=code_col,
-            right_on="code",
-            how="left"
-        )
+        df_with_sec_id = df_cat.join(dim_cat, left_on=code_col, right_on="code", how="left")
 
         join_time = time.perf_counter() - start_time
-        LOGGER.debug(
-            "[SEC_ID] Categorical join completed in %.3f seconds (%d rows)",
-            join_time,
-            len(df_with_sec_id)
-        )
+        LOGGER.debug("[SEC_ID] Categorical join completed in %.3f seconds (%d rows)", join_time, len(df_with_sec_id))
 
         # Check for invalid codes (sec_id is null)
         invalid = df_with_sec_id.filter(pl.col("sec_id").is_null())
@@ -399,7 +388,7 @@ class DatasetBuilder:
             LOGGER.warning(
                 "[SEC_ID] %d rows with invalid codes (not in dim_security): %d unique codes",
                 len(invalid),
-                len(invalid_codes)
+                len(invalid_codes),
             )
             LOGGER.warning("[SEC_ID] Sample invalid codes: %s", invalid_codes[:10])
 
@@ -727,9 +716,7 @@ class DatasetBuilder:
         if self.settings.enable_graph_features:
             combined_df = self.graph_features.add_features(combined_df)
         else:
-            LOGGER.info(
-                "[GRAPH] ENABLE_GRAPH_FEATURES=0 detected; skipping graph_* feature generation for chunk build"
-            )
+            LOGGER.info("[GRAPH] ENABLE_GRAPH_FEATURES=0 detected; skipping graph_* feature generation for chunk build")
         combined_df = self.advanced_features.add_features(combined_df)
         combined_df = self.technical_features.add_features(combined_df)
 
@@ -919,6 +906,8 @@ class DatasetBuilder:
 
         finalized = self._finalize_for_output(enriched_df)
         finalized = self._ensure_ret_prev_columns(finalized)
+        finalized = self._add_future_realized_vol_labels(finalized, horizons=(5, 10))
+        finalized = self._add_blend_weight_labels(finalized)
         if chunk_spec is not None:
             return self._persist_chunk_dataset(finalized, chunk_spec, start_time=start_time)
 
@@ -1159,7 +1148,7 @@ class DatasetBuilder:
         metadata.update(get_git_metadata())
 
         validation_error: str | None = None
-    # Check if schema validation is enabled via environment variable (default: enabled)
+        # Check if schema validation is enabled via environment variable (default: enabled)
         enable_validation = os.getenv("ENABLE_SCHEMA_VALIDATION", "1") == "1"
         if self.schema_validator is not None and enable_validation:
             try:
@@ -1325,9 +1314,7 @@ class DatasetBuilder:
             raise
         except Exception as exc:
             build_duration = time.time() - start_time
-            self._write_chunk_status(
-                chunk_spec, state="failed", error=str(exc), build_duration=build_duration
-            )
+            self._write_chunk_status(chunk_spec, state="failed", error=str(exc), build_duration=build_duration)
             raise
 
     def _load_small_table_cached(self, table_name: str, generator_fn) -> pl.LazyFrame:
@@ -1472,9 +1459,7 @@ class DatasetBuilder:
                 if not normalized.is_empty():
                     start_date = datetime.fromisoformat(start).date()
                     end_date = datetime.fromisoformat(end).date()
-                    normalized = normalized.filter(
-                        (pl.col("date") >= start_date) & (pl.col("date") <= end_date)
-                    )
+                    normalized = normalized.filter((pl.col("date") >= start_date) & (pl.col("date") <= end_date))
                     if symbols_list:
                         normalized = normalized.filter(pl.col("code").is_in(symbols_list))
                 if not normalized.is_empty():
@@ -1651,13 +1636,9 @@ class DatasetBuilder:
             # shards store it as Utf8. Guard `.str.strptime` to avoid applying
             # string methods on non-string columns when mixing cache generations.
             if date_dtype == pl.Utf8:
-                normalized = normalized.with_columns(
-                    pl.col("date").str.strptime(pl.Date, strict=False).alias("date")
-                )
+                normalized = normalized.with_columns(pl.col("date").str.strptime(pl.Date, strict=False).alias("date"))
             elif date_dtype != pl.Date:
-                normalized = normalized.with_columns(
-                    pl.col("date").cast(pl.Date, strict=False).alias("date")
-                )
+                normalized = normalized.with_columns(pl.col("date").cast(pl.Date, strict=False).alias("date"))
         if "code" in normalized.columns:
             normalized = normalized.with_columns(pl.col("code").cast(pl.Utf8, strict=False))
 
@@ -2076,9 +2057,7 @@ class DatasetBuilder:
                 return value.isoformat()
             return value
 
-        normalized_listed = [
-            {key: _normalize_python_value(val) for key, val in entry.items()} for entry in listed
-        ]
+        normalized_listed = [{key: _normalize_python_value(val) for key, val in entry.items()} for entry in listed]
 
         # DEBUG: Log sample of normalized data before DataFrame creation
         if normalized_listed:
@@ -2234,9 +2213,7 @@ class DatasetBuilder:
         # Join quotes with listed metadata
         # Phase 3.1: Migrate to sec_id-based join (30-50% faster than string join)
         aligned = quotes.join(
-            listed.select(["sec_id", "code", "sector_code_listed", "market_code"]),
-            on="sec_id",
-            how="left"
+            listed.select(["sec_id", "code", "sector_code_listed", "market_code"]), on="sec_id", how="left"
         )
 
         # BATCH-2B: Ensure sector dimensions for sector_short_selling_ratio (#12)
@@ -2299,7 +2276,9 @@ class DatasetBuilder:
         # Join quotes with listed metadata (lazy, optimized)
         # Phase 3.1: Migrate to sec_id-based join (30-50% faster than string join)
         aligned_lf = (
-            quotes_lf.join(listed_filtered.select(["sec_id", "code", "sector_code", "market_code"]), on="sec_id", how="left")
+            quotes_lf.join(
+                listed_filtered.select(["sec_id", "code", "sector_code", "market_code"]), on="sec_id", how="left"
+            )
             .with_columns(
                 [
                     # Ensure sector_code exists
@@ -2542,6 +2521,128 @@ class DatasetBuilder:
         enriched = df.with_columns(missing_exprs)
         return enriched
 
+    def _add_future_realized_vol_labels(
+        self,
+        df: pl.DataFrame,
+        horizons: tuple[int, ...] = (5, 10),
+    ) -> pl.DataFrame:
+        """
+        Add forward realized volatility labels ``rv_future_{h}d`` for short horizons.
+
+        These labels use FUTURE simple returns based on adjusted close prices and are
+        intended for volatility prediction tasks (e.g. ATFT-GAT-FAN), not as model
+        input features.
+        """
+        if df.is_empty():
+            return df
+
+        code_col = self._resolve_column_name(df, "code")
+        date_col = self._resolve_column_name(df, "date")
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+
+        if code_col is None or date_col is None or price_col is None:
+            return df
+
+        # Ensure deterministic ordering for rolling operations.
+        df = df.sort([code_col, date_col])
+
+        eps = 1e-12
+        # Simple 1-day return r_t = P_t / P_{t-1} - 1 (per code).
+        df = df.with_columns(
+            ((pl.col(price_col) / (pl.col(price_col).shift(1).over(code_col) + eps)) - 1.0).alias("_rv_ret_1d")
+        )
+        df = df.with_columns(pl.col("_rv_ret_1d").pow(2).alias("_rv_ret_1d2"))
+
+        exprs: list[pl.Expr] = []
+        for horizon in horizons:
+            if horizon <= 0:
+                continue
+            col_name = f"rv_future_{horizon}d"
+            if col_name in df.columns:
+                continue
+            window = int(horizon)
+            # Σ_{i=t+1..t+h} r_i^2 via right-closed rolling sum shifted by -h within each code.
+            sum_sq = pl.col("_rv_ret_1d2").rolling_sum(window_size=window, min_periods=window)
+            exprs.append(sum_sq.shift(-window).over(code_col).mul(252.0 / float(window)).sqrt().alias(col_name))
+
+        if exprs:
+            df = df.with_columns(exprs)
+
+        # Clean up temporary columns.
+        df = df.drop(["_rv_ret_1d", "_rv_ret_1d2"], strict=False)
+        return df
+
+    def _add_blend_weight_labels(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Add per-horizon optimal static blend weights between IV and RV.
+
+        For each horizon h, we approximate the sample-wise optimal weight w*_h
+        in the convex combination:
+
+            sigma_hat_h = w * IV_h + (1 - w) * RV_h
+
+        by solving the 1D least-squares problem against the realised future
+        volatility label rv_future_h and clipping to [0, 1]. These labels are
+        intended for auxiliary training of a blend head (e.g. MLP producing
+        state-dependent w_h).
+        """
+        if df.is_empty():
+            return df
+
+        required = {
+            "rv_future_5d",
+            "rv_future_10d",
+            "idxopt_iv_atm_30d",
+            "volatility_10d",
+            "volatility_20d",
+        }
+        missing = [col for col in required if col not in df.columns]
+        if missing:
+            LOGGER.warning(
+                "[VOL-BLEND] Missing columns for blend_weight labels, filling NULLs: %s",
+                missing,
+            )
+            # Ensure the label columns exist even when inputs are missing.
+            for name in ("blend_weight_5d", "blend_weight_10d"):
+                if name not in df.columns:
+                    df = df.with_columns(pl.lit(None).cast(pl.Float64).alias(name))
+            return df
+
+        eps = 1e-6
+        exprs: list[pl.Expr] = []
+
+        # 5d horizon: use IV_30D and 10d realised volatility as RV proxy.
+        y5 = pl.col("rv_future_5d")
+        iv5 = pl.col("idxopt_iv_atm_30d")
+        rv5 = pl.col("volatility_10d")
+        denom5 = iv5 - rv5
+        w5 = (
+            pl.when(y5.is_not_null() & iv5.is_not_null() & rv5.is_not_null() & (denom5.abs() > eps))
+            .then(((y5 - rv5) / denom5).clip(0.0, 1.0))
+            .when(y5.is_not_null() & iv5.is_not_null() & rv5.is_not_null())
+            .then(pl.lit(0.5))
+            .otherwise(None)
+            .alias("blend_weight_5d")
+        )
+        exprs.append(w5)
+
+        # 10d horizon: use IV_30D and 20d realised volatility as RV proxy.
+        y10 = pl.col("rv_future_10d")
+        iv10 = pl.col("idxopt_iv_atm_30d")
+        rv10 = pl.col("volatility_20d")
+        denom10 = iv10 - rv10
+        w10 = (
+            pl.when(y10.is_not_null() & iv10.is_not_null() & rv10.is_not_null() & (denom10.abs() > eps))
+            .then(((y10 - rv10) / denom10).clip(0.0, 1.0))
+            .when(y10.is_not_null() & iv10.is_not_null() & rv10.is_not_null())
+            .then(pl.lit(0.5))
+            .otherwise(None)
+            .alias("blend_weight_10d")
+        )
+        exprs.append(w10)
+
+        return df.with_columns(exprs)
+
     @staticmethod
     def _resolve_column_name(df: pl.DataFrame, canonical: str) -> str | None:
         """Return actual column matching canonical name (case-insensitive)."""
@@ -2642,18 +2743,14 @@ class DatasetBuilder:
 
         if obs_available:
             adv_expr = (
-                pl.when(pl.col("_adv60_obs_count").fill_null(0) >= min_obs)
-                .then(pl.col("_adv60_yen"))
-                .otherwise(None)
+                pl.when(pl.col("_adv60_obs_count").fill_null(0) >= min_obs).then(pl.col("_adv60_yen")).otherwise(None)
             )
         else:
             adv_expr = pl.col("_adv60_yen")
 
         df = df.with_columns(adv_expr.alias("_adv60_materialized"))
         if "adv60_yen" in df.columns:
-            df = df.with_columns(
-                pl.coalesce([pl.col("_adv60_materialized"), pl.col("adv60_yen")]).alias("adv60_yen")
-            )
+            df = df.with_columns(pl.coalesce([pl.col("_adv60_materialized"), pl.col("adv60_yen")]).alias("adv60_yen"))
         else:
             df = df.with_columns(pl.col("_adv60_materialized").alias("adv60_yen"))
         df = df.drop(["_adv60_materialized"], strict=False)
@@ -2696,9 +2793,8 @@ class DatasetBuilder:
             return self._ensure_market_cap_columns(df)
 
         price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
-        shares_total_col = (
-            self._resolve_column_name(df, "shares_total")
-            or self._resolve_column_name(df, "fs_shares_outstanding")
+        shares_total_col = self._resolve_column_name(df, "shares_total") or self._resolve_column_name(
+            df, "fs_shares_outstanding"
         )
         float_candidates = [
             self._resolve_column_name(df, "shares_free_float"),
@@ -2759,8 +2855,8 @@ class DatasetBuilder:
             ]
         )
         date_diff_expr = (
-            (pl.col(date_col).cast(pl.Int64, strict=False) - pl.col(prev_date_col).cast(pl.Int64, strict=False)).abs()
-        )
+            pl.col(date_col).cast(pl.Int64, strict=False) - pl.col(prev_date_col).cast(pl.Int64, strict=False)
+        ).abs()
         df = df.with_columns(
             pl.when(
                 pl.col(prev_col).is_not_null()
@@ -2848,13 +2944,26 @@ class DatasetBuilder:
                 pl.coalesce([pl.col("fs_shares_outstanding"), pl.col("shares_total")]).alias("fs_shares_outstanding")
             )
         elif "fs_shares_outstanding" not in joined.columns and "shares_total" in joined.columns:
-            joined = joined.with_columns(pl.col("shares_total").cast(pl.Float64, strict=False).alias("fs_shares_outstanding"))
+            joined = joined.with_columns(
+                pl.col("shares_total").cast(pl.Float64, strict=False).alias("fs_shares_outstanding")
+            )
 
         if "shares_total" not in joined.columns:
             joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("shares_total"))
 
         if "shares_free_float" not in joined.columns:
             joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("shares_free_float"))
+
+        # Expose a unified tradable share count for downstream percentage features.
+        # Primary preference is shares_total (issued - treasury); fallback to fs_shares_outstanding.
+        joined = joined.with_columns(
+            pl.coalesce(
+                [
+                    pl.col("shares_total").cast(pl.Float64, strict=False),
+                    pl.col("fs_shares_outstanding").cast(pl.Float64, strict=False),
+                ]
+            ).alias("shares_tradable")
+        )
 
         return joined
 
@@ -2872,6 +2981,10 @@ class DatasetBuilder:
             "weekly_margin_long_pct_tradable": (pl.Float64, None),
             "weekly_margin_long_pct_float_z20": (pl.Float64, None),
             "weekly_margin_long_pct_float_roc_5d": (pl.Float64, None),
+            "crowding_margin": (pl.Float64, None),
+            "crowding_dmi": (pl.Float64, None),
+            "crowding_breakdown": (pl.Float64, None),
+            "crowding_short": (pl.Float64, None),
             "crowding_score": (pl.Float64, None),
             "is_crowding_signal_valid": (pl.Int8, 0),
         }
@@ -2934,13 +3047,19 @@ class DatasetBuilder:
             group = group.sort(date_col).with_columns(
                 [
                     pl.col("_rq_ret_1d")
-                    .rolling_quantile(window_size=window, quantile=0.10, interpolation="nearest", min_periods=min_periods)
+                    .rolling_quantile(
+                        window_size=window, quantile=0.10, interpolation="nearest", min_periods=min_periods
+                    )
                     .alias("rq_63_10"),
                     pl.col("_rq_ret_1d")
-                    .rolling_quantile(window_size=window, quantile=0.50, interpolation="nearest", min_periods=min_periods)
+                    .rolling_quantile(
+                        window_size=window, quantile=0.50, interpolation="nearest", min_periods=min_periods
+                    )
                     .alias("rq_63_50"),
                     pl.col("_rq_ret_1d")
-                    .rolling_quantile(window_size=window, quantile=0.90, interpolation="nearest", min_periods=min_periods)
+                    .rolling_quantile(
+                        window_size=window, quantile=0.90, interpolation="nearest", min_periods=min_periods
+                    )
                     .alias("rq_63_90"),
                 ]
             )
@@ -2975,7 +3094,11 @@ class DatasetBuilder:
             LOGGER.debug("[FLOAT] Missing base columns for float turnover computation")
             return self._ensure_float_crowding_columns(df)
 
-        shares_col = self._resolve_column_name(df, "fs_shares_outstanding")
+        shares_col = (
+            self._resolve_column_name(df, "shares_tradable")
+            or self._resolve_column_name(df, "shares_total")
+            or self._resolve_column_name(df, "fs_shares_outstanding")
+        )
         turnover_col = self._resolve_column_name(df, "turnovervalue")
         price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
         margin_long_col = self._resolve_column_name(df, "dmi_long_balance")
@@ -3073,19 +3196,47 @@ class DatasetBuilder:
             frame = frame.drop([ma_col, std_col])
             return frame
 
-        df = _apply_roll_metrics(df, "float_turnover_pct", "float_turnover_pct_z20", "float_turnover_pct_roc_5d")
+        df = _apply_roll_metrics(
+            df, "float_turnover_pct_tradable", "float_turnover_pct_z20", "float_turnover_pct_roc_5d"
+        )
         df = _apply_roll_metrics(
             df,
-            "margin_long_pct_float",
+            "margin_long_pct_tradable",
             "margin_long_pct_float_z20",
             "margin_long_pct_float_roc_5d",
         )
         df = _apply_roll_metrics(
             df,
-            "weekly_margin_long_pct_float",
+            "weekly_margin_long_pct_tradable",
             "weekly_margin_long_pct_float_z20",
             "weekly_margin_long_pct_float_roc_5d",
         )
+
+        # Decomposed crowding components for interpretability.
+        component_exprs: list[pl.Expr] = []
+
+        margin_z_cols = [
+            c for c in ["margin_long_pct_float_z20", "weekly_margin_long_pct_float_z20"] if c in df.columns
+        ]
+        if margin_z_cols:
+            margin_values = [pl.col(c).fill_null(0.0) for c in margin_z_cols]
+            margin_weights = [pl.col(c).is_not_null().cast(pl.Float64) for c in margin_z_cols]
+            component_exprs.append(
+                pl.when(pl.sum_horizontal(margin_weights) > 0.0)
+                .then(pl.sum_horizontal(margin_values) / pl.sum_horizontal(margin_weights))
+                .otherwise(None)
+                .alias("crowding_margin")
+            )
+
+        if "dmi_net_z20" in df.columns:
+            component_exprs.append(pl.col("dmi_net_z20").alias("crowding_dmi"))
+        if "bd_net_z20" in df.columns:
+            component_exprs.append(pl.col("bd_net_z20").alias("crowding_breakdown"))
+        if "ss_ratio_market_z20" in df.columns:
+            component_exprs.append(pl.col("ss_ratio_market_z20").alias("crowding_short"))
+
+        if component_exprs:
+            df = df.with_columns(component_exprs)
 
         # Composite crowding score: combine margin z-scores, daily margin net z-score,
         # breakdown net z-score, and sector short-selling z-score when available.
@@ -3234,7 +3385,9 @@ class DatasetBuilder:
             return self._ensure_margin_pain_columns(df)
 
         # Note: shares_col resolved but not needed (margin pain uses percentage)
-        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_float")
+        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_tradable") or self._resolve_column_name(
+            df, "margin_long_pct_float"
+        )
         price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
         lower_limit_price_col = self._resolve_column_name(df, "lower_limit_price")
 
@@ -3333,7 +3486,9 @@ class DatasetBuilder:
         if df.is_empty():
             return self._ensure_pre_earnings_flow_columns(df)
 
-        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_float")
+        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_tradable") or self._resolve_column_name(
+            df, "margin_long_pct_float"
+        )
         short_ratio_col = self._resolve_column_name(df, "short_selling_ratio_market")
         earn_flag_col = self._resolve_column_name(df, "earnings_upcoming_3d") or self._resolve_column_name(
             df, "is_E_pp3"
@@ -5369,6 +5524,37 @@ class DatasetBuilder:
             LOGGER.info("[FINS] No normalized financial statement rows available")
             return self._ensure_fs_columns(df)
 
+        # Approximate typical gap between financial statement events per code using
+        # historical fs_period_end_date gaps. This is used as a fallback for
+        # fs_days_to_next when an exact next event distance is not directly observable.
+        gap_stats: pl.DataFrame | None = None
+        if "code" in feature_frame.columns and "fs_period_end_date" in feature_frame.columns:
+            try:
+                gap_frame = (
+                    feature_frame.select(
+                        [
+                            pl.col("code").cast(pl.Utf8, strict=False).alias("code"),
+                            pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_period_end_date"),
+                        ]
+                    )
+                    .drop_nulls(["code", "fs_period_end_date"])
+                    .unique()
+                    .sort(["code", "fs_period_end_date"])
+                    .with_columns(
+                        (pl.col("fs_period_end_date") - pl.col("fs_period_end_date").shift(1).over("code"))
+                        .dt.days()
+                        .alias("gap_days")
+                    )
+                )
+                gap_stats = (
+                    gap_frame.group_by("code")
+                    .agg(pl.col("gap_days").drop_nulls().median().alias("fs_gap_median_code"))
+                    .filter(pl.col("fs_gap_median_code").is_not_null())
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                LOGGER.warning("[FINS] Failed to compute fs_gap_median_code: %s", exc)
+                gap_stats = None
+
         snapshot_ts_col = "_fs_available_ts"
         backbone_ts_col = "_fs_asof_ts"
         feature_frame = feature_frame.with_columns(pl.col("available_ts").cast(pl.Int64).alias(snapshot_ts_col))
@@ -5402,9 +5588,7 @@ class DatasetBuilder:
             ]
         )
         # 明示的な実績決算イベント日（E）としてfs_E_event_dateを保持
-        joined = joined.with_columns(
-            pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_E_event_date")
-        )
+        joined = joined.with_columns(pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_E_event_date"))
         # fs_staleness_bd: 前回開示からの営業日差（既存）
         joined = joined.with_columns(
             pl.when(pl.col("_fs_today_date").is_not_null() & pl.col("_fs_report_date").is_not_null())
@@ -5433,10 +5617,27 @@ class DatasetBuilder:
         # エイリアス: fs_days_since_E としても公開
         joined = joined.with_columns(pl.col("fs_days_since").alias("fs_days_since_E"))
 
-        # fs_days_to_next: 次回決算日までの営業日差（次のfs_period_end_dateを探す）
-        # 簡易実装: グループ内で次のfs_period_end_dateをshift(-1)で取得
-        # より正確には、各codeごとに次の決算日を計算する必要があるが、簡易実装として
-        # 現在の実装では省略（後で拡張可能）
+        # fs_days_to_next: 次回決算日までのおおよその距離（営業日差の近似）。
+        # 将来の実際の決算日を直接参照せず、歴史的なfs_period_end_date間隔の
+        # 中央値（fs_gap_median_code）をコード別に推定し、そこから残り日数を近似する。
+        if gap_stats is not None and not gap_stats.is_empty():
+            joined = joined.join(gap_stats, on="code", how="left")
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("fs_gap_median_code"))
+
+        fs_gap_ref = pl.coalesce(
+            [
+                pl.col("fs_gap_median_code").cast(pl.Float64, strict=False),
+                pl.lit(float(FS_TYPICAL_GAP_DAYS)),
+            ]
+        )
+        joined = joined.with_columns(
+            pl.when(pl.col("fs_days_since").is_not_null() & (pl.col("fs_days_since") >= 0))
+            .then((fs_gap_ref - pl.col("fs_days_since").cast(pl.Float64, strict=False)).clip(lower_bound=0.0))
+            .otherwise(None)
+            .cast(pl.Int32)
+            .alias("fs_days_to_next")
+        )
 
         # P0新特徴量: fs_window_e±{1,3,5}（E前後の近傍フラグ）
         # fs_period_end_dateを決算日（E）として、dateとの距離で判定
@@ -5711,11 +5912,9 @@ class DatasetBuilder:
             if open_col is not None and close_col is not None:
                 joined = joined.sort(["code", "date"])
                 joined = joined.with_columns(
-                    (
-                        pl.col(open_col)
-                        / (pl.col(close_col).shift(1).over("code") + 1e-9)
-                        - 1.0
-                    ).alias("_ret_overnight_fallback")
+                    (pl.col(open_col) / (pl.col(close_col).shift(1).over("code") + 1e-9) - 1.0).alias(
+                        "_ret_overnight_fallback"
+                    )
                 )
                 ret_overnight_col = "_ret_overnight_fallback"
 
@@ -6541,7 +6740,9 @@ class DatasetBuilder:
                 roll_mean_safe(pl.col(feature), window, min_periods=min_periods, by="code").alias(mean_col),
                 roll_std_safe(pl.col(feature), window, min_periods=min_periods, by="code").alias(std_col),
             )
-            enriched = enriched.with_columns(((pl.col(feature) - pl.col(mean_col)) / (pl.col(std_col) + 1e-8)).alias(z_col))
+            enriched = enriched.with_columns(
+                ((pl.col(feature) - pl.col(mean_col)) / (pl.col(std_col) + 1e-8)).alias(z_col)
+            )
             enriched = enriched.with_columns((pl.col(z_col).abs() > sigma).cast(pl.Int8).alias(flag_col))
 
             sector_mean_col = f"{feature}_sector_mean"
@@ -7368,9 +7569,7 @@ class DatasetBuilder:
 
             # Validate join success (detect timestamp mismatches)
             if "short_selling_ratio_market" in result.columns:
-                null_rate = result.select(
-                    pl.col("short_selling_ratio_market").is_null().mean()
-                ).item()
+                null_rate = result.select(pl.col("short_selling_ratio_market").is_null().mean()).item()
                 if null_rate > 0.95:
                     LOGGER.error(
                         f"High NULL rate ({null_rate:.1%}) after short_selling join - "
@@ -7670,12 +7869,10 @@ class DatasetBuilder:
                         # メインDataFrameにsector_codeカラムを追加（Sector33Codeまたはsector33_codeから）
                         sector_col = next(
                             (c for c in result.columns if c.lower() in ["sector33code", "sector_33code", "sectorcode"]),
-                            None
+                            None,
                         )
                         if sector_col:
-                            result = result.with_columns(
-                                pl.col(sector_col).cast(pl.Utf8).alias("sector_code")
-                            )
+                            result = result.with_columns(pl.col(sector_col).cast(pl.Utf8).alias("sector_code"))
                             LOGGER.info(
                                 "[SHORT_SELLING] Mapped '%s' → 'sector_code' for sector join",
                                 sector_col,
@@ -7695,7 +7892,9 @@ class DatasetBuilder:
                             )
 
                             # staleness計算: 現在の日付と公表日の差
-                            publish_col = "_ss_publish_date_ss" if "_ss_publish_date_ss" in result.columns else "_ss_publish_date"
+                            publish_col = (
+                                "_ss_publish_date_ss" if "_ss_publish_date_ss" in result.columns else "_ss_publish_date"
+                            )
                             if "date" in result.columns and publish_col in result.columns:
                                 result = result.with_columns(
                                     [
@@ -8249,6 +8448,24 @@ class DatasetBuilder:
             .alias("is_idxopt_valid")
         )
 
+        # Static IV-RV blend forecasts for short horizons (5d, 10d).
+        # These serve as simple baselines and as additional features
+        # for downstream models (e.g. ATFT-GAT-FAN in gogooku3).
+        required_blend_cols = {"idxopt_iv_atm_30d", "volatility_10d", "volatility_20d"}
+        if required_blend_cols.issubset(set(joined.columns)):
+            joined = joined.with_columns(
+                [
+                    pl.when(pl.col("idxopt_iv_atm_30d").is_not_null() & pl.col("volatility_10d").is_not_null())
+                    .then(0.6 * pl.col("idxopt_iv_atm_30d") + 0.4 * pl.col("volatility_10d"))
+                    .otherwise(None)
+                    .alias("idxopt_blend_vol_5d"),
+                    pl.when(pl.col("idxopt_iv_atm_30d").is_not_null() & pl.col("volatility_20d").is_not_null())
+                    .then(0.5 * pl.col("idxopt_iv_atm_30d") + 0.5 * pl.col("volatility_20d"))
+                    .otherwise(None)
+                    .alias("idxopt_blend_vol_10d"),
+                ]
+            )
+
         # クリーンアップ（一時列を削除）
         cleanup_cols = [
             "topix_realized_vol_20d",
@@ -8303,6 +8520,8 @@ class DatasetBuilder:
             "idxopt_vrp_gap": pl.Float64,
             "idxopt_vrp_ratio": pl.Float64,
             "idxopt_iv_30d_z20": pl.Float64,
+            "idxopt_blend_vol_5d": pl.Float64,
+            "idxopt_blend_vol_10d": pl.Float64,
             "is_idxopt_valid": pl.Int8,
         }
 
@@ -8440,6 +8659,8 @@ class DatasetBuilder:
         return Path(path)
 
     def _file_sha256(self, path: Path) -> str:
+        import hashlib
+
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -8632,6 +8853,65 @@ class DatasetBuilder:
                 schema_meta = meta.setdefault("schema_governance", {})
                 schema_meta["dropped_log_return_columns"] = sorted(log_returns_cols)
 
+        # Safety net: ensure am_vol_share survives to the final schema.
+        # Earlier builds occasionally lost this column; if missing, backfill it
+        # from previous-day morning_volume / adjustmentvolume (left-closed).
+        if "am_vol_share" not in df.columns:
+            required_am_cols = {"code", "date", "morning_volume", "adjustmentvolume"}
+            if required_am_cols.issubset(df.columns):
+                LOGGER.info("[SCHEMA] Backfilling am_vol_share from morning_volume/adjustmentvolume (left-closed)")
+                eps = 1e-12
+                df = (
+                    df.sort(["code", "date"])
+                    .with_columns(
+                        [
+                            pl.col("morning_volume")
+                            .shift(1)
+                            .over("code")
+                            .cast(pl.Float64, strict=False)
+                            .alias("_am_vol_prev"),
+                            pl.col("adjustmentvolume")
+                            .shift(1)
+                            .over("code")
+                            .cast(pl.Float64, strict=False)
+                            .alias("_am_vol_den_prev"),
+                        ]
+                    )
+                    .with_columns(
+                        pl.when(pl.col("_am_vol_den_prev").abs() > eps)
+                        .then(pl.col("_am_vol_prev") / (pl.col("_am_vol_den_prev") + eps))
+                        .otherwise(None)
+                        .alias("am_vol_share")
+                    )
+                )
+                df = df.drop(["_am_vol_prev", "_am_vol_den_prev"], strict=False)
+
+        # Normalize legacy *_pct_float names to *_pct_tradable before dropping the old aliases.
+        pct_float_aliases: dict[str, str] = {}
+        for col in df.columns:
+            if "_pct_float" in col:
+                new_name = col.replace("_pct_float", "_pct_tradable")
+                if new_name not in df.columns:
+                    pct_float_aliases[col] = new_name
+
+        if pct_float_aliases:
+            df = df.with_columns([pl.col(old).alias(new) for old, new in pct_float_aliases.items()])
+            if isinstance(meta, dict):
+                schema_meta = meta.setdefault("schema_governance", {})
+                schema_meta["pct_float_aliases"] = pct_float_aliases
+
+        # Remove deprecated *_pct_float base columns from the final output schema.
+        legacy_pct_float_cols = [col for col in df.columns if col.endswith("_pct_float")]
+        if legacy_pct_float_cols:
+            LOGGER.warning(
+                "[SCHEMA] Dropping deprecated *_pct_float columns from final output: %s",
+                legacy_pct_float_cols[:15],
+            )
+            df = df.drop(legacy_pct_float_cols)
+            if isinstance(meta, dict):
+                schema_meta = meta.setdefault("schema_governance", {})
+                schema_meta["dropped_pct_float_columns"] = sorted(legacy_pct_float_cols)
+
         macro_sector_cols = [
             col
             for col in df.columns
@@ -8715,9 +8995,7 @@ class DatasetBuilder:
             upper = pl.col("upper_limit") if "upper_limit" in out.columns else pl.lit(0, dtype=pl.Int8)
             lower = pl.col("lower_limit") if "lower_limit" in out.columns else pl.lit(0, dtype=pl.Int8)
             out = out.with_columns(
-                ((upper.fill_null(0) == 1) | (lower.fill_null(0) == 1))
-                .cast(pl.Int8)
-                .alias("flag_price_limit_hit")
+                ((upper.fill_null(0) == 1) | (lower.fill_null(0) == 1)).cast(pl.Int8).alias("flag_price_limit_hit")
             )
         else:
             out = out.with_columns(pl.lit(0, dtype=pl.Int8).alias("flag_price_limit_hit"))
@@ -8725,10 +9003,7 @@ class DatasetBuilder:
         # flag_adjustment_event: any change in AdjustmentFactor within a code
         if "AdjustmentFactor" in out.columns and "Code" in out.columns:
             out = out.sort(["Code", "Date"]).with_columns(
-                (
-                    pl.col("AdjustmentFactor")
-                    != pl.col("AdjustmentFactor").shift(1).over("Code")
-                )
+                (pl.col("AdjustmentFactor") != pl.col("AdjustmentFactor").shift(1).over("Code"))
                 .fill_null(False)
                 .cast(pl.Int8)
                 .alias("flag_adjustment_event")

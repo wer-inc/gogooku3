@@ -48,6 +48,9 @@ train:
   time_decay_tau_days: 120
   use_ema: true
   ema_beta: 0.999
+  nvml_enabled: true
+  nvml_device_index: 0
+  nvml_sample_interval: 0.2
 eval:
   k_ratio: 0.1
   ndcg_beta: 1.0

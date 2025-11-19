@@ -146,6 +146,31 @@ groups:
       - topix_ret_prev_5d_zscore_20d
       - price_to_sma20_sector_mean
 
+      # Realized quantile features (63-day window)
+      - rq_63_10
+      - rq_63_50
+      - rq_63_90
+
+      # Earnings event (actual E) features
+      - fs_E_event_date
+      - fs_days_since_E
+      - fs_window_e_pm1
+      - fs_window_e_pp3
+      - fs_window_e_pp5
+
+      # Float / margin / crowding features
+      - float_turnover_pct_tradable
+      - float_turnover_pct_z20
+      - margin_long_pct_tradable
+      - weekly_margin_long_pct_tradable
+      - margin_long_listed_ratio
+      - margin_short_listed_ratio
+      - crowding_margin
+      - crowding_dmi
+      - crowding_breakdown
+      - crowding_short
+      - crowding_score
+
       # Technical indicators for short-term
       # NOTE: gogooku5 dataset uses ret_prev_* and idr_atr / bb_bw / bb_pct_b
       # instead of returns_* / atr_14 / bb_width / bb_position.

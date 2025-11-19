@@ -305,3 +305,35 @@ print(null_100['column'].tolist())
 ---
 
 **総合評価**: ✅ **現状でも学習可能だが、282列の削除で品質向上が見込める**
+
+---
+
+## ✅ 方針更新 (fs_E / free-float / イベント系)
+
+### preE 系列の扱い
+
+- `preE_*`（決算「予定」ベース）の特徴量は、/fins/announcement が過去の予定履歴を提供しない仕様のため、**過去時点の再現ができない**。
+- 現世代ではこれらを **モデル入力から外し、feature group にも含めない** 方針とする。
+- 代わりに、/fins/statements / fs_details 由来の実績決算イベント:
+  - `fs_E_event_date`
+  - `fs_days_since_E`
+  - `fs_window_e_pm1`, `fs_window_e_pp3`, `fs_window_e_pp5`
+  を短期モデルの主要な E イベント特徴量として採用する。
+
+### free-float 系列の扱い
+
+- 真のフリーフロート（`shares_free_float`, `market_cap_free_float`, `*_pct_float`）は **J-Quants単体では十分に再現できない**。
+- 現在のパイプラインでは:
+  - 発行済株数ベースの `fs_shares_outstanding` / `market_cap_total` を基盤とし、
+  - /markets/daily_margin_interest の `*ListedShareRatio` を用いた `margin_long_listed_ratio` / `margin_short_listed_ratio`,
+  - `float_turnover_pct_tradable`, `margin_long_pct_tradable`, `weekly_margin_long_pct_tradable`
+    を主要な需給比率として採用する。
+- `*_free_float*` プレフィックスを持つ列は **原則としてモデルでは使用しない（非推奨）**。
+
+### セクター変更 / SQ 距離の扱い
+
+- `days_since_sector33_change`, `sector33_changed_5d`, `days_to_sq`, `days_since_sq` は、
+  - イベント自体がきわめて稀であるため **高NULL率は構造的に避けられない**。
+- これらの列はデータセット内には保持するが、
+  - 短期用 feature group（`g5_short_term`）からは除外し、
+  - 将来のイベント専用モデルや分析用途での利用候補として扱う。

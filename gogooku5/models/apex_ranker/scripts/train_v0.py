@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from datetime import date as Date
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -39,6 +39,7 @@ from apex_ranker.utils import (
 )
 from torch.utils.data import DataLoader
 
+from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
 from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 from gogooku5.data.src.builder.utils.mlflow_tracker import MLflowTracker
 
@@ -463,7 +464,7 @@ def _create_mlflow_tracker(args) -> MLflowTracker | None:
     )
 
 
-def _collect_training_run_params(args, cfg) -> Dict[str, Any]:
+def _collect_training_run_params(args, cfg) -> dict[str, Any]:
     train_cfg = cfg.get("train", {})
     data_cfg = cfg.get("data", {})
     horizons = train_cfg.get("horizons", [])
@@ -475,7 +476,7 @@ def _collect_training_run_params(args, cfg) -> Dict[str, Any]:
     }
 
 
-def _extract_dataset_tags(data_cfg: dict) -> Dict[str, str]:
+def _extract_dataset_tags(data_cfg: dict) -> dict[str, str]:
     parquet_path = Path(data_cfg["parquet_path"])
     metadata_path = data_cfg.get("metadata_path")
     if not metadata_path:
@@ -992,8 +993,34 @@ def _run_training(args, cfg, tracker) -> None:
         autocast_kwargs = {"enabled": amp_enabled}
         autocast_ctx = cuda_autocast
 
-    def to_device(tensor: torch.Tensor) -> torch.Tensor:
-        return tensor.to(device, non_blocking=True)
+    def make_to_device(dev: torch.device | str, monitor: NVMLMonitor | None = None):
+        """Factory for a device transfer helper with optional H2D timing."""
+
+        def _to_device(tensor: torch.Tensor) -> torch.Tensor:
+            if not torch.is_tensor(tensor):
+                return tensor
+            if monitor is not None and monitor.enabled:
+                with monitor.phase("h2d"):
+                    return tensor.to(dev, non_blocking=True)
+            return tensor.to(dev, non_blocking=True)
+
+        return _to_device
+
+    # NVML configuration (can be controlled via config or env)
+    env_flag = os.getenv("GOGOOKU5_NVML_ENABLED")
+    if env_flag is not None:
+        nvml_enabled = env_flag not in ("0", "false", "False")
+    else:
+        nvml_enabled = bool(train_cfg.get("nvml_enabled", True))
+    nvml_device_index = int(train_cfg.get("nvml_device_index", 0))
+    nvml_sample_interval = float(train_cfg.get("nvml_sample_interval", 0.2))
+
+    monitor = NVMLMonitor(
+        device_index=nvml_device_index,
+        sample_interval=nvml_sample_interval,
+        enabled=nvml_enabled,
+    )
+    to_device = make_to_device(device, monitor if nvml_enabled else None)
 
     print(f"[INFO] Training device: {device}")
     print(f"[INFO] Train days: {len(train_dataset)}, Val days: {len(val_dataset)}")
@@ -1016,6 +1043,8 @@ def _run_training(args, cfg, tracker) -> None:
         print(f"[INFO] Early stopping enabled: patience={patience}, metric={monitor_metric}, min_delta={min_delta:.4f}")
 
     for epoch in range(1, train_cfg["epochs"] + 1):
+        if monitor is not None and monitor.enabled:
+            monitor.start_epoch(epoch)
         print(f"[INFO] Starting epoch {epoch}/{train_cfg['epochs']}")
         model.train()
         running_loss = 0.0
@@ -1029,9 +1058,18 @@ def _run_training(args, cfg, tracker) -> None:
             y = to_device(batch["y"].squeeze(0))
 
             optimizer.zero_grad(set_to_none=True)
-            with autocast_ctx(**autocast_kwargs):
-                scores = model(X)
-                loss = model.compute_loss(scores, y)
+            if monitor is not None and monitor.enabled:
+                fwd_cm = monitor.phase("fwd")
+                fwd_cm.__enter__()
+            else:
+                fwd_cm = None
+            try:
+                with autocast_ctx(**autocast_kwargs):
+                    scores = model(X)
+                    loss = model.compute_loss(scores, y)
+            finally:
+                if fwd_cm is not None:
+                    fwd_cm.__exit__(None, None, None)
 
             # GRADIENT-SAFE: Skip if all horizons were invalid (empty aggregation)
             if loss is None:
@@ -1056,12 +1094,31 @@ def _run_training(args, cfg, tracker) -> None:
                 weight = math.exp(-float(age) / max(time_decay_tau, 1e-6))
                 loss = loss * weight
 
-            scaler.scale(loss).backward()
+            if monitor is not None and monitor.enabled:
+                bwd_cm = monitor.phase("bwd")
+                bwd_cm.__enter__()
+            else:
+                bwd_cm = None
+            try:
+                scaler.scale(loss).backward()
+            finally:
+                if bwd_cm is not None:
+                    bwd_cm.__exit__(None, None, None)
+
             if grad_clip := train_cfg.get("grad_clip"):
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
+            if monitor is not None and monitor.enabled:
+                step_cm = monitor.phase("step")
+                step_cm.__enter__()
+            else:
+                step_cm = None
+            try:
+                scaler.step(optimizer)
+                scaler.update()
+            finally:
+                if step_cm is not None:
+                    step_cm.__exit__(None, None, None)
             if ema is not None:
                 ema.update(model)
 
@@ -1148,6 +1205,18 @@ def _run_training(args, cfg, tracker) -> None:
                     stats["spread"].append(spread_val)
                     stats["k_over_n"].append(k / max(1, n))
                     stats["wil"].append(wil_val)
+
+        if monitor is not None and monitor.enabled:
+            summary_nvml = monitor.end_epoch(epoch)
+            gpu_util = float(summary_nvml.get("gpu_util_avg", 0.0))
+            mem_used = float(summary_nvml.get("mem_used_avg_bytes", 0.0))
+            mem_total = float(summary_nvml.get("mem_total_bytes", 1.0))
+            phase_ratios = summary_nvml.get("phase_ratios", {}) or {}
+            mem_ratio = mem_used / max(1.0, mem_total)
+            print(
+                f"[NVML][epoch {epoch}] gpu_util_avg={gpu_util:.3f}, "
+                f"gpu_mem_used_ratio={mem_ratio:.3f}, phase_ratios={phase_ratios}"
+            )
 
         # Compute and print validation metrics
         summary: dict[int, dict[str, float]] = {}

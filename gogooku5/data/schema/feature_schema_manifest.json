@@ -3,9 +3,9 @@
   "generated_at": "2025-11-17T15:41:50",
   "reference_file": "/workspace/gogooku3/output_g5/chunks/2025M03/ml_dataset.parquet",
   "hash_strategy": "sha256_orderless_v1",
-  "schema_hash": "e8eed6163ec92385",
+  "schema_hash": "9eef6f2dd730e01a",
   "column_order_enforced": false,
-  "total_columns": 4207,
+  "total_columns": 4215,
   "columns": [
     {
       "name": "Date",
@@ -1938,6 +1938,36 @@
       "nullable": true
     },
     {
+      "name": "rv_ewm2",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "rv_ewm",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "rv_future_5d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "rv_future_10d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "blend_weight_5d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "blend_weight_10d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
       "name": "volatility_5d",
       "dtype": "Float64",
       "nullable": true
@@ -2574,6 +2604,16 @@
     },
     {
       "name": "idxopt_iv_30d_z20",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "idxopt_blend_vol_5d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "idxopt_blend_vol_10d",
       "dtype": "Float64",
       "nullable": true
     },

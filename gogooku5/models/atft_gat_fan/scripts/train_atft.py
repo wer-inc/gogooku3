@@ -16,6 +16,11 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 from atft_gat_fan.config.training_config import TrainingConfig
+from atft_gat_fan.monitoring.nvml_lightning_callbacks import (
+    AutoTuneCallback,
+    NVMLPhaseCallback,
+)
+from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
 from atft_gat_fan.training.data import build_dataloaders, load_dataset
 from atft_gat_fan.training.module import ATFTGATFANLightningModule
 
@@ -97,6 +102,12 @@ def main() -> int:
         len(spec.target_columns),
     )
 
+    monitor = NVMLMonitor(
+        device_index=cfg.train.nvml_device_index,
+        sample_interval=cfg.train.nvml_sample_interval,
+        enabled=cfg.train.nvml_enabled,
+    )
+
     train_loader, val_loader = build_dataloaders(
         df,
         spec,
@@ -114,10 +125,13 @@ def main() -> int:
         n_targets=len(spec.target_columns),
         train_cfg=cfg.train,
         amp_cfg=cfg.amp,
+        monitor=monitor,
+        target_names=spec.target_columns,
+        heads=getattr(cfg, "heads", None),
     )
 
     precision = "bf16-mixed" if cfg.amp.enabled and cfg.amp.dtype == "bfloat16" else "16-mixed"
-    callbacks = []
+    callbacks: list[pl.Callback] = []
     if cfg.logging.enable_checkpointing:
         cfg.logging.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         ckpt_cb = ModelCheckpoint(
@@ -128,6 +142,11 @@ def main() -> int:
             mode="min",
         )
         callbacks.append(ckpt_cb)
+
+    if monitor.enabled:
+        callbacks.append(NVMLPhaseCallback(monitor))
+        if cfg.train.auto_tune_enabled:
+            callbacks.append(AutoTuneCallback(cfg.train, monitor))
 
     accelerator = "gpu" if pl.utilities.device_parser.num_cuda_devices() > 0 else "cpu"
 
