@@ -1,6 +1,9 @@
 version: 0
+# Base configuration for APEX-Ranker v0
+# Dataset: 2023-2024 ONLY (484 trading days, 1.88M samples, 3542 features)
+# NOTE: 2025 data excluded due to schema mismatch (124-column差分)
 data:
-  parquet_path: output_g5/ml_dataset_full_with_targets.parquet
+  parquet_path: output_g5/datasets/ml_dataset_2023_2025_final_pruned.parquet
   metadata_path: null
   feature_groups_config: apex-ranker/configs/feature_groups_dataset145.yaml
   feature_groups:

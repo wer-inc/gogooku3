@@ -1,10 +1,11 @@
 version: 0
 # Short-term (1d+5d) focused configuration for APEX-Ranker v0
-# Dataset: 2023+2024+2025 (703 trading days)
+# Dataset: 2023-2024 ONLY (484 trading days, 1.88M samples)
+# NOTE: 2025 data excluded due to schema mismatch (124-column差分)
 # Goal: Improve short-term ranking performance with focused training
 
 data:
-  parquet_path: output_g5/ml_dataset_2023_2024_2025_full.parquet
+  parquet_path: output_g5/datasets/ml_dataset_2023_2025_final_pruned.parquet
   metadata_path: null
   feature_groups_config: apex-ranker/configs/feature_groups_dataset145.yaml
   feature_groups:

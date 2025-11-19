@@ -37,13 +37,15 @@ def _find_all_null_columns(df: pl.DataFrame, keep: Iterable[str]) -> List[Tuple[
         return []
 
     keep_set = set(keep)
-    null_counts = df.null_count()
+    null_counts_df = df.null_count()
+    null_counts_dict = null_counts_df.to_dict(as_series=False)
     to_drop: List[Tuple[str, int]] = []
-    for name, null_count in zip(df.columns, null_counts):
+    for name, null_list in null_counts_dict.items():
         if name in keep_set:
             continue
-        if int(null_count) == height:
-            to_drop.append((name, int(null_count)))
+        null_count = null_list[0]  # Get first (and only) row value
+        if null_count == height:
+            to_drop.append((name, null_count))
     return to_drop
 
 

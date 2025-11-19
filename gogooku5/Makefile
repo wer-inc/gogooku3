@@ -238,7 +238,7 @@ build-range-dataset:
 	mkdir -p "$$STAGING_DIR"; \
 	for y in $$(seq $(START_YEAR) $(END_YEAR)); do \
 	  for qi in 1 2 3 4; do \
-	    q="$$yQ$$qi"; \
+	    q="$${y}Q$${qi}"; \
 	    if [ ! -d "$(_output_dir)/chunks/$$q" ]; then \
 	      echo "❌ Missing chunk: $$q (expected at $(_output_dir)/chunks/$$q)"; \
 	      exit 1; \
