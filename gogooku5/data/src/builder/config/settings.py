@@ -90,6 +90,10 @@ class DatasetBuilderSettings(BaseSettings):
     rmm_pool_size: str = Field("40GB", env="RMM_POOL_SIZE")
 
     # Graph feature configuration
+    # When True, GraphFeatureEngineer adds correlation-based peer features
+    # (graph_degree, graph_peer_corr_mean, graph_peer_corr_max) to the ML
+    # dataset. These can be selectively enabled in model configs (e.g.,
+    # apex-ranker feature groups or ATFT-GAT-FAN experiments).
     enable_graph_features: bool = Field(True, env="ENABLE_GRAPH_FEATURES")
 
     # Financial statement history configuration

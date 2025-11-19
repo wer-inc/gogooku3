@@ -722,6 +722,8 @@ class DatasetBuilder:
         combined_df = self._ensure_macro_columns(combined_df)
 
         combined_df = self.volatility_features.add_features(combined_df)
+        # Realized quantile features based on 63-day returns (rq_63_10/50/90).
+        combined_df = self._add_rq63_features(combined_df)
         if self.settings.enable_graph_features:
             combined_df = self.graph_features.add_features(combined_df)
         else:
@@ -2839,9 +2841,16 @@ class DatasetBuilder:
         cleanup_cols.extend(["_share_asof", "_share_ts"])
         joined = joined.drop([col for col in cleanup_cols if col in joined.columns], strict=False)
 
-        if "shares_total" in joined.columns:
-            joined = joined.with_columns(pl.col("shares_total").alias("fs_shares_outstanding"))
-        else:
+        # Prefer fs_shares_outstanding computed from financial statements and use
+        # shares_total from the share master only to fill remaining gaps.
+        if "fs_shares_outstanding" in joined.columns and "shares_total" in joined.columns:
+            joined = joined.with_columns(
+                pl.coalesce([pl.col("fs_shares_outstanding"), pl.col("shares_total")]).alias("fs_shares_outstanding")
+            )
+        elif "fs_shares_outstanding" not in joined.columns and "shares_total" in joined.columns:
+            joined = joined.with_columns(pl.col("shares_total").cast(pl.Float64, strict=False).alias("fs_shares_outstanding"))
+
+        if "shares_total" not in joined.columns:
             joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("shares_total"))
 
         if "shares_free_float" not in joined.columns:
@@ -2852,12 +2861,15 @@ class DatasetBuilder:
     def _ensure_float_crowding_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
             "float_turnover_pct": (pl.Float64, None),
+            "float_turnover_pct_tradable": (pl.Float64, None),
             "float_turnover_pct_z20": (pl.Float64, None),
             "float_turnover_pct_roc_5d": (pl.Float64, None),
             "margin_long_pct_float": (pl.Float64, None),
+            "margin_long_pct_tradable": (pl.Float64, None),
             "margin_long_pct_float_z20": (pl.Float64, None),
             "margin_long_pct_float_roc_5d": (pl.Float64, None),
             "weekly_margin_long_pct_float": (pl.Float64, None),
+            "weekly_margin_long_pct_tradable": (pl.Float64, None),
             "weekly_margin_long_pct_float_z20": (pl.Float64, None),
             "weekly_margin_long_pct_float_roc_5d": (pl.Float64, None),
             "crowding_score": (pl.Float64, None),
@@ -2867,6 +2879,92 @@ class DatasetBuilder:
             if col not in df.columns:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
+
+    def _ensure_rq63_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure base rq_63_* columns exist with proper defaults."""
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "rq_63_10": (pl.Float64, None),
+            "rq_63_50": (pl.Float64, None),
+            "rq_63_90": (pl.Float64, None),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_rq63_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Add realized quantile features rq_63_{10,50,90} based on 63-day returns."""
+        if df.is_empty():
+            return self._ensure_rq63_columns(df)
+
+        code_col = self._resolve_column_name(df, "code") or self._resolve_column_name(df, "Code")
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+        price_col = (
+            self._resolve_column_name(df, "adjustmentclose")
+            or self._resolve_column_name(df, "AdjustmentClose")
+            or self._resolve_column_name(df, "close")
+        )
+
+        if code_col is None or date_col is None or price_col is None:
+            LOGGER.debug(
+                "[RQ63] Missing inputs (code=%s, date=%s, price=%s); skipping rq_63 features",
+                code_col,
+                date_col,
+                price_col,
+            )
+            return self._ensure_rq63_columns(df)
+
+        # Sort and compute 1-day log returns per code.
+        working = df.sort([code_col, date_col]).with_columns(
+            (
+                pl.col(price_col).cast(pl.Float64, strict=False)
+                / pl.col(price_col).cast(pl.Float64, strict=False).shift(1).over(code_col)
+            )
+            .log()
+            .alias("_rq_ret_1d")
+        )
+
+        window = 63
+        min_periods = 25
+
+        def _add_rq_for_symbol(group: pl.DataFrame) -> pl.DataFrame:
+            if "_rq_ret_1d" not in group.columns:
+                return group
+            # Rolling quantiles over time for this symbol.
+            group = group.sort(date_col).with_columns(
+                [
+                    pl.col("_rq_ret_1d")
+                    .rolling_quantile(window_size=window, quantile=0.10, interpolation="nearest", min_periods=min_periods)
+                    .alias("rq_63_10"),
+                    pl.col("_rq_ret_1d")
+                    .rolling_quantile(window_size=window, quantile=0.50, interpolation="nearest", min_periods=min_periods)
+                    .alias("rq_63_50"),
+                    pl.col("_rq_ret_1d")
+                    .rolling_quantile(window_size=window, quantile=0.90, interpolation="nearest", min_periods=min_periods)
+                    .alias("rq_63_90"),
+                ]
+            )
+            return group
+
+        try:
+            enriched = (
+                working.group_by(code_col, maintain_order=True)
+                .map_groups(_add_rq_for_symbol)
+                .drop(["_rq_ret_1d"], strict=False)
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("[RQ63] Failed to compute rq_63 features: %s", exc)
+            return self._ensure_rq63_columns(df)
+
+        # Join back rq_63_* onto original df using code/date as keys.
+        rq_cols = ["rq_63_10", "rq_63_50", "rq_63_90"]
+        available = [c for c in rq_cols if c in enriched.columns]
+        if not available:
+            return self._ensure_rq63_columns(df)
+
+        rq_frame = enriched.select([code_col, date_col] + available)
+        out = df.join(rq_frame, on=[code_col, date_col], how="left")
+        return self._ensure_rq63_columns(out)
 
     def _add_float_turnover_crowding_features(self, df: pl.DataFrame) -> pl.DataFrame:
         if df.is_empty():
@@ -2900,7 +2998,13 @@ class DatasetBuilder:
             )
             .then(turnover_expr / (price_expr * share_expr + eps))
             .otherwise(None)
-            .alias("float_turnover_pct")
+            .alias("float_turnover_pct"),
+            pl.when(
+                share_expr.is_not_null() & (share_expr > 0) & turnover_expr.is_not_null() & price_expr.is_not_null()
+            )
+            .then(turnover_expr / (price_expr * share_expr + eps))
+            .otherwise(None)
+            .alias("float_turnover_pct_tradable"),
         ]
 
         if margin_long_col is not None:
@@ -2911,8 +3015,15 @@ class DatasetBuilder:
                 .otherwise(None)
                 .alias("margin_long_pct_float")
             )
+            new_columns.append(
+                pl.when(share_expr.is_not_null() & (share_expr > 0) & long_expr.is_not_null())
+                .then(long_expr / (share_expr + eps))
+                .otherwise(None)
+                .alias("margin_long_pct_tradable")
+            )
         else:
             new_columns.append(pl.lit(None).cast(pl.Float64).alias("margin_long_pct_float"))
+            new_columns.append(pl.lit(None).cast(pl.Float64).alias("margin_long_pct_tradable"))
 
         if weekly_long_col is not None:
             weekly_expr = pl.col(weekly_long_col).cast(pl.Float64, strict=False)
@@ -2922,8 +3033,15 @@ class DatasetBuilder:
                 .otherwise(None)
                 .alias("weekly_margin_long_pct_float")
             )
+            new_columns.append(
+                pl.when(share_expr.is_not_null() & (share_expr > 0) & weekly_expr.is_not_null())
+                .then(weekly_expr / (share_expr + eps))
+                .otherwise(None)
+                .alias("weekly_margin_long_pct_tradable")
+            )
         else:
             new_columns.append(pl.lit(None).cast(pl.Float64).alias("weekly_margin_long_pct_float"))
+            new_columns.append(pl.lit(None).cast(pl.Float64).alias("weekly_margin_long_pct_tradable"))
 
         df = df.sort(["code", "date"]).with_columns(new_columns)
 
@@ -2969,15 +3087,31 @@ class DatasetBuilder:
             "weekly_margin_long_pct_float_roc_5d",
         )
 
-        df = df.with_columns(
-            pl.when(
-                pl.col("margin_long_pct_float_z20").is_not_null()
-                & pl.col("weekly_margin_long_pct_float_z20").is_not_null()
+        # Composite crowding score: combine margin z-scores, daily margin net z-score,
+        # breakdown net z-score, and sector short-selling z-score when available.
+        contrib_cols: list[str] = [
+            "margin_long_pct_float_z20",
+            "weekly_margin_long_pct_float_z20",
+            "dmi_net_z20",
+            "bd_net_z20",
+            "ss_ratio_market_z20",
+        ]
+        present = [c for c in contrib_cols if c in df.columns]
+        if present:
+            # Replace NULL with 0 for aggregation, keep explicit non-null count for normalization.
+            value_exprs = [pl.col(c).fill_null(0.0) for c in present]
+            weight_exprs = [pl.col(c).is_not_null().cast(pl.Float64) for c in present]
+            df = df.with_columns(
+                pl.sum_horizontal(value_exprs).alias("__crowding_sum"),
+                pl.sum_horizontal(weight_exprs).alias("__crowding_n"),
             )
-            .then(pl.col("margin_long_pct_float_z20") + pl.col("weekly_margin_long_pct_float_z20"))
-            .otherwise(None)
-            .alias("crowding_score"),
-        )
+            df = df.with_columns(
+                pl.when(pl.col("__crowding_n") > 0)
+                .then(pl.col("__crowding_sum") / pl.col("__crowding_n"))
+                .otherwise(None)
+                .alias("crowding_score")
+            )
+            df = df.drop(["__crowding_sum", "__crowding_n"], strict=False)
 
         df = df.with_columns(
             pl.when(pl.col("crowding_score").is_not_null())
@@ -4014,6 +4148,8 @@ class DatasetBuilder:
             "dmi_total": pl.Float64,
             "dmi_net": pl.Float64,
             "dmi_long_short_ratio": pl.Float64,
+            "margin_long_listed_ratio": pl.Float64,
+            "margin_short_listed_ratio": pl.Float64,
             # P0: Changes
             "dmi_long_balance_diff_1d": pl.Float64,
             "dmi_short_balance_diff_1d": pl.Float64,
@@ -4113,6 +4249,7 @@ class DatasetBuilder:
             "DisclosedDate": (pl.Date, None),
             "fs_shares_outstanding": (pl.Float64, None),
             "fs_average_shares": (pl.Float64, None),
+            "fs_E_event_date": (pl.Date, None),
             # P0新特徴量
             "fs_ttm_sales": (pl.Float64, None),
             "fs_ttm_op_profit": (pl.Float64, None),
@@ -4128,6 +4265,7 @@ class DatasetBuilder:
             "fs_accruals": (pl.Float64, None),
             "fs_days_since": (pl.Int32, None),
             "fs_days_to_next": (pl.Int32, None),
+            "fs_days_since_E": (pl.Int32, None),
             "fs_window_e_pm1": (pl.Int8, 0),
             "fs_window_e_pp3": (pl.Int8, 0),
             "fs_window_e_pp5": (pl.Int8, 0),
@@ -4305,6 +4443,20 @@ class DatasetBuilder:
             ]
         )
 
+        # Listed share ratios (percentage of outstanding shares on margin)
+        long_listed_col = _resolve(
+            [
+                "LongMarginOutstandingListedShareRatio_dmi",
+                "LongMarginOutstandingListedShareRatio",
+            ]
+        )
+        short_listed_col = _resolve(
+            [
+                "ShortMarginOutstandingListedShareRatio_dmi",
+                "ShortMarginOutstandingListedShareRatio",
+            ]
+        )
+
         if margin_long_col is None or margin_short_col is None:
             LOGGER.warning(
                 "[MARGIN] Daily margin join missing required columns (long=%s, short=%s)",
@@ -4363,15 +4515,31 @@ class DatasetBuilder:
             )
 
         # P0: Core levels (当日公表値)
+        ratio_den = pl.col("_dmi_short_yen") + 1e-9
         joined = joined.with_columns(
             [
                 pl.col("_dmi_long_yen").alias("dmi_long_balance"),
                 pl.col("_dmi_short_yen").alias("dmi_short_balance"),
                 (pl.col("_dmi_long_yen") + pl.col("_dmi_short_yen")).alias("dmi_total"),
                 (pl.col("_dmi_long_yen") - pl.col("_dmi_short_yen")).alias("dmi_net"),
-                (pl.col("_dmi_long_yen") / (pl.col("_dmi_short_yen") + 1e-9)).alias("dmi_long_short_ratio"),
+                (pl.col("_dmi_long_yen") / ratio_den).alias("dmi_long_short_ratio"),
             ]
         )
+
+        # Listed share ratios (DIベースの対上場株比)
+        if long_listed_col and long_listed_col in joined.columns:
+            joined = joined.with_columns(
+                pl.col(long_listed_col).cast(pl.Float64, strict=False).alias("margin_long_listed_ratio")
+            )
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("margin_long_listed_ratio"))
+
+        if short_listed_col and short_listed_col in joined.columns:
+            joined = joined.with_columns(
+                pl.col(short_listed_col).cast(pl.Float64, strict=False).alias("margin_short_listed_ratio")
+            )
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("margin_short_listed_ratio"))
 
         # P0: 1-day differences (shift(1) to prevent leakage)
         joined = joined.sort(["code", "date"])
@@ -5233,6 +5401,10 @@ class DatasetBuilder:
                 pl.col("DisclosedDate").cast(pl.Date, strict=False).alias("_fs_disclosed_date"),
             ]
         )
+        # 明示的な実績決算イベント日（E）としてfs_E_event_dateを保持
+        joined = joined.with_columns(
+            pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_E_event_date")
+        )
         # fs_staleness_bd: 前回開示からの営業日差（既存）
         joined = joined.with_columns(
             pl.when(pl.col("_fs_today_date").is_not_null() & pl.col("_fs_report_date").is_not_null())
@@ -5258,6 +5430,8 @@ class DatasetBuilder:
             .otherwise(None)
             .alias("fs_days_since")
         )
+        # エイリアス: fs_days_since_E としても公開
+        joined = joined.with_columns(pl.col("fs_days_since").alias("fs_days_since_E"))
 
         # fs_days_to_next: 次回決算日までの営業日差（次のfs_period_end_dateを探す）
         # 簡易実装: グループ内で次のfs_period_end_dateをshift(-1)で取得

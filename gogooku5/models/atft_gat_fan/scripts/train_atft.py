@@ -43,6 +43,30 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override the maximum number of epochs.",
     )
+    parser.add_argument(
+        "--cv-type",
+        choices=["holdout", "purged_kfold"],
+        default="holdout",
+        help="Cross-validation splitter to use for train/validation split.",
+    )
+    parser.add_argument(
+        "--cv-n-splits",
+        type=int,
+        default=5,
+        help="Number of folds when using Purged K-Fold.",
+    )
+    parser.add_argument(
+        "--cv-fold",
+        type=int,
+        default=None,
+        help="Purged K-Fold index (1-based). Defaults to the last fold.",
+    )
+    parser.add_argument(
+        "--embargo-days",
+        type=int,
+        default=0,
+        help="Embargo days appended to purge gaps for Purged K-Fold.",
+    )
     return parser.parse_args()
 
 
@@ -73,7 +97,16 @@ def main() -> int:
         len(spec.target_columns),
     )
 
-    train_loader, val_loader = build_dataloaders(df, spec, cfg.dataset, cfg.train)
+    train_loader, val_loader = build_dataloaders(
+        df,
+        spec,
+        cfg.dataset,
+        cfg.train,
+        cv_type=args.cv_type,
+        cv_n_splits=int(args.cv_n_splits),
+        cv_fold=args.cv_fold,
+        embargo_days=int(args.embargo_days),
+    )
     in_features = len(spec.feature_columns)
 
     model = ATFTGATFANLightningModule(
@@ -98,19 +131,26 @@ def main() -> int:
 
     accelerator = "gpu" if pl.utilities.device_parser.num_cuda_devices() > 0 else "cpu"
 
+    accumulate_grad_batches = max(1, int(cfg.train.accumulate_grad_batches))
+    gradient_clip_val = cfg.train.gradient_clip_val if cfg.train.gradient_clip_val is not None else 0.0
+
     trainer = pl.Trainer(
         max_epochs=cfg.train.max_epochs,
         accelerator=accelerator,
         precision=precision if cfg.amp.enabled else "32-true",
         log_every_n_steps=cfg.logging.log_every_n_steps,
         callbacks=callbacks,
+        accumulate_grad_batches=accumulate_grad_batches,
+        gradient_clip_val=gradient_clip_val,
     )
 
     _logger.info(
-        "Starting training: epochs=%d, batch_size=%d, params=%d",
+        "Starting training: epochs=%d, batch_size=%d, params=%d (accum_steps=%d, grad_clip=%.3f)",
         cfg.train.max_epochs,
         cfg.train.batch_size,
         model.parameter_count,
+        accumulate_grad_batches,
+        gradient_clip_val,
     )
 
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)

@@ -31,7 +31,21 @@ class _WindowSlice:
 
 
 class GraphFeatureEngineer:
-    """Build simple correlation-based peer graph features per day."""
+    """Build simple correlation-based peer graph features per day.
+
+    The generated columns:
+
+    - ``graph_degree``
+    - ``graph_peer_corr_mean``
+    - ``graph_peer_corr_max``
+
+    are included in the final ML dataset when
+    ``ENABLE_GRAPH_FEATURES=1`` (see ``DatasetBuilderSettings``).
+    Downstream models such as apex-ranker and ATFT-GAT-FAN can opt-in
+    by adding these feature names to their feature group configs. This
+    repository treats them as optional enhancements that can be toggled
+    on/off in experiments without changing the core dataset schema.
+    """
 
     def __init__(self, config: GraphFeatureConfig | None = None) -> None:
         self.config = config or GraphFeatureConfig()
