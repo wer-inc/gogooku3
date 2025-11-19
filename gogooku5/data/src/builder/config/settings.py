@@ -92,6 +92,9 @@ class DatasetBuilderSettings(BaseSettings):
     # Graph feature configuration
     enable_graph_features: bool = Field(True, env="ENABLE_GRAPH_FEATURES")
 
+    # Financial statement history configuration
+    fs_history_years: int = Field(4, ge=1, env="FS_HISTORY_YEARS")
+
     # Dataset quality checker
     enable_dataset_quality_check: bool = Field(False, env="ENABLE_DATASET_QUALITY_CHECK")
     dataset_quality_targets: str | None = Field(None, env="DATASET_QUALITY_TARGETS")

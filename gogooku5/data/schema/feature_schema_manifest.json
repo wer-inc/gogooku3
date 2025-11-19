@@ -20999,7 +20999,7 @@
     },
     {
       "name": "SecId",
-      "dtype": "Int32",
+      "dtype": "Categorical",
       "nullable": true
     },
     {

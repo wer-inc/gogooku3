@@ -256,24 +256,67 @@ def save_with_cache(
         # Filter to only columns that exist in DataFrame
         valid_cat_cols = [col for col in categorical_columns if col in df.columns]
         if valid_cat_cols:
-            LOGGER.info(
-                "[CATEGORICAL] Converting %d columns to Categorical: %s",
-                len(valid_cat_cols),
-                valid_cat_cols
-            )
-            # Cast to categorical (dictionary-based encoding)
-            df = df.with_columns([
-                pl.col(col).cast(pl.Categorical) for col in valid_cat_cols
-            ])
-            LOGGER.debug(
-                "[CATEGORICAL] Categorical encoding applied (expect 50-70%% memory reduction, 5-10%% parquet size reduction)"
-            )
-        else:
-            LOGGER.debug(
-                "[CATEGORICAL] No valid categorical columns found in DataFrame (requested: %s, available: %s)",
-                categorical_columns,
-                df.columns
-            )
+            schema = df.schema
+
+            # Separate handling for string vs. integer columns to avoid
+            # known Polars bug where direct Int -> Categorical casting
+            # produces null / corrupted values.
+            integer_dtypes = {
+                pl.Int8,
+                pl.Int16,
+                pl.Int32,
+                pl.Int64,
+                pl.UInt8,
+                pl.UInt16,
+                pl.UInt32,
+                pl.UInt64,
+            }
+            string_dtypes = {pl.Utf8, pl.String}
+
+            encoded_cols: list[str] = []
+            cast_exprs: list[pl.Expr] = []
+            for col in valid_cat_cols:
+                dtype = schema.get(col)
+                if dtype is None:
+                    continue
+
+                # Skip columns already encoded as Categorical
+                if dtype == pl.Categorical:
+                    continue
+
+                if dtype in string_dtypes:
+                    expr = pl.col(col).cast(pl.Categorical)
+                elif dtype in integer_dtypes:
+                    # Safe path for integer codes (e.g., SecId):
+                    # cast to Utf8 first, then to Categorical.
+                    expr = pl.col(col).cast(pl.Utf8, strict=False).cast(pl.Categorical)
+                else:
+                    LOGGER.warning(
+                        "[CATEGORICAL] Skipping column %s with unsupported dtype %s for categorical encoding",
+                        col,
+                        dtype,
+                    )
+                    continue
+
+                cast_exprs.append(expr)
+                encoded_cols.append(col)
+
+            if cast_exprs:
+                LOGGER.info(
+                    "[CATEGORICAL] Converting %d columns to Categorical: %s",
+                    len(encoded_cols),
+                    encoded_cols,
+                )
+                df = df.with_columns(cast_exprs)
+                LOGGER.debug(
+                    "[CATEGORICAL] Categorical encoding applied (expect 50-70%% memory reduction, 5-10%% parquet size reduction)"
+                )
+            else:
+                LOGGER.debug(
+                    "[CATEGORICAL] No valid categorical columns found in DataFrame (requested: %s, available: %s)",
+                    categorical_columns,
+                    df.columns,
+                )
 
     # Write Parquet (archival format)
     LOGGER.info("Saving Parquet: %s (%d rows, %d cols)", path, df.height, df.width)
