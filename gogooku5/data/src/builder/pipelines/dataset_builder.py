@@ -1120,7 +1120,9 @@ class DatasetBuilder:
         metadata.update(get_git_metadata())
 
         validation_error: str | None = None
-        if self.schema_validator is not None:
+    # Check if schema validation is enabled via environment variable (default: enabled)
+        enable_validation = os.getenv("ENABLE_SCHEMA_VALIDATION", "1") == "1"
+        if self.schema_validator is not None and enable_validation:
             try:
                 # FIX: Validate the saved parquet file (with categorical types applied)
                 # instead of the in-memory df (before categorical conversion)
@@ -1143,6 +1145,11 @@ class DatasetBuilder:
                     chunk_spec.chunk_id,
                     exc,
                 )
+        elif not enable_validation:
+            LOGGER.info(
+                "[SCHEMA] Validation disabled via ENABLE_SCHEMA_VALIDATION=0 for %s",
+                chunk_spec.chunk_id,
+            )
 
         quality_summary = None
         try:
@@ -7436,7 +7443,10 @@ class DatasetBuilder:
                             result = result.with_columns(
                                 pl.col(sector_col).cast(pl.Utf8).alias("sector_code")
                             )
-                            self.logger.info(f"[SHORT_SELLING] Mapped '{sector_col}' → 'sector_code' for sector join")
+                            LOGGER.info(
+                                "[SHORT_SELLING] Mapped '%s' → 'sector_code' for sector join",
+                                sector_col,
+                            )
 
                         if "sector_code" in result.columns:
                             # セクター別の結合: sector_codeとavailable_tsで結合

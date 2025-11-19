@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def update_symlink(target: Path, link_path: Path) -> None:
+def update_symlink(target: Path, link_path: Path | None) -> None:
     if not link_path:
         return
     if link_path.exists() or link_path.is_symlink():
@@ -60,7 +60,7 @@ def main() -> None:
     args = parse_args()
     input_path = Path(args.input).resolve()
     output_path = Path(args.output).resolve()
-    symlink_path = Path(args.symlink).resolve() if args.symlink else None
+    symlink_path: Path | None = Path(args.symlink).resolve() if args.symlink else None
     horizons: Sequence[int] = tuple(dict.fromkeys(args.horizons))  # preserve order, drop duplicates
 
     if not input_path.exists():
@@ -95,8 +95,8 @@ def main() -> None:
     for line in format_coverage(summary, horizons):
         print(line)
 
+    update_symlink(output_path, symlink_path)
     if symlink_path:
-        update_symlink(output_path, symlink_path)
         print(f"\n🔗 Updated symlink: {symlink_path} → {output_path.name}")
 
 

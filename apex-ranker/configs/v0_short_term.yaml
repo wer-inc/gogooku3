@@ -4,9 +4,9 @@ version: 0
 # Goal: Improve short-term ranking performance with focused training
 
 data:
-  parquet_path: ../output_g5/datasets/ml_dataset_2023_2024_2025_full.parquet
+  parquet_path: output_g5/ml_dataset_2023_2024_2025_full.parquet
   metadata_path: null
-  feature_groups_config: configs/feature_groups_dataset145.yaml
+  feature_groups_config: apex-ranker/configs/feature_groups_dataset145.yaml
   feature_groups:
   - g5_short_term  # Short-term optimized features (low NULL%)
   optional_groups: []

@@ -1,6 +1,6 @@
 .PHONY: help dataset train-atft train-apex health-check status \
         build-2025 build-2024 build-2020-2024 build-all \
-        build-2025-year-with-graph \
+        build-2025-year-with-graph build-2023-2025-dataset \
         build-raw \
         validate validate-meta validate-quality validate-phase1 \
         clean-chunks list-chunks
@@ -23,6 +23,12 @@ help:
 	@echo "Utilities:"
 	@echo "  make list-chunks        -> チャンク一覧表示"
 	@echo "  make clean-chunks YEAR=2025  -> 指定年のチャンク削除"
+	@echo ""
+	@echo "Merged Dataset Pipelines:"
+	@echo "  make build-2023-2025-dataset"
+	@echo "      -> 2023-2025統合データセット (固定範囲)"
+	@echo "  make build-range-dataset START_YEAR=2020 END_YEAR=2025"
+	@echo "      -> 任意期間の統合データセット"
 	@echo ""
 	@echo "Legacy (Delegated):"
 	@echo "  make dataset            -> delegate to data package"
@@ -57,6 +63,10 @@ _tests_dir := $(CURDIR)/data/tests
 _scripts_dir := $(CURDIR)/data/scripts
 _dim_security := $(_output_dir)/dim_security.parquet
 _raw_manifest := $(_output_dir)/raw_manifest.json
+
+# Default year range for merged training dataset (can be overridden on CLI)
+START_YEAR ?= 2023
+END_YEAR ?= 2025
 
 # Build configuration
 export DATA_OUTPUT_DIR := $(_output_dir)
@@ -134,6 +144,178 @@ build-2025-year-with-graph:
 	@echo "✅ [2025] Year-level dataset with graph features ready:"
 	@echo "   Input:  $(_output_dir)/datasets/ml_dataset_latest.parquet"
 	@echo "   Output: $(_output_dir)/datasets/ml_dataset_latest_with_graph.parquet"
+
+# Unified 2023-2025 ML dataset pipeline (chunks -> merge -> beta/alpha -> basis_gate -> graph33 -> drop NULL)
+build-2023-2025-dataset:
+	@echo "🔨 [2023-2025] Step 1/5: Staging chunks for 2023-2025..."
+	@STAGING_DIR="$(_output_dir)/chunks_2023_2025"; \
+	rm -rf "$$STAGING_DIR"; \
+	mkdir -p "$$STAGING_DIR"; \
+	for q in 2023Q1 2023Q2 2023Q3 2023Q4 2024Q1 2024Q2 2024Q3 2024Q4 2025Q1 2025Q2 2025Q3 2025Q4; do \
+	  if [ ! -d "$(_output_dir)/chunks/$$q" ]; then \
+	    echo "❌ Missing chunk: $$q (expected at $(_output_dir)/chunks/$$q)"; \
+	    exit 1; \
+	  fi; \
+	  ln -s "$(_output_dir)/chunks/$$q" "$$STAGING_DIR/$$q"; \
+	done
+	@echo "✅ [2023-2025] Staging complete: $(_output_dir)/chunks_2023_2025"
+	@echo "🔗 [2023-2025] Step 2/5: Merging staged chunks into a full dataset..."
+	@PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/merge_chunks.py \
+		--chunks-dir $(_output_dir)/chunks_2023_2025 \
+		--output-dir $(_output_dir)/datasets \
+		--allow-partial
+	@echo "✅ [2023-2025] Chunk merge completed (see $(_output_dir)/datasets)"
+	@echo "📈 [2023-2025] Step 3/5: Adding beta60_topix/alpha60_topix and bd_net_adv60..."
+	@BASE="$(_output_dir)/datasets/ml_dataset_latest.parquet"; \
+	if [ ! -f "$$BASE" ]; then \
+	  echo "❌ Expected merged dataset symlink not found: $$BASE"; \
+	  exit 1; \
+	fi; \
+	OUT_BETA="$(_output_dir)/datasets/ml_dataset_2023_2025_beta_bd.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_BETA" ] && [ "$$OUT_BETA" -nt "$$BASE" ]; then \
+	  echo "⏩ [2023-2025] beta/alpha + bd_net_adv60 already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/add_beta_alpha_bd_features_full.py \
+	    --input  "$$BASE" \
+	    --output "$$OUT_BETA" \
+	    --date-col Date --code-col Code \
+	    --window 60 --min-periods-beta 30 \
+	    --beta-deriv-window 20 --beta-deriv-min-periods 10 \
+	    --beta-deriv-sigma 2.0 --min-periods-adv 10; \
+	fi
+	@echo "✅ [2023-2025] beta/alpha + bd_net_adv60 augmentation complete"
+	@echo "📉 [2023-2025] Step 4/5: Adding basis_gate feature family..."
+	@IN_BETA="$(_output_dir)/datasets/ml_dataset_2023_2025_beta_bd.parquet"; \
+	OUT_BASIS="$(_output_dir)/datasets/ml_dataset_2023_2025_beta_bd_basis.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_BASIS" ] && [ "$$OUT_BASIS" -nt "$$IN_BETA" ]; then \
+	  echo "⏩ [2023-2025] basis_gate already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/add_basis_gate_full.py \
+	    --input  "$$IN_BETA" \
+	    --output "$$OUT_BASIS" \
+	    --date-col Date --code-col Code; \
+	fi
+	@echo "✅ [2023-2025] basis_gate augmentation complete"
+	@echo "🌐 [2023-2025] Step 5/5: Adding graph_* (base + derived) and dropping all-NULL columns..."
+	@IN_BASIS="$(_output_dir)/datasets/ml_dataset_2023_2025_beta_bd_basis.parquet"; \
+	OUT_GRAPH="$(_output_dir)/datasets/ml_dataset_2023_2025_with_graph33.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_GRAPH" ] && [ "$$OUT_GRAPH" -nt "$$IN_BASIS" ]; then \
+	  echo "⏩ [2023-2025] graph_* already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/add_graph_features_full.py \
+	    --input  "$$IN_BASIS" \
+	    --output "$$OUT_GRAPH" \
+	    --date-col Date --code-col Code \
+	    --window-days 60 --min-observations 20 --correlation-threshold 0.3 \
+	    --with-derived; \
+	fi
+	@IN_GRAPH="$(_output_dir)/datasets/ml_dataset_2023_2025_with_graph33.parquet"; \
+	OUT_FINAL="$(_output_dir)/datasets/ml_dataset_2023_2025_final_pruned.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_FINAL" ] && [ "$$OUT_FINAL" -nt "$$IN_GRAPH" ]; then \
+	  echo "⏩ [2023-2025] final_pruned already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/drop_all_null_columns.py \
+	    --input  "$$IN_GRAPH" \
+	    --output "$$OUT_FINAL" \
+	    --keep-col Date --keep-col Code \
+	    --keep-col target_1d --keep-col target_5d \
+	    --keep-col target_10d --keep-col target_20d \
+	    --report $(_output_dir)/datasets/ml_dataset_2023_2025_final_pruned_dropped_cols.json; \
+	fi
+	@ln -sf ml_dataset_2023_2025_final_pruned.parquet $(_output_dir)/datasets/ml_dataset_2023_2025_final.parquet
+	@echo "✅ [2023-2025] Final training dataset ready:"
+	@echo "   Path:    $(_output_dir)/datasets/ml_dataset_2023_2025_final_pruned.parquet"
+	@echo "   Symlink: $(_output_dir)/datasets/ml_dataset_2023_2025_final.parquet"
+
+# Generic merged ML dataset pipeline for arbitrary year range.
+# Usage examples:
+#   make build-range-dataset                 # uses START_YEAR=2023 END_YEAR=2025
+#   make build-range-dataset START_YEAR=2020 END_YEAR=2025
+build-range-dataset:
+	@echo "🔨 [$(START_YEAR)-$(END_YEAR)] Step 1/5: Staging chunks..."
+	@STAGING_DIR="$(_output_dir)/chunks_$(START_YEAR)_$(END_YEAR)"; \
+	rm -rf "$$STAGING_DIR"; \
+	mkdir -p "$$STAGING_DIR"; \
+	for y in $$(seq $(START_YEAR) $(END_YEAR)); do \
+	  for qi in 1 2 3 4; do \
+	    q="$$yQ$$qi"; \
+	    if [ ! -d "$(_output_dir)/chunks/$$q" ]; then \
+	      echo "❌ Missing chunk: $$q (expected at $(_output_dir)/chunks/$$q)"; \
+	      exit 1; \
+	    fi; \
+	    ln -s "$(_output_dir)/chunks/$$q" "$$STAGING_DIR/$$q"; \
+	  done; \
+	done
+	@echo "✅ [$(START_YEAR)-$(END_YEAR)] Staging complete: $(_output_dir)/chunks_$(START_YEAR)_$(END_YEAR)"
+	@echo "🔗 [$(START_YEAR)-$(END_YEAR)] Step 2/5: Merging staged chunks into a full dataset..."
+	@PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/merge_chunks.py \
+		--chunks-dir $(_output_dir)/chunks_$(START_YEAR)_$(END_YEAR) \
+		--output-dir $(_output_dir)/datasets \
+		--allow-partial
+	@echo "✅ [$(START_YEAR)-$(END_YEAR)] Chunk merge completed (see $(_output_dir)/datasets)"
+	@echo "📈 [$(START_YEAR)-$(END_YEAR)] Step 3/5: Adding beta60_topix/alpha60_topix and bd_net_adv60..."
+	@BASE="$(_output_dir)/datasets/ml_dataset_latest.parquet"; \
+	if [ ! -f "$$BASE" ]; then \
+	  echo "❌ Expected merged dataset symlink not found: $$BASE"; \
+	  exit 1; \
+	fi; \
+	DATASET_PREFIX="ml_dataset_$(START_YEAR)_$(END_YEAR)"; \
+	OUT_BETA="$(_output_dir)/datasets/$${DATASET_PREFIX}_beta_bd.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_BETA" ] && [ "$$OUT_BETA" -nt "$$BASE" ]; then \
+	  echo "⏩ [$(START_YEAR)-$(END_YEAR)] beta/alpha + bd_net_adv60 already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/add_beta_alpha_bd_features_full.py \
+	    --input  "$$BASE" \
+	    --output "$$OUT_BETA" \
+	    --date-col Date --code-col Code \
+	    --window 60 --min-periods-beta 30 \
+	    --beta-deriv-window 20 --beta-deriv-min-periods 10 \
+	    --beta-deriv-sigma 2.0 --min-periods-adv 10; \
+	fi
+	@echo "✅ [$(START_YEAR)-$(END_YEAR)] beta/alpha + bd_net_adv60 augmentation complete"
+	@echo "📉 [$(START_YEAR)-$(END_YEAR)] Step 4/5: Adding basis_gate feature family..."
+	@DATASET_PREFIX="ml_dataset_$(START_YEAR)_$(END_YEAR)"; \
+	IN_BETA="$(_output_dir)/datasets/$${DATASET_PREFIX}_beta_bd.parquet"; \
+	OUT_BASIS="$(_output_dir)/datasets/$${DATASET_PREFIX}_beta_bd_basis.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_BASIS" ] && [ "$$OUT_BASIS" -nt "$$IN_BETA" ]; then \
+	  echo "⏩ [$(START_YEAR)-$(END_YEAR)] basis_gate already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/add_basis_gate_full.py \
+	    --input  "$$IN_BETA" \
+	    --output "$$OUT_BASIS" \
+	    --date-col Date --code-col Code; \
+	fi
+	@echo "✅ [$(START_YEAR)-$(END_YEAR)] basis_gate augmentation complete"
+	@echo "🌐 [$(START_YEAR)-$(END_YEAR)] Step 5/5: Adding graph_* (base + derived) and dropping all-NULL columns..."
+	@DATASET_PREFIX="ml_dataset_$(START_YEAR)_$(END_YEAR)"; \
+	IN_BASIS="$(_output_dir)/datasets/$${DATASET_PREFIX}_beta_bd_basis.parquet"; \
+	OUT_GRAPH="$(_output_dir)/datasets/$${DATASET_PREFIX}_with_graph33.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_GRAPH" ] && [ "$$OUT_GRAPH" -nt "$$IN_BASIS" ]; then \
+	  echo "⏩ [$(START_YEAR)-$(END_YEAR)] graph_* already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/add_graph_features_full.py \
+	    --input  "$$IN_BASIS" \
+	    --output "$$OUT_GRAPH" \
+	    --date-col Date --code-col Code \
+	    --window-days 60 --min-observations 20 --correlation-threshold 0.3 \
+	    --with-derived; \
+	fi; \
+	OUT_FINAL="$(_output_dir)/datasets/$${DATASET_PREFIX}_final_pruned.parquet"; \
+	if [ -z "$$FORCE_REBUILD" ] && [ -f "$$OUT_FINAL" ] && [ "$$OUT_FINAL" -nt "$$OUT_GRAPH" ]; then \
+	  echo "⏩ [$(START_YEAR)-$(END_YEAR)] final_pruned already up-to-date (use FORCE_REBUILD=1 to recompute)"; \
+	else \
+	  PYTHONPATH=$(_data_dir)/src ../venv/bin/python $(_data_dir)/tools/drop_all_null_columns.py \
+	    --input  "$$OUT_GRAPH" \
+	    --output "$$OUT_FINAL" \
+	    --keep-col Date --keep-col Code \
+	    --keep-col target_1d --keep-col target_5d \
+	    --keep-col target_10d --keep-col target_20d \
+	    --report $(_output_dir)/datasets/$${DATASET_PREFIX}_final_pruned_dropped_cols.json; \
+	fi; \
+	ln -sf "$${DATASET_PREFIX}_final_pruned.parquet" $(_output_dir)/datasets/"$${DATASET_PREFIX}_final.parquet"; \
+	echo "✅ [$(START_YEAR)-$(END_YEAR)] Final training dataset ready:"; \
+	echo "   Path:    $(_output_dir)/datasets/$${DATASET_PREFIX}_final_pruned.parquet"; \
+	echo "   Symlink: $(_output_dir)/datasets/$${DATASET_PREFIX}_final.parquet"
 
 # Raw snapshot chunking + manifest -----------------------------------------
 
