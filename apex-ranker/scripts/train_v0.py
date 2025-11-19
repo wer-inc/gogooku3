@@ -541,20 +541,38 @@ def main() -> None:
     )
 
     num_workers = int(train_cfg.get("num_workers", 0))
-    train_loader = DataLoader(
-        train_dataset,
+    pin_memory = bool(train_cfg.get("pin_memory", True))
+    prefetch_factor = train_cfg.get("prefetch_factor", 4)
+    persistent_workers = bool(train_cfg.get("persistent_workers", True))
+
+    # Common DataLoader kwargs; batch_size=1 (one day per batch).
+    train_loader_kwargs = dict(
+        dataset=train_dataset,
         batch_size=1,
         shuffle=False,
         num_workers=num_workers,
         collate_fn=collate_day_batch,
+        pin_memory=pin_memory,
     )
-    val_loader = DataLoader(
-        val_dataset,
+    val_loader_kwargs = dict(
+        dataset=val_dataset,
         batch_size=1,
         shuffle=False,
         num_workers=num_workers,
         collate_fn=collate_day_batch,
+        pin_memory=pin_memory,
     )
+    # Prefetch and persistent workers are only valid when num_workers > 0.
+    if num_workers > 0:
+        if prefetch_factor is not None:
+            train_loader_kwargs["prefetch_factor"] = int(prefetch_factor)
+            val_loader_kwargs["prefetch_factor"] = int(prefetch_factor)
+        if persistent_workers:
+            train_loader_kwargs["persistent_workers"] = True
+            val_loader_kwargs["persistent_workers"] = True
+
+    train_loader = DataLoader(**train_loader_kwargs)
+    val_loader = DataLoader(**val_loader_kwargs)
     train_total_steps = len(train_loader) if len(train_loader) > 0 else 0
 
     horizons = [int(h) for h in train_cfg["horizons"]]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import List
@@ -11,6 +12,21 @@ from typing import List
 ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Best-effort .env loading from repository root so that dataset
+# quality settings (e.g., DATASET_QUALITY_DATE_COL) are respected
+REPO_ROOT = Path(__file__).resolve().parents[3]
+env_path = REPO_ROOT / ".env"
+if env_path.exists():
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, val = stripped.split("=", 1)
+        key = key.strip()
+        val = val.split("#", 1)[0].strip()
+        if key and val and key not in os.environ:
+            os.environ[key] = val
 
 from builder.validation.quality import parse_asof_specs, run_quality_checks
 
@@ -45,6 +61,12 @@ def parse_args() -> argparse.Namespace:
         help="Number of sample rows to show for violations (default: 5)",
     )
     parser.add_argument(
+        "--exclude-col",
+        action="append",
+        default=[],
+        help="Feature column name to exclude from missingness checks (repeatable)",
+    )
+    parser.add_argument(
         "--report",
         type=Path,
         help="Optional path to write JSON report",
@@ -69,6 +91,12 @@ def main() -> None:
     except ValueError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         sys.exit(2)
+    exclude_columns: list[str] = list(args.exclude_col or [])
+    if not exclude_columns:
+        env_exclusions = os.getenv("DATASET_QUALITY_EXCLUDE_COLUMNS", "")
+        if env_exclusions:
+            exclude_columns = [col.strip() for col in env_exclusions.split(",") if col.strip()]
+
     summary, errors, warnings = run_quality_checks(
         dataset_path,
         date_col=args.date_col,
@@ -77,6 +105,7 @@ def main() -> None:
         asof_pairs=asof_pairs,
         allow_future_days=args.allow_future_days,
         sample_rows=args.sample_rows,
+        exclude_columns=exclude_columns or None,
     )
 
     print(json.dumps(summary, indent=2, default=str))

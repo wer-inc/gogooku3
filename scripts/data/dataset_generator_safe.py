@@ -317,7 +317,12 @@ class MemorySafeDatasetGenerator:
             symlink_path = Path("output") / "ml_dataset_latest_full.parquet"
             if symlink_path.exists() or symlink_path.is_symlink():
                 symlink_path.unlink()
-            symlink_path.symlink_to(output_path.name)
+            # Use relative path for symlink
+            import os
+            if symlink_path.parent == output_path.parent:
+                symlink_path.symlink_to(output_path.name)
+            else:
+                symlink_path.symlink_to(os.path.relpath(output_path, start=symlink_path.parent))
             logger.info(f"Created symlink: {symlink_path} -> {output_path.name}")
 
             logger.info(f"Final dataset saved: {output_path}")

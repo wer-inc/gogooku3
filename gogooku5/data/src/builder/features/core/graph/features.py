@@ -13,8 +13,8 @@ import polars as pl
 
 @dataclass
 class GraphFeatureConfig:
-    code_column: str = "code"
-    date_column: str = "date"
+    code_column: str = "Code"  # Fixed: Use uppercase to match dataset schema
+    date_column: str = "Date"  # Fixed: Use uppercase to match dataset schema
     return_column: str = "ret_prev_1d"  # Phase 2: changed from returns_1d
     window_days: int = 60
     min_observations: int = 20
@@ -31,7 +31,21 @@ class _WindowSlice:
 
 
 class GraphFeatureEngineer:
-    """Build simple correlation-based peer graph features per day."""
+    """Build simple correlation-based peer graph features per day.
+
+    The generated columns:
+
+    - ``graph_degree``
+    - ``graph_peer_corr_mean``
+    - ``graph_peer_corr_max``
+
+    are included in the final ML dataset when
+    ``ENABLE_GRAPH_FEATURES=1`` (see ``DatasetBuilderSettings``).
+    Downstream models such as apex-ranker and ATFT-GAT-FAN can opt-in
+    by adding these feature names to their feature group configs. This
+    repository treats them as optional enhancements that can be toggled
+    on/off in experiments without changing the core dataset schema.
+    """
 
     def __init__(self, config: GraphFeatureConfig | None = None) -> None:
         self.config = config or GraphFeatureConfig()

@@ -274,18 +274,14 @@ def main() -> None:
             gold: list[RangeLabel] = []
             if args.labels:
                 labels_df = _read(args.labels)
-                label_ranges = [
-                    {
-                        "id": str(row["id"]),
-                        "start": pd.to_datetime(row["start"]),
-                        "end": pd.to_datetime(row["end"]),
-                    }
-                    for _, row in labels_df.iterrows()
-                ]
+                # Vectorized conversion (5-10x faster than iterrows)
+                ids = labels_df["id"].astype(str).tolist()
+                starts = pd.to_datetime(labels_df["start"]).tolist()
+                ends = pd.to_datetime(labels_df["end"]).tolist()
                 gold.extend(
                     [
-                        RangeLabel(id=lr["id"], start=lr["start"], end=lr["end"])
-                        for lr in label_ranges
+                        RangeLabel(id=id_val, start=start_val, end=end_val)
+                        for id_val, start_val, end_val in zip(ids, starts, ends)
                     ]
                 )
             if args.events:

@@ -1,17 +1,36 @@
-"""Placeholder training entrypoint for ATFT-GAT-FAN.
+"""Training entrypoint for ATFT-GAT-FAN within gogooku5.
 
-This will be replaced with the migrated SafeTrainingPipeline integration.
+This script is intentionally self-contained so that the
+``gogooku5/models/atft_gat_fan`` package can run without importing
+training utilities from gogooku3. It provides a minimal but functional
+training loop using PyTorch Lightning and the shared ML dataset produced
+by ``gogooku5/data``.
 """
 from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
+
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+
+from atft_gat_fan.config.training_config import TrainingConfig
+from atft_gat_fan.monitoring.nvml_lightning_callbacks import (
+    AutoTuneCallback,
+    NVMLPhaseCallback,
+)
+from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
+from atft_gat_fan.training.data import build_dataloaders, load_dataset
+from atft_gat_fan.training.module import ATFTGATFANLightningModule
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("atft_gat_fan.train")
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the training script."""
+
     parser = argparse.ArgumentParser(description="Train the ATFT-GAT-FAN model")
     parser.add_argument(
         "--config",
@@ -23,21 +42,140 @@ def parse_args() -> argparse.Namespace:
         default="../../data/output/ml_dataset_latest.parquet",
         help="Path to the pre-built dataset parquet file.",
     )
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=None,
+        help="Override the maximum number of epochs.",
+    )
+    parser.add_argument(
+        "--cv-type",
+        choices=["holdout", "purged_kfold"],
+        default="holdout",
+        help="Cross-validation splitter to use for train/validation split.",
+    )
+    parser.add_argument(
+        "--cv-n-splits",
+        type=int,
+        default=5,
+        help="Number of folds when using Purged K-Fold.",
+    )
+    parser.add_argument(
+        "--cv-fold",
+        type=int,
+        default=None,
+        help="Purged K-Fold index (1-based). Defaults to the last fold.",
+    )
+    parser.add_argument(
+        "--embargo-days",
+        type=int,
+        default=0,
+        help="Embargo days appended to purge gaps for Purged K-Fold.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
-    """Stub implementation that logs a warning instead of raising SystemExit.
+    """Entry point used by the Makefile and CLI."""
 
-    Phase 2 Bug #31 fix: Changed from NoReturn -> int to avoid import-time failure.
-    """
     args = parse_args()
-    _logger.warning(
-        "ATFT-GAT-FAN training pipeline is not yet implemented. "
-        f"Received config={args.config}, dataset={args.dataset}. "
-        "Skipping training."
+    config_path = Path(args.config).resolve()
+    if not config_path.exists():
+        _logger.error("Config file not found: %s", config_path)
+        return 1
+
+    cfg = TrainingConfig.from_yaml(config_path)
+
+    # Override dataset path if explicitly provided.
+    if args.dataset:
+        cfg.dataset.path = Path(args.dataset).resolve()
+
+    if args.max_epochs is not None:
+        cfg.train.max_epochs = int(args.max_epochs)
+
+    _logger.info("Using dataset: %s", cfg.dataset.path)
+    df, spec = load_dataset(cfg.dataset)
+    _logger.info(
+        "Loaded dataset: %d rows, %d feature columns, %d targets",
+        len(df),
+        len(spec.feature_columns),
+        len(spec.target_columns),
     )
+
+    monitor = NVMLMonitor(
+        device_index=cfg.train.nvml_device_index,
+        sample_interval=cfg.train.nvml_sample_interval,
+        enabled=cfg.train.nvml_enabled,
+    )
+
+    train_loader, val_loader = build_dataloaders(
+        df,
+        spec,
+        cfg.dataset,
+        cfg.train,
+        cv_type=args.cv_type,
+        cv_n_splits=int(args.cv_n_splits),
+        cv_fold=args.cv_fold,
+        embargo_days=int(args.embargo_days),
+    )
+    in_features = len(spec.feature_columns)
+
+    model = ATFTGATFANLightningModule(
+        in_features=in_features,
+        n_targets=len(spec.target_columns),
+        train_cfg=cfg.train,
+        amp_cfg=cfg.amp,
+        monitor=monitor,
+        target_names=spec.target_columns,
+        heads=getattr(cfg, "heads", None),
+    )
+
+    precision = "bf16-mixed" if cfg.amp.enabled and cfg.amp.dtype == "bfloat16" else "16-mixed"
+    callbacks: list[pl.Callback] = []
+    if cfg.logging.enable_checkpointing:
+        cfg.logging.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_cb = ModelCheckpoint(
+            dirpath=str(cfg.logging.checkpoint_dir),
+            filename=cfg.logging.checkpoint_name,
+            save_top_k=1,
+            monitor="val_loss",
+            mode="min",
+        )
+        callbacks.append(ckpt_cb)
+
+    if monitor.enabled:
+        callbacks.append(NVMLPhaseCallback(monitor))
+        if cfg.train.auto_tune_enabled:
+            callbacks.append(AutoTuneCallback(cfg.train, monitor))
+
+    accelerator = "gpu" if pl.utilities.device_parser.num_cuda_devices() > 0 else "cpu"
+
+    accumulate_grad_batches = max(1, int(cfg.train.accumulate_grad_batches))
+    gradient_clip_val = cfg.train.gradient_clip_val if cfg.train.gradient_clip_val is not None else 0.0
+
+    trainer = pl.Trainer(
+        max_epochs=cfg.train.max_epochs,
+        accelerator=accelerator,
+        precision=precision if cfg.amp.enabled else "32-true",
+        log_every_n_steps=cfg.logging.log_every_n_steps,
+        callbacks=callbacks,
+        accumulate_grad_batches=accumulate_grad_batches,
+        gradient_clip_val=gradient_clip_val,
+    )
+
+    _logger.info(
+        "Starting training: epochs=%d, batch_size=%d, params=%d (accum_steps=%d, grad_clip=%.3f)",
+        cfg.train.max_epochs,
+        cfg.train.batch_size,
+        model.parameter_count,
+        accumulate_grad_batches,
+        gradient_clip_val,
+    )
+
+    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+    _logger.info("Training finished.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

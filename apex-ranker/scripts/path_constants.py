@@ -19,12 +19,12 @@ import os
 from pathlib import Path
 
 # Base directories
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-OUTPUT_DIR = PROJECT_ROOT.parent / "output"  # gogooku3/output/
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "output_g5"  # SecId対応データセット配置先
 
-# Dataset paths (3-step quality pipeline)
-DATASET_RAW = str(OUTPUT_DIR / "ml_dataset_latest_full.parquet")
-DATASET_CLEAN = str(OUTPUT_DIR / "ml_dataset_clean.parquet")
+# Dataset paths (raw + quality pipeline). Raw must include target_* columns.
+DATASET_RAW = str(OUTPUT_DIR / "ml_dataset_full_with_targets.parquet")
+DATASET_CLEAN = str(OUTPUT_DIR / "ml_dataset_full_with_targets_clean.parquet")
 
 # Backtest output paths
 BACKTEST_OUTPUT_DIR = OUTPUT_DIR / "backtest"
@@ -38,12 +38,12 @@ QUALITY_REPORT = str(REPORT_DIR / "quality_report.json")
 BACKTEST_HEALTH_REPORT = str(REPORT_DIR / "backtest_health_report.json")
 
 # Model paths
-MODEL_DIR = PROJECT_ROOT.parent / "models"
+MODEL_DIR = PROJECT_ROOT / "models"
 MODEL_PRUNED = str(MODEL_DIR / "apex_ranker_v0_pruned.pt")
 MODEL_ENHANCED = str(MODEL_DIR / "apex_ranker_v0_enhanced.pt")
 
 # Config paths
-CONFIG_DIR = PROJECT_ROOT / "configs"
+CONFIG_DIR = PROJECT_ROOT / "apex-ranker" / "configs"
 CONFIG_PRUNED = str(CONFIG_DIR / "v0_pruned.yaml")
 CONFIG_ENHANCED = str(CONFIG_DIR / "v0_base.yaml")
 

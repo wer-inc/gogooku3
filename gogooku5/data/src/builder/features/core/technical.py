@@ -403,6 +403,14 @@ def _compute_indicators_for_group(group: pd.DataFrame, cfg: TechnicalFeatureConf
         ):
             g[name] = returns_1d.rolling(window=window, min_periods=window).std() * np.sqrt(252.0)
 
+        # EWMA-based realized volatility (RV_EWMA)
+        # Half-life approximately 16.7 days when alpha=0.06 (lambda ≈ 0.94).
+        # This follows sigma_t^2 = lambda * sigma_{t-1}^2 + (1-lambda) * r_t^2.
+        alpha = 0.06
+        rv_ewm2 = returns_1d.pow(2).ewm(alpha=alpha, adjust=False).mean()
+        g["rv_ewm2"] = rv_ewm2
+        g["rv_ewm"] = (rv_ewm2 * 252.0) ** 0.5
+
     rolling_mean_20 = values.rolling(window=20, min_periods=20).mean()
     rolling_std_20 = values.rolling(window=20, min_periods=20).std()
     upper = rolling_mean_20 + 2 * rolling_std_20

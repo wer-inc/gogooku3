@@ -8,7 +8,7 @@ import time
 import weakref
 from calendar import monthrange
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, TypeVar
 
@@ -78,16 +78,17 @@ from ..utils import (
     business_date_range,
     configure_logger,
     forward_fill_after_publication,
+    get_git_metadata,
     interval_join_pl,
     month_key,
-    prepare_snapshot_pl,
     month_range,
+    prepare_snapshot_pl,
     shift_trading_days,
 )
-from ..utils.schema_validator import SchemaValidator
-from ..utils.mlflow_tracker import MLflowTracker
 from ..utils.lazy_io import save_with_cache
+from ..utils.mlflow_tracker import MLflowTracker
 from ..utils.prefetch import DataSourcePrefetcher
+from ..utils.schema_validator import SchemaValidator
 from ..validation.quality import parse_asof_specs, run_quality_checks
 
 LOGGER = configure_logger("builder.pipeline")
@@ -112,6 +113,8 @@ def _tokenize_quality_list(value: str | None) -> list[str]:
 
 BETA_EPS = 1e-12
 SUPPLY_SHOCK_THRESHOLD = 0.01
+# Typical gap between financial statement events in days (approx. quarterly cadence).
+FS_TYPICAL_GAP_DAYS = 90
 TOPIX_FEATURE_WHITELIST: tuple[str, ...] = (
     "close",
     "r_prev_1d",
@@ -232,15 +235,17 @@ class DatasetBuilder:
         self._rate_limit_checked = False
         self._schema_fp_cache = None  # Lazy initialization for L0 schema fingerprint
         self._run_meta: dict[str, Any] | None = None
-        raw_manifest = getattr(self.settings, "raw_manifest_path", None)
-        if raw_manifest:
+        raw_manifest_path = self.settings.raw_manifest_path
+        if raw_manifest_path and Path(raw_manifest_path).exists():
             try:
-                self.raw_store = RawDataStore(Path(raw_manifest))
-                LOGGER.info("[RAW] RawDataStore initialized from %s", raw_manifest)
+                self.raw_store = RawDataStore(Path(raw_manifest_path))
+                LOGGER.info("[RAW] RawDataStore initialized from %s", raw_manifest_path)
             except FileNotFoundError:
-                LOGGER.warning("[RAW] Manifest %s not found; raw store disabled", raw_manifest)
+                LOGGER.warning("[RAW] Manifest %s not found; raw store disabled", raw_manifest_path)
                 self.raw_store = None
         else:
+            if raw_manifest_path:
+                LOGGER.info("[RAW] Manifest %s missing; raw store disabled", raw_manifest_path)
             self.raw_store = None
 
         if hasattr(self.data_sources, "attach_raw_store"):
@@ -283,6 +288,122 @@ class DatasetBuilder:
         if quotes_rows >= LAZY_ALIGN_MIN_QUOTE_ROWS:
             return True
         return False
+
+    def _load_dim_security(self) -> pl.DataFrame:
+        """
+        Load global security dimension table.
+
+        Returns:
+            DataFrame with sec_id mapping
+
+        Raises:
+            FileNotFoundError: If dim_security.parquet not found
+
+        Notes:
+            - dim_security must be generated before dataset build
+            - Run: python gogooku5/data/scripts/build_dim_security.py
+            - Location: {data_cache_dir}/dim_security.parquet
+        """
+        dim_path = self.settings.data_cache_dir / "dim_security.parquet"
+
+        if not dim_path.exists():
+            raise FileNotFoundError(
+                f"dim_security not found: {dim_path}\n"
+                f"\n"
+                f"Please generate dim_security first:\n"
+                f"  python gogooku5/data/scripts/build_dim_security.py\n"
+                f"\n"
+                f"This will create a global security master table with stable sec_id."
+            )
+
+        LOGGER.info("[DIM_SECURITY] Loading from %s", dim_path)
+        dim = pl.read_parquet(dim_path)
+
+        # Validation
+        if "sec_id" not in dim.columns or "code" not in dim.columns:
+            raise ValueError(
+                f"Invalid dim_security schema: missing required columns (sec_id, code)\n"
+                f"Found columns: {dim.columns}"
+            )
+
+        LOGGER.info(
+            "[DIM_SECURITY] Loaded %d securities (sec_id range: %d-%d)",
+            len(dim),
+            dim["sec_id"].min(),
+            dim["sec_id"].max(),
+        )
+
+        return dim
+
+    def _attach_sec_id(self, df: pl.DataFrame, dim_security: pl.DataFrame) -> pl.DataFrame:
+        """
+        Attach sec_id to DataFrame by joining with dim_security.
+
+        OPTIMIZATION (2025-11-19): Categorical join for 20-40% speedup on large DataFrames.
+        Uses Categorical encoding for join keys while preserving Utf8 schema externally.
+
+        Args:
+            df: DataFrame with 'Code' column (or 'code' - case insensitive)
+            dim_security: Security master table with sec_id mapping
+
+        Returns:
+            DataFrame with sec_id column added
+
+        Notes:
+            - Codes not in dim_security are logged as warnings and excluded
+            - Invalid codes are saved to output_g5/invalid_codes.parquet for debugging
+            - Categorical encoding improves join performance by 20-40% (4.6M rows benchmark)
+        """
+        import time
+
+        from builder.utils.join_helpers import prepare_join_keys
+
+        # Normalize code column name (handle both 'Code' and 'code')
+        code_col = None
+        for col in df.columns:
+            if col.lower() == "code":
+                code_col = col
+                break
+
+        if code_col is None:
+            raise ValueError(f"DataFrame must have 'Code' column. Found columns: {df.columns}")
+
+        # OPTIMIZATION: Categorical join (20-40% faster than string join)
+        start_time = time.perf_counter()
+
+        # Categorize join keys in both DataFrames
+        df_cat = prepare_join_keys(df, [code_col], lazy=False)
+        dim_cat = prepare_join_keys(dim_security.select(["code", "sec_id"]), ["code"], lazy=False)
+
+        # Perform categorical join
+        df_with_sec_id = df_cat.join(dim_cat, left_on=code_col, right_on="code", how="left")
+
+        join_time = time.perf_counter() - start_time
+        LOGGER.debug("[SEC_ID] Categorical join completed in %.3f seconds (%d rows)", join_time, len(df_with_sec_id))
+
+        # Check for invalid codes (sec_id is null)
+        invalid = df_with_sec_id.filter(pl.col("sec_id").is_null())
+        if len(invalid) > 0:
+            invalid_codes = invalid[code_col].unique().to_list()
+            LOGGER.warning(
+                "[SEC_ID] %d rows with invalid codes (not in dim_security): %d unique codes",
+                len(invalid),
+                len(invalid_codes),
+            )
+            LOGGER.warning("[SEC_ID] Sample invalid codes: %s", invalid_codes[:10])
+
+            # Save invalid codes for debugging
+            invalid_path = self.settings.data_cache_dir / "invalid_codes.parquet"
+            invalid.write_parquet(invalid_path)
+            LOGGER.warning("[SEC_ID] Saved invalid codes to: %s", invalid_path)
+
+            # Exclude invalid codes from main DataFrame
+            df_with_sec_id = df_with_sec_id.filter(pl.col("sec_id").is_not_null())
+            LOGGER.info("[SEC_ID] Excluded %d invalid rows, %d rows remaining", len(invalid), len(df_with_sec_id))
+
+        # NOTE: Code remains Categorical (lazy_io.py will re-apply at save time)
+        # SecId will also be Categorical after rename in build() finalization
+        return df_with_sec_id
 
     def build(
         self,
@@ -358,6 +479,9 @@ class DatasetBuilder:
         # Use context dates for data fetching
         start, end = start_ctx, end_out
 
+        # Load dim_security (global security master table)
+        dim_security = self._load_dim_security()
+
         LOGGER.info("Starting dataset build from %s to %s", start, end)
 
         prefetcher = DataSourcePrefetcher(self.settings.data_prefetch_threads, logger=LOGGER)
@@ -391,6 +515,14 @@ class DatasetBuilder:
         # Filter to symbols and materialize (small table, fast)
         listed_df = listed_filtered_lf.collect()
 
+        # Attach sec_id to listed_df for sec_id-based joins
+        LOGGER.info("[SEC_ID] Attaching sec_id to listed_df (%d rows)", len(listed_df))
+        listed_df = self._attach_sec_id(listed_df, dim_security)
+        LOGGER.info("[SEC_ID] Listed after sec_id attachment: %d rows", len(listed_df))
+
+        # Update listed_filtered_lf to include sec_id (for lazy join operations)
+        listed_filtered_lf = listed_df.lazy()
+
         LOGGER.info("[DEBUG] Step 6: Building calendar...")
         # Use IPC cache for fast reuse (calendar is ~250 rows/year, perfect for caching)
         calendar_key = f"trading_calendar_{start}_{end}"
@@ -400,6 +532,11 @@ class DatasetBuilder:
 
         LOGGER.info("[DEBUG] Step 7: Checking quotes cache (smart reuse enabled)...")
         quotes_df = self._load_or_fetch_quotes(symbols=symbols, start=start, end=end)
+
+        # Attach sec_id to quotes
+        LOGGER.info("[SEC_ID] Attaching sec_id to %d quotes rows", len(quotes_df))
+        quotes_df = self._attach_sec_id(quotes_df, dim_security)
+        LOGGER.info("[SEC_ID] After sec_id attachment: %d rows", len(quotes_df))
 
         span_days = self._date_span_days(start, end)
         use_lazy_alignment = self._should_use_lazy_alignment(
@@ -440,6 +577,13 @@ class DatasetBuilder:
             LOGGER.info("[DEBUG] Starting margin data fetch...")
             margin_df = self._fetch_margin_data(start=start, end=end)
             LOGGER.info("[DEBUG] Margin data fetched: %d rows", len(margin_df))
+
+            # Attach sec_id to margin_df for sec_id-based joins
+            if not margin_df.is_empty():
+                LOGGER.info("[SEC_ID] Attaching sec_id to margin_df (%d rows)", len(margin_df))
+                margin_df = self._attach_sec_id(margin_df, dim_security)
+                LOGGER.info("[SEC_ID] Margin after sec_id attachment: %d rows", len(margin_df))
+
             combined_df = self._attach_margin_daily_features(
                 combined_df,
                 raw_daily=margin_df,
@@ -468,10 +612,20 @@ class DatasetBuilder:
         combined_df = self.peer_features.add_features(combined_df)
 
         try:
+            # Use extended history for financial statements to support TTM/YoY computations.
+            history_years = getattr(self.settings, "fs_history_years", 4)
+            try:
+                start_dt = datetime.fromisoformat(start).date()
+            except ValueError:
+                start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+            # Simple year offset; if this underflows for very early dates it will be clamped by data availability.
+            warmup_year = max(1900, start_dt.year - history_years)
+            fs_start = start_dt.replace(year=warmup_year).isoformat()
+
             fs_df = self._resolve_prefetched(
                 prefetcher,
                 "fs_details",
-                lambda: self.data_sources.fs_details(start=start, end=end),
+                lambda: self.data_sources.fs_details(start=fs_start, end=end),
             )
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.debug("Failed to fetch fs_details: %s", exc)
@@ -512,6 +666,8 @@ class DatasetBuilder:
             raw_fs=fs_df,
             calendar_df=calendar_df,
         )
+        combined_df = self._attach_share_master_features(combined_df)
+        combined_df = self._add_market_cap_features(combined_df)
 
         combined_df = self._attach_dividend_features(
             combined_df,
@@ -552,9 +708,15 @@ class DatasetBuilder:
         combined_df = self.macro_features.add_global_regime(combined_df, global_regime_features)
 
         combined_df = self._shift_macro_features(combined_df)
+        combined_df = self._ensure_macro_columns(combined_df)
 
         combined_df = self.volatility_features.add_features(combined_df)
-        combined_df = self.graph_features.add_features(combined_df)
+        # Realized quantile features based on 63-day returns (rq_63_10/50/90).
+        combined_df = self._add_rq63_features(combined_df)
+        if self.settings.enable_graph_features:
+            combined_df = self.graph_features.add_features(combined_df)
+        else:
+            LOGGER.info("[GRAPH] ENABLE_GRAPH_FEATURES=0 detected; skipping graph_* feature generation for chunk build")
         combined_df = self.advanced_features.add_features(combined_df)
         combined_df = self.technical_features.add_features(combined_df)
 
@@ -601,6 +763,7 @@ class DatasetBuilder:
 
         # β/α (60日, 対TOPIX) の追加（P0: 市場曝露の除去と残差の抽出）
         combined_df = self._add_beta_alpha_features(combined_df, start=start, end=end)
+        combined_df = self._add_beta_alpha_derivatives(combined_df)
 
         # trades_spec（投資部門別売買状況）特徴量の追加（MVP）
         combined_df = self._add_trades_spec_features(combined_df, calendar_df=calendar_df, start=start, end=end)
@@ -630,6 +793,10 @@ class DatasetBuilder:
                 LOGGER.debug("TOPIX data empty, skipping futures features")
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.warning("Failed to attach TOPIX futures features: %s", exc, exc_info=True)
+
+        # スキーマ整合性のため、先物特徴量列が存在しない場合でも
+        # fut_topix_* 列を必ず追加しておく（値はNull/False埋め）。
+        combined_df = self._ensure_futures_topix_columns(combined_df)
 
         # オプション特徴量の追加（P0: 最小構成）
         try:
@@ -739,6 +906,8 @@ class DatasetBuilder:
 
         finalized = self._finalize_for_output(enriched_df)
         finalized = self._ensure_ret_prev_columns(finalized)
+        finalized = self._add_future_realized_vol_labels(finalized, horizons=(5, 10))
+        finalized = self._add_blend_weight_labels(finalized)
         if chunk_spec is not None:
             return self._persist_chunk_dataset(finalized, chunk_spec, start_time=start_time)
 
@@ -945,11 +1114,17 @@ class DatasetBuilder:
         """Persist chunk outputs and metadata without touching global symlinks."""
 
         parquet_kwargs = {"compression": self.settings.dataset_parquet_compression}
+
+        # Categorical optimization: Convert low-cardinality identifier columns to Categorical
+        # Code and SecId are encoded for memory/join performance; sector/market remain strings.
+        categorical_columns = ["Code", "SecId"]
+
         parquet_path, ipc_path = save_with_cache(
             df,
             chunk_spec.dataset_path,
             create_ipc=True,
             parquet_kwargs=parquet_kwargs,
+            categorical_columns=categorical_columns,
         )
 
         metadata: dict[str, Any] = {
@@ -969,10 +1144,18 @@ class DatasetBuilder:
         if isinstance(self._run_meta, dict):
             metadata["builder_meta"] = self._run_meta
 
+        # Phase 1.4: Add Git metadata for reproducibility
+        metadata.update(get_git_metadata())
+
         validation_error: str | None = None
-        if self.schema_validator is not None:
+        # Check if schema validation is enabled via environment variable (default: enabled)
+        enable_validation = os.getenv("ENABLE_SCHEMA_VALIDATION", "1") == "1"
+        if self.schema_validator is not None and enable_validation:
             try:
-                validation_result = self.schema_validator.validate_dataframe(df)
+                # FIX: Validate the saved parquet file (with categorical types applied)
+                # instead of the in-memory df (before categorical conversion)
+                # Issue: save_with_cache() modifies df locally, caller's df remains unchanged
+                validation_result = self.schema_validator.validate_parquet(parquet_path)
                 metadata["feature_schema_version"] = self.schema_validator.manifest_version
                 metadata["feature_schema_hash"] = validation_result.schema_hash
                 metadata["schema_validation"] = validation_result.to_dict()
@@ -990,6 +1173,11 @@ class DatasetBuilder:
                     chunk_spec.chunk_id,
                     exc,
                 )
+        elif not enable_validation:
+            LOGGER.info(
+                "[SCHEMA] Validation disabled via ENABLE_SCHEMA_VALIDATION=0 for %s",
+                chunk_spec.chunk_id,
+            )
 
         quality_summary = None
         try:
@@ -1126,9 +1314,7 @@ class DatasetBuilder:
             raise
         except Exception as exc:
             build_duration = time.time() - start_time
-            self._write_chunk_status(
-                chunk_spec, state="failed", error=str(exc), build_duration=build_duration
-            )
+            self._write_chunk_status(chunk_spec, state="failed", error=str(exc), build_duration=build_duration)
             raise
 
     def _load_small_table_cached(self, table_name: str, generator_fn) -> pl.LazyFrame:
@@ -1242,6 +1428,16 @@ class DatasetBuilder:
         if cast_exprs:
             df = df.select(cast_exprs)
 
+        # DEBUG: Log final schema before returning
+        LOGGER.debug("[SCHEMA_FIX] Final schema after normalization: %s", df.schema)
+        for col_name in df.columns:
+            sample_vals = df.select(pl.col(col_name)).head(3)
+            LOGGER.debug(
+                "[SCHEMA_FIX] Column '%s' sample types: %s",
+                col_name,
+                [type(v).__name__ for v in sample_vals[col_name].to_list()],
+            )
+
         return df
 
     def _load_or_fetch_quotes(self, *, symbols: Iterable[str], start: str, end: str) -> pl.DataFrame:
@@ -1263,9 +1459,7 @@ class DatasetBuilder:
                 if not normalized.is_empty():
                     start_date = datetime.fromisoformat(start).date()
                     end_date = datetime.fromisoformat(end).date()
-                    normalized = normalized.filter(
-                        (pl.col("date") >= start_date) & (pl.col("date") <= end_date)
-                    )
+                    normalized = normalized.filter((pl.col("date") >= start_date) & (pl.col("date") <= end_date))
                     if symbols_list:
                         normalized = normalized.filter(pl.col("code").is_in(symbols_list))
                 if not normalized.is_empty():
@@ -1391,6 +1585,18 @@ class DatasetBuilder:
         payload = fetcher.fetch_by_date(dates=trading_days, codes=None)
         LOGGER.info("[CACHE] Month %s fetched %d records", month, len(payload))
         quotes_df = self._format_quotes(payload)
+        if not quotes_df.is_empty():
+            from ..utils import save_raw_snapshot
+
+            save_raw_snapshot(
+                root=self.settings.raw_data_dir,
+                source="prices",
+                df=quotes_df,
+                start=start_date,
+                end=end_date,
+                filename=f"daily_quotes_{month}.parquet",
+                overwrite=True,
+            )
         if quotes_df.is_empty():
             return pl.DataFrame()
         return self._normalize_for_shard(quotes_df)
@@ -1425,7 +1631,14 @@ class DatasetBuilder:
         reverse = {dst: src for src, dst in self._L0_RENAME.items() if dst in shard_df.columns}
         normalized = shard_df.rename(reverse)
         if "date" in normalized.columns:
-            normalized = normalized.with_columns(pl.col("date").str.strptime(pl.Date, strict=False))
+            date_dtype = normalized.schema.get("date")
+            # Old shards may persist `date` as a native Date type, while newer
+            # shards store it as Utf8. Guard `.str.strptime` to avoid applying
+            # string methods on non-string columns when mixing cache generations.
+            if date_dtype == pl.Utf8:
+                normalized = normalized.with_columns(pl.col("date").str.strptime(pl.Date, strict=False).alias("date"))
+            elif date_dtype != pl.Date:
+                normalized = normalized.with_columns(pl.col("date").cast(pl.Date, strict=False).alias("date"))
         if "code" in normalized.columns:
             normalized = normalized.with_columns(pl.col("code").cast(pl.Utf8, strict=False))
 
@@ -1829,7 +2042,32 @@ class DatasetBuilder:
                 }
             )
 
-        df = pl.DataFrame(listed)
+        def _normalize_python_value(value: object) -> object:
+            """Normalize Python values from listed records for DataFrame creation.
+
+            Polars requires consistent dtypes when building from list[dict]. Some API
+            responses return datetime.date objects for fields like ListedDate while
+            others provide strings. This helper coerces date/datetime objects to
+            ISO strings so that schema inference stays consistent.
+            """
+
+            if isinstance(value, datetime):
+                return value.date().isoformat()
+            if isinstance(value, date):
+                return value.isoformat()
+            return value
+
+        normalized_listed = [{key: _normalize_python_value(val) for key, val in entry.items()} for entry in listed]
+
+        # DEBUG: Log sample of normalized data before DataFrame creation
+        if normalized_listed:
+            LOGGER.debug("[LISTED_DF] Creating DataFrame from %d entries", len(normalized_listed))
+            sample_entry = normalized_listed[0]
+            LOGGER.debug("[LISTED_DF] Sample entry keys: %s", list(sample_entry.keys()))
+            for key, val in list(sample_entry.items())[:5]:  # First 5 fields
+                LOGGER.debug("[LISTED_DF]   %s: %s (type: %s)", key, val, type(val).__name__)
+
+        df = pl.DataFrame(normalized_listed)
         # Normalize column names, keeping only lowercase version if duplicates exist
         lower_cols = {}
         for col in df.columns:
@@ -1880,7 +2118,15 @@ class DatasetBuilder:
             if not days:
                 days = business_date_range(start, end)
             df = pl.DataFrame({"date": days})
-            return df.with_columns(pl.col("date").str.strptime(pl.Date, strict=False))
+            # Guard .str.strptime to handle mixed cache generations
+            # Old cache files may have date: Date, new ones have date: Utf8
+            date_dtype = df.schema.get("date")
+            if date_dtype == pl.Utf8:
+                return df.with_columns(pl.col("date").str.strptime(pl.Date, strict=False))
+            elif date_dtype != pl.Date:
+                return df.with_columns(pl.col("date").cast(pl.Date, strict=False))
+            # Already Date type, return as-is
+            return df
 
         calendar_df, _ = self.cache.get_or_fetch_dataframe(
             cache_key,
@@ -1965,7 +2211,10 @@ class DatasetBuilder:
             )
 
         # Join quotes with listed metadata
-        aligned = quotes.join(listed.select(["code", "sector_code_listed", "market_code"]), on="code", how="left")
+        # Phase 3.1: Migrate to sec_id-based join (30-50% faster than string join)
+        aligned = quotes.join(
+            listed.select(["sec_id", "code", "sector_code_listed", "market_code"]), on="sec_id", how="left"
+        )
 
         # BATCH-2B: Ensure sector dimensions for sector_short_selling_ratio (#12)
         aligned = ensure_sector_dimensions(aligned)
@@ -2015,9 +2264,9 @@ class DatasetBuilder:
         quotes_lf = quotes.lazy()
 
         # Join with listed metadata (LazyFrame, cached)
-        # Filter listed to only codes present in quotes for efficiency
-        quotes_codes = quotes_lf.select("code").unique()
-        listed_filtered = listed_lf.join(quotes_codes, on="code", how="inner").with_columns(
+        # Phase 3.1: Filter listed to only sec_ids present in quotes for efficiency
+        quotes_sec_ids = quotes_lf.select("sec_id").unique()
+        listed_filtered = listed_lf.join(quotes_sec_ids, on="sec_id", how="inner").with_columns(
             [
                 pl.col("sector_code").fill_null("UNKNOWN"),
                 pl.col("market_code").cast(pl.Utf8, strict=False),
@@ -2025,8 +2274,11 @@ class DatasetBuilder:
         )
 
         # Join quotes with listed metadata (lazy, optimized)
+        # Phase 3.1: Migrate to sec_id-based join (30-50% faster than string join)
         aligned_lf = (
-            quotes_lf.join(listed_filtered.select(["code", "sector_code", "market_code"]), on="code", how="left")
+            quotes_lf.join(
+                listed_filtered.select(["sec_id", "code", "sector_code", "market_code"]), on="sec_id", how="left"
+            )
             .with_columns(
                 [
                     # Ensure sector_code exists
@@ -2269,6 +2521,128 @@ class DatasetBuilder:
         enriched = df.with_columns(missing_exprs)
         return enriched
 
+    def _add_future_realized_vol_labels(
+        self,
+        df: pl.DataFrame,
+        horizons: tuple[int, ...] = (5, 10),
+    ) -> pl.DataFrame:
+        """
+        Add forward realized volatility labels ``rv_future_{h}d`` for short horizons.
+
+        These labels use FUTURE simple returns based on adjusted close prices and are
+        intended for volatility prediction tasks (e.g. ATFT-GAT-FAN), not as model
+        input features.
+        """
+        if df.is_empty():
+            return df
+
+        code_col = self._resolve_column_name(df, "code")
+        date_col = self._resolve_column_name(df, "date")
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+
+        if code_col is None or date_col is None or price_col is None:
+            return df
+
+        # Ensure deterministic ordering for rolling operations.
+        df = df.sort([code_col, date_col])
+
+        eps = 1e-12
+        # Simple 1-day return r_t = P_t / P_{t-1} - 1 (per code).
+        df = df.with_columns(
+            ((pl.col(price_col) / (pl.col(price_col).shift(1).over(code_col) + eps)) - 1.0).alias("_rv_ret_1d")
+        )
+        df = df.with_columns(pl.col("_rv_ret_1d").pow(2).alias("_rv_ret_1d2"))
+
+        exprs: list[pl.Expr] = []
+        for horizon in horizons:
+            if horizon <= 0:
+                continue
+            col_name = f"rv_future_{horizon}d"
+            if col_name in df.columns:
+                continue
+            window = int(horizon)
+            # Σ_{i=t+1..t+h} r_i^2 via right-closed rolling sum shifted by -h within each code.
+            sum_sq = pl.col("_rv_ret_1d2").rolling_sum(window_size=window, min_periods=window)
+            exprs.append(sum_sq.shift(-window).over(code_col).mul(252.0 / float(window)).sqrt().alias(col_name))
+
+        if exprs:
+            df = df.with_columns(exprs)
+
+        # Clean up temporary columns.
+        df = df.drop(["_rv_ret_1d", "_rv_ret_1d2"], strict=False)
+        return df
+
+    def _add_blend_weight_labels(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Add per-horizon optimal static blend weights between IV and RV.
+
+        For each horizon h, we approximate the sample-wise optimal weight w*_h
+        in the convex combination:
+
+            sigma_hat_h = w * IV_h + (1 - w) * RV_h
+
+        by solving the 1D least-squares problem against the realised future
+        volatility label rv_future_h and clipping to [0, 1]. These labels are
+        intended for auxiliary training of a blend head (e.g. MLP producing
+        state-dependent w_h).
+        """
+        if df.is_empty():
+            return df
+
+        required = {
+            "rv_future_5d",
+            "rv_future_10d",
+            "idxopt_iv_atm_30d",
+            "volatility_10d",
+            "volatility_20d",
+        }
+        missing = [col for col in required if col not in df.columns]
+        if missing:
+            LOGGER.warning(
+                "[VOL-BLEND] Missing columns for blend_weight labels, filling NULLs: %s",
+                missing,
+            )
+            # Ensure the label columns exist even when inputs are missing.
+            for name in ("blend_weight_5d", "blend_weight_10d"):
+                if name not in df.columns:
+                    df = df.with_columns(pl.lit(None).cast(pl.Float64).alias(name))
+            return df
+
+        eps = 1e-6
+        exprs: list[pl.Expr] = []
+
+        # 5d horizon: use IV_30D and 10d realised volatility as RV proxy.
+        y5 = pl.col("rv_future_5d")
+        iv5 = pl.col("idxopt_iv_atm_30d")
+        rv5 = pl.col("volatility_10d")
+        denom5 = iv5 - rv5
+        w5 = (
+            pl.when(y5.is_not_null() & iv5.is_not_null() & rv5.is_not_null() & (denom5.abs() > eps))
+            .then(((y5 - rv5) / denom5).clip(0.0, 1.0))
+            .when(y5.is_not_null() & iv5.is_not_null() & rv5.is_not_null())
+            .then(pl.lit(0.5))
+            .otherwise(None)
+            .alias("blend_weight_5d")
+        )
+        exprs.append(w5)
+
+        # 10d horizon: use IV_30D and 20d realised volatility as RV proxy.
+        y10 = pl.col("rv_future_10d")
+        iv10 = pl.col("idxopt_iv_atm_30d")
+        rv10 = pl.col("volatility_20d")
+        denom10 = iv10 - rv10
+        w10 = (
+            pl.when(y10.is_not_null() & iv10.is_not_null() & rv10.is_not_null() & (denom10.abs() > eps))
+            .then(((y10 - rv10) / denom10).clip(0.0, 1.0))
+            .when(y10.is_not_null() & iv10.is_not_null() & rv10.is_not_null())
+            .then(pl.lit(0.5))
+            .otherwise(None)
+            .alias("blend_weight_10d")
+        )
+        exprs.append(w10)
+
+        return df.with_columns(exprs)
+
     @staticmethod
     def _resolve_column_name(df: pl.DataFrame, canonical: str) -> str | None:
         """Return actual column matching canonical name (case-insensitive)."""
@@ -2343,6 +2717,52 @@ class DatasetBuilder:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
 
+    def _ensure_adv60_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure liquidity baseline columns exist."""
+        specs = {
+            "adv60_yen": (pl.Float64, None),
+            "adv60_obs_count": (pl.Int32, 0),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _persist_adv60_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Promote internal ADV calculations to publicly visible columns.
+
+        Many feature blocks compute `_adv60_yen` for their own normalization,
+        but downstream ratios (breakdown, beta) also require the raw series.
+        """
+        if "_adv60_yen" not in df.columns:
+            return self._ensure_adv60_columns(df)
+
+        min_obs = max(1, int(self.settings.adv_min_periods))
+        obs_available = "_adv60_obs_count" in df.columns
+
+        if obs_available:
+            adv_expr = (
+                pl.when(pl.col("_adv60_obs_count").fill_null(0) >= min_obs).then(pl.col("_adv60_yen")).otherwise(None)
+            )
+        else:
+            adv_expr = pl.col("_adv60_yen")
+
+        df = df.with_columns(adv_expr.alias("_adv60_materialized"))
+        if "adv60_yen" in df.columns:
+            df = df.with_columns(pl.coalesce([pl.col("_adv60_materialized"), pl.col("adv60_yen")]).alias("adv60_yen"))
+        else:
+            df = df.with_columns(pl.col("_adv60_materialized").alias("adv60_yen"))
+        df = df.drop(["_adv60_materialized"], strict=False)
+
+        if obs_available:
+            df = df.with_columns(pl.col("_adv60_obs_count").cast(pl.Int32).alias("adv60_obs_count"))
+        else:
+            df = self._ensure_adv60_columns(df)
+
+        df = df.drop(["_adv60_obs_count"], strict=False)
+        return self._ensure_adv60_columns(df)
+
     def _ensure_supply_shock_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
             "fs_shares_outstanding": (pl.Float64, None),
@@ -2357,6 +2777,59 @@ class DatasetBuilder:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
 
+    def _ensure_market_cap_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "market_cap": (pl.Float64, None),
+            "market_cap_total": (pl.Float64, None),
+            "market_cap_free_float": (pl.Float64, None),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_market_cap_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        if df.is_empty():
+            return self._ensure_market_cap_columns(df)
+
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+        shares_total_col = self._resolve_column_name(df, "shares_total") or self._resolve_column_name(
+            df, "fs_shares_outstanding"
+        )
+        float_candidates = [
+            self._resolve_column_name(df, "shares_free_float"),
+            self._resolve_column_name(df, "fs_free_float_shares"),
+            self._resolve_column_name(df, "fs_float_shares"),
+        ]
+        float_candidates = [col for col in float_candidates if col]
+
+        exprs: list[pl.Expr] = []
+        if price_col and shares_total_col:
+            exprs.append((pl.col(price_col) * pl.col(shares_total_col)).alias("market_cap_total"))
+
+        float_exprs: list[pl.Expr] = []
+        if float_candidates:
+            float_exprs.append(pl.col(float_candidates[0]))
+        if shares_total_col:
+            float_exprs.append(pl.col(shares_total_col))
+        float_shares_expr: pl.Expr | None = None
+        if float_exprs:
+            if len(float_exprs) == 1:
+                float_shares_expr = float_exprs[0]
+            else:
+                float_shares_expr = pl.coalesce(float_exprs)
+
+        if price_col and float_shares_expr is not None:
+            exprs.append((pl.col(price_col) * float_shares_expr).alias("market_cap_free_float"))
+
+        if exprs:
+            df = df.with_columns(exprs)
+
+        if "market_cap_total" in df.columns:
+            df = df.with_columns(pl.col("market_cap_total").alias("market_cap"))
+
+        return self._ensure_market_cap_columns(df)
+
     def _add_supply_shock_features(self, df: pl.DataFrame) -> pl.DataFrame:
         if df.is_empty():
             return self._ensure_supply_shock_columns(df)
@@ -2366,11 +2839,31 @@ class DatasetBuilder:
             LOGGER.debug("[SUPPLY] No fs_shares_outstanding column available")
             return self._ensure_supply_shock_columns(df)
 
-        df = df.sort(["code", "date"])
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+        if date_col is None:
+            LOGGER.debug("[SUPPLY] No date column available for supply shock computation")
+            return self._ensure_supply_shock_columns(df)
+
+        max_ffill_days = max(1, int(self.settings.share_forward_fill_days))
+        df = df.sort(["code", date_col])
         prev_col = "__prev_shares"
-        df = df.with_columns(pl.col(shares_col).shift(1).over("code").alias(prev_col))
+        prev_date_col = "__prev_share_date"
         df = df.with_columns(
-            pl.when(pl.col(prev_col).is_not_null() & (pl.col(prev_col).abs() > 1e-3))
+            [
+                pl.col(shares_col).shift(1).over("code").alias(prev_col),
+                pl.col(date_col).shift(1).over("code").alias(prev_date_col),
+            ]
+        )
+        date_diff_expr = (
+            pl.col(date_col).cast(pl.Int64, strict=False) - pl.col(prev_date_col).cast(pl.Int64, strict=False)
+        ).abs()
+        df = df.with_columns(
+            pl.when(
+                pl.col(prev_col).is_not_null()
+                & (pl.col(prev_col).abs() > 1e-3)
+                & pl.col(prev_date_col).is_not_null()
+                & (date_diff_expr <= max_ffill_days)
+            )
             .then((pl.col(shares_col) - pl.col(prev_col)) / (pl.col(prev_col) + 1e-12))
             .otherwise(None)
             .alias("shares_out_delta_pct")
@@ -2382,20 +2875,116 @@ class DatasetBuilder:
             (pl.col("shares_out_delta_pct").is_not_null()).cast(pl.Int8).alias("is_supply_shock_valid"),
         )
         df = df.with_columns((pl.col("buyback_flag") - pl.col("dilution_flag")).alias("supply_shock"))
-        df = df.drop([prev_col], strict=False)
+        df = df.drop([prev_col, prev_date_col], strict=False)
         return self._ensure_supply_shock_columns(df)
+
+    def _share_master_path(self) -> Path | None:
+        if self.settings.share_master_path is not None:
+            return Path(self.settings.share_master_path)
+        return self.settings.data_cache_dir / "shares_master.parquet"
+
+    def _load_share_master(self) -> pl.DataFrame | None:
+        path = self._share_master_path()
+        if path is None or not path.exists():
+            return None
+        try:
+            share_df = pl.read_parquet(path)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("[SHARES] Failed to read shares master %s: %s", path, exc)
+            return None
+        if share_df.is_empty():
+            LOGGER.warning("[SHARES] Shares master %s is empty", path)
+            return None
+        required = {"code", "available_ts"}
+        missing = required - set(share_df.columns)
+        if missing:
+            LOGGER.warning("[SHARES] Shares master missing required columns: %s", sorted(missing))
+            return None
+        return share_df
+
+    def _attach_share_master_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        share_df = self._load_share_master()
+        if share_df is None or df.is_empty():
+            return df
+        if "code" not in df.columns or "asof_ts" not in df.columns:
+            return df
+
+        share_snapshot = (
+            share_df.select(
+                [
+                    pl.col("code").cast(pl.Utf8, strict=False).alias("code"),
+                    pl.col("available_ts").cast(pl.Int64).alias("_share_ts"),
+                    pl.col("shares_total").cast(pl.Float64, strict=False),
+                    pl.col("shares_free_float").cast(pl.Float64, strict=False),
+                ]
+            )
+            .drop_nulls("code")
+            .sort(["code", "_share_ts"])
+        )
+        working = df.with_columns(pl.col("asof_ts").cast(pl.Int64).alias("_share_asof"))
+
+        joined = interval_join_pl(
+            backbone=working,
+            snapshot=share_snapshot,
+            on_code="code",
+            backbone_ts="_share_asof",
+            snapshot_ts="_share_ts",
+            strategy="backward",
+            suffix="_share",
+        )
+
+        cleanup_cols = [col for col in joined.columns if col.endswith("_share")]
+        cleanup_cols.extend(["_share_asof", "_share_ts"])
+        joined = joined.drop([col for col in cleanup_cols if col in joined.columns], strict=False)
+
+        # Prefer fs_shares_outstanding computed from financial statements and use
+        # shares_total from the share master only to fill remaining gaps.
+        if "fs_shares_outstanding" in joined.columns and "shares_total" in joined.columns:
+            joined = joined.with_columns(
+                pl.coalesce([pl.col("fs_shares_outstanding"), pl.col("shares_total")]).alias("fs_shares_outstanding")
+            )
+        elif "fs_shares_outstanding" not in joined.columns and "shares_total" in joined.columns:
+            joined = joined.with_columns(
+                pl.col("shares_total").cast(pl.Float64, strict=False).alias("fs_shares_outstanding")
+            )
+
+        if "shares_total" not in joined.columns:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("shares_total"))
+
+        if "shares_free_float" not in joined.columns:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("shares_free_float"))
+
+        # Expose a unified tradable share count for downstream percentage features.
+        # Primary preference is shares_total (issued - treasury); fallback to fs_shares_outstanding.
+        joined = joined.with_columns(
+            pl.coalesce(
+                [
+                    pl.col("shares_total").cast(pl.Float64, strict=False),
+                    pl.col("fs_shares_outstanding").cast(pl.Float64, strict=False),
+                ]
+            ).alias("shares_tradable")
+        )
+
+        return joined
 
     def _ensure_float_crowding_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
             "float_turnover_pct": (pl.Float64, None),
+            "float_turnover_pct_tradable": (pl.Float64, None),
             "float_turnover_pct_z20": (pl.Float64, None),
             "float_turnover_pct_roc_5d": (pl.Float64, None),
             "margin_long_pct_float": (pl.Float64, None),
+            "margin_long_pct_tradable": (pl.Float64, None),
             "margin_long_pct_float_z20": (pl.Float64, None),
             "margin_long_pct_float_roc_5d": (pl.Float64, None),
             "weekly_margin_long_pct_float": (pl.Float64, None),
+            "weekly_margin_long_pct_tradable": (pl.Float64, None),
             "weekly_margin_long_pct_float_z20": (pl.Float64, None),
             "weekly_margin_long_pct_float_roc_5d": (pl.Float64, None),
+            "crowding_margin": (pl.Float64, None),
+            "crowding_dmi": (pl.Float64, None),
+            "crowding_breakdown": (pl.Float64, None),
+            "crowding_short": (pl.Float64, None),
             "crowding_score": (pl.Float64, None),
             "is_crowding_signal_valid": (pl.Int8, 0),
         }
@@ -2403,6 +2992,98 @@ class DatasetBuilder:
             if col not in df.columns:
                 df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
         return df
+
+    def _ensure_rq63_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure base rq_63_* columns exist with proper defaults."""
+        specs: dict[str, tuple[pl.DataType, object | None]] = {
+            "rq_63_10": (pl.Float64, None),
+            "rq_63_50": (pl.Float64, None),
+            "rq_63_90": (pl.Float64, None),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_rq63_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Add realized quantile features rq_63_{10,50,90} based on 63-day returns."""
+        if df.is_empty():
+            return self._ensure_rq63_columns(df)
+
+        code_col = self._resolve_column_name(df, "code") or self._resolve_column_name(df, "Code")
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+        price_col = (
+            self._resolve_column_name(df, "adjustmentclose")
+            or self._resolve_column_name(df, "AdjustmentClose")
+            or self._resolve_column_name(df, "close")
+        )
+
+        if code_col is None or date_col is None or price_col is None:
+            LOGGER.debug(
+                "[RQ63] Missing inputs (code=%s, date=%s, price=%s); skipping rq_63 features",
+                code_col,
+                date_col,
+                price_col,
+            )
+            return self._ensure_rq63_columns(df)
+
+        # Sort and compute 1-day log returns per code.
+        working = df.sort([code_col, date_col]).with_columns(
+            (
+                pl.col(price_col).cast(pl.Float64, strict=False)
+                / pl.col(price_col).cast(pl.Float64, strict=False).shift(1).over(code_col)
+            )
+            .log()
+            .alias("_rq_ret_1d")
+        )
+
+        window = 63
+        min_periods = 25
+
+        def _add_rq_for_symbol(group: pl.DataFrame) -> pl.DataFrame:
+            if "_rq_ret_1d" not in group.columns:
+                return group
+            # Rolling quantiles over time for this symbol.
+            group = group.sort(date_col).with_columns(
+                [
+                    pl.col("_rq_ret_1d")
+                    .rolling_quantile(
+                        window_size=window, quantile=0.10, interpolation="nearest", min_periods=min_periods
+                    )
+                    .alias("rq_63_10"),
+                    pl.col("_rq_ret_1d")
+                    .rolling_quantile(
+                        window_size=window, quantile=0.50, interpolation="nearest", min_periods=min_periods
+                    )
+                    .alias("rq_63_50"),
+                    pl.col("_rq_ret_1d")
+                    .rolling_quantile(
+                        window_size=window, quantile=0.90, interpolation="nearest", min_periods=min_periods
+                    )
+                    .alias("rq_63_90"),
+                ]
+            )
+            return group
+
+        try:
+            enriched = (
+                working.group_by(code_col, maintain_order=True)
+                .map_groups(_add_rq_for_symbol)
+                .drop(["_rq_ret_1d"], strict=False)
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("[RQ63] Failed to compute rq_63 features: %s", exc)
+            return self._ensure_rq63_columns(df)
+
+        # Join back rq_63_* onto original df using code/date as keys.
+        rq_cols = ["rq_63_10", "rq_63_50", "rq_63_90"]
+        available = [c for c in rq_cols if c in enriched.columns]
+        if not available:
+            return self._ensure_rq63_columns(df)
+
+        rq_frame = enriched.select([code_col, date_col] + available)
+        out = df.join(rq_frame, on=[code_col, date_col], how="left")
+        return self._ensure_rq63_columns(out)
 
     def _add_float_turnover_crowding_features(self, df: pl.DataFrame) -> pl.DataFrame:
         if df.is_empty():
@@ -2413,7 +3094,11 @@ class DatasetBuilder:
             LOGGER.debug("[FLOAT] Missing base columns for float turnover computation")
             return self._ensure_float_crowding_columns(df)
 
-        shares_col = self._resolve_column_name(df, "fs_shares_outstanding")
+        shares_col = (
+            self._resolve_column_name(df, "shares_tradable")
+            or self._resolve_column_name(df, "shares_total")
+            or self._resolve_column_name(df, "fs_shares_outstanding")
+        )
         turnover_col = self._resolve_column_name(df, "turnovervalue")
         price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
         margin_long_col = self._resolve_column_name(df, "dmi_long_balance")
@@ -2436,7 +3121,13 @@ class DatasetBuilder:
             )
             .then(turnover_expr / (price_expr * share_expr + eps))
             .otherwise(None)
-            .alias("float_turnover_pct")
+            .alias("float_turnover_pct"),
+            pl.when(
+                share_expr.is_not_null() & (share_expr > 0) & turnover_expr.is_not_null() & price_expr.is_not_null()
+            )
+            .then(turnover_expr / (price_expr * share_expr + eps))
+            .otherwise(None)
+            .alias("float_turnover_pct_tradable"),
         ]
 
         if margin_long_col is not None:
@@ -2447,8 +3138,15 @@ class DatasetBuilder:
                 .otherwise(None)
                 .alias("margin_long_pct_float")
             )
+            new_columns.append(
+                pl.when(share_expr.is_not_null() & (share_expr > 0) & long_expr.is_not_null())
+                .then(long_expr / (share_expr + eps))
+                .otherwise(None)
+                .alias("margin_long_pct_tradable")
+            )
         else:
             new_columns.append(pl.lit(None).cast(pl.Float64).alias("margin_long_pct_float"))
+            new_columns.append(pl.lit(None).cast(pl.Float64).alias("margin_long_pct_tradable"))
 
         if weekly_long_col is not None:
             weekly_expr = pl.col(weekly_long_col).cast(pl.Float64, strict=False)
@@ -2458,8 +3156,15 @@ class DatasetBuilder:
                 .otherwise(None)
                 .alias("weekly_margin_long_pct_float")
             )
+            new_columns.append(
+                pl.when(share_expr.is_not_null() & (share_expr > 0) & weekly_expr.is_not_null())
+                .then(weekly_expr / (share_expr + eps))
+                .otherwise(None)
+                .alias("weekly_margin_long_pct_tradable")
+            )
         else:
             new_columns.append(pl.lit(None).cast(pl.Float64).alias("weekly_margin_long_pct_float"))
+            new_columns.append(pl.lit(None).cast(pl.Float64).alias("weekly_margin_long_pct_tradable"))
 
         df = df.sort(["code", "date"]).with_columns(new_columns)
 
@@ -2491,29 +3196,73 @@ class DatasetBuilder:
             frame = frame.drop([ma_col, std_col])
             return frame
 
-        df = _apply_roll_metrics(df, "float_turnover_pct", "float_turnover_pct_z20", "float_turnover_pct_roc_5d")
+        df = _apply_roll_metrics(
+            df, "float_turnover_pct_tradable", "float_turnover_pct_z20", "float_turnover_pct_roc_5d"
+        )
         df = _apply_roll_metrics(
             df,
-            "margin_long_pct_float",
+            "margin_long_pct_tradable",
             "margin_long_pct_float_z20",
             "margin_long_pct_float_roc_5d",
         )
         df = _apply_roll_metrics(
             df,
-            "weekly_margin_long_pct_float",
+            "weekly_margin_long_pct_tradable",
             "weekly_margin_long_pct_float_z20",
             "weekly_margin_long_pct_float_roc_5d",
         )
 
-        df = df.with_columns(
-            pl.when(
-                pl.col("margin_long_pct_float_z20").is_not_null()
-                & pl.col("weekly_margin_long_pct_float_z20").is_not_null()
+        # Decomposed crowding components for interpretability.
+        component_exprs: list[pl.Expr] = []
+
+        margin_z_cols = [
+            c for c in ["margin_long_pct_float_z20", "weekly_margin_long_pct_float_z20"] if c in df.columns
+        ]
+        if margin_z_cols:
+            margin_values = [pl.col(c).fill_null(0.0) for c in margin_z_cols]
+            margin_weights = [pl.col(c).is_not_null().cast(pl.Float64) for c in margin_z_cols]
+            component_exprs.append(
+                pl.when(pl.sum_horizontal(margin_weights) > 0.0)
+                .then(pl.sum_horizontal(margin_values) / pl.sum_horizontal(margin_weights))
+                .otherwise(None)
+                .alias("crowding_margin")
             )
-            .then(pl.col("margin_long_pct_float_z20") + pl.col("weekly_margin_long_pct_float_z20"))
-            .otherwise(None)
-            .alias("crowding_score"),
-        )
+
+        if "dmi_net_z20" in df.columns:
+            component_exprs.append(pl.col("dmi_net_z20").alias("crowding_dmi"))
+        if "bd_net_z20" in df.columns:
+            component_exprs.append(pl.col("bd_net_z20").alias("crowding_breakdown"))
+        if "ss_ratio_market_z20" in df.columns:
+            component_exprs.append(pl.col("ss_ratio_market_z20").alias("crowding_short"))
+
+        if component_exprs:
+            df = df.with_columns(component_exprs)
+
+        # Composite crowding score: combine margin z-scores, daily margin net z-score,
+        # breakdown net z-score, and sector short-selling z-score when available.
+        contrib_cols: list[str] = [
+            "margin_long_pct_float_z20",
+            "weekly_margin_long_pct_float_z20",
+            "dmi_net_z20",
+            "bd_net_z20",
+            "ss_ratio_market_z20",
+        ]
+        present = [c for c in contrib_cols if c in df.columns]
+        if present:
+            # Replace NULL with 0 for aggregation, keep explicit non-null count for normalization.
+            value_exprs = [pl.col(c).fill_null(0.0) for c in present]
+            weight_exprs = [pl.col(c).is_not_null().cast(pl.Float64) for c in present]
+            df = df.with_columns(
+                pl.sum_horizontal(value_exprs).alias("__crowding_sum"),
+                pl.sum_horizontal(weight_exprs).alias("__crowding_n"),
+            )
+            df = df.with_columns(
+                pl.when(pl.col("__crowding_n") > 0)
+                .then(pl.col("__crowding_sum") / pl.col("__crowding_n"))
+                .otherwise(None)
+                .alias("crowding_score")
+            )
+            df = df.drop(["__crowding_sum", "__crowding_n"], strict=False)
 
         df = df.with_columns(
             pl.when(pl.col("crowding_score").is_not_null())
@@ -2636,7 +3385,9 @@ class DatasetBuilder:
             return self._ensure_margin_pain_columns(df)
 
         # Note: shares_col resolved but not needed (margin pain uses percentage)
-        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_float")
+        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_tradable") or self._resolve_column_name(
+            df, "margin_long_pct_float"
+        )
         price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
         lower_limit_price_col = self._resolve_column_name(df, "lower_limit_price")
 
@@ -2735,7 +3486,9 @@ class DatasetBuilder:
         if df.is_empty():
             return self._ensure_pre_earnings_flow_columns(df)
 
-        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_float")
+        margin_pct_col = self._resolve_column_name(df, "margin_long_pct_tradable") or self._resolve_column_name(
+            df, "margin_long_pct_float"
+        )
         short_ratio_col = self._resolve_column_name(df, "short_selling_ratio_market")
         earn_flag_col = self._resolve_column_name(df, "earnings_upcoming_3d") or self._resolve_column_name(
             df, "is_E_pp3"
@@ -2810,6 +3563,12 @@ class DatasetBuilder:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
             "gap_predictor": (pl.Float64, None),
             "basis_gate": (pl.Float64, None),
+            "basis_gate_roll_mean_20d": (pl.Float64, None),
+            "basis_gate_roll_std_20d": (pl.Float64, None),
+            "basis_gate_zscore_20d": (pl.Float64, None),
+            "basis_gate_outlier_flag": (pl.Int8, 0),
+            "basis_gate_sector_mean": (pl.Float64, None),
+            "basis_gate_sector_rel": (pl.Float64, None),
             "is_gap_basis_valid": (pl.Int8, 0),
         }
         for col, (dtype, default) in specs.items():
@@ -2847,8 +3606,47 @@ class DatasetBuilder:
             .cast(pl.Int8)
             .alias("is_gap_basis_valid"),
         )
-
+        df = self._add_basis_gate_derivatives(df)
         return self._ensure_gap_basis_columns(df)
+
+    def _add_basis_gate_derivatives(self, df: pl.DataFrame) -> pl.DataFrame:
+        if "basis_gate" not in df.columns:
+            return df
+
+        window = 20
+        min_periods = max(window // 2, 5)
+        sigma = getattr(self.quality_features, "sigma_threshold", 2.0)
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+        sector_col = next(
+            (col for col in ("sector_code", "SectorCode", "sector33_code", "Sector33Code") if col in df.columns),
+            None,
+        )
+
+        mean_col = f"basis_gate_roll_mean_{window}d"
+        std_col = f"basis_gate_roll_std_{window}d"
+        z_col = f"basis_gate_zscore_{window}d"
+        flag_col = "basis_gate_outlier_flag"
+
+        df = df.with_columns(
+            roll_mean_safe(pl.col("basis_gate"), window, min_periods=min_periods, by="code").alias(mean_col),
+            roll_std_safe(pl.col("basis_gate"), window, min_periods=min_periods, by="code").alias(std_col),
+        )
+        df = df.with_columns(((pl.col("basis_gate") - pl.col(mean_col)) / (pl.col(std_col) + 1e-8)).alias(z_col))
+        df = df.with_columns((pl.col(z_col).abs() > sigma).cast(pl.Int8).alias(flag_col))
+
+        if sector_col and date_col:
+            df = df.with_columns(
+                pl.col("basis_gate").mean().over([date_col, sector_col]).alias("basis_gate_sector_mean")
+            )
+            df = df.with_columns(
+                (pl.col("basis_gate") - pl.col("basis_gate_sector_mean")).alias("basis_gate_sector_rel")
+            )
+        else:
+            if "basis_gate_sector_mean" not in df.columns:
+                df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("basis_gate_sector_mean"))
+            if "basis_gate_sector_rel" not in df.columns:
+                df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("basis_gate_sector_rel"))
+        return df
 
     def _ensure_liquidity_impact_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         specs: dict[str, tuple[pl.DataType, object | None]] = {
@@ -3075,6 +3873,14 @@ class DatasetBuilder:
             if "_vol_ma20" in df.columns:
                 df = df.drop("_vol_ma20")
 
+        if "am_vol_share" not in df.columns:
+            df = df.with_columns(
+                pl.when(pl.col("volume").abs() > eps)
+                .then(mv / (pl.col("volume") + eps))
+                .otherwise(None)
+                .alias("am_vol_share")
+            )
+
         df = self._ensure_am_pm_columns(df)
 
         if isinstance(self._run_meta, dict):
@@ -3095,6 +3901,7 @@ class DatasetBuilder:
         specs = {
             "am_pos": (pl.Float64, None),
             "am_vol_ratio_20": (pl.Float64, None),
+            "am_vol_share": (pl.Float64, None),
         }
         for col, (dtype, default) in specs.items():
             if col not in df.columns:
@@ -3397,6 +4204,61 @@ class DatasetBuilder:
 
         return df
 
+    def _ensure_macro_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure macro VIX / VVMD feature columns exist with correct dtypes.
+
+        This prevents schema validation failures when upstream macro loaders
+        return empty frames (e.g., yfinance unavailable or cache missing).
+        """
+        specs: dict[str, pl.DataType] = {
+            # VIX-based features
+            "macro_vix_close": pl.Float64,
+            "macro_vix_log_close": pl.Float64,
+            "macro_vix_ret_1d": pl.Float64,
+            "macro_vix_ret_5d": pl.Float64,
+            "macro_vix_ret_10d": pl.Float64,
+            "macro_vix_ret_20d": pl.Float64,
+            "macro_vix_vol_20": pl.Float64,
+            "macro_vix_sma_ratio_5_20": pl.Float64,
+            "macro_vix_vol_z": pl.Float64,
+            "macro_vix_spike": pl.Int8,
+            # VVMD global regime features (schematized from feature_schema_summary.txt)
+            "macro_vvmd_vol_spy_rv20": pl.Float64,
+            "macro_vvmd_vol_spy_drv_20_63": pl.Float64,
+            "macro_vvmd_vol_qqq_rv20": pl.Float64,
+            "macro_vvmd_vol_vix_z_252d": pl.Float64,
+            "macro_vvmd_vlm_spy_surge20": pl.Float64,
+            "macro_vvmd_vlm_qqq_surge20": pl.Float64,
+            "macro_vvmd_mom_spy_63d": pl.Float64,
+            "macro_vvmd_mom_qqq_63d": pl.Float64,
+            "macro_vvmd_trend_spy_ma_gap_20_100": pl.Float64,
+            "macro_vvmd_trend_qqq_ma_gap_20_100": pl.Float64,
+            "macro_vvmd_breakout_spy_bo52": pl.Float64,
+            "macro_vvmd_demand_dxy_z_252d": pl.Float64,
+            "macro_vvmd_demand_btc_rel_63d": pl.Float64,
+            "macro_vvmd_vol_btc_rv20": pl.Float64,
+            "macro_vvmd_vrp_spy": pl.Float64,
+            "macro_vvmd_vrp_spy_z_252d": pl.Float64,
+            "macro_vvmd_vrp_spy_high_flag": pl.Int8,
+            "macro_vvmd_credit_spread_ratio": pl.Float64,
+            "macro_vvmd_credit_spread_z_63d": pl.Float64,
+            "macro_vvmd_rates_term_ratio": pl.Float64,
+            "macro_vvmd_rates_term_z_63d": pl.Float64,
+            "macro_vvmd_vix_term_slope": pl.Float64,
+            "macro_vvmd_vix_term_ratio": pl.Float64,
+            "macro_vvmd_vix_term_z_126d": pl.Float64,
+            "macro_vvmd_spy_overnight_ret": pl.Float64,
+            "macro_vvmd_spy_intraday_ret": pl.Float64,
+            "macro_vvmd_fx_usdjpy_ret_1d": pl.Float64,
+            "macro_vvmd_fx_usdjpy_ret_5d": pl.Float64,
+            "macro_vvmd_fx_usdjpy_ret_20d": pl.Float64,
+            "macro_vvmd_fx_usdjpy_z_20d": pl.Float64,
+        }
+        for name, dtype in specs.items():
+            if name not in df.columns:
+                df = df.with_columns(pl.lit(None, dtype=dtype).alias(name))
+        return df
+
     def _ensure_listed_info_columns(self, df: pl.DataFrame) -> pl.DataFrame:
         """Ensure all listed info feature columns exist with proper defaults."""
         specs = {
@@ -3441,6 +4303,8 @@ class DatasetBuilder:
             "dmi_total": pl.Float64,
             "dmi_net": pl.Float64,
             "dmi_long_short_ratio": pl.Float64,
+            "margin_long_listed_ratio": pl.Float64,
+            "margin_short_listed_ratio": pl.Float64,
             # P0: Changes
             "dmi_long_balance_diff_1d": pl.Float64,
             "dmi_short_balance_diff_1d": pl.Float64,
@@ -3537,8 +4401,10 @@ class DatasetBuilder:
             "fs_is_recent": (pl.Int8, 0),
             "fs_staleness_bd": (pl.Int32, None),
             "is_fs_valid": (pl.Int8, 0),
+            "DisclosedDate": (pl.Date, None),
             "fs_shares_outstanding": (pl.Float64, None),
             "fs_average_shares": (pl.Float64, None),
+            "fs_E_event_date": (pl.Date, None),
             # P0新特徴量
             "fs_ttm_sales": (pl.Float64, None),
             "fs_ttm_op_profit": (pl.Float64, None),
@@ -3554,6 +4420,7 @@ class DatasetBuilder:
             "fs_accruals": (pl.Float64, None),
             "fs_days_since": (pl.Int32, None),
             "fs_days_to_next": (pl.Int32, None),
+            "fs_days_since_E": (pl.Int32, None),
             "fs_window_e_pm1": (pl.Int8, 0),
             "fs_window_e_pp3": (pl.Int8, 0),
             "fs_window_e_pp5": (pl.Int8, 0),
@@ -3673,7 +4540,8 @@ class DatasetBuilder:
     ) -> pl.DataFrame:
         if raw_daily.is_empty():
             LOGGER.info("[MARGIN] Daily margin dataset empty, skipping features")
-            return self._ensure_margin_daily_columns(df)
+            df = self._ensure_margin_daily_columns(df)
+            return self._ensure_adv60_columns(df)
 
         snapshot = prepare_margin_daily_asof(
             raw_daily,
@@ -3683,6 +4551,12 @@ class DatasetBuilder:
         )
 
         snapshot_value_cols = [col for col in snapshot.columns if col.lower() not in {"code", "date", "available_ts"}]
+
+        # Ensure join key dtype consistency for as-of join (code-based).
+        if "code" in df.columns:
+            df = df.with_columns(pl.col("code").cast(pl.Utf8, strict=False))
+        if "code" in snapshot.columns:
+            snapshot = snapshot.with_columns(pl.col("code").cast(pl.Utf8, strict=False))
 
         joined = interval_join_pl(
             backbone=df,
@@ -3721,6 +4595,20 @@ class DatasetBuilder:
                 "margin_short_balance",
                 "margin_sell_volume_dmi",
                 "margin_sell_volume",
+            ]
+        )
+
+        # Listed share ratios (percentage of outstanding shares on margin)
+        long_listed_col = _resolve(
+            [
+                "LongMarginOutstandingListedShareRatio_dmi",
+                "LongMarginOutstandingListedShareRatio",
+            ]
+        )
+        short_listed_col = _resolve(
+            [
+                "ShortMarginOutstandingListedShareRatio_dmi",
+                "ShortMarginOutstandingListedShareRatio",
             ]
         )
 
@@ -3782,15 +4670,31 @@ class DatasetBuilder:
             )
 
         # P0: Core levels (当日公表値)
+        ratio_den = pl.col("_dmi_short_yen") + 1e-9
         joined = joined.with_columns(
             [
                 pl.col("_dmi_long_yen").alias("dmi_long_balance"),
                 pl.col("_dmi_short_yen").alias("dmi_short_balance"),
                 (pl.col("_dmi_long_yen") + pl.col("_dmi_short_yen")).alias("dmi_total"),
                 (pl.col("_dmi_long_yen") - pl.col("_dmi_short_yen")).alias("dmi_net"),
-                (pl.col("_dmi_long_yen") / (pl.col("_dmi_short_yen") + 1e-9)).alias("dmi_long_short_ratio"),
+                (pl.col("_dmi_long_yen") / ratio_den).alias("dmi_long_short_ratio"),
             ]
         )
+
+        # Listed share ratios (DIベースの対上場株比)
+        if long_listed_col and long_listed_col in joined.columns:
+            joined = joined.with_columns(
+                pl.col(long_listed_col).cast(pl.Float64, strict=False).alias("margin_long_listed_ratio")
+            )
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("margin_long_listed_ratio"))
+
+        if short_listed_col and short_listed_col in joined.columns:
+            joined = joined.with_columns(
+                pl.col(short_listed_col).cast(pl.Float64, strict=False).alias("margin_short_listed_ratio")
+            )
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("margin_short_listed_ratio"))
 
         # P0: 1-day differences (shift(1) to prevent leakage)
         joined = joined.sort(["code", "date"])
@@ -3815,6 +4719,15 @@ class DatasetBuilder:
                 ),
                 (pl.col("_dv_base_yen").shift(1).rolling_mean(window_size=60, min_periods=10).over("code")).alias(
                     "_adv60_yen"
+                ),
+                (
+                    pl.col("_dv_base_yen")
+                    .shift(1)
+                    .is_not_null()
+                    .cast(pl.Int32)
+                    .rolling_sum(window_size=60, min_periods=1)
+                    .over("code")
+                    .alias("_adv60_obs_count")
                 ),
             ]
         )
@@ -3969,6 +4882,8 @@ class DatasetBuilder:
             .alias("is_margin_daily_valid"),
         )
 
+        joined = self._persist_adv60_columns(joined)
+
         cleanup_cols: set[str] = {col for col in joined.columns if col.endswith("_dmi")}
         cleanup_cols.update(actual for actual in (margin_long_col, margin_short_col) if actual is not None)
         for base in ("available_ts", "application_date", "published_date", "date"):
@@ -3984,6 +4899,7 @@ class DatasetBuilder:
                 "_dv_base_yen",
                 "_adv20_yen",
                 "_adv60_yen",
+                "_adv60_obs_count",
                 "_dmi_long_shares",
                 "_dmi_short_shares",
                 "_dmi_long_yen",
@@ -4418,6 +5334,15 @@ class DatasetBuilder:
                 (pl.col("_dv_base_yen").shift(1).rolling_mean(window_size=60, min_periods=10).over("code")).alias(
                     "_adv60_yen"
                 ),
+                (
+                    pl.col("_dv_base_yen")
+                    .shift(1)
+                    .is_not_null()
+                    .cast(pl.Int32)
+                    .rolling_sum(window_size=60, min_periods=1)
+                    .over("code")
+                    .alias("_adv60_obs_count")
+                ),
             ]
         )
 
@@ -4455,6 +5380,8 @@ class DatasetBuilder:
             ]
         )
 
+        joined = self._persist_adv60_columns(joined)
+
         # 一時列をクリーンアップ
         cleanup_cols: set[str] = {col for col in joined.columns if col.endswith("_wmi")}
         cleanup_cols.update(
@@ -4482,6 +5409,7 @@ class DatasetBuilder:
             [
                 "_dv_base_yen",
                 "_adv60_yen",
+                "_adv60_obs_count",
                 "_adv20_shares",
                 "_wmi_long_shares",
                 "_wmi_short_shares",
@@ -4596,6 +5524,37 @@ class DatasetBuilder:
             LOGGER.info("[FINS] No normalized financial statement rows available")
             return self._ensure_fs_columns(df)
 
+        # Approximate typical gap between financial statement events per code using
+        # historical fs_period_end_date gaps. This is used as a fallback for
+        # fs_days_to_next when an exact next event distance is not directly observable.
+        gap_stats: pl.DataFrame | None = None
+        if "code" in feature_frame.columns and "fs_period_end_date" in feature_frame.columns:
+            try:
+                gap_frame = (
+                    feature_frame.select(
+                        [
+                            pl.col("code").cast(pl.Utf8, strict=False).alias("code"),
+                            pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_period_end_date"),
+                        ]
+                    )
+                    .drop_nulls(["code", "fs_period_end_date"])
+                    .unique()
+                    .sort(["code", "fs_period_end_date"])
+                    .with_columns(
+                        (pl.col("fs_period_end_date") - pl.col("fs_period_end_date").shift(1).over("code"))
+                        .dt.days()
+                        .alias("gap_days")
+                    )
+                )
+                gap_stats = (
+                    gap_frame.group_by("code")
+                    .agg(pl.col("gap_days").drop_nulls().median().alias("fs_gap_median_code"))
+                    .filter(pl.col("fs_gap_median_code").is_not_null())
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                LOGGER.warning("[FINS] Failed to compute fs_gap_median_code: %s", exc)
+                gap_stats = None
+
         snapshot_ts_col = "_fs_available_ts"
         backbone_ts_col = "_fs_asof_ts"
         feature_frame = feature_frame.with_columns(pl.col("available_ts").cast(pl.Int64).alias(snapshot_ts_col))
@@ -4628,6 +5587,8 @@ class DatasetBuilder:
                 pl.col("DisclosedDate").cast(pl.Date, strict=False).alias("_fs_disclosed_date"),
             ]
         )
+        # 明示的な実績決算イベント日（E）としてfs_E_event_dateを保持
+        joined = joined.with_columns(pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_E_event_date"))
         # fs_staleness_bd: 前回開示からの営業日差（既存）
         joined = joined.with_columns(
             pl.when(pl.col("_fs_today_date").is_not_null() & pl.col("_fs_report_date").is_not_null())
@@ -4653,11 +5614,30 @@ class DatasetBuilder:
             .otherwise(None)
             .alias("fs_days_since")
         )
+        # エイリアス: fs_days_since_E としても公開
+        joined = joined.with_columns(pl.col("fs_days_since").alias("fs_days_since_E"))
 
-        # fs_days_to_next: 次回決算日までの営業日差（次のfs_period_end_dateを探す）
-        # 簡易実装: グループ内で次のfs_period_end_dateをshift(-1)で取得
-        # より正確には、各codeごとに次の決算日を計算する必要があるが、簡易実装として
-        # 現在の実装では省略（後で拡張可能）
+        # fs_days_to_next: 次回決算日までのおおよその距離（営業日差の近似）。
+        # 将来の実際の決算日を直接参照せず、歴史的なfs_period_end_date間隔の
+        # 中央値（fs_gap_median_code）をコード別に推定し、そこから残り日数を近似する。
+        if gap_stats is not None and not gap_stats.is_empty():
+            joined = joined.join(gap_stats, on="code", how="left")
+        else:
+            joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("fs_gap_median_code"))
+
+        fs_gap_ref = pl.coalesce(
+            [
+                pl.col("fs_gap_median_code").cast(pl.Float64, strict=False),
+                pl.lit(float(FS_TYPICAL_GAP_DAYS)),
+            ]
+        )
+        joined = joined.with_columns(
+            pl.when(pl.col("fs_days_since").is_not_null() & (pl.col("fs_days_since") >= 0))
+            .then((fs_gap_ref - pl.col("fs_days_since").cast(pl.Float64, strict=False)).clip(lower_bound=0.0))
+            .otherwise(None)
+            .cast(pl.Int32)
+            .alias("fs_days_to_next")
+        )
 
         # P0新特徴量: fs_window_e±{1,3,5}（E前後の近傍フラグ）
         # fs_period_end_dateを決算日（E）として、dateとの距離で判定
@@ -4697,6 +5677,9 @@ class DatasetBuilder:
             joined = joined.with_columns(pl.lit(None).cast(pl.Int32).alias("fs_staleness_bd"))
         if "fs_lag_days" not in joined.columns:
             joined = joined.with_columns(pl.lit(None).cast(pl.Int32).alias("fs_lag_days"))
+
+        if "_fs_disclosed_date" in joined.columns:
+            joined = joined.with_columns(pl.col("_fs_disclosed_date").alias("DisclosedDate"))
 
         cleanup_cols = [col for col in joined.columns if col.endswith("_fs")]
         if "fs_period_end_date" in joined.columns:
@@ -4920,7 +5903,21 @@ class DatasetBuilder:
             joined = joined.with_columns(pl.lit(None).cast(pl.Float64).alias("div_ex_drop_expected"))
 
         joined = joined.with_columns(pl.col("div_ex_drop_expected").alias("div_ex_gap_theo"))
+
+        # Prefer canonical ret_overnight; fall back to raw Open/Close-based overnight return when unavailable.
         ret_overnight_col = self._resolve_column_name(joined, "ret_overnight")
+        if ret_overnight_col is None:
+            open_col = self._resolve_column_name(joined, "open")
+            close_col = self._resolve_column_name(joined, "close")
+            if open_col is not None and close_col is not None:
+                joined = joined.sort(["code", "date"])
+                joined = joined.with_columns(
+                    (pl.col(open_col) / (pl.col(close_col).shift(1).over("code") + 1e-9) - 1.0).alias(
+                        "_ret_overnight_fallback"
+                    )
+                )
+                ret_overnight_col = "_ret_overnight_fallback"
+
         if ret_overnight_col is not None:
             joined = joined.with_columns(
                 pl.when(
@@ -5291,6 +6288,8 @@ class DatasetBuilder:
             (
                 c
                 for c in (
+                    "market_cap_free_float",
+                    "market_cap_total",
                     "market_cap",
                     "market_capitalization",
                     "float_market_cap",
@@ -5700,11 +6699,66 @@ class DatasetBuilder:
         specs = {
             "beta60_topix": pl.Float64,
             "alpha60_topix": pl.Float64,
+            "beta60_topix_roll_mean_20d": pl.Float64,
+            "beta60_topix_roll_std_20d": pl.Float64,
+            "beta60_topix_zscore_20d": pl.Float64,
+            "beta60_topix_outlier_flag": pl.Int8,
+            "beta60_topix_sector_mean": pl.Float64,
+            "beta60_topix_sector_rel": pl.Float64,
+            "alpha60_topix_roll_mean_20d": pl.Float64,
+            "alpha60_topix_roll_std_20d": pl.Float64,
+            "alpha60_topix_zscore_20d": pl.Float64,
+            "alpha60_topix_outlier_flag": pl.Int8,
+            "alpha60_topix_sector_mean": pl.Float64,
+            "alpha60_topix_sector_rel": pl.Float64,
         }
         for col, dtype in specs.items():
             if col not in df.columns:
                 df = df.with_columns(pl.lit(None).cast(dtype).alias(col))
         return df
+
+    def _add_beta_alpha_derivatives(self, df: pl.DataFrame) -> pl.DataFrame:
+        features = [feature for feature in ("beta60_topix", "alpha60_topix") if feature in df.columns]
+        if not features:
+            return self._ensure_beta_alpha_columns(df)
+
+        window = 20
+        min_periods = max(window // 2, 5)
+        sigma = getattr(self.quality_features, "sigma_threshold", 2.0)
+        sector_candidates = ("sector_code", "SectorCode", "sector33_code", "Sector33Code")
+        sector_col = next((col for col in sector_candidates if col in df.columns), None)
+        date_col = self._resolve_column_name(df, "date") or self._resolve_column_name(df, "Date")
+
+        enriched = df
+        for feature in features:
+            mean_col = f"{feature}_roll_mean_{window}d"
+            std_col = f"{feature}_roll_std_{window}d"
+            z_col = f"{feature}_zscore_{window}d"
+            flag_col = f"{feature}_outlier_flag"
+
+            enriched = enriched.with_columns(
+                roll_mean_safe(pl.col(feature), window, min_periods=min_periods, by="code").alias(mean_col),
+                roll_std_safe(pl.col(feature), window, min_periods=min_periods, by="code").alias(std_col),
+            )
+            enriched = enriched.with_columns(
+                ((pl.col(feature) - pl.col(mean_col)) / (pl.col(std_col) + 1e-8)).alias(z_col)
+            )
+            enriched = enriched.with_columns((pl.col(z_col).abs() > sigma).cast(pl.Int8).alias(flag_col))
+
+            sector_mean_col = f"{feature}_sector_mean"
+            sector_rel_col = f"{feature}_sector_rel"
+            if sector_col and date_col:
+                enriched = enriched.with_columns(
+                    pl.col(feature).mean().over([date_col, sector_col]).alias(sector_mean_col)
+                )
+                enriched = enriched.with_columns((pl.col(feature) - pl.col(sector_mean_col)).alias(sector_rel_col))
+            else:
+                if sector_mean_col not in enriched.columns:
+                    enriched = enriched.with_columns(pl.lit(None).cast(pl.Float64).alias(sector_mean_col))
+                if sector_rel_col not in enriched.columns:
+                    enriched = enriched.with_columns(pl.lit(None).cast(pl.Float64).alias(sector_rel_col))
+
+        return self._ensure_beta_alpha_columns(enriched)
 
     def _add_trades_spec_features(
         self,
@@ -5995,6 +7049,38 @@ class DatasetBuilder:
         for col_name, dtype in required_cols.items():
             if col_name not in df.columns:
                 df = df.with_columns(pl.lit(None).cast(dtype).alias(col_name))
+
+        return df
+
+    def _ensure_futures_topix_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure all TOPIX futures feature columns exist with proper defaults.
+
+        These columns are part of the v1.4.0 schema even when futures data is
+        unavailable (API outage, historical gaps). When the upstream loader
+        cannot build futures features, we still materialize the columns as
+        nullable with appropriate dtypes to satisfy the schema gate.
+        """
+        specs: dict[str, pl.DataType] = {
+            "fut_topix_front_ret_1d": pl.Float64,
+            "fut_topix_intraday": pl.Float64,
+            "fut_topix_overnight": pl.Float64,
+            "fut_topix_range_pct": pl.Float64,
+            "fut_topix_oi_chg_1d": pl.Float64,
+            "fut_topix_term_slope": pl.Float64,
+            "fut_topix_basis": pl.Float64,
+            "fut_topix_days_to_roll": pl.Int64,
+            "fut_topix_roll_soon_3": pl.Boolean,
+            "fut_topix_roll_soon_5": pl.Boolean,
+            "fut_topix_roll_soon_10": pl.Boolean,
+            "fut_topix_carry_ann": pl.Float64,
+        }
+
+        for col_name, dtype in specs.items():
+            if col_name not in df.columns:
+                if dtype == pl.Boolean:
+                    df = df.with_columns(pl.lit(False).cast(dtype).alias(col_name))
+                else:
+                    df = df.with_columns(pl.lit(None).cast(dtype).alias(col_name))
 
         return df
 
@@ -6472,21 +7558,45 @@ class DatasetBuilder:
             )
 
             # As-of join market-wide ratios (no code, just by timestamp)
-            result = df.join(
-                market.sort("available_ts"),
+            market_sorted = market.sort("available_ts")
+            df_sorted = df.sort("asof_ts")
+            result = df_sorted.join_asof(
+                market_sorted,
                 left_on="asof_ts",
                 right_on="available_ts",
-                how="left",
+                strategy="backward",
             ).drop(["available_ts"], strict=False)
 
-            LOGGER.info("[PATCH D] Joined short selling market features with T+1 as-of join")
+            # Validate join success (detect timestamp mismatches)
+            if "short_selling_ratio_market" in result.columns:
+                null_rate = result.select(pl.col("short_selling_ratio_market").is_null().mean()).item()
+                if null_rate > 0.95:
+                    LOGGER.error(
+                        f"High NULL rate ({null_rate:.1%}) after short_selling join - "
+                        f"possible timestamp mismatch or data availability issue"
+                    )
+                else:
+                    LOGGER.info(
+                        f"[PATCH D] Joined short selling market features with T+1 as-of join "
+                        f"(NULL rate: {null_rate:.1%})"
+                    )
+            else:
+                LOGGER.info("[PATCH D] Joined short selling market features with T+1 as-of join")
 
             # Phase 2 Bug #12 fix: Continue to sector-level processing instead of early return
             # Try to add sector-level short selling ratios
             try:
                 sector_short_df = self.data_sources.sector_short_selling(start=start, end=end)
-                if not sector_short_df.is_empty() and "publisheddate" in sector_short_df.columns:
-                    # Prepare sector short selling with T+1 availability
+                if not sector_short_df.is_empty():
+                    # Normalize column names (align with short_selling path)
+                    # - New fetcher returns PublishedDate / Sector33Code
+                    # - Older cached data may only have Date / Sector33Code
+                    sector_short_df = sector_short_df.rename({col: col.lower() for col in sector_short_df.columns})
+
+                    # Prepare sector short selling with T+1 availability.
+                    # `prepare_snapshot_pl` will fall back to "date" when
+                    # "publisheddate" is absent, so both new and legacy shapes
+                    # are supported.
                     sector_prepared = prepare_snapshot_pl(
                         sector_short_df,
                         published_date_col="publisheddate",
@@ -6756,41 +7866,51 @@ class DatasetBuilder:
                         )
 
                         # P0: セクター別にT+1 as-of結合（セクターコードとタイムスタンプで結合）
+                        # メインDataFrameにsector_codeカラムを追加（Sector33Codeまたはsector33_codeから）
+                        sector_col = next(
+                            (c for c in result.columns if c.lower() in ["sector33code", "sector_33code", "sectorcode"]),
+                            None,
+                        )
+                        if sector_col:
+                            result = result.with_columns(pl.col(sector_col).cast(pl.Utf8).alias("sector_code"))
+                            LOGGER.info(
+                                "[SHORT_SELLING] Mapped '%s' → 'sector_code' for sector join",
+                                sector_col,
+                            )
+
                         if "sector_code" in result.columns:
                             # セクター別の結合: sector_codeとavailable_tsで結合
-                            # まず、resultとsector_featuresをソート
-                            result_sorted = result.sort(["sector_code", "asof_ts"])
-                            sector_sorted = sector_features.sort(["sector_code", "available_ts"])
-
-                            # セクターコードごとにas-of joinを実行
-                            # 各セクターでbackward joinを実行
-                            result = result_sorted.join_asof(
-                                sector_sorted,
-                                left_on="asof_ts",
-                                right_on="available_ts",
-                                by="sector_code",
+                            # interval_join_plを使用して、コードごとのT+1 as-of joinを実施
+                            result = interval_join_pl(
+                                backbone=result,
+                                snapshot=sector_features,
+                                on_code="sector_code",
+                                backbone_ts="asof_ts",
+                                snapshot_ts="available_ts",
                                 strategy="backward",
                                 suffix="_ss",
                             )
 
                             # staleness計算: 現在の日付と公表日の差
-                            if "date" in result.columns and "_ss_publish_date" in result.columns:
+                            publish_col = (
+                                "_ss_publish_date_ss" if "_ss_publish_date_ss" in result.columns else "_ss_publish_date"
+                            )
+                            if "date" in result.columns and publish_col in result.columns:
                                 result = result.with_columns(
                                     [
                                         pl.col("date").cast(pl.Date, strict=False).alias("_current_date"),
-                                        pl.col("_ss_publish_date").cast(pl.Date, strict=False),
+                                        pl.col(publish_col).cast(pl.Date, strict=False),
                                     ]
                                 )
                                 result = result.with_columns(
-                                    (pl.col("_current_date").cast(pl.Int64) - pl.col("_ss_publish_date").cast(pl.Int64))
+                                    (pl.col("_current_date").cast(pl.Int64) - pl.col(publish_col).cast(pl.Int64))
                                     .cast(pl.Int32)
                                     .alias("ss_staleness_bd")
                                 )
-                                result = result.drop(["_current_date", "_ss_publish_date"], strict=False)
+                                result = result.drop(["_current_date", publish_col], strict=False)
 
                             # 一時列をクリーンアップ
-                            cleanup_cols = ["available_ts", "available_ts_ss"]
-                            cleanup_cols = [col for col in cleanup_cols if col in result.columns]
+                            cleanup_cols = [c for c in ["available_ts_ss", "available_ts"] if c in result.columns]
                             if cleanup_cols:
                                 result = result.drop(cleanup_cols, strict=False)
 
@@ -7328,6 +8448,24 @@ class DatasetBuilder:
             .alias("is_idxopt_valid")
         )
 
+        # Static IV-RV blend forecasts for short horizons (5d, 10d).
+        # These serve as simple baselines and as additional features
+        # for downstream models (e.g. ATFT-GAT-FAN in gogooku3).
+        required_blend_cols = {"idxopt_iv_atm_30d", "volatility_10d", "volatility_20d"}
+        if required_blend_cols.issubset(set(joined.columns)):
+            joined = joined.with_columns(
+                [
+                    pl.when(pl.col("idxopt_iv_atm_30d").is_not_null() & pl.col("volatility_10d").is_not_null())
+                    .then(0.6 * pl.col("idxopt_iv_atm_30d") + 0.4 * pl.col("volatility_10d"))
+                    .otherwise(None)
+                    .alias("idxopt_blend_vol_5d"),
+                    pl.when(pl.col("idxopt_iv_atm_30d").is_not_null() & pl.col("volatility_20d").is_not_null())
+                    .then(0.5 * pl.col("idxopt_iv_atm_30d") + 0.5 * pl.col("volatility_20d"))
+                    .otherwise(None)
+                    .alias("idxopt_blend_vol_10d"),
+                ]
+            )
+
         # クリーンアップ（一時列を削除）
         cleanup_cols = [
             "topix_realized_vol_20d",
@@ -7382,6 +8520,8 @@ class DatasetBuilder:
             "idxopt_vrp_gap": pl.Float64,
             "idxopt_vrp_ratio": pl.Float64,
             "idxopt_iv_30d_z20": pl.Float64,
+            "idxopt_blend_vol_5d": pl.Float64,
+            "idxopt_blend_vol_10d": pl.Float64,
             "is_idxopt_valid": pl.Int8,
         }
 
@@ -7397,8 +8537,9 @@ class DatasetBuilder:
         if "adjustmentfactor" not in quotes.columns:
             quotes = quotes.with_columns(pl.lit(1.0).alias("adjustmentfactor"))
 
+        # Phase 3.2: Include sec_id in adjustment_lookup for sec_id-based join
         adjustment_lookup = (
-            quotes.select("code", "date", "adjustmentfactor")
+            quotes.select("sec_id", "code", "date", "adjustmentfactor")
             .rename({"date": "application_date", "adjustmentfactor": "margin_adjustment_factor"})
             .with_columns(pl.col("application_date").cast(pl.Date, strict=False).alias("application_date"))
         )
@@ -7412,7 +8553,8 @@ class DatasetBuilder:
         if margin_cast_exprs:
             margin = margin.with_columns(margin_cast_exprs)
 
-        enriched_margin = margin.join(adjustment_lookup, on=["code", "application_date"], how="left")
+        # Phase 3.2: Migrate to sec_id+application_date join (30-50% faster than code+application_date join)
+        enriched_margin = margin.join(adjustment_lookup, on=["sec_id", "application_date"], how="left")
         enriched_margin = enriched_margin.with_columns(
             [
                 pl.when((pl.col("margin_adjustment_factor").is_null()) | (pl.col("margin_adjustment_factor") == 0))
@@ -7426,7 +8568,8 @@ class DatasetBuilder:
             ]
         )
         margin_features = self.margin_features.build_features(enriched_margin)
-        return quotes.join(margin_features, on=["code", "date"], how="left")
+        # Phase 3.1: Migrate to sec_id+date join (30-50% faster than code+date join)
+        return quotes.join(margin_features, on=["sec_id", "date"], how="left")
 
     def _apply_adv_filter(self, df: pl.DataFrame, *, start: str, end: str) -> pl.DataFrame:
         """
@@ -7502,12 +8645,132 @@ class DatasetBuilder:
 
         return hashlib.md5(digest_input).hexdigest()  # nosec: cache key only
 
+    def _parse_raw_chunk_sources(self) -> list[str]:
+        configured = (self.settings.raw_chunk_sources or "").strip()
+        if not configured:
+            return ["prices"]
+        tokens = [token.strip() for token in configured.split(",")]
+        return [token for token in tokens if token]
+
+    def _ensure_raw_manifest_path(self) -> Path:
+        path = self.settings.raw_manifest_path
+        if path is None:
+            path = self.settings.data_output_dir / "raw_manifest.json"
+        return Path(path)
+
+    def _file_sha256(self, path: Path) -> str:
+        import hashlib
+
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+
+    def _chunk_prices_quarter(self, chunk_spec: ChunkSpec) -> dict[str, Any] | None:
+        raw_root = self.settings.raw_data_dir
+        source_dir = raw_root / "prices"
+        chunk_dir = source_dir / "chunks"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        start_month = month_key(chunk_spec.output_start)
+        end_month = month_key(chunk_spec.output_end)
+        months = month_range(start_month, end_month) or [start_month]
+        frames: list[pl.DataFrame] = []
+        for month in months:
+            path = source_dir / f"daily_quotes_{month}.parquet"
+            if path.exists():
+                frames.append(pl.read_parquet(path))
+        if not frames:
+            LOGGER.debug("[RAW] No price snapshots available for %s", chunk_spec.chunk_id)
+            return None
+        combined = pl.concat(frames, how="vertical")
+        if combined.is_empty():
+            LOGGER.debug("[RAW] Combined price snapshot empty for %s", chunk_spec.chunk_id)
+            return None
+        date_col = "Date" if "Date" in combined.columns else ("date" if "date" in combined.columns else None)
+        if date_col is not None:
+            combined = combined.with_columns(pl.col(date_col).cast(pl.Date, strict=False).alias(date_col))
+            stats = combined.select(
+                pl.col(date_col).min().alias("start"),
+                pl.col(date_col).max().alias("end"),
+                pl.len().alias("rows"),
+            )
+            start_val = stats["start"][0]
+            end_val = stats["end"][0]
+            row_count = int(stats["rows"][0])
+        else:
+            start_val = end_val = None
+            row_count = combined.height
+        out_path = chunk_dir / f"daily_quotes_{chunk_spec.chunk_id}.parquet"
+        combined.write_parquet(out_path, compression=self.settings.dataset_parquet_compression)
+        rel_path = out_path.relative_to(raw_root).as_posix()
+        record: dict[str, Any] = {
+            "source": "prices",
+            "file": rel_path,
+            "start": start_val.isoformat() if isinstance(start_val, date) else None,
+            "end": end_val.isoformat() if isinstance(end_val, date) else None,
+            "chunk_id": chunk_spec.chunk_id,
+            "rows": row_count,
+            "hash": self._file_sha256(out_path),
+            "format": "parquet",
+        }
+        LOGGER.info("[RAW] Wrote price chunk %s (%s)", chunk_spec.chunk_id, out_path)
+        return record
+
+    def _update_raw_manifest(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        manifest_path = self._ensure_raw_manifest_path()
+        if manifest_path.exists():
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        else:
+            payload = {"generated_at": None, "raw_root": str(self.settings.raw_data_dir), "sources": {}}
+        sources = payload.setdefault("sources", {})
+        for record in records:
+            source_entries = sources.setdefault(record["source"], [])
+            source_entries = [item for item in source_entries if item.get("chunk_id") != record["chunk_id"]]
+            source_entries.append(record)
+            source_entries.sort(key=lambda item: item.get("chunk_id") or "")
+            sources[record["source"]] = source_entries
+        payload["generated_at"] = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        LOGGER.info("[RAW] Updated manifest at %s", manifest_path)
+
+    def _reload_raw_store(self) -> None:
+        manifest_path = self._ensure_raw_manifest_path()
+        if not manifest_path.exists():
+            return
+        try:
+            self.raw_store = RawDataStore(manifest_path)
+            LOGGER.info("[RAW] Reloaded RawDataStore from %s", manifest_path)
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.warning("[RAW] Failed to reload RawDataStore: %s", exc)
+            self.raw_store = None
+        if hasattr(self.data_sources, "attach_raw_store"):
+            self.data_sources.attach_raw_store(self.raw_store)
+
+    def _auto_chunk_and_manifest(self, chunk_spec: ChunkSpec) -> None:
+        sources = self._parse_raw_chunk_sources()
+        produced: list[dict[str, Any]] = []
+        for source in sources:
+            if source == "prices":
+                record = self._chunk_prices_quarter(chunk_spec)
+                if record:
+                    produced.append(record)
+            else:
+                LOGGER.debug("[RAW] Auto chunking not yet implemented for source=%s", source)
+        if not produced:
+            return
+        self._update_raw_manifest(produced)
+        self._reload_raw_store()
+
     def _finalize_for_output(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         Normalize schema before persistence.
 
         Phase 2 Patch B+I: Comprehensive leak defense with deny list.
         Phase 2 Hotfix: Duplicate column handling (canonicalize OHLC, safe rename)
+        Phase 3.2: Re-attach sec_id from dim_security for final output
         """
         import re
 
@@ -7517,6 +8780,21 @@ class DatasetBuilder:
             safe_rename,
             validate_unique_columns,
         )
+
+        # Phase 3.2: Ensure sec_id exists by joining with dim_security
+        # This handles cases where sec_id was lost during feature engineering
+        code_col = None
+        for col in df.columns:
+            if col.lower() == "code":
+                code_col = col
+                break
+
+        if code_col and "sec_id" not in df.columns:
+            dim_security_path = self.settings.data_cache_dir / "dim_security.parquet"
+            if dim_security_path.exists():
+                dim_security = pl.read_parquet(dim_security_path).select(["code", "sec_id"])
+                df = df.join(dim_security, left_on=code_col, right_on="code", how="left")
+                LOGGER.info("[PHASE 3.2] Re-attached sec_id from dim_security (%d rows)", len(df))
 
         # Phase 2 Patch I: Comprehensive feature deny list (regex-based)
         # Denies: forward returns, metadata columns, published dates, as-of timestamps
@@ -7574,6 +8852,65 @@ class DatasetBuilder:
             if isinstance(meta, dict):
                 schema_meta = meta.setdefault("schema_governance", {})
                 schema_meta["dropped_log_return_columns"] = sorted(log_returns_cols)
+
+        # Safety net: ensure am_vol_share survives to the final schema.
+        # Earlier builds occasionally lost this column; if missing, backfill it
+        # from previous-day morning_volume / adjustmentvolume (left-closed).
+        if "am_vol_share" not in df.columns:
+            required_am_cols = {"code", "date", "morning_volume", "adjustmentvolume"}
+            if required_am_cols.issubset(df.columns):
+                LOGGER.info("[SCHEMA] Backfilling am_vol_share from morning_volume/adjustmentvolume (left-closed)")
+                eps = 1e-12
+                df = (
+                    df.sort(["code", "date"])
+                    .with_columns(
+                        [
+                            pl.col("morning_volume")
+                            .shift(1)
+                            .over("code")
+                            .cast(pl.Float64, strict=False)
+                            .alias("_am_vol_prev"),
+                            pl.col("adjustmentvolume")
+                            .shift(1)
+                            .over("code")
+                            .cast(pl.Float64, strict=False)
+                            .alias("_am_vol_den_prev"),
+                        ]
+                    )
+                    .with_columns(
+                        pl.when(pl.col("_am_vol_den_prev").abs() > eps)
+                        .then(pl.col("_am_vol_prev") / (pl.col("_am_vol_den_prev") + eps))
+                        .otherwise(None)
+                        .alias("am_vol_share")
+                    )
+                )
+                df = df.drop(["_am_vol_prev", "_am_vol_den_prev"], strict=False)
+
+        # Normalize legacy *_pct_float names to *_pct_tradable before dropping the old aliases.
+        pct_float_aliases: dict[str, str] = {}
+        for col in df.columns:
+            if "_pct_float" in col:
+                new_name = col.replace("_pct_float", "_pct_tradable")
+                if new_name not in df.columns:
+                    pct_float_aliases[col] = new_name
+
+        if pct_float_aliases:
+            df = df.with_columns([pl.col(old).alias(new) for old, new in pct_float_aliases.items()])
+            if isinstance(meta, dict):
+                schema_meta = meta.setdefault("schema_governance", {})
+                schema_meta["pct_float_aliases"] = pct_float_aliases
+
+        # Remove deprecated *_pct_float base columns from the final output schema.
+        legacy_pct_float_cols = [col for col in df.columns if col.endswith("_pct_float")]
+        if legacy_pct_float_cols:
+            LOGGER.warning(
+                "[SCHEMA] Dropping deprecated *_pct_float columns from final output: %s",
+                legacy_pct_float_cols[:15],
+            )
+            df = df.drop(legacy_pct_float_cols)
+            if isinstance(meta, dict):
+                schema_meta = meta.setdefault("schema_governance", {})
+                schema_meta["dropped_pct_float_columns"] = sorted(legacy_pct_float_cols)
 
         macro_sector_cols = [
             col
@@ -7638,6 +8975,7 @@ class DatasetBuilder:
         # Hotfix Step 3: Safe rename (handles collision when rename target already exists)
         rename_map = {
             "code": "Code",
+            "sec_id": "SecId",
             "date": "Date",
             "turnovervalue": "TurnoverValue",
             "adjustmentclose": "AdjustmentClose",
@@ -7650,6 +8988,43 @@ class DatasetBuilder:
             "market_code": "MarketCode",
         }
         out = safe_rename(df, rename_map)
+
+        # Phase 1.3: Missing-value and event flags
+        # flag_price_limit_hit: price limits reached (upper or lower)
+        if "upper_limit" in out.columns or "lower_limit" in out.columns:
+            upper = pl.col("upper_limit") if "upper_limit" in out.columns else pl.lit(0, dtype=pl.Int8)
+            lower = pl.col("lower_limit") if "lower_limit" in out.columns else pl.lit(0, dtype=pl.Int8)
+            out = out.with_columns(
+                ((upper.fill_null(0) == 1) | (lower.fill_null(0) == 1)).cast(pl.Int8).alias("flag_price_limit_hit")
+            )
+        else:
+            out = out.with_columns(pl.lit(0, dtype=pl.Int8).alias("flag_price_limit_hit"))
+
+        # flag_adjustment_event: any change in AdjustmentFactor within a code
+        if "AdjustmentFactor" in out.columns and "Code" in out.columns:
+            out = out.sort(["Code", "Date"]).with_columns(
+                (pl.col("AdjustmentFactor") != pl.col("AdjustmentFactor").shift(1).over("Code"))
+                .fill_null(False)
+                .cast(pl.Int8)
+                .alias("flag_adjustment_event")
+            )
+        else:
+            out = out.with_columns(pl.lit(0, dtype=pl.Int8).alias("flag_adjustment_event"))
+
+        # flag_delisted: SecId missing (historical/delisted or unknown securities)
+        if "SecId" in out.columns:
+            out = out.with_columns(pl.col("SecId").is_null().cast(pl.Int8).alias("flag_delisted"))
+        else:
+            out = out.with_columns(pl.lit(0, dtype=pl.Int8).alias("flag_delisted"))
+
+        # flag_halted: prefer explicit trading suspension flags when present
+        if "TradingSuspensionFlag" in out.columns:
+            halted_expr = pl.col("TradingSuspensionFlag").cast(pl.Int8)
+        elif "trading_suspension_flag" in out.columns:
+            halted_expr = pl.col("trading_suspension_flag").cast(pl.Int8)
+        else:
+            halted_expr = pl.lit(0, dtype=pl.Int8)
+        out = out.with_columns(halted_expr.alias("flag_halted"))
 
         # Hotfix Step 4: Validate no duplicates remain (fail-fast)
         validate_unique_columns(out)
@@ -7703,8 +9078,8 @@ class DatasetBuilder:
             return df
 
         try:
-            # Extract only numeric columns needed for GPU processing + join keys
-            gpu_cols = ["code", "date", "close", "volume", "open", "high", "low"]
+            # Extract only columns needed for GPU processing + join keys
+            gpu_cols = ["sec_id", "code", "date", "close", "volume", "open", "high", "low"]
             gpu_cols = [c for c in gpu_cols if c in df.columns]
 
             LOGGER.info("Converting %d numeric columns to cuDF for GPU processing...", len(gpu_cols) - 2)
@@ -7747,7 +9122,14 @@ class DatasetBuilder:
             LOGGER.info("✅ GPU rolling features computed successfully")
 
             # Convert only GPU-computed feature columns back to Polars
-            gpu_result_cols = ["code", "date", "close_roll_mean_20d", "close_roll_std_20d", "close_zscore_20d"]
+            gpu_result_cols = [
+                "sec_id",
+                "code",
+                "date",
+                "close_roll_mean_20d",
+                "close_roll_std_20d",
+                "close_zscore_20d",
+            ]
             gdf_result = gdf[gpu_result_cols]
             result_features = cudf_to_pl(gdf_result)
 
@@ -7765,7 +9147,8 @@ class DatasetBuilder:
                     )
 
             # Join GPU-computed features back to original dataframe
-            result = df.join(result_features, on=["code", "date"], how="left")
+            # Phase 3.2: Migrate to sec_id+date join (30-50% faster than code+date join)
+            result = df.join(result_features, on=["sec_id", "date"], how="left")
 
             LOGGER.info(
                 "✅ GPU processing complete: %d rows, %d columns (+3 GPU features)", len(result), len(result.columns)
@@ -8027,6 +9410,7 @@ class DatasetBuilder:
 
     _L0_SCHEMA = {
         "Code": pl.Utf8,
+        "sec_id": pl.Int32,  # NEW: Integer join key (グローバルに安定な証券ID)
         "Date": pl.Utf8,
         "Open": pl.Float64,
         "High": pl.Float64,

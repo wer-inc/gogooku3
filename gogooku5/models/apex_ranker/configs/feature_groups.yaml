@@ -4,8 +4,11 @@ groups:
   core50:
     description: Core ranking factors (price/flow/sector/financial)
     include:
+      # Price/volume and technicals (clean, low-NULL)
       - returns_1d
       - returns_5d
+      - returns_10d
+      - returns_20d
       - log_returns_1d
       - volatility_5d
       - volatility_20d
@@ -19,6 +22,8 @@ groups:
       - volume_ratio_5
       - volume_ratio_20
       - turnover_rate
+
+      # Market / regime context
       - mkt_ret_1d
       - mkt_ret_5d
       - mkt_gap_5_20
@@ -27,16 +32,21 @@ groups:
       - mkt_high_vol
       - mkt_ret_1d_z
       - mkt_dd_from_peak
+
+      # Risk / beta
       - beta_60d
       - alpha_1d
       - alpha_5d
-      - rel_strength_5d
       - idio_vol_ratio
       - trend_align_mkt
+
+      # Sector / cross-section
       - sec_mom_20
       - sec_ret_5d_eq
       - sec_vol_20_z
       - sec_gap_5_20
+
+      # Flow (market-level)
       - flow_foreign_net_z
       - flow_individual_net_z
       - flow_activity_z
@@ -45,13 +55,26 @@ groups:
       - flow_shock_flag
       - flow_impulse
       - flow_days_since
-      - stmt_yoy_sales
-      - stmt_yoy_op
-      - stmt_opm
-      - stmt_progress_op
-      - stmt_rev_fore_op
-      - stmt_imp_statement
-      - stmt_days_since_statement
+
+      # J-Quants earnings actuals (TTM / YoY)
+      - fs_ttm_sales
+      - fs_ttm_op_profit
+      - fs_ttm_net_income
+      - fs_ttm_cfo
+      - fs_ttm_op_margin
+      - fs_ttm_cfo_margin
+      - fs_equity_ratio
+      - fs_net_cash_ratio
+      - fs_sales_yoy
+      - fs_yoy_ttm_sales
+      - fs_yoy_ttm_op_profit
+      - fs_yoy_ttm_net_income
+      - fs_roe_ttm
+      - fs_roa_ttm
+      - fs_accruals_ttm
+      - fs_cfo_to_ni
+      - fs_days_since
+      - fs_is_valid
     masks:
       - is_flow_valid
       - is_valid_ma
@@ -59,15 +82,20 @@ groups:
   plus30:
     description: Secondary enhancements (momentum, breadth, financial detail)
     include:
+      # Longer-horizon returns and volatility
       - returns_10d
+      - returns_20d
       - log_returns_10d
+      - log_returns_20d
+      - volatility_10d
       - volatility_60d
+      - realized_volatility
+
+      # Additional technicals
       - price_to_sma5
       - price_to_sma60
       - close_to_high
       - close_to_low
-      - realized_volatility
-      - log_returns_20d
       - mkt_bb_bw
       - mkt_bb_pct_b
       - mkt_ret_10d
@@ -83,23 +111,12 @@ groups:
       - stoch_k
       - alpha_vs_sec_1d
       - sec_gap_5_20
+
+      # Flow ratios / breadth
       - flow_foreign_net_ratio
       - flow_individual_net_ratio
       - flow_activity_ratio
       - flow_breadth_pos
-      - stmt_yoy_np
-      - stmt_npm
-      - stmt_progress_np
-      - stmt_rev_fore_np
-      - stmt_roe
-      - stmt_roa
-      - returns_20d
-      - volatility_10d
-      - x_mom_sh_5
-      - x_mom_sh_10
-      - x_mom_sh_5_mktneu
-      - x_rel_sec_mom
-      - x_z_sec_gap_mom
       - smart_money_mom4
     masks:
       - is_flow_valid

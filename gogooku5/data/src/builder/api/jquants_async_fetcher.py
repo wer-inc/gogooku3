@@ -1370,7 +1370,7 @@ class JQuantsAsyncFetcher:
             headers=headers,
         )
         if status == 200 and isinstance(data, dict):
-            rows.extend(data.get("dividends") or data.get("data") or [])
+            rows.extend(data.get("dividend") or data.get("dividends") or data.get("data") or [])
 
         # Fallback legacy path: daily pagination (older API behavior)
         if not rows:
@@ -1392,7 +1392,7 @@ class JQuantsAsyncFetcher:
                     )
                     if status != 200 or not isinstance(data, dict):
                         break
-                    items = data.get("dividends") or data.get("data") or []
+                    items = data.get("dividend") or data.get("dividends") or data.get("data") or []
                     if items:
                         rows.extend(items)
                     pagination_key = data.get("pagination_key")
@@ -1434,6 +1434,7 @@ class JQuantsAsyncFetcher:
         headers: dict[str, str],
         date_list: list[str],
         extract_fn: Callable[[dict], dict],
+        share_candidates: tuple[str, ...] = (),
     ) -> list[dict]:
         """
         Parallel fetch of financial statement details for multiple dates.
@@ -1474,18 +1475,21 @@ class JQuantsAsyncFetcher:
                 if status != 200 or not isinstance(data, dict):
                     break
 
-                items = data.get("fs_details") or data.get("data") or []
+                items = data.get("statements") or data.get("fs_details") or data.get("data") or []
                 for item in items:
                     base = {
-                        "Code": item.get("Code"),
+                        "Code": item.get("LocalCode") or item.get("Code"),
                         "TypeOfDocument": item.get("TypeOfDocument"),
                         "FiscalYear": item.get("FiscalYear"),
                         "AccountingStandard": item.get("AccountingStandard"),
                         "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
                         "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
                     }
-                    fs = item.get("FinancialStatement") or {}
-                    flat = extract_fn(fs)
+                    # FIX (2025-11-18): Save ALL 107 API columns instead of filtering to 9
+                    # Previously used extract_fn(_extract_financials) which dropped 96 columns
+                    # Now using _extract_all_financials to preserve complete raw data
+                    # This fixes 100% NULL rate in TTM features (see API_COLUMN_LOSS_INVESTIGATION_20251118.md)
+                    flat = extract_fn(item)
                     base.update(flat)
                     rows.append(base)
 
@@ -1521,12 +1525,12 @@ class JQuantsAsyncFetcher:
         return all_rows
 
     async def get_fs_details(self, session: aiohttp.ClientSession, from_date: str, to_date: str) -> pl.DataFrame:
-        """Fetch financial statement details (/fins/fs_details) for a date range."""
+        """Fetch financial statement details (/fins/statements) for a date range."""
         if not self.id_token:
             raise RuntimeError("authenticate() must be called first")
 
         headers = {"Authorization": f"Bearer {self.id_token}"}
-        base_url = f"{self.base_url}/fins/fs_details"
+        base_url = f"{self.base_url}/fins/statements"
 
         import datetime as _dt
 
@@ -1571,6 +1575,35 @@ class JQuantsAsyncFetcher:
             ),
         }
 
+        issued_share_candidates: tuple[str, ...] = (
+            "NumberOfIssuedAndOutstandingSharesAtTheEndOfFiscalYearIncludingTreasuryStock",
+            "NumberOfIssuedShares",
+            "IssuedShares",
+            "IssuedShareNumber",
+            "IssuedShareNumberOfListing",
+            "SharesOutstanding",
+        )
+        treasury_share_candidates: tuple[str, ...] = (
+            "NumberOfTreasuryStockAtTheEndOfFiscalYear",
+            "NumberOfTreasuryStockAtFiscalYearEnd",
+            "NumberOfTreasuryStock",
+            "TreasuryShares",
+            "TreasuryStock",
+            "TreasuryShareNumber",
+        )
+        average_share_candidates: tuple[str, ...] = (
+            "AverageNumberOfShares",
+            "AverageNumberOfSharesDuringPeriod",
+            "AverageNumberOfSharesOutstanding",
+        )
+
+        share_alias_map: dict[str, str] = {}
+        share_cast_columns: set[str] = set()
+        for candidate in issued_share_candidates + treasury_share_candidates + average_share_candidates:
+            key = candidate.strip().lower()
+            share_alias_map[key] = candidate
+            share_cast_columns.add(candidate)
+
         def _iter_items(node: Any) -> Iterable[tuple[str, Any]]:
             if isinstance(node, dict):
                 for k, v in node.items():
@@ -1583,6 +1616,13 @@ class JQuantsAsyncFetcher:
                     yield from _iter_items(item)
 
         def _extract_financials(fs_dict: dict[str, Any]) -> dict[str, Any]:
+            """
+            DEPRECATED (2025-11-18): This function previously filtered to only 9 financial columns,
+            causing 96 columns to be lost (API returns 107 columns total).
+
+            Now replaced with _extract_all_financials to preserve complete raw data.
+            Keeping this function for reference/rollback purposes only.
+            """
             lower_map = {k: set(v) for k, v in target_labels.items()}
             flat: dict[str, Any] = {}
             for key, value in _iter_items(fs_dict):
@@ -1590,6 +1630,46 @@ class JQuantsAsyncFetcher:
                 for target, aliases in lower_map.items():
                     if norm_key in aliases and target not in flat:
                         flat[target] = value
+                alias = share_alias_map.get(norm_key)
+                if alias and alias not in flat:
+                    flat[alias] = value
+            return flat
+
+        def _extract_all_financials(fs_dict: dict[str, Any]) -> dict[str, Any]:
+            """
+            FIX (2025-11-18): Save ALL API response fields to preserve complete raw data.
+
+            Previously, _extract_financials filtered to only 9 columns (NetSales, OperatingProfit, etc.),
+            causing 96 out of 107 API columns to be lost. This caused 100% NULL rates for TTM features.
+
+            Root cause analysis documented in:
+            /workspace/gogooku3/gogooku5/docs/API_COLUMN_LOSS_INVESTIGATION_20251118.md
+
+            This function saves all 107 columns from the API response, excluding only the base
+            metadata fields (Code, TypeOfDocument, etc.) which are handled separately.
+
+            Args:
+                fs_dict: Full item dict from API response
+
+            Returns:
+                Dict with all financial fields and their values (107 columns total)
+            """
+            # Base metadata fields that are handled separately
+            base_fields = {
+                "Code", "LocalCode",
+                "TypeOfDocument",
+                "FiscalYear",
+                "AccountingStandard",
+                "DisclosedDate", "AnnouncementDate",
+                "DisclosedTime", "AnnouncementTime",
+            }
+
+            # Extract all fields except base metadata
+            flat: dict[str, Any] = {}
+            for key, value in fs_dict.items():
+                if key not in base_fields:
+                    flat[key] = value
+
             return flat
 
         start = _parse(from_date)
@@ -1612,8 +1692,10 @@ class JQuantsAsyncFetcher:
 
         # Use parallel fetch if enabled and multiple dates
         if self.enable_parallel_fetch and len(date_list) > 1:
+            all_share_candidates = issued_share_candidates + treasury_share_candidates + average_share_candidates
+            # FIX (2025-11-18): Pass _extract_all_financials to save all 107 columns
             rows = await self._get_fs_details_parallel(
-                session, base_url, headers, date_list, _extract_financials
+                session, base_url, headers, date_list, _extract_all_financials, all_share_candidates
             )
         else:
             # Sequential fallback (original behavior)
@@ -1634,18 +1716,21 @@ class JQuantsAsyncFetcher:
                     )
                     if status != 200 or not isinstance(data, dict):
                         break
-                    items = data.get("fs_details") or data.get("data") or []
+                    items = data.get("statements") or data.get("fs_details") or data.get("data") or []
                     for item in items:
                         base = {
-                            "Code": item.get("Code"),
+                            "Code": item.get("LocalCode") or item.get("Code"),
                             "TypeOfDocument": item.get("TypeOfDocument"),
                             "FiscalYear": item.get("FiscalYear"),
                             "AccountingStandard": item.get("AccountingStandard"),
                             "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
                             "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
                         }
-                        fs = item.get("FinancialStatement") or {}
-                        flat = _extract_financials(fs)
+                        # FIX (2025-11-18): Save ALL 107 API columns instead of filtering to 9
+                        # Previously used _extract_financials which dropped 96 columns
+                        # Now using _extract_all_financials to preserve complete raw data
+                        # This fixes 100% NULL rate in TTM features (see API_COLUMN_LOSS_INVESTIGATION_20251118.md)
+                        flat = _extract_all_financials(item)
                         base.update(flat)
                         rows.append(base)
                     pagination_key = data.get("pagination_key")
@@ -1664,32 +1749,59 @@ class JQuantsAsyncFetcher:
 
         df = pl.DataFrame(rows)
         df = enforce_code_column_types(df)
+
+        # FIX (2025-11-18): Intelligent type casting for all 107 API columns
+        # Previously hardcoded 9 financial columns to Float64, now handles all numeric fields
+        # Strategy:
+        #   1. DisclosedDate → Date
+        #   2. FiscalYear → Int32
+        #   3. Numeric-looking columns → Float64 (profits, assets, dividends, forecasts, etc.)
+        #   4. Text columns (TypeOfDocument, AccountingStandard, etc.) → Utf8
+        #   5. Empty string values → NULL for numeric columns
+
+        # Metadata columns that should remain as strings
+        text_columns = {
+            "TypeOfDocument",
+            "AccountingStandard",
+            "DisclosedTime",
+            # Add more text columns as needed (e.g., flags, classifications)
+        }
+
         cast_exprs: list[pl.Expr] = []
         for col in df.columns:
             if col in {"Code"}:
+                # Code is already handled by enforce_code_column_types
                 continue
-            if col == "DisclosedDate":
+            elif col == "DisclosedDate":
+                # Date columns
                 cast_exprs.append(
-                    pl.col(col).cast(pl.Date, strict=False).alias(col) if df.schema.get(col) != pl.Date else pl.col(col)
+                    pl.col(col).cast(pl.Date, strict=False).alias(col)
+                    if df.schema.get(col) != pl.Date
+                    else pl.col(col)
                 )
             elif col == "FiscalYear":
+                # Fiscal year as integer
                 cast_exprs.append(pl.col(col).cast(pl.Int32, strict=False).alias(col))
-            elif col in {
-                "NetSales",
-                "OperatingProfit",
-                "Profit",
-                "Equity",
-                "TotalAssets",
-                "CashAndCashEquivalents",
-                "InterestBearingDebt",
-                "NetCashProvidedByOperatingActivities",
-                "PurchaseOfPropertyPlantAndEquipment",
-            }:
-                cast_exprs.append(pl.col(col).cast(pl.Float64, strict=False).alias(col))
-            else:
+            elif col in text_columns:
+                # Known text columns
                 cast_exprs.append(
-                    pl.col(col).cast(pl.Utf8, strict=False).alias(col) if df.schema.get(col) != pl.Utf8 else pl.col(col)
+                    pl.col(col).cast(pl.Utf8, strict=False).alias(col)
+                    if df.schema.get(col) != pl.Utf8
+                    else pl.col(col)
                 )
+            else:
+                # Default: Try to cast to Float64 for numeric financial data
+                # Most API fields are numeric (profits, assets, cash flows, dividends, forecasts, etc.)
+                # Empty strings "" will become NULL in Float64
+                # If a column truly contains text, Polars will handle it gracefully
+                cast_exprs.append(
+                    pl.when(pl.col(col) == "")
+                    .then(None)  # Convert empty strings to NULL
+                    .otherwise(pl.col(col))
+                    .cast(pl.Float64, strict=False)
+                    .alias(col)
+                )
+
         if cast_exprs:
             df = df.with_columns(cast_exprs)
         return df.sort(["Code", "DisclosedDate"])
@@ -3142,7 +3254,19 @@ class JQuantsAsyncFetcher:
             return pl.DataFrame()
 
         df = pl.DataFrame(all_data)
+
+        # First apply strict structural checks for sector-level payload
         df = self._normalize_sector_short_selling_data(df)
+        if df.is_empty():
+            # Normalization already logged any missing/invalid columns
+            return df
+
+        # Re-use generic short selling normalizer so that sector payloads
+        # get the same PublishedDate / Section / type handling as the
+        # issue-level short_selling endpoint. This ensures that downstream
+        # as-of joins, which expect `PublishedDate` (→ `publisheddate`),
+        # can treat sector_short_selling frames identically.
+        df = self._normalize_short_selling_data(df)
 
         print(f"Retrieved {len(df)} sector short selling records")
         return df

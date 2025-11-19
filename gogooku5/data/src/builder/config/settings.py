@@ -18,8 +18,9 @@ class DatasetBuilderSettings(BaseSettings):
     jquants_auth_password: str = Field(..., env="JQUANTS_AUTH_PASSWORD")
     jquants_plan_tier: str = Field("standard", env="JQUANTS_PLAN_TIER")
 
-    data_output_dir: Path = Field(default_factory=lambda: Path("output"), env="DATA_OUTPUT_DIR")
+    data_output_dir: Path = Field(default_factory=lambda: Path("output_g5"), env="DATA_OUTPUT_DIR")
     data_cache_dir: Path = Field(default_factory=lambda: Path("output/cache"), env="DATA_CACHE_DIR")
+    raw_data_dir: Path = Field(default_factory=lambda: Path("output/raw"), env="RAW_DATA_DIR")
 
     latest_dataset_symlink: str = Field("ml_dataset_latest.parquet", env="LATEST_DATASET_SYMLINK")
     latest_metadata_symlink: str = Field("ml_dataset_latest_metadata.json", env="LATEST_METADATA_SYMLINK")
@@ -75,6 +76,9 @@ class DatasetBuilderSettings(BaseSettings):
 
     raw_manifest_path: Path | None = Field(default=None, env="RAW_MANIFEST_PATH")
     use_raw_store: bool = Field(default=True, env="USE_RAW_STORE")
+    save_raw_data: bool = Field(default=False, env="SAVE_RAW_DATA")
+    auto_chunk_raw_data: bool = Field(default=False, env="AUTO_CHUNK_RAW_DATA")
+    raw_chunk_sources: str | None = Field(default=None, env="RAW_CHUNK_SOURCES")
 
     # Phase 2 Patch E: ADV filter configuration
     min_adv_yen: int | None = Field(None, ge=0, env="MIN_ADV_YEN")
@@ -85,22 +89,45 @@ class DatasetBuilderSettings(BaseSettings):
     force_gpu: bool = Field(True, env="FORCE_GPU")
     rmm_pool_size: str = Field("40GB", env="RMM_POOL_SIZE")
 
+    # Graph feature configuration
+    # When True, GraphFeatureEngineer adds correlation-based peer features
+    # (graph_degree, graph_peer_corr_mean, graph_peer_corr_max) to the ML
+    # dataset. These can be selectively enabled in model configs (e.g.,
+    # apex-ranker feature groups or ATFT-GAT-FAN experiments).
+    enable_graph_features: bool = Field(True, env="ENABLE_GRAPH_FEATURES")
+
+    # Financial statement history configuration
+    fs_history_years: int = Field(4, ge=1, env="FS_HISTORY_YEARS")
+
     # Dataset quality checker
     enable_dataset_quality_check: bool = Field(False, env="ENABLE_DATASET_QUALITY_CHECK")
     dataset_quality_targets: str | None = Field(None, env="DATASET_QUALITY_TARGETS")
     dataset_quality_asof_checks: str | None = Field(None, env="DATASET_QUALITY_ASOF_CHECKS")
     dataset_quality_date_col: str = Field("date", env="DATASET_QUALITY_DATE_COL")
     dataset_quality_code_col: str = Field("code", env="DATASET_QUALITY_CODE_COL")
+    dataset_quality_exclude_columns: str | None = Field(None, env="DATASET_QUALITY_EXCLUDE_COLUMNS")
     dataset_quality_allow_future_days: int = Field(0, ge=0, env="DATASET_QUALITY_ALLOW_FUTURE_DAYS")
     dataset_quality_sample_rows: int = Field(5, ge=1, env="DATASET_QUALITY_SAMPLE_ROWS")
     dataset_quality_fail_on_warning: bool = Field(False, env="DATASET_QUALITY_FAIL_ON_WARNING")
+    share_forward_fill_days: int = Field(250, ge=1, env="SHARE_FORWARD_FILL_DAYS")
+    share_master_path: Path | None = Field(default=None, env="SHARE_MASTER_PATH")
 
     @model_validator(mode="after")
     def _ensure_directories(self) -> "DatasetBuilderSettings":
         """Make sure important directories exist to avoid runtime surprises."""
 
+        if "data_cache_dir" not in self.model_fields_set or (
+            self.data_cache_dir == Path("output/cache")
+        ):
+            self.data_cache_dir = self.data_output_dir / "cache"
+        if "raw_data_dir" not in self.model_fields_set or (self.raw_data_dir == Path("output/raw")):
+            self.raw_data_dir = self.data_output_dir / "raw"
+
         self.data_output_dir.mkdir(parents=True, exist_ok=True)
         self.data_cache_dir.mkdir(parents=True, exist_ok=True)
+        self.raw_data_dir.mkdir(parents=True, exist_ok=True)
+        if self.raw_manifest_path is None:
+            self.raw_manifest_path = self.data_output_dir / "raw_manifest.json"
         # Quote cache v2 directories
         self.quote_cache_dir.mkdir(parents=True, exist_ok=True)
         (self.quote_cache_dir / "raw" / "quotes").mkdir(parents=True, exist_ok=True)

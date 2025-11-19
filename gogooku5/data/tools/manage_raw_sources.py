@@ -37,8 +37,8 @@ def _resolve_sources(selected: Sequence[str] | None) -> list[RawSourceSpec]:
     return [RAW_SOURCE_SPECS[name] for name in selected]
 
 
-def _resolve_input_path(spec: RawSourceSpec) -> Path:
-    paths = sorted(Path().glob(spec.input_glob))
+def _resolve_input_path(spec: RawSourceSpec, raw_root: Path) -> Path:
+    paths = sorted(raw_root.glob(spec.input_glob))
     files = [p for p in paths if p.is_file()]
     if not files:
         raise FileNotFoundError(f"No base parquet files match {spec.input_glob}")
@@ -101,19 +101,20 @@ def _build_chunk_dataframe(
 
 def _chunk_source(
     spec: RawSourceSpec,
+    raw_root: Path,
     *,
     start: date | None,
     end: date | None,
     overwrite: bool,
 ) -> None:
     try:
-        base_path = _resolve_input_path(spec)
+        base_path = _resolve_input_path(spec, raw_root)
     except FileNotFoundError as exc:
         print(f"[WARN] {spec.name}: {exc}")
         return
 
     chunk_prefix = _chunk_prefix(spec, base_path)
-    output_dir = spec.chunk_dir
+    output_dir = spec.resolve_chunk_dir(raw_root)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     df = _build_chunk_dataframe(base_path, spec, start=start, end=end)
@@ -148,12 +149,35 @@ def _chunk_source(
         print(f"[INFO] {spec.name}: no files written (all present)")
 
 
+def _normalize_date(value: str | date | None) -> date | None:
+    if isinstance(value, date):
+        return value
+    return _parse_date(value)
+
+
+def chunk_sources(
+    raw_root: Path,
+    *,
+    sources: Sequence[str] | None = None,
+    start: str | date | None = None,
+    end: str | date | None = None,
+    overwrite: bool = False,
+) -> None:
+    start_dt = _normalize_date(start)
+    end_dt = _normalize_date(end)
+    specs = _resolve_sources(sources)
+    for spec in specs:
+        _chunk_source(spec, raw_root=raw_root, start=start_dt, end=end_dt, overwrite=overwrite)
+
+
 def chunk_command(args: argparse.Namespace) -> None:
-    start = _parse_date(args.start)
-    end = _parse_date(args.end)
-    sources = _resolve_sources(args.sources)
-    for spec in sources:
-        _chunk_source(spec, start=start, end=end, overwrite=args.overwrite)
+    chunk_sources(
+        Path(args.raw_root),
+        sources=args.sources,
+        start=args.start,
+        end=args.end,
+        overwrite=args.overwrite,
+    )
 
 
 def _relative_to_raw(path: Path, raw_root: Path) -> Path:
@@ -215,33 +239,32 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _sorted_chunk_files(spec: RawSourceSpec, chunk_prefix: str) -> list[Path]:
-    if not spec.chunk_dir.exists():
+def _sorted_chunk_files(spec: RawSourceSpec, chunk_prefix: str, raw_root: Path) -> list[Path]:
+    chunk_dir = spec.resolve_chunk_dir(raw_root)
+    if not chunk_dir.exists():
         return []
     pattern = f"{chunk_prefix}_20??Q[1-4].parquet"
-    return sorted(spec.chunk_dir.glob(pattern))
+    return sorted(chunk_dir.glob(pattern))
 
 
-def manifest_command(args: argparse.Namespace) -> None:
-    raw_root = Path(args.raw_root)
-    manifest_path = Path(args.manifest)
-    sources = _resolve_sources(args.sources)
+def generate_manifest(raw_root: Path, manifest_path: Path, *, sources: Sequence[str] | None = None) -> None:
+    specs = _resolve_sources(sources)
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "raw_root": str(raw_root),
         "sources": {},
     }
 
-    for spec in sources:
+    for spec in specs:
         try:
-            base_path = _resolve_input_path(spec)
+            base_path = _resolve_input_path(spec, raw_root)
         except FileNotFoundError as exc:
             print(f"[WARN] {spec.name}: {exc}")
             continue
         chunk_prefix = _chunk_prefix(spec, base_path)
-        chunk_files = _sorted_chunk_files(spec, chunk_prefix)
+        chunk_files = _sorted_chunk_files(spec, chunk_prefix, raw_root)
         if not chunk_files:
-            print(f"[WARN] {spec.name}: no chunk files found under {spec.chunk_dir}")
+            print(f"[WARN] {spec.name}: no chunk files found under {spec.resolve_chunk_dir(raw_root)}")
             continue
 
         entries = []
@@ -269,6 +292,14 @@ def manifest_command(args: argparse.Namespace) -> None:
     print(f"[OK] Wrote manifest -> {manifest_path}")
 
 
+def manifest_command(args: argparse.Namespace) -> None:
+    generate_manifest(
+        Path(args.raw_root),
+        Path(args.manifest),
+        sources=args.sources,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Raw data chunk/manifest utilities.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -281,6 +312,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     chunk_parser.add_argument("--start", help="Optional ISO start date filter (YYYY-MM-DD).")
     chunk_parser.add_argument("--end", help="Optional ISO end date filter (YYYY-MM-DD).")
+    chunk_parser.add_argument(
+        "--raw-root",
+        default="output/raw",
+        help="Raw data root directory (default: %(default)s).",
+    )
     chunk_parser.add_argument(
         "--overwrite",
         action="store_true",

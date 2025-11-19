@@ -1,0 +1,108 @@
+version: 0
+# Short-term (1d+5d) focused configuration for APEX-Ranker v0
+# Dataset: 2023-2024 ONLY (484 trading days, 1.88M samples)
+# NOTE: 2025 data excluded due to schema mismatch (124-column差分)
+# Goal: Improve short-term ranking performance with focused training
+
+data:
+  parquet_path: ../output_g5/datasets/ml_dataset_2023_2025_final_pruned.parquet
+  metadata_path: null
+  feature_groups_config: configs/feature_groups_dataset145.yaml
+  feature_groups:
+  - g5_short_term  # Short-term optimized features (low NULL%)
+  optional_groups: []
+  use_plus30: false
+  lookback: 60  # Reduced from 90 for short-term (2-3 months history)
+  min_stocks_per_day: 80
+  date_column: Date
+  code_column: Code
+  target_columns:
+    1: ret_prev_1d
+    5: ret_prev_5d
+
+normalization:
+  mode: cross_section_z
+  clip_sigma: 5.0
+
+train:
+  # Focus on short-term horizons only
+  horizons:
+  - 1
+  - 5
+
+  epochs: 50
+  lr: 0.0005
+  weight_decay: 0.0001
+  grad_clip: 0.5
+  val_days: 120
+  log_interval: 10
+  amp: true
+  device: auto
+  num_workers: 0
+
+  # DataLoader optimization flags
+  pin_memory: true
+  prefetch_factor: 4
+  persistent_workers: true
+
+  warmup_epochs: 3
+  warmup_start_factor: 0.1
+
+  early_stopping:
+    patience: 5  # Increased from 3 for more training
+    metric: short_term_score
+    min_delta: 0.0
+
+  evaluation:
+    splitter: purged_kfold
+    purged_kfold:
+      n_splits: 5
+      embargo_days: 2  # Reduced from 5 (short-term + more data)
+
+  time_decay_tau_days: 120
+  use_ema: true
+  ema_beta: 0.999
+
+eval:
+  k_ratio: 0.07
+  ndcg_beta: 1.0
+  # Short-term weight distribution: 1d ignored, 5d (60%), 10d/20d (20% each)
+  # Note: Code expects 3 values for horizons 5,10,20
+  es_weights: "0.6,0.2,0.2"
+
+selection:
+  default:
+    k_ratio: 0.07
+    k_min: 5
+    sign: 1
+  horizons:
+    "1":
+      sign: 1
+    "5":
+      sign: 1
+
+model:
+  # Reduced model size for short-term + prevent overfitting
+  d_model: 128       # Reduced from 256
+  depth: 3           # Reduced from 4
+  patch_len: 8       # Reduced from 16 (shorter patches for short-term)
+  stride: 4          # Reduced from 8 (more overlap)
+  n_heads: 8         # Keep same
+  dropout: 0.3       # Increased from 0.2 (overfitting prevention)
+
+loss:
+  # Ranking-focused loss configuration
+  listnet:
+    weight: 1.0
+    tau: 0.3         # Sharpened from 0.4 (more aggressive ranking)
+    topk: 100        # Focus on top-100 stocks
+
+  ranknet:
+    weight: 1.0      # Increased from 0.5 (stronger pairwise learning)
+    neg_sample: 8192 # Increased from 4096 (more negatives)
+
+  mse:
+    weight: 0.01     # Reduced from 0.1 (less regression focus)
+
+  turnover:
+    weight: 0.0      # Disabled during initial training

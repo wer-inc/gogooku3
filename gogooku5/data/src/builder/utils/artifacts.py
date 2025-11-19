@@ -441,7 +441,13 @@ class DatasetArtifactWriter:
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.debug("Failed to remove existing symlink %s: %s", link_path, exc)
         try:
-            link_path.symlink_to(target.name)
+            # Use relative path for symlink to avoid absolute path issues
+            # If link and target are in the same directory, use just the filename
+            # Otherwise, use a proper relative path
+            if link_path.parent == target.parent:
+                link_path.symlink_to(target.name)
+            else:
+                link_path.symlink_to(os.path.relpath(target, start=link_path.parent))
         except Exception as exc:  # pragma: no cover - defensive
             LOGGER.warning("Failed to create symlink %s -> %s: %s", link_path, target, exc)
         return link_path

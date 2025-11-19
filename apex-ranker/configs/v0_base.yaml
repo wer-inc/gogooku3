@@ -1,21 +1,25 @@
 version: 0
+# Base configuration for APEX-Ranker v0
+# Dataset: 2023-2024 ONLY (484 trading days, 1.88M samples, 3542 features)
+# NOTE: 2025 data excluded due to schema mismatch (124-column差分)
 data:
-  parquet_path: output/ml_dataset_latest_full_filled.parquet
+  parquet_path: ../output_g5/datasets/ml_dataset_2023_2025_final_pruned.parquet
   metadata_path: null
-  feature_groups_config: apex-ranker/configs/feature_groups_dataset145.yaml
+  feature_groups_config: configs/feature_groups_dataset145.yaml
   feature_groups:
-  - all_features
+  - g5_core
+  - g5_top_corr
   optional_groups: []
   use_plus30: false
-  lookback: 180
+  lookback: 90
   min_stocks_per_day: 80
   date_column: Date
   code_column: Code
   target_columns:
-    1: target_1d
-    5: target_5d
-    10: target_10d
-    20: target_20d
+    1: ret_prev_1d
+    5: ret_prev_5d
+    10: ret_prev_10d
+    20: ret_prev_20d
 normalization:
   mode: cross_section_z
   clip_sigma: 5.0
@@ -34,6 +38,10 @@ train:
   amp: true
   device: auto
   num_workers: 0
+  # DataLoader optimization flags
+  pin_memory: true
+  prefetch_factor: 4
+  persistent_workers: true
   warmup_epochs: 3
   warmup_start_factor: 0.1
   early_stopping:

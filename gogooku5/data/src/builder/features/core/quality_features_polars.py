@@ -12,6 +12,73 @@ from ..utils.rolling import roll_mean_safe, roll_std_safe
 LOGGER = logging.getLogger(__name__)
 
 
+def add_robust_clipping(
+    df: pl.DataFrame,
+    features: List[str],
+    quantile_range: tuple[float, float] = (0.01, 0.99),
+) -> pl.DataFrame:
+    """
+    分位クリップ + 異常度スコア追加
+
+    Args:
+        df: Input Polars DataFrame
+        features: List of numeric column names to clip
+        quantile_range: (low_quantile, high_quantile) for clipping, default (1%, 99%)
+
+    Returns:
+        DataFrame with added columns:
+            - {feature}_clipped: Clipped version of feature
+            - {feature}_anomaly_score: Z-score based anomaly score (absolute value)
+
+    Notes:
+        - Chunk単位で計算（全DataFrame計算を避ける）
+        - 将来的にTrain期間の基準値を保存して再利用可能な設計
+        - Lazy-friendlyではない (eager evaluation required)
+
+    Examples:
+        >>> import polars as pl
+        >>> df = pl.DataFrame({"price": [1, 5, 10, 100, 15, 8]})
+        >>> result = add_robust_clipping(df, ["price"], quantile_range=(0.1, 0.9))
+        >>> result.columns
+        ['price', 'price_clipped', 'price_anomaly_score']
+    """
+    q_low, q_high = quantile_range
+
+    for col in features:
+        if col not in df.columns:
+            LOGGER.warning("Column %s not found in DataFrame, skipping", col)
+            continue
+
+        # Check if column is numeric
+        if df[col].dtype not in {pl.Float32, pl.Float64, pl.Int32, pl.Int64}:
+            LOGGER.warning("Column %s is not numeric (dtype=%s), skipping", col, df[col].dtype)
+            continue
+
+        # Chunk内の分位値計算 (eager evaluation)
+        q_values = df.select(
+            [
+                pl.col(col).quantile(q_low).alias("q_low"),
+                pl.col(col).quantile(q_high).alias("q_high"),
+                pl.col(col).mean().alias("mean"),
+                pl.col(col).std().alias("std"),
+            ]
+        ).row(0)
+
+        # Clipped column
+        df = df.with_columns(
+            pl.col(col).clip(q_values[0], q_values[1]).alias(f"{col}_clipped")
+        )
+
+        # Anomaly score (absolute z-score)
+        # Handle division by zero with fallback
+        std_val = q_values[3] if q_values[3] and q_values[3] > 1e-8 else 1.0
+        df = df.with_columns(
+            ((pl.col(col) - q_values[2]) / std_val).abs().alias(f"{col}_anomaly_score")
+        )
+
+    return df
+
+
 class QualityFinancialFeaturesGeneratorPolars:
     """Generate quality-related features using Polars transformations."""
 
@@ -96,7 +163,8 @@ class QualityFinancialFeaturesGeneratorPolars:
     # Feature helpers
     # ------------------------------------------------------------------
     def _add_cross_sectional_quantiles(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        features_to_process = list(self._limit(self.numeric_features, 25))
+        # Process ALL numeric features (no limit) to ensure idx_*, topix_*, graph_* get quality stats
+        features_to_process = list(self.numeric_features)
         if not features_to_process:
             return df
 

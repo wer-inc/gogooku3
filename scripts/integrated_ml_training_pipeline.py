@@ -439,12 +439,34 @@ class CompleteATFTTrainingPipeline:
             logger.info("📊 Loading and validating ML dataset...")
 
             # MLデータセットの読み込み（実際のデータを使用）
-            # 優先順位: コマンドライン引数 > output/ml_dataset_*.parquet > data/processed/ml_dataset_latest.parquet > data/ml_dataset.parquet
+            # 優先順位:
+            #   1) --data-path 引数
+            #   2) ATFT_DATASET_PATH 環境変数
+            #   3) gogooku5 フルデータセット (output_g5/datasets/ml_dataset_*.parquet)
+            #   4) 従来の output/ml_dataset_*.parquet
+            #   5) data/processed/ml_dataset_latest.parquet, data/ml_dataset.parquet
             ml_dataset_paths = []
 
             # コマンドライン引数が指定されていれば最優先
             if self.data_path and self.data_path.exists():
                 ml_dataset_paths.append(self.data_path)
+
+            # 明示的な環境変数があれば次に優先
+            env_dataset_path = os.getenv("ATFT_DATASET_PATH")
+            if env_dataset_path:
+                env_path = Path(env_dataset_path)
+                if env_path.exists():
+                    ml_dataset_paths.append(env_path)
+
+            # gogooku5 のフルデータセット (output_g5/datasets) を優先的に探す
+            g5_root = Path("output_g5/datasets")
+            if g5_root.exists():
+                g5_candidates = sorted(
+                    list(g5_root.glob("ml_dataset_*_latest.parquet"))
+                    + list(g5_root.glob("ml_dataset_*_full.parquet")),
+                    reverse=True,
+                )
+                ml_dataset_paths.extend(g5_candidates[:3])
 
             # output内の最新のデータセットを探す
             output_datasets = sorted(Path("output").glob("ml_dataset_*.parquet"), reverse=True)

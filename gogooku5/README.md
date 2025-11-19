@@ -26,6 +26,73 @@ gogooku5/
 ## Getting Started
 1. Review the migration plan and the dataset/model package READMEs.
 2. Set up required environment variables in `data/.env.example` and copy to `.env` as needed.
-3. Use the top-level Make targets (`make dataset`, `make train-atft`, etc.) to dispatch work into each package.
+3. Use the top-level Make targets (see Quick Commands below) to dispatch work into each package.
 
-> **Status:** Skeleton structure only. Implementation work is tracked per migration phase.
+## Quick Commands
+
+### Dataset Building
+```bash
+# Build 2025 full year (Q1-Q4)
+make build-2025
+
+# Build 2020-2024 full period
+make build-2020-2024
+
+# Build all periods (2020-2025)
+make build-all
+
+# Chunk raw snapshots and refresh raw_manifest (optional)
+make build-raw
+```
+
+### Validation
+```bash
+# Run all validation (metadata + data quality) - Recommended
+make validate
+
+# Run metadata validation only (2025 year)
+make validate-meta
+
+# Run data quality validation only (2025 year)
+make validate-quality
+
+# Run Phase 1 feature validation (single chunk)
+make validate-phase1
+```
+
+### Utilities
+```bash
+# List all chunks
+make list-chunks
+
+# Clean chunks for specific year (requires YEAR parameter)
+make clean-chunks YEAR=2025
+```
+
+### Legacy Commands (Delegated)
+```bash
+# Delegate to data package
+make dataset
+
+# Delegate to ATFT-GAT-FAN model
+make train-atft
+
+# Delegate to APEX-Ranker model
+make train-apex
+
+# Run shared health diagnostics
+make health-check
+
+# Summarize dataset + model states
+make status
+```
+
+> **Status:** Core infrastructure complete. Dataset building and validation targets fully implemented. Model training targets delegated to respective packages.
+
+## Recommended Simple Workflow
+
+- 日常運用では、基本的に次のコマンドだけを使います:
+  - データセット構築: `make build-2020-2024`, `make build-2025`, または `make build-all`
+  - 検証: `make validate`（必要に応じて `make validate-meta`, `make validate-quality`）
+  - Raw スナップショットの集約と manifest 更新: `make build-raw`（ときどき実行）
+- それ以外のスクリプトや内部モジュール（Dagster, 個別の fetch スクリプトなど）は、特殊な調査や改善時のみ触る想定です。

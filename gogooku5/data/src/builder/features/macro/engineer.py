@@ -89,10 +89,13 @@ class MacroFeatureEngineer:
                 right_on="available_ts",
                 by=None,  # No code-based join (broadcast to all stocks)
                 strategy="backward",
+                suffix="_fut",  # Explicit suffix to avoid collision with other joins
             )
             # Remove available_ts from result (keep only feature columns)
             feature_cols = [col for col in merge_df.columns if col not in [self.date_column, "available_ts"]]
-            result = result.drop([col for col in feature_cols if col + "_right" in result.columns])
+            result = result.drop([col for col in feature_cols if col + "_fut" in result.columns])
+            result = result.drop(["available_ts_fut"], strict=False)  # Also drop the timestamp column
+            result = result.drop([self.date_column + "_fut"], strict=False)  # Also drop date column with suffix
             return result
         else:
             # Fallback: simple date-based join
@@ -142,10 +145,13 @@ class MacroFeatureEngineer:
                 right_on="available_ts",
                 by=None,  # No code-based join (broadcast to all stocks)
                 strategy="backward",
+                suffix="_opt",  # Explicit suffix to avoid collision with other joins
             )
             # Remove available_ts from result (keep only feature columns)
             feature_cols = [col for col in merge_df.columns if col not in [self.date_column, "available_ts"]]
-            result = result.drop([col for col in feature_cols if col + "_right" in result.columns])
+            result = result.drop([col for col in feature_cols if col + "_opt" in result.columns])
+            result = result.drop(["available_ts_opt"], strict=False)  # Also drop the timestamp column
+            result = result.drop([self.date_column + "_opt"], strict=False)  # Also drop date column with suffix
             return result
         else:
             # Fallback: simple date-based join
