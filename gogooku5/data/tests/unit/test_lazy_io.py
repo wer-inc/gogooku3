@@ -156,11 +156,7 @@ def test_lazy_load_combined_optimization(tmp_path: Path, sample_df: pl.DataFrame
         prefer_ipc=False,
     )
 
-    expected = (
-        sample_df
-        .filter(pl.col("close") > 105.0)
-        .select(["date", "code", "close"])
-    )
+    expected = sample_df.filter(pl.col("close") > 105.0).select(["date", "code", "close"])
     assert_frame_equal(loaded, expected)
 
 

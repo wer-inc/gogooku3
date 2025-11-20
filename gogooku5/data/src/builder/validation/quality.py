@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import polars as pl
 
@@ -50,14 +50,8 @@ class CheckResult:
         return payload
 
 
-def _check_primary_key(
-    lf: pl.LazyFrame, date_col: str, code_col: str, sample_rows: int
-) -> CheckResult:
-    dup = (
-        lf.group_by([date_col, code_col])
-        .agg(pl.len().alias("row_count"))
-        .filter(pl.col("row_count") > 1)
-    )
+def _check_primary_key(lf: pl.LazyFrame, date_col: str, code_col: str, sample_rows: int) -> CheckResult:
+    dup = lf.group_by([date_col, code_col]).agg(pl.len().alias("row_count")).filter(pl.col("row_count") > 1)
     dup_df = dup.collect()
     if dup_df.is_empty():
         return CheckResult(status="ok")
@@ -79,10 +73,7 @@ def _check_future_dates(
     sample_rows: int,
 ) -> CheckResult:
     cutoff = date.today() + timedelta(days=allow_future_days)
-    future = (
-        lf.filter(pl.col(date_col) > pl.lit(cutoff))
-        .select([date_col, code_col])
-    )
+    future = lf.filter(pl.col(date_col) > pl.lit(cutoff)).select([date_col, code_col])
     future_rows = future.limit(sample_rows).collect()
     total_future = future.select(pl.len()).collect().item()
     if total_future == 0:
@@ -137,15 +128,8 @@ def _check_asof_pairs(
         if left not in available or right not in available:
             missing_pairs[f"{left}<={right}"] = [col for col in (left, right) if col not in available]
             continue
-        cond = (
-            pl.col(left).is_not_null()
-            & pl.col(right).is_not_null()
-            & (pl.col(left) > pl.col(right))
-        )
-        bad = (
-            lf.filter(cond)
-            .select([left, right])
-        )
+        cond = pl.col(left).is_not_null() & pl.col(right).is_not_null() & (pl.col(left) > pl.col(right))
+        bad = lf.filter(cond).select([left, right])
         total = bad.select(pl.len()).collect().item()
         if total > 0:
             violations[f"{left}<={right}"] = {

@@ -26,8 +26,9 @@ def sample_df() -> pl.DataFrame:
 @pytest.fixture
 def cache_manager(tmp_path: Path) -> CacheManager:
     """Create a CacheManager instance with temporary directory."""
-    from builder.config.settings import DatasetBuilderSettings
     from unittest.mock import Mock, PropertyMock
+
+    from builder.config.settings import DatasetBuilderSettings
 
     settings = Mock(spec=DatasetBuilderSettings)
     settings.data_cache_dir = tmp_path
@@ -36,9 +37,7 @@ def cache_manager(tmp_path: Path) -> CacheManager:
     settings.cache_ttl_days_default = 1
 
     # Mock default_cache_index_path property to return a real Path
-    type(settings).default_cache_index_path = PropertyMock(
-        return_value=tmp_path / "cache_index.json"
-    )
+    type(settings).default_cache_index_path = PropertyMock(return_value=tmp_path / "cache_index.json")
 
     manager = CacheManager(settings=settings)
     return manager

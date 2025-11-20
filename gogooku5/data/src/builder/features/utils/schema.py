@@ -19,7 +19,6 @@ _ALIAS_SANITIZE = {
     "adj_close": "adjclose_yf",
     "adjcloseyf": "adjclose_yf",
     "adjcloseytm": "adjclose_yf",
-    "adjcloseyf": "adjclose_yf",
     "adjcloseyfraw": "adjclose_yf",
     "adj close": "adjclose_yf",
     "close": "close_raw",

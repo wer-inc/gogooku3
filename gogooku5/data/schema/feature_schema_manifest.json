@@ -1,11 +1,11 @@
 {
-  "version": "1.6.0",
-  "generated_at": "2025-11-17T15:41:50",
+  "version": "1.6.1",
+  "generated_at": "2025-11-20T15:00:22",
   "reference_file": "/workspace/gogooku3/output_g5/chunks/2025M03/ml_dataset.parquet",
   "hash_strategy": "sha256_orderless_v1",
-  "schema_hash": "9eef6f2dd730e01a",
+  "schema_hash": "1acf8d23a633d37a",
   "column_order_enforced": false,
-  "total_columns": 4215,
+  "total_columns": 4235,
   "columns": [
     {
       "name": "Date",
@@ -21079,6 +21079,106 @@
     },
     {
       "name": "flag_halted",
+      "dtype": "Int8",
+      "nullable": true
+    },
+    {
+      "name": "target_residual_1d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_residual_5d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_residual_10d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_residual_20d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_1d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_5d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_10d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_20d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_sector_1d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_sector_5d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_sector_10d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "target_rank_sector_20d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "is_split_event",
+      "dtype": "Int8",
+      "nullable": true
+    },
+    {
+      "name": "days_since_split",
+      "dtype": "Int32",
+      "nullable": true
+    },
+    {
+      "name": "days_to_split",
+      "dtype": "Int32",
+      "nullable": true
+    },
+    {
+      "name": "split_runup_20d",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "margin_long_short_ratio_log",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "margin_ratio_spike_z20",
+      "dtype": "Float64",
+      "nullable": true
+    },
+    {
+      "name": "margin_ratio_spike",
+      "dtype": "Int8",
+      "nullable": true
+    },
+    {
+      "name": "ssp_new_position_flag",
       "dtype": "Int8",
       "nullable": true
     }

@@ -48,10 +48,9 @@ def extract_date_range(
     print(f"   Input date range: {input_start} → {input_end}")
 
     # Filter by date range
-    print(f"\n🔍 Filtering rows...")
+    print("\n🔍 Filtering rows...")
     df_filtered = df.filter(
-        (pl.col(date_col) >= pl.lit(start_date).str.to_date()) &
-        (pl.col(date_col) <= pl.lit(end_date).str.to_date())
+        (pl.col(date_col) >= pl.lit(start_date).str.to_date()) & (pl.col(date_col) <= pl.lit(end_date).str.to_date())
     )
 
     filtered_rows = len(df_filtered)
@@ -77,9 +76,9 @@ def extract_date_range(
     print(f"   Output size: {output_size:.2f} GB")
 
     print(f"\n{'='*80}")
-    print(f"✅ Date range extraction complete")
+    print("✅ Date range extraction complete")
     print(f"{'='*80}\n")
-    print(f"Summary:")
+    print("Summary:")
     print(f"  Input:  {len(df):,} rows × {len(df.columns):,} cols")
     print(f"  Output: {filtered_rows:,} rows × {len(df_filtered.columns):,} cols")
     print(f"  Date range: {actual_start} → {actual_end}")
@@ -98,34 +97,14 @@ Examples:
         --output output_g5/datasets/ml_dataset_2023_2024_extracted.parquet \\
         --start-date 2023-01-01 \\
         --end-date 2024-12-31
-        """
+        """,
     )
 
-    parser.add_argument(
-        "--input", "-i",
-        required=True,
-        help="Input parquet file path"
-    )
-    parser.add_argument(
-        "--output", "-o",
-        required=True,
-        help="Output parquet file path"
-    )
-    parser.add_argument(
-        "--start-date", "-s",
-        required=True,
-        help="Start date (YYYY-MM-DD)"
-    )
-    parser.add_argument(
-        "--end-date", "-e",
-        required=True,
-        help="End date (YYYY-MM-DD)"
-    )
-    parser.add_argument(
-        "--date-col",
-        default="date",
-        help="Name of date column (default: 'date')"
-    )
+    parser.add_argument("--input", "-i", required=True, help="Input parquet file path")
+    parser.add_argument("--output", "-o", required=True, help="Output parquet file path")
+    parser.add_argument("--start-date", "-s", required=True, help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--end-date", "-e", required=True, help="End date (YYYY-MM-DD)")
+    parser.add_argument("--date-col", default="date", help="Name of date column (default: 'date')")
 
     args = parser.parse_args()
 

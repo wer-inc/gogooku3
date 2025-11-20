@@ -12,8 +12,8 @@ import logging
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from ..plan import ChunkSpec, ExecutionPlan
     from ..config import Config
+    from ..plan import ChunkSpec, ExecutionPlan
 
 from builder.config.settings import DatasetBuilderSettings
 from builder.pipelines.dataset_builder import DatasetBuilder

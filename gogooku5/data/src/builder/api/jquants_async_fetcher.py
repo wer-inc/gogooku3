@@ -333,9 +333,8 @@ class JQuantsAsyncFetcher:
         env_parallel = os.getenv("JQUANTS_ENABLE_PARALLEL_FETCH")
         self.enable_parallel_fetch = enable_parallel_fetch or (env_parallel == "1")
         # Index Options並列度: 新変数名を優先、旧変数名をフォールバック（互換性維持）
-        concurrency_str = (
-            os.getenv("INDEX_OPTION_PARALLEL_CONCURRENCY")
-            or os.getenv("JQUANTS_PARALLEL_CONCURRENCY", "8")
+        concurrency_str = os.getenv("INDEX_OPTION_PARALLEL_CONCURRENCY") or os.getenv(
+            "JQUANTS_PARALLEL_CONCURRENCY", "8"
         )
         self._parallel_max_concurrency = max(1, int(concurrency_str))
         self._index_option_log_percent = max(1, int(os.getenv("JQUANTS_INDEX_OPTION_PROGRESS_SPLITS", "10")))
@@ -1656,18 +1655,27 @@ class JQuantsAsyncFetcher:
             """
             # Base metadata fields that are handled separately
             base_fields = {
-                "Code", "LocalCode",
+                "Code",
+                "LocalCode",
                 "TypeOfDocument",
                 "FiscalYear",
                 "AccountingStandard",
-                "DisclosedDate", "AnnouncementDate",
-                "DisclosedTime", "AnnouncementTime",
+                "DisclosedDate",
+                "AnnouncementDate",
+                "DisclosedTime",
+                "AnnouncementTime",
+                "PeriodEndDate",
+                "CurrentPeriodEndDate",
+                "CurrentFiscalYearEndDate",
+                "NextFiscalYearEndDate",
             }
 
-            # Extract all fields except base metadata
+            # Extract all fields (including nested) except base metadata
             flat: dict[str, Any] = {}
-            for key, value in fs_dict.items():
-                if key not in base_fields:
+            for key, value in _iter_items(fs_dict):
+                if key in base_fields:
+                    continue
+                if key not in flat:
                     flat[key] = value
 
             return flat
@@ -1725,6 +1733,7 @@ class JQuantsAsyncFetcher:
                             "AccountingStandard": item.get("AccountingStandard"),
                             "DisclosedDate": item.get("DisclosedDate") or item.get("AnnouncementDate"),
                             "DisclosedTime": item.get("DisclosedTime") or item.get("AnnouncementTime"),
+                            "PeriodEndDate": item.get("PeriodEndDate"),
                         }
                         # FIX (2025-11-18): Save ALL 107 API columns instead of filtering to 9
                         # Previously used _extract_financials which dropped 96 columns
@@ -1775,9 +1784,7 @@ class JQuantsAsyncFetcher:
             elif col == "DisclosedDate":
                 # Date columns
                 cast_exprs.append(
-                    pl.col(col).cast(pl.Date, strict=False).alias(col)
-                    if df.schema.get(col) != pl.Date
-                    else pl.col(col)
+                    pl.col(col).cast(pl.Date, strict=False).alias(col) if df.schema.get(col) != pl.Date else pl.col(col)
                 )
             elif col == "FiscalYear":
                 # Fiscal year as integer
@@ -1785,9 +1792,7 @@ class JQuantsAsyncFetcher:
             elif col in text_columns:
                 # Known text columns
                 cast_exprs.append(
-                    pl.col(col).cast(pl.Utf8, strict=False).alias(col)
-                    if df.schema.get(col) != pl.Utf8
-                    else pl.col(col)
+                    pl.col(col).cast(pl.Utf8, strict=False).alias(col) if df.schema.get(col) != pl.Utf8 else pl.col(col)
                 )
             else:
                 # Default: Try to cast to Float64 for numeric financial data

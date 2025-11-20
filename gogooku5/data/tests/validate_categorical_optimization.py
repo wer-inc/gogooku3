@@ -22,21 +22,20 @@ def test_categorical_encoding_basic():
     """Test basic categorical encoding functionality."""
     print("\n1. Testing basic categorical encoding...")
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333", "1301", "1332"],
-        "sector_code": ["0050", "0050", "0050", "0050", "0050"],
-        "Close": [100.0, 200.0, 300.0, 105.0, 210.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333", "1301", "1332"],
+            "sector_code": ["0050", "0050", "0050", "0050", "0050"],
+            "Close": [100.0, 200.0, 300.0, 105.0, 210.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_categorical.parquet"
 
         # Save with categorical encoding
         parquet_path, _ = save_with_cache(
-            sample_data,
-            output_path,
-            create_ipc=False,
-            categorical_columns=["Code", "sector_code"]
+            sample_data, output_path, create_ipc=False, categorical_columns=["Code", "sector_code"]
         )
 
         # Load back and verify types
@@ -47,10 +46,12 @@ def test_categorical_encoding_basic():
         assert loaded["Close"].dtype == pl.Float64, "Close should remain Float64"
 
         # Verify data integrity
-        loaded_str = loaded.with_columns([
-            pl.col("Code").cast(pl.String),
-            pl.col("sector_code").cast(pl.String),
-        ])
+        loaded_str = loaded.with_columns(
+            [
+                pl.col("Code").cast(pl.String),
+                pl.col("sector_code").cast(pl.String),
+            ]
+        )
         assert loaded_str.equals(sample_data), "Data should match after categorical encoding"
 
         print("   ✅ Basic categorical encoding works correctly")
@@ -63,30 +64,24 @@ def test_categorical_size_reduction():
 
     # Create data with high repetition (production-like: 100K rows)
     # This simulates a real quarterly chunk with ~200K-300K rows
-    sample_data = pl.DataFrame({
-        "Code": (["1301"] * 30000 + ["1332"] * 30000 + ["1333"] * 30000 + ["1334"] * 10000),
-        "sector_code": ["0050"] * 100000,
-        "market_code": ["0101"] * 100000,
-        "Close": list(range(100000)),
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": (["1301"] * 30000 + ["1332"] * 30000 + ["1333"] * 30000 + ["1334"] * 10000),
+            "sector_code": ["0050"] * 100000,
+            "market_code": ["0101"] * 100000,
+            "Close": list(range(100000)),
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save without categorical encoding
         path_no_cat = Path(tmpdir) / "no_categorical.parquet"
-        save_with_cache(
-            sample_data,
-            path_no_cat,
-            create_ipc=False,
-            categorical_columns=None
-        )
+        save_with_cache(sample_data, path_no_cat, create_ipc=False, categorical_columns=None)
 
         # Save with categorical encoding
         path_with_cat = Path(tmpdir) / "with_categorical.parquet"
         save_with_cache(
-            sample_data,
-            path_with_cat,
-            create_ipc=False,
-            categorical_columns=["Code", "sector_code", "market_code"]
+            sample_data, path_with_cat, create_ipc=False, categorical_columns=["Code", "sector_code", "market_code"]
         )
 
         # Compare file sizes
@@ -109,7 +104,7 @@ def test_categorical_size_reduction():
             else:
                 # Even if no reduction, categorical provides memory benefits
                 print(f"   ⚠️  File size change: {reduction_pct:+.1f}% (expected ≥3% reduction)")
-                print(f"   Note: Categorical encoding still provides 50-70% memory reduction at runtime")
+                print("   Note: Categorical encoding still provides 50-70% memory reduction at runtime")
         else:
             # Small data: just ensure no excessive size increase
             assert size_with_cat < size_no_cat * 1.10, "Size increase should be <10% for small data"
@@ -122,11 +117,13 @@ def test_env_variable_support():
     """Test CATEGORICAL_COLUMNS environment variable support."""
     print("\n3. Testing environment variable support...")
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333"],
-        "sector_code": ["0050", "0051", "0052"],
-        "Close": [100.0, 200.0, 300.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333"],
+            "sector_code": ["0050", "0051", "0052"],
+            "Close": [100.0, 200.0, 300.0],
+        }
+    )
 
     # Set environment variable
     os.environ["CATEGORICAL_COLUMNS"] = "Code,sector_code"
@@ -136,11 +133,7 @@ def test_env_variable_support():
             output_path = Path(tmpdir) / "test_env.parquet"
 
             # Save without explicit categorical_columns (should use env var)
-            parquet_path, _ = save_with_cache(
-                sample_data,
-                output_path,
-                create_ipc=False
-            )
+            parquet_path, _ = save_with_cache(sample_data, output_path, create_ipc=False)
 
             # Load back and verify
             loaded = pl.read_parquet(parquet_path)
@@ -158,10 +151,12 @@ def test_invalid_columns_graceful():
     """Test graceful handling of invalid column names."""
     print("\n4. Testing graceful handling of invalid columns...")
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333"],
-        "Close": [100.0, 200.0, 300.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333"],
+            "Close": [100.0, 200.0, 300.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_invalid.parquet"
@@ -171,7 +166,7 @@ def test_invalid_columns_graceful():
             sample_data,
             output_path,
             create_ipc=False,
-            categorical_columns=["Code", "sector_code", "market_code"]  # Only Code exists
+            categorical_columns=["Code", "sector_code", "market_code"],  # Only Code exists
         )
 
         # Load and verify (should only encode Code, ignore missing columns)
@@ -187,21 +182,20 @@ def test_with_ipc_cache():
     """Test categorical encoding with IPC cache creation."""
     print("\n5. Testing with IPC cache creation...")
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333"],
-        "sector_code": ["0050", "0050", "0051"],
-        "Close": [100.0, 200.0, 300.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333"],
+            "sector_code": ["0050", "0050", "0051"],
+            "Close": [100.0, 200.0, 300.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_ipc.parquet"
 
         # Save with both categorical and IPC
         parquet_path, ipc_path = save_with_cache(
-            sample_data,
-            output_path,
-            create_ipc=True,
-            categorical_columns=["Code", "sector_code"]
+            sample_data, output_path, create_ipc=True, categorical_columns=["Code", "sector_code"]
         )
 
         # Verify both files exist
@@ -236,10 +230,7 @@ def test_production_dim_security():
 
         # Save with categorical encoding
         parquet_path, _ = save_with_cache(
-            dim_security,
-            output_path,
-            create_ipc=False,
-            categorical_columns=["code", "sector_code", "market_code"]
+            dim_security, output_path, create_ipc=False, categorical_columns=["code", "sector_code", "market_code"]
         )
 
         # Load and verify
@@ -250,11 +241,13 @@ def test_production_dim_security():
         assert loaded["market_code"].dtype == pl.Categorical, "market_code should be Categorical"
 
         # Verify data integrity
-        loaded_str = loaded.with_columns([
-            pl.col("code").cast(pl.String),
-            pl.col("sector_code").cast(pl.String),
-            pl.col("market_code").cast(pl.String),
-        ])
+        loaded_str = loaded.with_columns(
+            [
+                pl.col("code").cast(pl.String),
+                pl.col("sector_code").cast(pl.String),
+                pl.col("market_code").cast(pl.String),
+            ]
+        )
         assert loaded_str.equals(dim_security), "Production data should be identical"
 
         print(f"   ✅ Production data ({len(dim_security):,} rows) encoded correctly")

@@ -9,16 +9,16 @@ Usage:
     --strict: Fail on missing optional dependencies (default: warn only)
 """
 
-import sys
 import importlib
-from typing import List, Tuple, Dict
+import sys
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Dict, List, Tuple
 
 
 @dataclass
 class Dependency:
     """Dependency specification."""
+
     name: str
     import_name: str
     required: bool
@@ -35,10 +35,14 @@ DEPENDENCIES: List[Dependency] = [
     Dependency("requests", "requests", required=True, impact="HTTP requests", min_version="2.31.0"),
     Dependency("numpy", "numpy", required=True, impact="Numeric operations", min_version="1.26.0"),
     Dependency("aiohttp", "aiohttp", required=True, impact="Async HTTP", min_version="3.9.0"),
-
     # Feature generation dependencies (optional but important)
-    Dependency("yfinance", "yfinance", required=False,
-               impact="40 macro/VIX features (macro_vix_*, macro_vvmd_*)", min_version="0.2.0"),
+    Dependency(
+        "yfinance",
+        "yfinance",
+        required=False,
+        impact="40 macro/VIX features (macro_vix_*, macro_vvmd_*)",
+        min_version="0.2.0",
+    ),
 ]
 
 
@@ -74,10 +78,7 @@ def validate_all_dependencies(strict: bool = False) -> Dict[str, dict]:
     Returns:
         Results dictionary with status for each dependency
     """
-    results = {
-        "required": {"passed": [], "failed": []},
-        "optional": {"passed": [], "failed": []}
-    }
+    results = {"required": {"passed": [], "failed": []}, "optional": {"passed": [], "failed": []}}
 
     print("=" * 80)
     print("🔍 Dependency Validation Check")
@@ -96,7 +97,7 @@ def validate_all_dependencies(strict: bool = False) -> Dict[str, dict]:
             "available": available,
             "version": version_or_error if available else None,
             "error": version_or_error if not available else None,
-            "impact": dep.impact
+            "impact": dep.impact,
         }
 
         results[category][status].append(result)
@@ -159,8 +160,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Validate build dependencies")
-    parser.add_argument("--strict", action="store_true",
-                       help="Fail on missing optional dependencies")
+    parser.add_argument("--strict", action="store_true", help="Fail on missing optional dependencies")
     args = parser.parse_args()
 
     results = validate_all_dependencies(strict=args.strict)

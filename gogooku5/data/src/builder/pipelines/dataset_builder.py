@@ -561,6 +561,8 @@ class DatasetBuilder:
         # Data disclosed on day T becomes available at T 15:00 JST
         combined_df = add_asof_timestamp(aligned_quotes, date_col="date")
         LOGGER.info("[PATCH D] Added asof_ts column for temporal joins (15:00 JST)")
+        # Normalize key columns early so downstream features always see lowercase code/date
+        combined_df = self._normalize_key_columns(combined_df)
 
         # GPU-ETL: Convert to cuDF for accelerated processing
         if self.settings.use_gpu_etl:
@@ -595,9 +597,11 @@ class DatasetBuilder:
             raise
 
         combined_df = self._add_return_targets(combined_df)
+        combined_df = self._add_residual_rank_targets(combined_df, horizons=(1, 5, 10, 20))
         combined_df = self._ensure_ret_prev_columns(combined_df)
         combined_df = self._add_gap_features(combined_df)
         combined_df = self._add_range_features(combined_df)
+        combined_df = self._add_split_features(combined_df)
         combined_df = self.limit_features.add_features(combined_df, meta=self._run_meta)
         combined_df = self._extend_limit_features(combined_df)
         combined_df = self.session_features.add_features(
@@ -2355,6 +2359,104 @@ class DatasetBuilder:
             df = df.sort(sort_cols)
         return df.with_columns(exprs + [dollar_volume])
 
+    def _add_residual_rank_targets(self, df: pl.DataFrame, horizons: tuple[int, ...] = (1, 5, 10, 20)) -> pl.DataFrame:
+        """
+        Generate residual forward-return targets (sector-neutral) and daily ranks.
+
+        - target_residual_{h}d: forward return minus same-day sector mean
+        - target_rank_{h}d: daily cross-sectional rank percentile [0, 1]
+        - target_rank_sector_{h}d: daily rank within sector [0, 1]
+
+        These are labels (future-looking) and will be used downstream by ATFT/Ranker.
+        """
+        if df.is_empty():
+            return df
+
+        code_col = self._resolve_column_name(df, "code")
+        date_col = self._resolve_column_name(df, "date")
+        price_col = self._resolve_column_name(df, "adjustmentclose") or self._resolve_column_name(df, "close")
+        sector_col = (
+            self._resolve_column_name(df, "sector_code")
+            or self._resolve_column_name(df, "SectorCode")
+            or self._resolve_column_name(df, "sector33_code")
+        )
+
+        if code_col is None or date_col is None or price_col is None or sector_col is None:
+            # Ensure output columns exist (NULL) to keep schema consistency.
+            ensure_cols: list[pl.Expr] = []
+            for h in horizons:
+                ensure_cols.extend(
+                    [
+                        pl.lit(None).cast(pl.Float64).alias(f"target_residual_{h}d"),
+                        pl.lit(None).cast(pl.Float64).alias(f"target_rank_{h}d"),
+                        pl.lit(None).cast(pl.Float64).alias(f"target_rank_sector_{h}d"),
+                    ]
+                )
+            if ensure_cols:
+                return df.with_columns(ensure_cols)
+            return df
+
+        working = df.sort([code_col, date_col])
+        eps = 1e-12
+
+        # Compute forward returns per horizon (temp columns)
+        fwd_exprs: list[pl.Expr] = []
+        for horizon in horizons:
+            future_price = pl.col(price_col).shift(-horizon).over(code_col)
+            fwd_exprs.append(((future_price / (pl.col(price_col) + eps)) - 1.0).alias(f"_ret_fwd_{horizon}d"))
+
+        working = working.with_columns(fwd_exprs)
+
+        # Sector mean of forward returns per day
+        sector_aggs = []
+        for horizon in horizons:
+            col = f"_ret_fwd_{horizon}d"
+            sector_aggs.append(pl.col(col).mean().alias(f"_sector_ret_fwd_{horizon}d"))
+
+        sector_means = (
+            working.select([pl.col(date_col), pl.col(sector_col)] + [pl.col(f"_ret_fwd_{h}d") for h in horizons])
+            .group_by([date_col, sector_col])
+            .agg(sector_aggs)
+        )
+
+        joined = working.join(sector_means, on=[date_col, sector_col], how="left")
+
+        out_exprs: list[pl.Expr] = []
+        for horizon in horizons:
+            fwd_col = f"_ret_fwd_{horizon}d"
+            sector_col_mean = f"_sector_ret_fwd_{horizon}d"
+            residual_col = f"target_residual_{horizon}d"
+            rank_col = f"target_rank_{horizon}d"
+            rank_sector_col = f"target_rank_sector_{horizon}d"
+
+            out_exprs.append((pl.col(fwd_col) - pl.col(sector_col_mean)).alias(residual_col))
+
+            # Cross-sectional rank within the day
+            rank = pl.col(fwd_col).rank(method="ordinal").over(date_col)
+            count = pl.count().over(date_col)
+            out_exprs.append(pl.when(count > 1).then((rank - 1.0) / (count - 1.0)).otherwise(None).alias(rank_col))
+
+            # Sector-day rank
+            rank_sector = pl.col(fwd_col).rank(method="ordinal").over([date_col, sector_col])
+            count_sector = pl.count().over([date_col, sector_col])
+            out_exprs.append(
+                pl.when(count_sector > 1)
+                .then((rank_sector - 1.0) / (count_sector - 1.0))
+                .otherwise(None)
+                .alias(rank_sector_col)
+            )
+
+        joined = joined.with_columns(out_exprs)
+
+        # Drop temporary forward-return columns
+        cleanup_cols = [
+            col for col in joined.columns if col.startswith("_ret_fwd_") or col.startswith("_sector_ret_fwd_")
+        ]
+        if cleanup_cols:
+            joined = joined.drop(cleanup_cols)
+
+        return joined
+
     def _add_gap_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """Decompose previous-day returns into overnight and intraday components."""
         required = {"code", "date", "adjustmentopen", "adjustmentclose"}
@@ -2653,6 +2755,26 @@ class DatasetBuilder:
                 return column
         return None
 
+    @staticmethod
+    def _normalize_key_columns(df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure lowercase key columns (code/date) exist for downstream feature engineering."""
+
+        rename_map: dict[str, str] = {}
+        # Normalize code
+        if "code" not in df.columns:
+            alt_code = next((c for c in df.columns if c.lower() == "code"), None)
+            if alt_code and alt_code != "code":
+                rename_map[alt_code] = "code"
+        # Normalize date
+        if "date" not in df.columns:
+            alt_date = next((c for c in df.columns if c.lower() == "date"), None)
+            if alt_date and alt_date != "date":
+                rename_map[alt_date] = "date"
+
+        if rename_map:
+            df = df.rename(rename_map)
+        return df
+
     def _add_range_features(self, df: pl.DataFrame) -> pl.DataFrame:
         """Add range/position features (P0: day_range, close_location, range_expansion)."""
         required = {"code", "date", "adjustmenthigh", "adjustmentlow", "adjustmentclose"}
@@ -2711,6 +2833,90 @@ class DatasetBuilder:
             "day_range": (pl.Float64, None),
             "close_location": (pl.Float64, None),
             "range_expansion": (pl.Float64, None),
+        }
+        for col, (dtype, default) in specs.items():
+            if col not in df.columns:
+                df = df.with_columns(pl.lit(default).cast(dtype).alias(col))
+        return df
+
+    def _add_split_features(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Derive stock split/merge event flags from adjustmentfactor."""
+        if df.is_empty():
+            return self._ensure_split_columns(df)
+
+        code_col = self._resolve_column_name(df, "code") or "code"
+        date_col = self._resolve_column_name(df, "date") or "date"
+        adj_factor_col = self._resolve_column_name(df, "adjustmentfactor")
+        ret20_col = self._resolve_column_name(df, "ret_prev_20d")
+
+        if adj_factor_col is None:
+            return self._ensure_split_columns(df)
+
+        working = df.sort([code_col, date_col])
+        eps = 1e-12
+
+        working = working.with_columns(
+            [
+                (pl.col(adj_factor_col) != 1.0).cast(pl.Int8).alias("is_split_event"),
+                pl.arange(0, pl.len()).over(code_col).alias("_row_idx"),
+            ]
+        )
+
+        # Days since / to nearest split (trading-day based)
+        working = working.with_columns(
+            pl.when(pl.col("is_split_event") == 1).then(pl.col("_row_idx")).otherwise(None).alias("_split_idx")
+        )
+        working = working.with_columns(
+            [
+                pl.col("_split_idx").forward_fill().over(code_col).alias("_split_idx_prev"),
+                pl.col("_split_idx").backward_fill().over(code_col).alias("_split_idx_next"),
+            ]
+        )
+        working = working.with_columns(
+            [
+                pl.when(pl.col("_split_idx_prev").is_not_null())
+                .then((pl.col("_row_idx") - pl.col("_split_idx_prev")).cast(pl.Int32))
+                .otherwise(None)
+                .alias("days_since_split"),
+                pl.when(pl.col("_split_idx_next").is_not_null())
+                .then((pl.col("_split_idx_next") - pl.col("_row_idx")).cast(pl.Int32))
+                .otherwise(None)
+                .alias("days_to_split"),
+            ]
+        )
+
+        # Pre-event run-up: use prior 20d return on event day, else NULL
+        if ret20_col:
+            working = working.with_columns(
+                pl.when(pl.col("is_split_event") == 1).then(pl.col(ret20_col)).otherwise(None).alias("split_runup_20d")
+            )
+        else:
+            working = working.with_columns(pl.lit(None).cast(pl.Float64).alias("split_runup_20d"))
+
+        # Cleanup temporaries
+        working = working.drop(["_row_idx", "_split_idx", "_split_idx_prev", "_split_idx_next"], strict=False)
+
+        working = self._ensure_split_columns(working)
+
+        if isinstance(self._run_meta, dict):
+            split_meta = self._run_meta.setdefault("split_features", {})
+            split_meta.update(
+                {
+                    "columns": ["is_split_event", "days_since_split", "days_to_split", "split_runup_20d"],
+                    "source": "adjustmentfactor",
+                    "policy": "event_flag_shift0",
+                }
+            )
+
+        return working
+
+    def _ensure_split_columns(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Ensure split-related columns exist even if adjustmentfactor is missing."""
+        specs = {
+            "is_split_event": (pl.Int8, 0),
+            "days_since_split": (pl.Int32, None),
+            "days_to_split": (pl.Int32, None),
+            "split_runup_20d": (pl.Float64, None),
         }
         for col, (dtype, default) in specs.items():
             if col not in df.columns:
@@ -5524,6 +5730,18 @@ class DatasetBuilder:
             LOGGER.info("[FINS] No normalized financial statement rows available")
             return self._ensure_fs_columns(df)
 
+        # Fallback: if fs_period_end_date is missing/null, coalesce with DisclosedDate (publish date).
+        if "fs_period_end_date" in feature_frame.columns and "DisclosedDate" in feature_frame.columns:
+            feature_frame = feature_frame.with_columns(
+                pl.coalesce([pl.col("fs_period_end_date"), pl.col("DisclosedDate")]).alias("fs_period_end_date")
+            )
+
+        # 営業日ベースのstaleness計算のため、FSのavailable日付を保持しておく
+        if "available_ts" in feature_frame.columns and "fs_available_date" not in feature_frame.columns:
+            feature_frame = feature_frame.with_columns(
+                feature_frame["available_ts"].dt.convert_time_zone("Asia/Tokyo").dt.date().alias("fs_available_date")
+            )
+
         # Approximate typical gap between financial statement events per code using
         # historical fs_period_end_date gaps. This is used as a fallback for
         # fs_days_to_next when an exact next event distance is not directly observable.
@@ -5532,10 +5750,8 @@ class DatasetBuilder:
             try:
                 gap_frame = (
                     feature_frame.select(
-                        [
-                            pl.col("code").cast(pl.Utf8, strict=False).alias("code"),
-                            pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_period_end_date"),
-                        ]
+                        pl.col("code").cast(pl.Utf8, strict=False).alias("code"),
+                        pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_period_end_date"),
                     )
                     .drop_nulls(["code", "fs_period_end_date"])
                     .unique()
@@ -5545,14 +5761,21 @@ class DatasetBuilder:
                         .dt.days()
                         .alias("gap_days")
                     )
+                    # 無効な差分（一時的な重複や負値/極端値）を除外
+                    .filter(pl.col("gap_days").is_not_null() & (pl.col("gap_days") > 0) & (pl.col("gap_days") <= 550))
                 )
-                gap_stats = (
-                    gap_frame.group_by("code")
-                    .agg(pl.col("gap_days").drop_nulls().median().alias("fs_gap_median_code"))
-                    .filter(pl.col("fs_gap_median_code").is_not_null())
-                )
+                if not gap_frame.is_empty():
+                    gap_stats = (
+                        gap_frame.group_by("code")
+                        .agg(pl.col("gap_days").median().alias("fs_gap_median_code"))
+                        .filter(pl.col("fs_gap_median_code").is_not_null())
+                    )
             except Exception as exc:  # pragma: no cover - defensive
-                LOGGER.warning("[FINS] Failed to compute fs_gap_median_code: %s", exc)
+                LOGGER.warning(
+                    "[FINS] Failed to compute fs_gap_median_code (falling back to default %s): %s",
+                    FS_TYPICAL_GAP_DAYS,
+                    exc,
+                )
                 gap_stats = None
 
         snapshot_ts_col = "_fs_available_ts"
@@ -5579,27 +5802,48 @@ class DatasetBuilder:
             if alt_period is not None:
                 joined = joined.rename({alt_period: "fs_period_end_date"})
 
+        # 営業日序数をcalendar_dfから構築
+        cal = (
+            calendar_df.select(pl.col("date").cast(pl.Date).alias("date"))
+            .unique()
+            .sort("date")
+            .with_columns(pl.arange(0, pl.len()).alias("bd_ord"))
+        )
+
+        # 当日営業日序数
+        joined = joined.join(cal.rename({"bd_ord": "bd_ord_today"}), on="date", how="left")
+
         joined = joined.with_columns(
             [
                 pl.col("date").cast(pl.Date, strict=False).alias("_fs_today_date"),
                 pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("_fs_report_date"),
-                # DisclosedDateも取得（E前後のフラグ計算用）
+                # DisclosedDateも取得（前回開示日としてstaleness計算に利用）
                 pl.col("DisclosedDate").cast(pl.Date, strict=False).alias("_fs_disclosed_date"),
             ]
         )
         # 明示的な実績決算イベント日（E）としてfs_E_event_dateを保持
         joined = joined.with_columns(pl.col("fs_period_end_date").cast(pl.Date, strict=False).alias("fs_E_event_date"))
-        # fs_staleness_bd: 前回開示からの営業日差（既存）
-        joined = joined.with_columns(
-            pl.when(pl.col("_fs_today_date").is_not_null() & pl.col("_fs_report_date").is_not_null())
-            .then(
-                pl.col("_fs_today_date").cast(pl.Int64, strict=False)
-                - pl.col("_fs_report_date").cast(pl.Int64, strict=False)
+
+        # fs_staleness_bd: 前回「利用可能になった日」（fs_available_date）からの営業日差
+        # feature_frame側で保持したfs_available_dateを用いて営業日序数差分を計算する。
+        # interval_join_plのsuffix="_fs"により、fs_available_dateがfs_available_date_fsに
+        # リネームされている可能性があるため、両方をチェックして統一する。
+        fs_available_date_col = None
+        if "fs_available_date" in joined.columns:
+            fs_available_date_col = "fs_available_date"
+        elif "fs_available_date_fs" in joined.columns:
+            fs_available_date_col = "fs_available_date_fs"
+            # 統一のためfs_available_dateにリネーム
+            joined = joined.rename({"fs_available_date_fs": "fs_available_date"})
+
+        if fs_available_date_col is not None:
+            cal_fs = cal.rename({"date": "fs_available_date", "bd_ord": "fs_bd_ord"})
+            joined = joined.join(cal_fs, on="fs_available_date", how="left")
+            joined = joined.with_columns(
+                ((pl.col("bd_ord_today") - pl.col("fs_bd_ord")).clip(lower_bound=0).cast(pl.Int32)).alias(
+                    "fs_staleness_bd"
+                )
             )
-            .otherwise(None)
-            .cast(pl.Int32)
-            .alias("fs_staleness_bd")
-        )
 
         # P0新特徴量: fs_days_since, fs_days_to_next（最近/次回決算までの営業日距離）
         # fs_days_since: 前回決算日（fs_period_end_date）からの営業日差
@@ -5666,8 +5910,35 @@ class DatasetBuilder:
         )
 
         joined = joined.drop(["_fs_today_date", "_fs_report_date", "_fs_disclosed_date", "_fs_days_to_e"], strict=False)
+        # fs_is_valid: TTM系のどれかが存在し、かつstalenessが閾値以内のとき1。
+        fs_valid_flag = (
+            pl.when(
+                pl.any_horizontal(
+                    [
+                        pl.col("fs_ttm_sales").is_not_null(),
+                        pl.col("fs_ttm_op_profit").is_not_null(),
+                        pl.col("fs_ttm_net_income").is_not_null(),
+                        pl.col("fs_ttm_cfo").is_not_null(),
+                    ]
+                )
+                & pl.col("fs_staleness_bd").is_not_null()
+                & (pl.col("fs_staleness_bd") <= 120)
+            )
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+        )
         joined = joined.with_columns(
-            pl.when(pl.col("is_fs_valid") == 1)
+            [
+                fs_valid_flag.alias("fs_is_valid"),
+                # Backward-compatibility alias kept in sync with fs_is_valid.
+                fs_valid_flag.alias("is_fs_valid"),
+            ]
+        )
+
+        # fs_is_recent: fs_is_validかつstalenessがよりタイトな閾値（65日）以内。
+        joined = joined.with_columns(
+            pl.when(pl.col("fs_is_valid") == 1)
             .then((pl.col("fs_staleness_bd") <= 65).fill_null(False))
             .otherwise(False)
             .cast(pl.Int8)
@@ -6574,42 +6845,65 @@ class DatasetBuilder:
         if df.is_empty():
             return self._ensure_beta_alpha_columns(df)
 
-        # TOPIXリターンデータを取得
-        try:
-            topix_df = self.data_sources.topix(start=start, end=end)
-        except Exception as exc:
-            LOGGER.debug("Failed to fetch TOPIX data for beta/alpha: %s", exc)
+        # Normalize key columns (code/date) for rolling ops
+        code_col = self._resolve_column_name(df, "code")
+        date_col = self._resolve_column_name(df, "date")
+        if code_col is None or date_col is None:
+            LOGGER.debug("Missing code/date columns, skipping beta/alpha features")
             return self._ensure_beta_alpha_columns(df)
 
-        if topix_df.is_empty():
-            LOGGER.debug("TOPIX data is empty, skipping beta/alpha features")
-            return self._ensure_beta_alpha_columns(df)
+        working = df
+        if code_col != "code":
+            working = working.with_columns(pl.col(code_col).alias("code"))
+        if date_col != "date":
+            working = working.with_columns(pl.col(date_col).alias("date"))
 
-        # Normalize column names to lowercase
-        topix_df = topix_df.rename({col: col.lower() for col in topix_df.columns if col.lower() != col})
-
-        # TOPIXリターンを計算
-        topix_df = topix_df.sort("date")
-        topix_df = topix_df.with_columns(
-            [
-                ((pl.col("close") / (pl.col("close").shift(1) + BETA_EPS)) - 1.0).alias("topix_ret_1d"),
-            ]
-        )
-
-        # 銘柄リターン列を特定
+        # 銘柄リターン列を特定（case-insensitive）
         ret_col = None
         for candidate in ["ret_prev_1d", "returns_1d", "ret_1d"]:
-            if candidate in df.columns:
-                ret_col = candidate
+            resolved = self._resolve_column_name(working, candidate)
+            if resolved:
+                ret_col = resolved
                 break
 
         if ret_col is None:
             LOGGER.debug("No return column found, skipping beta/alpha features")
             return self._ensure_beta_alpha_columns(df)
 
-        # 日付で結合
-        topix_ret = topix_df.select(["date", "topix_ret_1d"])
-        df_with_topix = df.join(topix_ret, on="date", how="left")
+        # TOPIXリターン列を優先的に既存カラムから利用（計算済みの方が安定）
+        topix_ret_col = None
+        for candidate in ("topix_ret_prev_1d", "idx_topix_ret_prev_1d", "topix_ret_1d"):
+            resolved = self._resolve_column_name(working, candidate)
+            if resolved:
+                topix_ret_col = resolved
+                break
+
+        if topix_ret_col:
+            df_with_topix = working.with_columns(pl.col(topix_ret_col).alias("topix_ret_1d"))
+        else:
+            # TOPIXリターンデータを取得して結合
+            try:
+                topix_df = self.data_sources.topix(start=start, end=end)
+            except Exception as exc:
+                LOGGER.debug("Failed to fetch TOPIX data for beta/alpha: %s", exc)
+                return self._ensure_beta_alpha_columns(df)
+
+            if topix_df.is_empty():
+                LOGGER.debug("TOPIX data is empty, skipping beta/alpha features")
+                return self._ensure_beta_alpha_columns(df)
+
+            # Normalize column names to lowercase
+            topix_df = topix_df.rename({col: col.lower() for col in topix_df.columns if col.lower() != col})
+
+            # TOPIXリターンを計算
+            topix_df = topix_df.sort("date")
+            topix_df = topix_df.with_columns(
+                [
+                    ((pl.col("close") / (pl.col("close").shift(1) + BETA_EPS)) - 1.0).alias("topix_ret_1d"),
+                ]
+            )
+            topix_ret = topix_df.select(["date", "topix_ret_1d"])
+            df_with_topix = working.join(topix_ret, on="date", how="left")
 
         # コードごとにβとαを計算
         df_sorted = df_with_topix.sort(["code", "date"])
@@ -6992,6 +7286,14 @@ class DatasetBuilder:
             "mkt_flow_individuals_net_ratio": pl.Float64,
             "mkt_flow_trust_banks_net_ratio": pl.Float64,
             "mkt_flow_investment_trusts_net_ratio": pl.Float64,
+            # net ratio z-score (20d) with original flow_* naming retained
+            "mkt_flow_flow_foreigners_net_ratio_zscore_20d": pl.Float64,
+            "mkt_flow_flow_individuals_net_ratio_zscore_20d": pl.Float64,
+            "mkt_flow_flow_divergence_foreigners_vs_individuals_zscore_20d": pl.Float64,
+            "mkt_flow_flow_total_net_zscore_20d": pl.Float64,
+            # 短期z-score
+            "mkt_flow_foreigners_net_ratio_zscore_20d": pl.Float64,
+            "mkt_flow_individuals_net_ratio_zscore_20d": pl.Float64,
             # z-score (13週)
             "mkt_flow_foreigners_net_ratio_z13": pl.Float64,
             "mkt_flow_individuals_net_ratio_z13": pl.Float64,
@@ -8112,6 +8414,18 @@ class DatasetBuilder:
             .sort(["code", date_col_for_group])
         )
 
+        # Detect new disclosures (0 -> positive) and concentration spikes
+        aggregated = aggregated.sort(["code", date_col_for_group])
+        aggregated = aggregated.with_columns(pl.col("ssp_ratio_sum").shift(1).over("code").alias("_ssp_prev_ratio_sum"))
+        aggregated = aggregated.with_columns(
+            (
+                ((pl.col("_ssp_prev_ratio_sum").is_null()) | (pl.col("_ssp_prev_ratio_sum") <= 0))
+                & (pl.col("ssp_ratio_sum") > 0)
+            )
+            .cast(pl.Int8)
+            .alias("ssp_new_position_flag")
+        )
+
         # Add validation flags: check if values are in valid ranges
         aggregated = aggregated.with_columns(
             [
@@ -8243,7 +8557,7 @@ class DatasetBuilder:
             )
 
         # Clean up temporary validation columns
-        cleanup_cols = ["_ratio_valid", "_delta_valid", "available_ts", date_col_for_group]
+        cleanup_cols = ["_ratio_valid", "_delta_valid", "_ssp_prev_ratio_sum", "available_ts", date_col_for_group]
         if "_ssp_date" in joined.columns:
             cleanup_cols.append("_ssp_date")
         cleanup_cols = [col for col in cleanup_cols if col in joined.columns]
@@ -8275,6 +8589,7 @@ class DatasetBuilder:
                         "ssp_ratio_sum_z20",
                         "ssp_delta_sum_z20",
                         "ssp_ratio_sum_ema10",
+                        "ssp_new_position_flag",
                         "is_ssp_valid",
                     ],
                     "availability": "T+1_09:00_JST",
@@ -8492,6 +8807,7 @@ class DatasetBuilder:
                         "idxopt_pc_oi_ratio",
                         "idxopt_pc_vol_ratio",
                         "idxopt_skew_25",
+                        "idxopt_rr_25",
                         "idxopt_days_to_sq",
                         "idxopt_iv_night_jump",
                         "idxopt_vrp_gap",
@@ -8515,6 +8831,7 @@ class DatasetBuilder:
             "idxopt_pc_oi_ratio": pl.Float64,
             "idxopt_pc_vol_ratio": pl.Float64,
             "idxopt_skew_25": pl.Float64,
+            "idxopt_rr_25": pl.Float64,
             "idxopt_days_to_sq": pl.Int64,
             "idxopt_iv_night_jump": pl.Float64,
             "idxopt_vrp_gap": pl.Float64,

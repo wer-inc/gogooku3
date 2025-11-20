@@ -23,10 +23,10 @@ help:
 	@echo "  make lint              -> run ruff + mypy"
 
 build:
-	@python scripts/build.py --start $(START) --end $(END) $(REFRESH_FLAG)
+	@PYTHONPATH=src python scripts/build.py --start $(START) --end $(END) $(REFRESH_FLAG)
 
 build-optimized:
-	@python scripts/build_optimized.py --start $(START) --end $(END) $(CACHE_ONLY_FLAG)
+	@PYTHONPATH=src python scripts/build_optimized.py --start $(START) --end $(END) $(CACHE_ONLY_FLAG)
 
 lint:
 	@echo "[data] running ruff + mypy"

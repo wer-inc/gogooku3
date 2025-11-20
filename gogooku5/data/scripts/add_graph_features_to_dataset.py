@@ -28,7 +28,10 @@ import polars as pl
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from builder.features.core.graph.features import GraphFeatureConfig, GraphFeatureEngineer
+from builder.features.core.graph.features import (
+    GraphFeatureConfig,
+    GraphFeatureEngineer,
+)
 
 
 def main() -> None:
@@ -113,14 +116,14 @@ def main() -> None:
         block_size=512,
     )
 
-    print(f"\n📊 Graph Feature Configuration:")
+    print("\n📊 Graph Feature Configuration:")
     print(f"   - Window: {config.window_days} days")
     print(f"   - Min observations: {config.min_observations}")
     print(f"   - Correlation threshold: {config.correlation_threshold}")
     print(f"   - Return column: {config.return_column}")
 
     # Add graph features
-    print(f"\n🔄 Computing graph features...")
+    print("\n🔄 Computing graph features...")
     engineer = GraphFeatureEngineer(config=config)
     graph_start = time.time()
     df_with_graph = engineer.add_features(df)
@@ -152,7 +155,7 @@ def main() -> None:
     }
 
     # Calculate NULL rates for graph columns
-    print(f"\n📈 Graph Feature Quality:")
+    print("\n📈 Graph Feature Quality:")
     for col in sorted(new_graph_cols):
         null_count = df_with_graph[col].null_count()
         null_rate = null_count / len(df_with_graph) * 100
@@ -176,7 +179,7 @@ def main() -> None:
     total_time = time.time() - start_time
     print(f"   ✅ Saved {len(df_with_graph):,} rows × {len(df_with_graph.columns)} columns in {save_time:.1f}s")
     print(f"\n✅ Total processing time: {total_time:.1f}s")
-    print(f"\n🎉 Graph features successfully added!")
+    print("\n🎉 Graph features successfully added!")
     print(f"   Input:  {args.input}")
     print(f"   Output: {args.output}")
     print(f"   Graph columns: {len(new_graph_cols)}")

@@ -11,7 +11,7 @@ Validates data quality for all 2025 chunks:
 
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import polars as pl
 
@@ -66,17 +66,13 @@ def validate_quarter_data_quality(chunk_id: str) -> Dict:
         dtype = df[flag_col].dtype
         if dtype != pl.Int8:
             result["passed"] = False
-            result["errors"].append(
-                f"{flag_col}: Wrong dtype (got {dtype}, expected Int8)"
-            )
+            result["errors"].append(f"{flag_col}: Wrong dtype (got {dtype}, expected Int8)")
             continue
 
         # Check NULL count
         null_count = df[flag_col].null_count()
         if null_count > 0:
-            result["warnings"].append(
-                f"{flag_col}: {null_count:,} NULLs ({null_count/len(df)*100:.1f}%)"
-            )
+            result["warnings"].append(f"{flag_col}: {null_count:,} NULLs ({null_count/len(df)*100:.1f}%)")
 
         # Get value distribution
         value_counts = df[flag_col].value_counts().sort("count", descending=True)
@@ -129,9 +125,7 @@ def validate_quarter_data_quality(chunk_id: str) -> Dict:
 
     if len(macro_cols) < 35:
         result["passed"] = False
-        result["errors"].append(
-            f"Too few macro columns: {len(macro_cols)} (expected ≥35)"
-        )
+        result["errors"].append(f"Too few macro columns: {len(macro_cols)} (expected ≥35)")
 
     # Check 4: Data integrity
     if "Date" in df.columns:
@@ -226,9 +220,7 @@ def validate_2025_data_quality() -> bool:
         "flag_delisted",
         "flag_adjustment_event",
     ]:
-        total_count = sum(
-            r.get("stats", {}).get(f"{flag}_count", 0) for r in results
-        )
+        total_count = sum(r.get("stats", {}).get(f"{flag}_count", 0) for r in results)
         print(f"  - {flag}: {total_count:,} instances")
     print()
 

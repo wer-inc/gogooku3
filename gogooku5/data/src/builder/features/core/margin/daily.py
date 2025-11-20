@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from ...utils.rolling import roll_mean_safe, roll_std_safe
+
 EPS = 1e-9
 
 
@@ -110,4 +112,28 @@ class MarginDailyFeatureEngineer:
         )
 
         out = out.drop(["_margin_buy_ma20", "_margin_buy_std20"], strict=False)
+
+        # Additional leak-safe, scale-stable ratios
+        out = out.with_columns(
+            pl.when(pl.col("margin_long_short_ratio").is_not_null() & (pl.col("margin_long_short_ratio") > 0))
+            .then(pl.col("margin_long_short_ratio").log())
+            .otherwise(None)
+            .alias("margin_long_short_ratio_log")
+        )
+
+        # Detect unusual swings in the long/short balance (shift(1) to avoid look-ahead)
+        out = out.with_columns(
+            [
+                roll_mean_safe(pl.col("margin_long_short_ratio"), 20, min_periods=5, by=code).alias("_mls_ma20"),
+                roll_std_safe(pl.col("margin_long_short_ratio"), 20, min_periods=5, by=code).alias("_mls_std20"),
+            ]
+        )
+        out = out.with_columns(
+            pl.when(pl.col("_mls_std20").abs() > EPS)
+            .then((pl.col("margin_long_short_ratio") - pl.col("_mls_ma20")) / (pl.col("_mls_std20") + EPS))
+            .otherwise(None)
+            .alias("margin_ratio_spike_z20")
+        )
+        out = out.with_columns((pl.col("margin_ratio_spike_z20").abs() > 2.5).cast(pl.Int8).alias("margin_ratio_spike"))
+        out = out.drop(["_mls_ma20", "_mls_std20"], strict=False)
         return out

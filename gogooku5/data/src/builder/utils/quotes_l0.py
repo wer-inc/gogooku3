@@ -66,8 +66,6 @@ def compute_checksum(df: pl.DataFrame) -> str:
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise RuntimeError("xxhash is required for cache checksum computation.") from exc
 
-    import io
-
     algo = xxhash.xxh64()
     buffer = io.BytesIO()
     df.write_parquet(buffer, compression="zstd", statistics=False, use_pyarrow=True)
@@ -77,7 +75,7 @@ def compute_checksum(df: pl.DataFrame) -> str:
 
 def atomic_write_parquet(df: pl.DataFrame, path: Path, create_ipc: bool = True) -> None:
     """Write parquet to temporary file then atomically replace target.
-    
+
     Also creates IPC cache for 3-5x faster subsequent reads.
 
     Args:
@@ -90,7 +88,7 @@ def atomic_write_parquet(df: pl.DataFrame, path: Path, create_ipc: bool = True) 
     tmp_path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(tmp_path, compression="zstd", statistics=True, use_pyarrow=True)
     os.replace(tmp_path, path)
-    
+
     # Create IPC cache for faster reads (3-5x speedup)
     if create_ipc:
         try:
@@ -249,7 +247,9 @@ class QuoteShardIndex:
             )
         return items
 
-    def register_window(self, window_id: str, *, start: str, end: str, codes_fp: str, coverage: float, months: list[str]) -> None:
+    def register_window(
+        self, window_id: str, *, start: str, end: str, codes_fp: str, coverage: float, months: list[str]
+    ) -> None:
         """Record logical request → months mapping."""
 
         with self._transaction() as con:

@@ -1,5 +1,5 @@
 version: 0
-# Short-term (1d+5d) configuration for APEX-Ranker v0 using CLEAN dataset
+# Short-term (1d+5d) configuration for APEX-Ranker v0 using CLEAN dataset + mkt_flow core block
 # Dataset: 2023-2024 ONLY (cleaned high-NULL columns, g5 schema)
 
 data:
@@ -7,7 +7,9 @@ data:
   metadata_path: null
   feature_groups_config: configs/feature_groups_dataset145.yaml
   feature_groups:
-  - g5_short_term
+    - g5_short_term          # Baseline short-term block
+    - g5_mkt_flow_core       # Added: core market flow zscore_20d features
+    - g5_idxopt_rr           # Added: 25Δ risk reversal
   optional_groups: []
   use_plus30: false
   lookback: 60

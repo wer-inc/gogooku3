@@ -1,6 +1,5 @@
 """Unit tests for dim_security table generation."""
 
-import tempfile
 from pathlib import Path
 
 import polars as pl
@@ -10,14 +9,16 @@ import pytest
 def test_dim_security_deterministic():
     """Test that dim_security generation is deterministic."""
     # Create sample listed_info data
-    sample_data = pl.DataFrame({
-        "Code": ["13010", "13050", "13060"],
-        "Date": ["2024-01-01", "2024-01-01", "2024-01-01"],
-        "MarketCode": ["0101", "0109", "0109"],
-        "MarketCodeName": ["東証一部", "その他", "その他"],
-        "Sector33Code": ["0050", "9999", "9999"],
-        "Sector33CodeName": ["水産・農林業", "その他", "その他"],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["13010", "13050", "13060"],
+            "Date": ["2024-01-01", "2024-01-01", "2024-01-01"],
+            "MarketCode": ["0101", "0109", "0109"],
+            "MarketCodeName": ["東証一部", "その他", "その他"],
+            "Sector33Code": ["0050", "9999", "9999"],
+            "Sector33CodeName": ["水産・農林業", "その他", "その他"],
+        }
+    )
 
     # Build dim_security twice
     dim1 = _build_dim_security_from_df(sample_data)
@@ -29,14 +30,16 @@ def test_dim_security_deterministic():
 
 def test_dim_security_sec_id_sequential():
     """Test that sec_id is sequential and 1-based."""
-    sample_data = pl.DataFrame({
-        "Code": ["A", "B", "C", "D", "E"],
-        "Date": ["2024-01-01"] * 5,
-        "MarketCode": ["0101"] * 5,
-        "MarketCodeName": ["Market"] * 5,
-        "Sector33Code": ["0050"] * 5,
-        "Sector33CodeName": ["Sector"] * 5,
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["A", "B", "C", "D", "E"],
+            "Date": ["2024-01-01"] * 5,
+            "MarketCode": ["0101"] * 5,
+            "MarketCodeName": ["Market"] * 5,
+            "Sector33Code": ["0050"] * 5,
+            "Sector33CodeName": ["Sector"] * 5,
+        }
+    )
 
     dim = _build_dim_security_from_df(sample_data)
 
@@ -53,14 +56,16 @@ def test_dim_security_sec_id_sequential():
 def test_dim_security_no_duplicate_codes():
     """Test that dim_security has no duplicate codes."""
     # Sample with duplicate codes (same code, different dates)
-    sample_data = pl.DataFrame({
-        "Code": ["13010", "13010", "13050"],
-        "Date": ["2024-01-01", "2024-01-02", "2024-01-01"],
-        "MarketCode": ["0101", "0101", "0109"],
-        "MarketCodeName": ["東証一部", "東証一部", "その他"],
-        "Sector33Code": ["0050", "0050", "9999"],
-        "Sector33CodeName": ["水産・農林業", "水産・農林業", "その他"],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["13010", "13010", "13050"],
+            "Date": ["2024-01-01", "2024-01-02", "2024-01-01"],
+            "MarketCode": ["0101", "0101", "0109"],
+            "MarketCodeName": ["東証一部", "東証一部", "その他"],
+            "Sector33Code": ["0050", "0050", "9999"],
+            "Sector33CodeName": ["水産・農林業", "水産・農林業", "その他"],
+        }
+    )
 
     dim = _build_dim_security_from_df(sample_data)
 
@@ -71,14 +76,16 @@ def test_dim_security_no_duplicate_codes():
 
 def test_dim_security_sorted_by_code():
     """Test that dim_security is sorted by code."""
-    sample_data = pl.DataFrame({
-        "Code": ["Z", "A", "M", "C", "B"],
-        "Date": ["2024-01-01"] * 5,
-        "MarketCode": ["0101"] * 5,
-        "MarketCodeName": ["Market"] * 5,
-        "Sector33Code": ["0050"] * 5,
-        "Sector33CodeName": ["Sector"] * 5,
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["Z", "A", "M", "C", "B"],
+            "Date": ["2024-01-01"] * 5,
+            "MarketCode": ["0101"] * 5,
+            "MarketCodeName": ["Market"] * 5,
+            "Sector33Code": ["0050"] * 5,
+            "Sector33CodeName": ["Sector"] * 5,
+        }
+    )
 
     dim = _build_dim_security_from_df(sample_data)
 
@@ -88,19 +95,30 @@ def test_dim_security_sorted_by_code():
 
 def test_dim_security_schema():
     """Test that dim_security has correct schema."""
-    sample_data = pl.DataFrame({
-        "Code": ["13010"],
-        "Date": ["2024-01-01"],
-        "MarketCode": ["0101"],
-        "MarketCodeName": ["東証一部"],
-        "Sector33Code": ["0050"],
-        "Sector33CodeName": ["水産・農林業"],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["13010"],
+            "Date": ["2024-01-01"],
+            "MarketCode": ["0101"],
+            "MarketCodeName": ["東証一部"],
+            "Sector33Code": ["0050"],
+            "Sector33CodeName": ["水産・農林業"],
+        }
+    )
 
     dim = _build_dim_security_from_df(sample_data)
 
     # Check columns
-    expected_columns = ["sec_id", "code", "market_code", "market_name", "sector_code", "sector_name", "effective_date", "is_active"]
+    expected_columns = [
+        "sec_id",
+        "code",
+        "market_code",
+        "market_name",
+        "sector_code",
+        "sector_name",
+        "effective_date",
+        "is_active",
+    ]
     assert dim.columns == expected_columns, f"Expected columns: {expected_columns}, got: {dim.columns}"
 
     # Check types
@@ -112,14 +130,16 @@ def test_dim_security_schema():
 
 def test_dim_security_normalization():
     """Test that dim_security normalizes whitespace."""
-    sample_data = pl.DataFrame({
-        "Code": ["  13010  ", "13050"],
-        "Date": ["2024-01-01", "2024-01-01"],
-        "MarketCode": [" 0101 ", "0109"],
-        "MarketCodeName": ["  東証一部  ", "その他"],
-        "Sector33Code": [" 0050 ", "9999"],
-        "Sector33CodeName": ["  水産・農林業  ", "その他"],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["  13010  ", "13050"],
+            "Date": ["2024-01-01", "2024-01-01"],
+            "MarketCode": [" 0101 ", "0109"],
+            "MarketCodeName": ["  東証一部  ", "その他"],
+            "Sector33Code": [" 0050 ", "9999"],
+            "Sector33CodeName": ["  水産・農林業  ", "その他"],
+        }
+    )
 
     dim = _build_dim_security_from_df(sample_data)
 
@@ -130,14 +150,16 @@ def test_dim_security_normalization():
 
 def test_dim_security_effective_date():
     """Test that effective_date is the earliest date for each code."""
-    sample_data = pl.DataFrame({
-        "Code": ["13010", "13010", "13050"],
-        "Date": ["2024-01-05", "2024-01-01", "2024-02-01"],
-        "MarketCode": ["0101", "0101", "0109"],
-        "MarketCodeName": ["東証一部", "東証一部", "その他"],
-        "Sector33Code": ["0050", "0050", "9999"],
-        "Sector33CodeName": ["水産・農林業", "水産・農林業", "その他"],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["13010", "13010", "13050"],
+            "Date": ["2024-01-05", "2024-01-01", "2024-02-01"],
+            "MarketCode": ["0101", "0101", "0109"],
+            "MarketCodeName": ["東証一部", "東証一部", "その他"],
+            "Sector33Code": ["0050", "0050", "9999"],
+            "Sector33CodeName": ["水産・農林業", "水産・農林業", "その他"],
+        }
+    )
 
     dim = _build_dim_security_from_df(sample_data)
 
@@ -148,14 +170,16 @@ def test_dim_security_effective_date():
 
 def test_dim_security_is_active_default():
     """Test that is_active defaults to True."""
-    sample_data = pl.DataFrame({
-        "Code": ["13010"],
-        "Date": ["2024-01-01"],
-        "MarketCode": ["0101"],
-        "MarketCodeName": ["東証一部"],
-        "Sector33Code": ["0050"],
-        "Sector33CodeName": ["水産・農林業"],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["13010"],
+            "Date": ["2024-01-01"],
+            "MarketCode": ["0101"],
+            "MarketCodeName": ["東証一部"],
+            "Sector33Code": ["0050"],
+            "Sector33CodeName": ["水産・農林業"],
+        }
+    )
 
     dim = _build_dim_security_from_df(sample_data)
 
@@ -171,40 +195,45 @@ def _build_dim_security_from_df(df: pl.DataFrame) -> pl.DataFrame:
     This replicates the logic from build_dim_security.py.
     """
     # Normalize
-    normalized = df.select([
-        pl.col("Code").str.strip_chars().alias("code"),
-        pl.col("Date").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),
-        pl.col("MarketCode").str.strip_chars().alias("market_code"),
-        pl.col("MarketCodeName").str.strip_chars().alias("market_name"),
-        pl.col("Sector33Code").str.strip_chars().alias("sector_code"),
-        pl.col("Sector33CodeName").str.strip_chars().alias("sector_name"),
-    ])
+    normalized = df.select(
+        [
+            pl.col("Code").str.strip_chars().alias("code"),
+            pl.col("Date").str.strptime(pl.Date, "%Y-%m-%d").alias("date"),
+            pl.col("MarketCode").str.strip_chars().alias("market_code"),
+            pl.col("MarketCodeName").str.strip_chars().alias("market_name"),
+            pl.col("Sector33Code").str.strip_chars().alias("sector_code"),
+            pl.col("Sector33CodeName").str.strip_chars().alias("sector_name"),
+        ]
+    )
 
     # Group and build dim_security
     dim = (
-        normalized
-        .group_by("code")
-        .agg([
-            pl.col("market_code").first().alias("market_code"),
-            pl.col("market_name").first().alias("market_name"),
-            pl.col("sector_code").first().alias("sector_code"),
-            pl.col("sector_name").first().alias("sector_name"),
-            pl.col("date").min().alias("effective_date"),
-        ])
+        normalized.group_by("code")
+        .agg(
+            [
+                pl.col("market_code").first().alias("market_code"),
+                pl.col("market_name").first().alias("market_name"),
+                pl.col("sector_code").first().alias("sector_code"),
+                pl.col("sector_name").first().alias("sector_name"),
+                pl.col("date").min().alias("effective_date"),
+            ]
+        )
         .sort("code")
         .with_row_index("sec_id", offset=1)
         .with_columns(pl.col("sec_id").cast(pl.Int32))
         .with_columns(pl.lit(True).alias("is_active"))
-        .select([
-            "sec_id",
-            "code",
-            "market_code",
-            "market_name",
-            "sector_code",
-            "sector_name",
-            "effective_date",
-            "is_active",
-        ])
+        .select(
+            [
+                "sec_id",
+                "code",
+                "market_code",
+                "market_name",
+                "sector_code",
+                "sector_name",
+                "effective_date",
+                "is_active",
+            ]
+        )
     )
 
     return dim
@@ -212,7 +241,7 @@ def _build_dim_security_from_df(df: pl.DataFrame) -> pl.DataFrame:
 
 @pytest.mark.skipif(
     not Path("output_g5/dim_security.parquet").exists(),
-    reason="dim_security.parquet not found (run build_dim_security.py first)"
+    reason="dim_security.parquet not found (run build_dim_security.py first)",
 )
 def test_dim_security_file_exists():
     """Test that generated dim_security file exists and is valid."""

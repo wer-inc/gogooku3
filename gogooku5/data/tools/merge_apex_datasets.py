@@ -8,8 +8,9 @@ handling schema differences and ensuring data quality.
 
 import argparse
 import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 import polars as pl
 
 
@@ -154,19 +155,13 @@ def merge_datasets(input_paths: list[str], output_path: str, verbose: bool = Tru
         "output_file": str(output_path.name),
         "total_rows": len(merged_df),
         "total_columns": len(merged_df.columns),
-        "date_range": {
-            "start": str(merged_df["Date"].min()),
-            "end": str(merged_df["Date"].max())
-        },
+        "date_range": {"start": str(merged_df["Date"].min()), "end": str(merged_df["Date"].max())},
         "unique_dates": merged_df["Date"].n_unique(),
         "unique_stocks": merged_df["Code"].n_unique(),
         "duplicates_removed": duplicates_removed,
         "common_columns": len(common_columns),
         "total_unique_columns": len(all_columns),
-        "schema_differences": {
-            name: len(set(df.columns) - common_columns)
-            for name, df in datasets
-        }
+        "schema_differences": {name: len(set(df.columns) - common_columns) for name, df in datasets},
     }
 
     metadata_path = output_path.with_suffix(".json")
@@ -181,14 +176,14 @@ def merge_datasets(input_paths: list[str], output_path: str, verbose: bool = Tru
         print("\n" + "=" * 80)
         print("Merge Complete")
         print("=" * 80)
-        print(f"📊 Final Dataset:")
+        print("📊 Final Dataset:")
         print(f"   Rows: {len(merged_df):,}")
         print(f"   Columns: {len(merged_df.columns):,}")
         print(f"   Date range: {merged_df['Date'].min()} to {merged_df['Date'].max()}")
         print(f"   Trading days: {merged_df['Date'].n_unique()}")
         print(f"   Unique stocks: {merged_df['Code'].n_unique()}")
         print(f"   Avg stocks/day: {len(merged_df) / merged_df['Date'].n_unique():.0f}")
-        print(f"\n📁 Output files:")
+        print("\n📁 Output files:")
         print(f"   Dataset: {output_path}")
         print(f"   Metadata: {metadata_path}")
 
@@ -214,37 +209,21 @@ Examples:
              gogooku5/data/output/datasets/ml_dataset_2024_full.parquet \\
              gogooku5/data/output/datasets/ml_dataset_2025_full.parquet \\
     --output gogooku5/data/output/datasets/ml_dataset_2023_2024_2025_full.parquet
-        """
+        """,
     )
-    parser.add_argument(
-        "--inputs",
-        nargs="+",
-        required=True,
-        help="Input parquet files to merge"
-    )
-    parser.add_argument(
-        "--output",
-        required=True,
-        help="Output parquet file path"
-    )
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress progress messages"
-    )
+    parser.add_argument("--inputs", nargs="+", required=True, help="Input parquet files to merge")
+    parser.add_argument("--output", required=True, help="Output parquet file path")
+    parser.add_argument("--quiet", action="store_true", help="Suppress progress messages")
 
     args = parser.parse_args()
 
     try:
-        merge_datasets(
-            input_paths=args.inputs,
-            output_path=args.output,
-            verbose=not args.quiet
-        )
+        merge_datasets(input_paths=args.inputs, output_path=args.output, verbose=not args.quiet)
         print("\n✅ Success!")
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

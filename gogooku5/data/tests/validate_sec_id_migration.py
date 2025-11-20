@@ -36,15 +36,15 @@ def test_sec_id_exists(dataset_path: Path) -> bool:
         sec_id_valid_count = len(df) - sec_id_null_count
         null_pct = (sec_id_null_count / len(df) * 100) if len(df) > 0 else 0
 
-        print(f"   ✅ SecId exists and is valid")
+        print("   ✅ SecId exists and is valid")
         print(f"      - Type: {df['SecId'].dtype}")
         print(f"      - Valid count: {sec_id_valid_count:,} ({100-null_pct:.1f}%)")
         print(f"      - NULL count: {sec_id_null_count:,} ({null_pct:.1f}%)")
         print(f"      - Unique values: {df['SecId'].n_unique()}")
 
         if null_pct > 90:
-            print(f"      - ℹ️  High NULL rate is NORMAL for historical data")
-            print(f"        (delisted securities not in current dim_security)")
+            print("      - ℹ️  High NULL rate is NORMAL for historical data")
+            print("        (delisted securities not in current dim_security)")
 
         return True
     except Exception as e:
@@ -69,7 +69,7 @@ def test_code_still_exists(dataset_path: Path) -> bool:
             print(f"   ❌ FAILED: Code has wrong dtype: {df['Code'].dtype}")
             return False
 
-        print(f"   ✅ Parallel schema maintained")
+        print("   ✅ Parallel schema maintained")
         print(f"      - Code type: {df['Code'].dtype}")
         print(f"      - Unique codes: {df['Code'].n_unique()}")
 
@@ -139,7 +139,9 @@ def test_data_integrity(dataset_path: Path) -> bool:
         date_col = "Date"
 
         if code_col in df.columns and date_col in df.columns:
-            duplicate_count = df.group_by([code_col, date_col]).agg(pl.len().alias("count")).filter(pl.col("count") > 1).height
+            duplicate_count = (
+                df.group_by([code_col, date_col]).agg(pl.len().alias("count")).filter(pl.col("count") > 1).height
+            )
 
             if duplicate_count > 0:
                 print(f"   ❌ FAILED: {duplicate_count} duplicate (Code, Date) pairs found")
@@ -152,10 +154,7 @@ def test_data_integrity(dataset_path: Path) -> bool:
             # Each SecId should map to exactly one Code (excluding NULLs)
             sec_id_code_mapping = df.filter(pl.col("SecId").is_not_null()).select(["SecId", code_col]).unique()
             sec_ids_with_multiple_codes = (
-                sec_id_code_mapping
-                .group_by("SecId")
-                .agg(pl.len().alias("code_count"))
-                .filter(pl.col("code_count") > 1)
+                sec_id_code_mapping.group_by("SecId").agg(pl.len().alias("code_count")).filter(pl.col("code_count") > 1)
             )
 
             if len(sec_ids_with_multiple_codes) > 0:
@@ -165,7 +164,7 @@ def test_data_integrity(dataset_path: Path) -> bool:
             else:
                 print("   ✅ SecId to Code mapping is 1:1")
 
-        print(f"   ✅ Data integrity checks passed")
+        print("   ✅ Data integrity checks passed")
         print(f"      - Total rows: {row_count:,}")
         print(f"      - Columns: {len(df.columns)}")
         print(f"      - Date range: {df[date_col].min()} to {df[date_col].max()}")
@@ -185,7 +184,7 @@ def test_join_columns(dataset_path: Path) -> bool:
 
         # Expected columns from joins
         expected_join_columns = [
-            "SectorCode",       # From listed join (PascalCase in gogooku5)
+            "SectorCode",  # From listed join (PascalCase in gogooku5)
         ]
 
         missing_columns = [col for col in expected_join_columns if col not in df.columns]

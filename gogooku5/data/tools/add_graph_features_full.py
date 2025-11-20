@@ -39,9 +39,10 @@ from pathlib import Path
 from typing import Iterable, List
 
 import polars as pl
-
-from builder.features.core.graph.features import GraphFeatureConfig, GraphFeatureEngineer
-
+from builder.features.core.graph.features import (
+    GraphFeatureConfig,
+    GraphFeatureEngineer,
+)
 
 GRAPH_BASE_FEATURES: tuple[str, ...] = ("graph_degree", "graph_peer_corr_mean", "graph_peer_corr_max")
 DERIVED_ROLL_WINDOW_DAYS: int = 20
@@ -189,11 +190,7 @@ def _add_rolling_and_outlier_features(
             ]
             return group.with_columns(new_cols)
 
-        df_sorted = (
-            df_sorted.group_by(code_col, maintain_order=True)
-            .map_groups(_add_group)
-            .sort([code_col, date_col])
-        )
+        df_sorted = df_sorted.group_by(code_col, maintain_order=True).map_groups(_add_group).sort([code_col, date_col])
 
     return df_sorted
 
@@ -234,9 +231,8 @@ def _add_sector_relative_features(
         mean_col = f"{feature}_sector_mean"
         rel_col = f"{feature}_sector_rel"
 
-        sector_means = (
-            df.group_by([date_col, sector_col], maintain_order=False)
-            .agg(pl.col(feature).mean().alias(mean_col))
+        sector_means = df.group_by([date_col, sector_col], maintain_order=False).agg(
+            pl.col(feature).mean().alias(mean_col)
         )
         df = df.join(sector_means, on=[date_col, sector_col], how="left")
         df = df.with_columns((pl.col(feature) - pl.col(mean_col)).alias(rel_col))
@@ -377,4 +373,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

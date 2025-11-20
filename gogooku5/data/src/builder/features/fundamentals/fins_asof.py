@@ -466,7 +466,7 @@ def build_fs_feature_frame(snapshot: pl.DataFrame) -> pl.DataFrame:
                 _valid_ratio(pl.col("fs_op_profit_ttm"), pl.col("fs_revenue_ttm")).alias("fs_op_margin"),
                 _valid_ratio(pl.col("fs_net_income_ttm"), pl.col("fs_revenue_ttm")).alias("fs_net_margin"),
                 # P0新特徴量: fs_ttm_op_margin, fs_ttm_cfo_margin
-                _valid_ratio(pl.col("fs_op_profit_ttm"), pl.col("fs_revenue_ttm")).alias("fs_ttm_op_margin"),
+                _valid_ratio(pl.col("fs_op_profit_ttm"), pl.col("fs_revenue_ttm")).alias("fs_ttm_op_margin_raw"),
                 _valid_ratio(pl.col("fs_cfo_ttm"), pl.col("fs_revenue_ttm")).alias("fs_ttm_cfo_margin"),
                 # 品質指標（既存）
                 _valid_ratio(pl.col("fs_net_income_ttm"), pl.col("_fs_equity_avg")).alias("fs_roe_ttm"),
@@ -521,22 +521,33 @@ def build_fs_feature_frame(snapshot: pl.DataFrame) -> pl.DataFrame:
             ]
         )
 
+        # fs_ttm_op_marginの極端値をフラグ化し、本体はNULLに倒す（validatorのextreme率を抑制）
         group = group.with_columns(
-            pl.all_horizontal(
-                [
-                    pl.col("fs_revenue_ttm").is_not_null(),
-                    pl.col("fs_op_profit_ttm").is_not_null(),
-                    pl.col("fs_net_income_ttm").is_not_null(),
-                    pl.col("fs_cfo_ttm").is_not_null(),
-                    (pl.col("fs_observation_count") >= 4),
-                ]
-            )
+            ((pl.col("fs_ttm_op_margin_raw") < -1.5) | (pl.col("fs_ttm_op_margin_raw") > 1.5))
             .cast(pl.Int8)
-            .alias("is_fs_valid")
+            .alias("fs_op_margin_extreme_flag")
+        )
+        group = group.with_columns(
+            pl.when(pl.col("fs_op_margin_extreme_flag") == 1)
+            .then(None)
+            .otherwise(pl.col("fs_ttm_op_margin_raw"))
+            .alias("fs_ttm_op_margin")
         )
 
-        # P0新特徴量: fs_is_valid (is_fs_validのエイリアス)
-        group = group.with_columns(pl.col("is_fs_valid").alias("fs_is_valid"))
+        # ベースの有効性フラグ（TTM系のどれかが存在するか）を緩和定義で付与。
+        base_valid = pl.any_horizontal(
+            [
+                pl.col("fs_revenue_ttm").is_not_null(),
+                pl.col("fs_op_profit_ttm").is_not_null(),
+                pl.col("fs_net_income_ttm").is_not_null(),
+                pl.col("fs_cfo_ttm").is_not_null(),
+            ]
+        )
+        group = group.with_columns(
+            base_valid.cast(pl.Int8).alias("is_fs_valid"),
+            # P0新特徴量: fs_is_valid (後段でstalenessを加味して上書きされる前提のエイリアス)
+            base_valid.cast(pl.Int8).alias("fs_is_valid"),
+        )
 
         lag_days = (
             pl.col("DisclosedDate").cast(pl.Int64, strict=False)

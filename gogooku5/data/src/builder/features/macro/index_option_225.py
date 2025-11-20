@@ -307,6 +307,7 @@ def build_index_option_225_features(
 
         # 4. Skew（25Δ近似、±10% OTMのIV差で代用）
         skew_25 = None
+        rr_25 = None
         if "ImpliedVolatility" in group.columns and "StrikePrice" in group.columns:
             # OTM Put（10% OTM、K < S * 0.9）
             otm_puts = group.filter(
@@ -328,6 +329,8 @@ def build_index_option_225_features(
                 iv_call_otm = otm_calls["ImpliedVolatility"].median()
                 if iv_put_otm is not None and iv_call_otm is not None:
                     skew_25 = iv_put_otm - iv_call_otm
+                    # Risk Reversal 25Δ: call wing IV minus put wing IV（一般定義に合わせ符号反転）
+                    rr_25 = iv_call_otm - iv_put_otm
 
         # 5. 満期までの日数（営業日換算）
         days_to_sq = None
@@ -385,6 +388,7 @@ def build_index_option_225_features(
                 "idxopt_pc_oi_ratio": pc_oi_ratio,
                 "idxopt_pc_vol_ratio": pc_vol_ratio,
                 "idxopt_skew_25": skew_25,
+                "idxopt_rr_25": rr_25,
                 "idxopt_days_to_sq": days_to_sq,
                 "idxopt_iv_night_jump": iv_night_jump,
                 "idxopt_underlying_price": underlying_price,

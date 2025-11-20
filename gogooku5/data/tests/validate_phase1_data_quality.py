@@ -11,7 +11,6 @@ Validates that Phase 1 features are correctly implemented in actual data:
 
 import json
 from pathlib import Path
-from typing import Dict, List
 
 import polars as pl
 
@@ -77,7 +76,7 @@ def validate_phase1_data_quality(chunk_id: str = "2025Q4") -> bool:
 
         print(f"✅ {flag_col}: Int8")
         print(f"   - NULL: {null_count:,} ({null_count/len(df)*100:.2f}%)")
-        print(f"   - Value distribution:")
+        print("   - Value distribution:")
         for row in value_counts.head(5).iter_rows(named=True):
             val = row[flag_col]
             count = row["count"]
@@ -85,7 +84,7 @@ def validate_phase1_data_quality(chunk_id: str = "2025Q4") -> bool:
             print(f"     {val}: {count:,} ({pct:.2f}%)")
 
     if flag_check_passed:
-        print(f"\n✅ All 4 flag columns validated")
+        print("\n✅ All 4 flag columns validated")
     print()
 
     # =========================================================================
@@ -149,7 +148,7 @@ def validate_phase1_data_quality(chunk_id: str = "2025Q4") -> bool:
         print(f"✅ Macro columns found: {len(macro_cols)}")
 
     # Show sample
-    print(f"\n   Sample macro columns (first 10):")
+    print("\n   Sample macro columns (first 10):")
     for col in sorted(macro_cols)[:10]:
         null_count = df[col].null_count()
         null_pct = null_count / len(df) * 100
@@ -171,7 +170,7 @@ def validate_phase1_data_quality(chunk_id: str = "2025Q4") -> bool:
             print(f"❌ Date column has {date_nulls:,} NULLs")
             all_passed = False
         else:
-            print(f"✅ Date column: No NULLs")
+            print("✅ Date column: No NULLs")
 
         date_min = df["Date"].min()
         date_max = df["Date"].max()
@@ -184,7 +183,7 @@ def validate_phase1_data_quality(chunk_id: str = "2025Q4") -> bool:
             print(f"❌ Code column has {code_nulls:,} NULLs")
             all_passed = False
         else:
-            print(f"✅ Code column: No NULLs")
+            print("✅ Code column: No NULLs")
 
         unique_codes = df["Code"].n_unique()
         print(f"   Unique codes: {unique_codes:,}")

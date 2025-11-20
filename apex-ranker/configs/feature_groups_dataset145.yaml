@@ -84,6 +84,8 @@ groups:
   g5_short_term:
     # Short-term (1d+5d) optimized features
     # Criteria: NULL <10%, high signal for short-term prediction
+
+    # NOTE: Graph features excluded (not available in dataset)
     include:
       # Core price/volume features (NULL <5%)
       - AdjustmentOpen
@@ -103,26 +105,18 @@ groups:
       - volume_ma_5      # 0.3% NULL
       - volume_ma_20     # 0.1% NULL
 
-      # Graph features (NULL <1%)
-      - graph_degree                     # 0.6% NULL
-      - graph_peer_corr_mean             # 0.6% NULL
-      - graph_peer_corr_max              # 0.6% NULL
-      - graph_degree_roll_mean_20d
-      - graph_degree_roll_std_20d
-      - graph_degree_zscore_20d
-      - graph_peer_corr_mean_roll_mean_20d
-      - graph_peer_corr_mean_roll_std_20d
-      - graph_peer_corr_mean_zscore_20d
-      - graph_peer_corr_max_roll_mean_20d
-      - graph_peer_corr_max_roll_std_20d
-      - graph_peer_corr_max_zscore_20d
-
       # Macro regime features (NULL <4%)
       - topix_drawdown_60d               # 0.0% NULL
       - topix_drawdown_60d_roll_mean_20d
       - topix_atr14_zscore_20d
       - topix_natr14_zscore_20d
       - topix_rsi_14_zscore_20d
+      - topix_ret_prev_1d
+      - topix_ret_overnight
+      - topix_ret_intraday
+      - topix_atr14
+      - beta60_topix
+      - alpha60_topix
       - macro_vix_ret_10d                # 3.7% NULL
       - macro_vix_close                  # 3.7% NULL
       - macro_vix_log_close
@@ -151,22 +145,21 @@ groups:
       - rq_63_50
       - rq_63_90
 
-      # Earnings event (actual E) features
-      - fs_E_event_date
+      # Earnings event features (restored in Clean v2)
+      # NOTE: fs_E_event_date excluded (Date type, not numeric feature)
+      - days_to_earnings
       - fs_days_since_E
       - fs_window_e_pm1
       - fs_window_e_pp3
       - fs_window_e_pp5
 
-      # Float / margin / crowding features
+      # Float / margin / crowding features (restored in Clean v2)
+      - margin_long_pct_tradable
+      - crowding_dmi
       - float_turnover_pct_tradable
       - float_turnover_pct_z20
-      - margin_long_pct_tradable
       - weekly_margin_long_pct_tradable
-      - margin_long_listed_ratio
-      - margin_short_listed_ratio
       - crowding_margin
-      - crowding_dmi
       - crowding_breakdown
       - crowding_short
       - crowding_score
@@ -188,6 +181,37 @@ groups:
       - idr_atr
       - bb_bw
       - bb_pct_b
+
+  g5_mkt_flow_core:
+    # Net flow ratios (20d z-score) for foreigners/individuals/total,
+    # plus divergence between foreigners vs individuals
+    include:
+      - mkt_flow_flow_foreigners_net_ratio_zscore_20d
+      - mkt_flow_flow_individuals_net_ratio_zscore_20d
+      - mkt_flow_flow_divergence_foreigners_vs_individuals_zscore_20d
+      - mkt_flow_flow_total_net_zscore_20d
+
+  g5_idxopt_rr:
+    # 25Δ Risk Reversal (call wing IV minus put wing IV)
+    include:
+      - idxopt_rr_25
+
+  g5_nt_basis:
+    # Equity vs index context: NT ratio + TOPIX futures basis tilts
+    include:
+      - idx_ratio_nt_ratio           # NK225/TOPIXレベル比（要再ビルドで反映）
+      - idx_spread_nt_ratio_1d       # NK225 vs TOPIXリターンスプレッド
+      - fut_topix_basis              # 先物ベーシス
+      - basis_gate                   # β補正済みベーシスゲート
+      - basis_gate_zscore_20d
+
+  g5_overheat_margin:
+    # Overheating / pain gauges for margin traders
+    include:
+      - margin_pain_index
+      - mpi_drawdown_z20
+      - mpi_dist_to_limit_z20
+      - margin_long_pct_float_z20
 
   all_features:
     include:

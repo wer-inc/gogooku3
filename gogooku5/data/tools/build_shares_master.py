@@ -15,15 +15,13 @@ import polars as pl
 
 from ..src.builder.api.data_sources import DataSourceManager
 from ..src.builder.config import get_settings
-from ..src.builder.features.fundamentals.fins_asof import (
-    prepare_fs_snapshot,
-)
 
 # Reuse candidate lists used by fins_asof
 from ..src.builder.features.fundamentals.fins_asof import (
     _AVERAGE_SHARES_CANDIDATES,
     _ISSUED_SHARES_CANDIDATES,
     _TREASURY_SHARES_CANDIDATES,
+    prepare_fs_snapshot,
 )
 
 

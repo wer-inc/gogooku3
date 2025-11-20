@@ -32,36 +32,24 @@ from apex_ranker.backtest import WalkForwardSplitter
 def _load_backtest_function() -> Callable[..., dict]:
     """Dynamically load the regime-adaptive backtest runner."""
     script_path = Path(__file__).resolve().parent / "backtest_regime_adaptive.py"
-    spec = importlib.util.spec_from_file_location(
-        "apex_ranker_backtest_regime", script_path
-    )
+    spec = importlib.util.spec_from_file_location("apex_ranker_backtest_regime", script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     if not hasattr(module, "run_regime_adaptive_backtest"):
-        raise AttributeError(
-            "backtest_regime_adaptive.py does not define run_regime_adaptive_backtest"
-        )
+        raise AttributeError("backtest_regime_adaptive.py does not define run_regime_adaptive_backtest")
     return module.run_regime_adaptive_backtest
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run regime-adaptive walk-forward backtest evaluation"
-    )
+    parser = argparse.ArgumentParser(description="Run regime-adaptive walk-forward backtest evaluation")
     parser.add_argument("--data", required=True, help="Parquet dataset path")
     parser.add_argument("--model", default=None, help="Model checkpoint (.pt)")
     parser.add_argument("--config", default=None, help="Model config YAML")
-    parser.add_argument(
-        "--date-column", default="Date", help="Dataset date column name"
-    )
+    parser.add_argument("--date-column", default="Date", help="Dataset date column name")
 
-    parser.add_argument(
-        "--train-days", type=int, default=252, help="Training window size in days"
-    )
-    parser.add_argument(
-        "--test-days", type=int, default=63, help="Test window size in days"
-    )
+    parser.add_argument("--train-days", type=int, default=252, help="Training window size in days")
+    parser.add_argument("--test-days", type=int, default=63, help="Test window size in days")
     parser.add_argument("--step-days", type=int, default=21, help="Step size in days")
     parser.add_argument(
         "--min-train-days",
@@ -75,16 +63,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="rolling",
         help="Walk-forward mode",
     )
-    parser.add_argument(
-        "--gap-days", type=int, default=0, help="Gap between train/test windows"
-    )
+    parser.add_argument("--gap-days", type=int, default=0, help="Gap between train/test windows")
 
-    parser.add_argument(
-        "--rebalance-freq", default="monthly", help="Rebalance frequency"
-    )
-    parser.add_argument(
-        "--top-k", type=int, default=50, help="Number of stocks to hold"
-    )
+    parser.add_argument("--rebalance-freq", default="monthly", help="Rebalance frequency")
+    parser.add_argument("--top-k", type=int, default=50, help="Number of stocks to hold")
     parser.add_argument(
         "--target-top-k",
         type=int,
@@ -126,12 +108,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="cache/panel",
         help="Directory for persisted panel caches (default: cache/panel)",
     )
-    parser.add_argument(
-        "--horizon", type=int, default=20, help="Prediction horizon in days"
-    )
-    parser.add_argument(
-        "--initial-capital", type=float, default=100_000_000.0, help="Initial capital"
-    )
+    parser.add_argument("--horizon", type=int, default=20, help="Prediction horizon in days")
+    parser.add_argument("--initial-capital", type=float, default=100_000_000.0, help="Initial capital")
     parser.add_argument(
         "--device",
         choices=["auto", "cuda", "cpu"],
@@ -164,21 +142,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Lookback window for regime calculation in days (default: 20)",
     )
 
-    parser.add_argument(
-        "--start-date", default=None, help="Minimum test start date (YYYY-MM-DD)"
-    )
-    parser.add_argument(
-        "--end-date", default=None, help="Maximum test end date (YYYY-MM-DD)"
-    )
+    parser.add_argument("--start-date", default=None, help="Minimum test start date (YYYY-MM-DD)")
+    parser.add_argument("--end-date", default=None, help="Maximum test end date (YYYY-MM-DD)")
     parser.add_argument(
         "--fold-offset",
         type=int,
         default=0,
         help="Skip this many folds before starting",
     )
-    parser.add_argument(
-        "--max-folds", type=int, default=None, help="Limit number of folds to run"
-    )
+    parser.add_argument("--max-folds", type=int, default=None, help="Limit number of folds to run")
     parser.add_argument(
         "--min-test-days",
         type=int,
@@ -186,24 +158,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Minimum trading days in test period (default: 20)",
     )
 
-    parser.add_argument(
-        "--fold-output-dir", default=None, help="Directory for per-fold JSON outputs"
-    )
+    parser.add_argument("--fold-output-dir", default=None, help="Directory for per-fold JSON outputs")
     parser.add_argument(
         "--fold-metrics-dir",
         default=None,
         help="Directory for per-fold daily metrics CSV",
     )
-    parser.add_argument(
-        "--fold-trades-dir", default=None, help="Directory for per-fold trade logs"
-    )
+    parser.add_argument("--fold-trades-dir", default=None, help="Directory for per-fold trade logs")
 
-    parser.add_argument(
-        "--output", required=True, help="Path to write aggregate JSON results"
-    )
-    parser.add_argument(
-        "--summary", default=None, help="Optional path to write human-readable summary"
-    )
+    parser.add_argument("--output", required=True, help="Path to write aggregate JSON results")
+    parser.add_argument("--summary", default=None, help="Optional path to write human-readable summary")
 
     parser.add_argument(
         "--max-folds-preview",
@@ -245,6 +209,7 @@ def run_walk_forward_backtest_regime(
     cost_penalty: float,
     candidate_multiplier: float,
     min_alpha: float,
+    panel_cache_dir: Path | None = None,
 ) -> dict:
     """
     Run regime-adaptive walk-forward backtest.
@@ -396,11 +361,7 @@ def run_walk_forward_backtest_regime(
             "max_drawdown",
             "transaction_cost_pct",
         ]:
-            values = [
-                f["performance"].get(key, 0.0)
-                for f in fold_results
-                if key in f["performance"]
-            ]
+            values = [f["performance"].get(key, 0.0) for f in fold_results if key in f["performance"]]
             if values:
                 import numpy as np
 
@@ -415,9 +376,7 @@ def run_walk_forward_backtest_regime(
     # Aggregate regime statistics
     regime_summary = {}
     if enable_regime_detection:
-        total_detections = sum(
-            f["regime_stats"].get("regime_detections", 0) for f in fold_results
-        )
+        total_detections = sum(f["regime_stats"].get("regime_detections", 0) for f in fold_results)
         regime_counts = {}
         exposure_values = []
 
@@ -431,29 +390,21 @@ def run_walk_forward_backtest_regime(
                     if regime_name not in regime_counts:
                         regime_counts[regime_name] = {"count": 0, "total_exposure": 0.0}
                     regime_counts[regime_name]["count"] += stats["count"]
-                    regime_counts[regime_name]["total_exposure"] += (
-                        stats["avg_exposure"] * stats["count"]
-                    )
+                    regime_counts[regime_name]["total_exposure"] += stats["avg_exposure"] * stats["count"]
 
         # Calculate regime summaries
         import numpy as np
 
         regime_summary = {
             "total_detections": total_detections,
-            "avg_exposure_across_folds": float(np.mean(exposure_values))
-            if exposure_values
-            else 1.0,
+            "avg_exposure_across_folds": float(np.mean(exposure_values)) if exposure_values else 1.0,
             "min_exposure": float(np.min(exposure_values)) if exposure_values else 1.0,
             "max_exposure": float(np.max(exposure_values)) if exposure_values else 1.0,
             "regime_distribution": {
                 name: {
                     "count": data["count"],
-                    "pct": 100.0 * data["count"] / total_detections
-                    if total_detections > 0
-                    else 0.0,
-                    "avg_exposure": data["total_exposure"] / data["count"]
-                    if data["count"] > 0
-                    else 1.0,
+                    "pct": 100.0 * data["count"] / total_detections if total_detections > 0 else 0.0,
+                    "avg_exposure": data["total_exposure"] / data["count"] if data["count"] > 0 else 1.0,
                 }
                 for name, data in regime_counts.items()
             },
@@ -490,17 +441,11 @@ def main(argv: list[str] | None = None) -> None:
         raise FileNotFoundError(f"Dataset not found: {data_path}")
 
     if not args.use_mock_predictions and args.model is None:
-        raise ValueError(
-            "Model path is required unless --use-mock-predictions is specified"
-        )
+        raise ValueError("Model path is required unless --use-mock-predictions is specified")
     if not args.use_mock_predictions and args.config is None:
-        raise ValueError(
-            "Config path is required unless --use-mock-predictions is specified"
-        )
+        raise ValueError("Config path is required unless --use-mock-predictions is specified")
 
-    panel_cache_dir = (
-        Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
-    )
+    panel_cache_dir = Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
 
     splitter = WalkForwardSplitter(
         train_days=args.train_days,
@@ -565,9 +510,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     duration = time.time() - start_time
-    print(
-        f"\nCompleted regime-adaptive walk-forward backtest in {duration/60:.2f} minutes"
-    )
+    print(f"\nCompleted regime-adaptive walk-forward backtest in {duration/60:.2f} minutes")
 
     metrics = results["metrics"]
     sharpe_stats = metrics.get("sharpe_ratio", {})
@@ -577,9 +520,7 @@ def main(argv: list[str] | None = None) -> None:
     skipped = results.get("skipped_folds", [])
     failed = results.get("failed_folds", [])
 
-    print(
-        f"\nFolds executed : {len(results['folds'])} | skipped={len(skipped)} | failed={len(failed)}"
-    )
+    print(f"\nFolds executed : {len(results['folds'])} | skipped={len(skipped)} | failed={len(failed)}")
 
     print("\nAggregate Metrics:")
     print(
@@ -588,20 +529,14 @@ def main(argv: list[str] | None = None) -> None:
         f"min={sharpe_stats.get('min', 0.0):.3f} max={sharpe_stats.get('max', 0.0):.3f}"
     )
     print(
-        f"  Total Return  | mean={return_stats.get('mean', 0.0):.2f}% "
-        f"median={return_stats.get('median', 0.0):.2f}%"
+        f"  Total Return  | mean={return_stats.get('mean', 0.0):.2f}% " f"median={return_stats.get('median', 0.0):.2f}%"
     )
-    print(
-        f"  Tx Cost (%PV) | mean={cost_stats.get('mean', 0.0):.2f}% "
-        f"median={cost_stats.get('median', 0.0):.2f}%"
-    )
+    print(f"  Tx Cost (%PV) | mean={cost_stats.get('mean', 0.0):.2f}% " f"median={cost_stats.get('median', 0.0):.2f}%")
 
     if args.enable_regime_detection:
         print("\nRegime Statistics:")
         print(f"  Total Detections  : {regime_summary.get('total_detections', 0)}")
-        print(
-            f"  Average Exposure  : {regime_summary.get('avg_exposure_across_folds', 1.0)*100:.1f}%"
-        )
+        print(f"  Average Exposure  : {regime_summary.get('avg_exposure_across_folds', 1.0)*100:.1f}%")
         print(
             f"  Exposure Range    : {regime_summary.get('min_exposure', 1.0)*100:.1f}% - "
             f"{regime_summary.get('max_exposure', 1.0)*100:.1f}%"
@@ -610,9 +545,7 @@ def main(argv: list[str] | None = None) -> None:
         regime_dist = regime_summary.get("regime_distribution", {})
         if regime_dist:
             print("\n  Regime Distribution:")
-            for regime_name, stats in sorted(
-                regime_dist.items(), key=lambda x: x[1]["count"], reverse=True
-            ):
+            for regime_name, stats in sorted(regime_dist.items(), key=lambda x: x[1]["count"], reverse=True):
                 print(
                     f"    {regime_name:12s}: {stats['count']:3d} detections ({stats['pct']:5.1f}%), "
                     f"Avg Exposure={stats['avg_exposure']*100:.1f}%"
@@ -642,12 +575,8 @@ def main(argv: list[str] | None = None) -> None:
                 f.write("\nRegime Detection:\n")
                 f.write("  Enabled       : Yes\n")
                 f.write(f"  Lookback      : {args.regime_lookback} days\n")
-                f.write(
-                    f"  Total Events  : {regime_summary.get('total_detections', 0)}\n"
-                )
-                f.write(
-                    f"  Avg Exposure  : {regime_summary.get('avg_exposure_across_folds', 1.0)*100:.1f}%\n"
-                )
+                f.write(f"  Total Events  : {regime_summary.get('total_detections', 0)}\n")
+                f.write(f"  Avg Exposure  : {regime_summary.get('avg_exposure_across_folds', 1.0)*100:.1f}%\n")
 
             f.write(f"\nRuntime (min)  : {duration/60:.2f}\n")
         print(f"[Output] Summary written to {summary_path}")

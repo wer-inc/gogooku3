@@ -14,7 +14,8 @@ from typing import Iterable, List, Optional
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
 try:
-    from builder.utils.schema_validator import SchemaValidator, SchemaValidationResult
+    from builder.utils.schema_validator import SchemaValidationResult, SchemaValidator
+
     SCHEMA_VALIDATION_AVAILABLE = True
 except ImportError:
     SCHEMA_VALIDATION_AVAILABLE = False
@@ -75,7 +76,9 @@ def find_metadata(chunk_dir: Path) -> Optional[Path]:
     return candidates[0] if candidates else None
 
 
-def collect_chunk_status(chunk_dir: Path, validate_schema: bool = False, schema_validator: Optional[SchemaValidator] = None) -> ChunkStatus:
+def collect_chunk_status(
+    chunk_dir: Path, validate_schema: bool = False, schema_validator: Optional[SchemaValidator] = None
+) -> ChunkStatus:
     chunk_id = chunk_dir.name
     status = ChunkStatus(chunk_id=chunk_id)
 
@@ -155,7 +158,9 @@ def summarize(chunks: Iterable[ChunkStatus], show_schema: bool = False) -> None:
         if show_schema:
             schema_display = chunk.schema_hash[:8] if chunk.schema_hash else "N/A"
             schema_status = "✓" if chunk.schema_ok else "✗"
-            print(f"{chunk.chunk_id:<15} {rows_display:>10} {state_display:<12} {schema_status} {schema_display:16s} {'; '.join(issues) if issues else ''}")
+            print(
+                f"{chunk.chunk_id:<15} {rows_display:>10} {state_display:<12} {schema_status} {schema_display:16s} {'; '.join(issues) if issues else ''}"
+            )
         else:
             print(f"{chunk.chunk_id:<15} {rows_display:>10} {state_display:<12} {'; '.join(issues) if issues else ''}")
 
@@ -211,7 +216,7 @@ def main() -> int:
     schema_validator = None
     if args.validate_schema:
         if not SCHEMA_VALIDATION_AVAILABLE:
-            print(f"[ERROR] Schema validation not available (import failed)", file=sys.stderr)
+            print("[ERROR] Schema validation not available (import failed)", file=sys.stderr)
             return 2
 
         try:

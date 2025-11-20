@@ -109,9 +109,7 @@ class ExponentialMovingAverage:
     def __init__(self, model: torch.nn.Module, beta: float = 0.999) -> None:
         self.beta = float(beta)
         self.shadow: dict[str, torch.Tensor] = {
-            name: param.detach().clone()
-            for name, param in model.named_parameters()
-            if param.requires_grad
+            name: param.detach().clone() for name, param in model.named_parameters() if param.requires_grad
         }
         self.backup: dict[str, torch.Tensor] | None = None
 
@@ -162,12 +160,8 @@ def clone_state_dict(state_dict: dict) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train APEX-Ranker v0 baseline.")
     parser.add_argument("--config", required=True, help="Path to YAML configuration.")
-    parser.add_argument(
-        "--output", default=None, help="Optional path to save model state dict."
-    )
-    parser.add_argument(
-        "--max-epochs", type=int, default=None, help="Optional cap on training epochs."
-    )
+    parser.add_argument("--output", default=None, help="Optional path to save model state dict.")
+    parser.add_argument("--max-epochs", type=int, default=None, help="Optional cap on training epochs.")
     parser.add_argument(
         "--max-train-days",
         type=int,
@@ -341,18 +335,14 @@ def load_dataset(
 
     target_cols = [resolve_target(int(h)) for h in horizons]
 
-    required_columns = (
-        [date_col, code_col] + selection.features + selection.masks + target_cols
-    )
+    required_columns = [date_col, code_col] + selection.features + selection.masks + target_cols
     required_columns = list(dict.fromkeys(required_columns))
 
     frame = pl.read_parquet(parquet_path, columns=required_columns)
 
     mask_columns = list(selection.masks)
     if mask_columns:
-        coverage_exprs = [
-            pl.col(mask).fill_null(0).gt(0.5).sum().alias(mask) for mask in mask_columns
-        ]
+        coverage_exprs = [pl.col(mask).fill_null(0).gt(0.5).sum().alias(mask) for mask in mask_columns]
         coverage = frame.select(coverage_exprs)
         active_masks: list[str] = []
         dropped_masks: list[str] = []
@@ -393,11 +383,7 @@ def load_dataset(
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
-    snapshot_epochs = {
-        int(epoch)
-        for epoch in args.ema_snapshot_epochs or []
-        if int(epoch) > 0
-    }
+    snapshot_epochs = {int(epoch) for epoch in args.ema_snapshot_epochs or [] if int(epoch) > 0}
     warned_snapshot_no_output = False
     eval_cfg = cfg.get("eval", {}) or {}
     eval_k_value = eval_cfg.get("k")
@@ -410,12 +396,10 @@ def main() -> None:
     es_weights_cfg = eval_cfg.get("es_weights", "0.5,0.35,0.15")
     es_weights: dict[int, float] = {}
     try:
-        w1, w2, w3 = [float(x.strip()) for x in es_weights_cfg.split(",")]
+        w1, w2, w3 = (float(x.strip()) for x in es_weights_cfg.split(","))
         es_weights = {5: w1, 10: w2, 20: w3}
     except Exception as exc:  # pragma: no cover - defensive
-        raise ValueError(
-            "eval.es_weights must be a comma-separated string for horizons 5,10,20"
-        ) from exc
+        raise ValueError("eval.es_weights must be a comma-separated string for horizons 5,10,20") from exc
 
     data_cfg = cfg["data"]
     cfg.get("normalization", {})
@@ -435,16 +419,14 @@ def main() -> None:
 
     evaluation_cfg = train_cfg.get("evaluation", {}) or {}
     cfg_cv_type = evaluation_cfg.get("splitter", "walk_forward").lower()
-    cv_type = (args.cv_type.lower() if args.cv_type else cfg_cv_type)
+    cv_type = args.cv_type.lower() if args.cv_type else cfg_cv_type
     purged_cfg = evaluation_cfg.get("purged_kfold", {}) or {}
 
     default_n_splits = int(purged_cfg.get("n_splits", 5))
     default_embargo = int(purged_cfg.get("embargo_days", 0))
 
     n_splits = args.cv_n_splits if args.cv_n_splits is not None else default_n_splits
-    embargo_days = (
-        args.embargo_days if args.embargo_days is not None else default_embargo
-    )
+    embargo_days = args.embargo_days if args.embargo_days is not None else default_embargo
     cv_fold = int(args.cv_fold if args.cv_fold is not None else purged_cfg.get("fold", 1) or 1)
 
     horizons = [int(h) for h in train_cfg["horizons"]]
@@ -494,9 +476,7 @@ def main() -> None:
         train_dates = dates[:-val_days] if len(dates) > val_days else dates
         val_dates = dates[-val_days:] if len(dates) > val_days else dates[-1:]
         if args.cv_fold is not None:
-            print(
-                "[WARN] --cv-fold specified but purged_kfold is not active; ignoring."
-            )
+            print("[WARN] --cv-fold specified but purged_kfold is not active; ignoring.")
 
     if args.max_train_days is not None and train_dates:
         train_dates = train_dates[-int(args.max_train_days) :]
@@ -520,9 +500,7 @@ def main() -> None:
         raise ValueError("No training dates available after applying filters.")
     if not val_dates:
         fallback = train_dates[-1]
-        print(
-            f"[WARN] No validation dates after filtering; falling back to the last training day {fallback}"
-        )
+        print(f"[WARN] No validation dates after filtering; falling back to the last training day {fallback}")
         val_dates = [fallback]
 
     train_dataset = DayPanelDataset(
@@ -597,9 +575,15 @@ def main() -> None:
         loss_fn=loss_module,
     )
 
-    device = train_cfg.get("device", "auto")
+    # Default to GPU; fail fast if explicitly set to CUDA but unavailable.
+    device = train_cfg.get("device", "cuda")
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
+    elif device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            "train.device is set to 'cuda' but torch.cuda.is_available() == False. "
+            "Install CUDA or set train.device=cpu if GPU is not present."
+        )
     model = model.to(device)
 
     use_ema = bool(train_cfg.get("use_ema", True))
@@ -609,6 +593,7 @@ def main() -> None:
     # ========== EVAL-ONLY MODE ==========
     if args.eval_only:
         import sys
+
         if not args.checkpoint:
             raise ValueError("--eval-only requires --checkpoint to be specified")
 
@@ -706,22 +691,16 @@ def main() -> None:
                 if not stats["rank_ic"]:
                     continue
                 arrays = {
-                    key: np.asarray(values, dtype=np.float64)
-                    for key, values in stats.items()
-                    if key != "date_int"
+                    key: np.asarray(values, dtype=np.float64) for key, values in stats.items() if key != "date_int"
                 }
                 rank_ic_mean = float(arrays["rank_ic"].mean())
                 overlap_mean = float(arrays["topk_overlap"].mean())
                 p_at_k_mean = float(arrays["p_at_k_pos"].mean())
                 p_rand_mean = float(arrays["p_at_k_pos_rand"].mean())
-                delta_p = float(
-                    (arrays["p_at_k_pos"] - arrays["p_at_k_pos_rand"]).mean()
-                )
+                delta_p = float((arrays["p_at_k_pos"] - arrays["p_at_k_pos_rand"]).mean())
                 ndcg_mean = float(arrays["ndcg"].mean())
                 ndcg_rand_mean = float(arrays["ndcg_rand"].mean())
-                delta_ndcg = float(
-                    (arrays["ndcg"] - arrays["ndcg_rand"]).mean()
-                )
+                delta_ndcg = float((arrays["ndcg"] - arrays["ndcg_rand"]).mean())
                 spread_mean = float(arrays["spread"].mean())
                 k_over_n_mean = float(arrays["k_over_n"].mean())
                 wil_mean = float(arrays["wil"].mean())
@@ -763,9 +742,7 @@ def main() -> None:
                 )
 
             if val_panel_count == 0:
-                print(
-                    "[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day."
-                )
+                print("[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day.")
             else:
                 print(f"[INFO] Processed {val_panel_count} validation panels.")
 
@@ -773,15 +750,11 @@ def main() -> None:
             if args.output:
                 output_path = Path(args.output)
                 ratio_int = int(round(eval_ratio_override * 100))
-                npz_path = output_path.with_name(
-                    f"{output_path.stem}_reval_k{ratio_int:02d}_val_perday.npz"
-                )
+                npz_path = output_path.with_name(f"{output_path.stem}_reval_k{ratio_int:02d}_val_perday.npz")
                 payload: dict[str, np.ndarray] = {}
                 for horizon, stats in per_horizon.items():
                     prefix = f"h{horizon}_"
-                    payload[prefix + "date_int"] = np.asarray(
-                        stats["date_int"], dtype=np.int64
-                    )
+                    payload[prefix + "date_int"] = np.asarray(stats["date_int"], dtype=np.int64)
                     for key, values in stats.items():
                         if key == "date_int":
                             continue
@@ -827,9 +800,7 @@ def main() -> None:
             schedulers=[warmup_scheduler, cosine_scheduler],
             milestones=[warmup_epochs],
         )
-        print(
-            f"[INFO] LR warmup enabled: epochs={warmup_epochs}, start_factor={warmup_start_factor}"
-        )
+        print(f"[INFO] LR warmup enabled: epochs={warmup_epochs}, start_factor={warmup_start_factor}")
     else:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
@@ -859,9 +830,7 @@ def main() -> None:
 
     print(f"[INFO] Training device: {device}")
     print(f"[INFO] Train days: {len(train_dataset)}, Val days: {len(val_dataset)}")
-    print(
-        f"[INFO] Active features: {len(feature_cols)}, Active masks: {len(mask_cols)}"
-    )
+    print(f"[INFO] Active features: {len(feature_cols)}, Active masks: {len(mask_cols)}")
     print(f"[INFO] Cached trading days available: {len(cache.date_ints)}")
     if not train_dataset:
         print("[ERROR] No training days available after masking; aborting.")
@@ -870,22 +839,14 @@ def main() -> None:
     # Initialize early stopping if requested (config or CLI)
     early_stopping = None
     early_cfg = train_cfg.get("early_stopping", {}) or {}
-    patience = (
-        args.early_stopping_patience
-        if args.early_stopping_patience is not None
-        else early_cfg.get("patience")
-    )
+    patience = args.early_stopping_patience if args.early_stopping_patience is not None else early_cfg.get("patience")
     monitor_metric = args.early_stopping_metric or early_cfg.get("metric")
     if not monitor_metric:
         monitor_metric = "short_term_score"
     min_delta = float(early_cfg.get("min_delta", 0.0))
     if patience is not None:
-        early_stopping = EarlyStopping(
-            patience=int(patience), mode="max", min_delta=min_delta
-        )
-        print(
-            f"[INFO] Early stopping enabled: patience={patience}, metric={monitor_metric}, min_delta={min_delta:.4f}"
-        )
+        early_stopping = EarlyStopping(patience=int(patience), mode="max", min_delta=min_delta)
+        print(f"[INFO] Early stopping enabled: patience={patience}, metric={monitor_metric}, min_delta={min_delta:.4f}")
 
     for epoch in range(1, train_cfg["epochs"] + 1):
         print(f"[INFO] Starting epoch {epoch}/{train_cfg['epochs']}")
@@ -945,18 +906,14 @@ def main() -> None:
                 print(f"[Epoch {epoch} | Step {step}] loss={avg_loss:.4f}")
 
             if args.max_train_steps is not None and batch_count >= args.max_train_steps:
-                print(
-                    f"[INFO] Reached max_train_steps={args.max_train_steps}; stopping epoch early."
-                )
+                print(f"[INFO] Reached max_train_steps={args.max_train_steps}; stopping epoch early.")
                 break
 
         if batch_count:
             scheduler.step()
             print(f"Epoch {epoch} training loss: {running_loss / batch_count:.4f}")
         else:
-            print(
-                f"[WARN] Epoch {epoch} produced no training batches; check data coverage."
-            )
+            print(f"[WARN] Epoch {epoch} produced no training batches; check data coverage.")
             continue
 
         # Validation (use EMA weights when enabled)
@@ -1031,23 +988,15 @@ def main() -> None:
             stats = per_horizon[horizon]
             if not stats["rank_ic"]:
                 continue
-            arrays = {
-                key: np.asarray(values, dtype=np.float64)
-                for key, values in stats.items()
-                if key != "date_int"
-            }
+            arrays = {key: np.asarray(values, dtype=np.float64) for key, values in stats.items() if key != "date_int"}
             rank_ic_mean = float(arrays["rank_ic"].mean())
             overlap_mean = float(arrays["topk_overlap"].mean())
             p_at_k_mean = float(arrays["p_at_k_pos"].mean())
             p_rand_mean = float(arrays["p_at_k_pos_rand"].mean())
-            delta_p = float(
-                (arrays["p_at_k_pos"] - arrays["p_at_k_pos_rand"]).mean()
-            )
+            delta_p = float((arrays["p_at_k_pos"] - arrays["p_at_k_pos_rand"]).mean())
             ndcg_mean = float(arrays["ndcg"].mean())
             ndcg_rand_mean = float(arrays["ndcg_rand"].mean())
-            delta_ndcg = float(
-                (arrays["ndcg"] - arrays["ndcg_rand"]).mean()
-            )
+            delta_ndcg = float((arrays["ndcg"] - arrays["ndcg_rand"]).mean())
             spread_mean = float(arrays["spread"].mean())
             k_over_n_mean = float(arrays["k_over_n"].mean())
             wil_mean = float(arrays["wil"].mean())
@@ -1088,9 +1037,7 @@ def main() -> None:
                 )
             )
         if val_panel_count == 0:
-            print(
-                "[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day."
-            )
+            print("[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day.")
         else:
             print(f"[INFO] Processed {val_panel_count} validation panels.")
 
@@ -1114,9 +1061,7 @@ def main() -> None:
             short_term_score += weight * summary[horizon]["p_at_k_pos"]
             total_weight += weight
         if total_weight > 0:
-            print(
-                f"[Val] Short-term score (5/10/20d weighted) = {short_term_score:.4f}"
-            )
+            print(f"[Val] Short-term score (5/10/20d weighted) = {short_term_score:.4f}")
             metric_results["short_term_score"] = short_term_score
 
         if args.output:
@@ -1125,9 +1070,7 @@ def main() -> None:
             payload: dict[str, np.ndarray] = {}
             for horizon, stats in per_horizon.items():
                 prefix = f"h{horizon}_"
-                payload[prefix + "date_int"] = np.asarray(
-                    stats["date_int"], dtype=np.int64
-                )
+                payload[prefix + "date_int"] = np.asarray(stats["date_int"], dtype=np.int64)
                 for key, values in stats.items():
                     if key == "date_int":
                         continue
@@ -1136,23 +1079,15 @@ def main() -> None:
                 np.savez_compressed(npz_path, **payload)
                 print(f"[INFO] Saved validation per-day metrics to {npz_path}")
 
-        if (
-            ema is not None
-            and snapshot_epochs
-            and epoch in snapshot_epochs
-        ):
+        if ema is not None and snapshot_epochs and epoch in snapshot_epochs:
             if args.output:
-                snapshot_path = Path(args.output).with_name(
-                    f"{Path(args.output).stem}_ema_epoch{epoch}.pt"
-                )
+                snapshot_path = Path(args.output).with_name(f"{Path(args.output).stem}_ema_epoch{epoch}.pt")
                 snapshot_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(model.state_dict(), snapshot_path)
                 print(f"[Snapshot] Saved EMA weights to {snapshot_path}")
                 snapshot_epochs.discard(epoch)
             elif not warned_snapshot_no_output:
-                print(
-                    "[WARN] --ema-snapshot-epochs provided but --output missing; skipping snapshot exports."
-                )
+                print("[WARN] --ema-snapshot-epochs provided but --output missing; skipping snapshot exports.")
                 warned_snapshot_no_output = True
                 snapshot_epochs.discard(epoch)
 
@@ -1168,9 +1103,7 @@ def main() -> None:
                 should_stop = early_stopping(score, epoch, model_state, ema_state)
 
                 if should_stop:
-                    print(
-                        f"[INFO] Restoring best model from epoch {early_stopping.best_epoch}"
-                    )
+                    print(f"[INFO] Restoring best model from epoch {early_stopping.best_epoch}")
                     model.load_state_dict(early_stopping.best_state)
                     break
             else:

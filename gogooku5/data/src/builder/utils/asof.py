@@ -214,6 +214,13 @@ def interval_join_pl(
         len(snapshot_sorted),
     )
 
+    # Avoid duplicate column names up front (GPUバックエンドでの衝突を防ぐ)
+    protected = {on_code, snapshot_ts, backbone_ts}
+    overlap = [c for c in snapshot_sorted.columns if c in backbone_sorted.columns and c not in protected]
+    if overlap:
+        rename_map = {c: f"{c}{suffix}" for c in overlap}
+        snapshot_sorted = snapshot_sorted.rename(rename_map)
+
     # Perform as-of join
     result = backbone_sorted.join_asof(
         snapshot_sorted,

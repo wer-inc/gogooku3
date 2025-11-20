@@ -34,10 +34,9 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable
 
 import polars as pl
-
 
 BETA_EPS: float = 1e-12
 
@@ -91,9 +90,7 @@ def _add_beta_alpha_from_dataset(
         .unique(subset=[date_col], keep="first")
         .sort(date_col)
         .with_columns(
-            (
-                (pl.col("topix_close") / (pl.col("topix_close").shift(1) + BETA_EPS)) - 1.0
-            ).alias("topix_ret_1d")
+            ((pl.col("topix_close") / (pl.col("topix_close").shift(1) + BETA_EPS)) - 1.0).alias("topix_ret_1d")
         )
         .select([date_col, "topix_ret_1d"])
     )
@@ -124,10 +121,8 @@ def _add_beta_alpha_from_dataset(
         stock_centered = stock_shifted - mean_stock
         topix_centered = topix_shifted - mean_topix
 
-        var_topix = (topix_centered ** 2).rolling_mean(window_size=window, min_periods=min_periods)
-        cov_stock_topix = (stock_centered * topix_centered).rolling_mean(
-            window_size=window, min_periods=min_periods
-        )
+        var_topix = (topix_centered**2).rolling_mean(window_size=window, min_periods=min_periods)
+        cov_stock_topix = (stock_centered * topix_centered).rolling_mean(window_size=window, min_periods=min_periods)
 
         beta = cov_stock_topix / (var_topix + BETA_EPS)
         alpha = mean_stock - beta * mean_topix
@@ -141,9 +136,7 @@ def _add_beta_alpha_from_dataset(
         return group
 
     df_beta = (
-        df_sorted.group_by(code_col, maintain_order=True)
-        .map_groups(_add_beta_alpha_group)
-        .sort([code_col, date_col])
+        df_sorted.group_by(code_col, maintain_order=True).map_groups(_add_beta_alpha_group).sort([code_col, date_col])
     )
 
     # Clean up temporary TOPIX returns if they are not part of the schema contract.
@@ -274,9 +267,7 @@ def _add_beta_alpha_derivatives(
                 return group.with_columns(new_cols) if new_cols else group
 
             df_sorted = (
-                df_sorted.group_by(code_col, maintain_order=True)
-                .map_groups(_add_group)
-                .sort([code_col, date_col])
+                df_sorted.group_by(code_col, maintain_order=True).map_groups(_add_group).sort([code_col, date_col])
             )
 
     if sector_col is None:
@@ -287,9 +278,8 @@ def _add_beta_alpha_derivatives(
             mean_col = f"{feature}_sector_mean"
             rel_col = f"{feature}_sector_rel"
             if _needs_population(df_sorted, mean_col):
-                sector_means = (
-                    df_sorted.group_by([date_col, sector_col], maintain_order=False)
-                    .agg(pl.col(feature).mean().alias(mean_col))
+                sector_means = df_sorted.group_by([date_col, sector_col], maintain_order=False).agg(
+                    pl.col(feature).mean().alias(mean_col)
                 )
                 df_sorted = df_sorted.join(sector_means, on=[date_col, sector_col], how="left")
             if _needs_population(df_sorted, rel_col):

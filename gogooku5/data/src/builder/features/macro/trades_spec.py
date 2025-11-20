@@ -245,7 +245,7 @@ def build_trades_spec_features(
         ]
     )
 
-    # 3. z-score（13週、52週、shift(1)でリーク防止）
+    # 3. z-score（20営業日、13週、52週、shift(1)でリーク防止）
     # Sectionごとにグループ化
     for col_base in [
         "flow_foreigners_net_ratio",
@@ -253,6 +253,24 @@ def build_trades_spec_features(
         "flow_trust_banks_net_ratio",
         "flow_investment_trusts_net_ratio",
     ]:
+        # 20営業日（約1か月）
+        trades_spec_df = trades_spec_df.with_columns(
+            [
+                roll_mean_safe(pl.col(col_base), 20, min_periods=10, by="section").alias(f"{col_base}_ma20"),
+                roll_std_safe(pl.col(col_base), 20, min_periods=10, by="section").alias(f"{col_base}_std20"),
+            ]
+        )
+        trades_spec_df = trades_spec_df.with_columns(
+            (
+                pl.when(pl.col(f"{col_base}_std20").abs() > eps)
+                .then(
+                    (pl.col(col_base).shift(1).over("section") - pl.col(f"{col_base}_ma20"))
+                    / (pl.col(f"{col_base}_std20") + eps)
+                )
+                .otherwise(None)
+            ).alias(f"{col_base}_zscore_20d")
+        )
+
         # 13週（約65営業日）
         trades_spec_df = trades_spec_df.with_columns(
             [
@@ -291,7 +309,14 @@ def build_trades_spec_features(
         )
 
         # 一時列を削除
-        for temp_col in [f"{col_base}_ma13w", f"{col_base}_std13w", f"{col_base}_ma52w", f"{col_base}_std52w"]:
+        for temp_col in [
+            f"{col_base}_ma20",
+            f"{col_base}_std20",
+            f"{col_base}_ma13w",
+            f"{col_base}_std13w",
+            f"{col_base}_ma52w",
+            f"{col_base}_std52w",
+        ]:
             if temp_col in trades_spec_df.columns:
                 trades_spec_df = trades_spec_df.drop(temp_col)
 

@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List
@@ -38,10 +37,7 @@ import polars as pl
 
 
 def check_schema_consistency(
-    df: pl.DataFrame,
-    *,
-    expected_code_dtype: pl.DataType = pl.Utf8,
-    expected_sec_id_dtype: pl.DataType | None = None
+    df: pl.DataFrame, *, expected_code_dtype: pl.DataType = pl.Utf8, expected_sec_id_dtype: pl.DataType | None = None
 ) -> Dict[str, Any]:
     """Verify that code columns are Utf8 (not Categorical) after optimization.
 
@@ -95,13 +91,9 @@ def check_schema_consistency(
         if expected_sec_id_dtype is None:
             # SecId is typically int32 or int64
             if sec_id_dtype not in (pl.Int32, pl.Int64):
-                results["warnings"].append(
-                    f"sec_id has dtype {sec_id_dtype}, expected Int32 or Int64"
-                )
+                results["warnings"].append(f"sec_id has dtype {sec_id_dtype}, expected Int32 or Int64")
         elif sec_id_dtype != expected_sec_id_dtype:
-            results["warnings"].append(
-                f"sec_id has dtype {sec_id_dtype}, expected {expected_sec_id_dtype}"
-            )
+            results["warnings"].append(f"sec_id has dtype {sec_id_dtype}, expected {expected_sec_id_dtype}")
 
     return results
 
@@ -150,8 +142,7 @@ def check_null_rates(df: pl.DataFrame, columns: List[str] | None = None) -> Dict
 
 
 def benchmark_build_time(
-    baseline_log_path: Path | None = None,
-    optimized_log_path: Path | None = None
+    baseline_log_path: Path | None = None, optimized_log_path: Path | None = None
 ) -> Dict[str, Any]:
     """Compare build times from log files.
 
@@ -189,10 +180,7 @@ def benchmark_build_time(
 
 
 def compare_datasets(
-    baseline_df: pl.DataFrame,
-    optimized_df: pl.DataFrame,
-    *,
-    tolerance: float = 1e-6
+    baseline_df: pl.DataFrame, optimized_df: pl.DataFrame, *, tolerance: float = 1e-6
 ) -> Dict[str, Any]:
     """Compare baseline and optimized datasets for correctness.
 
@@ -220,8 +208,7 @@ def compare_datasets(
     else:
         results["passed"] = False
         results["errors"].append(
-            f"Row count mismatch: baseline={len(baseline_df):,}, "
-            f"optimized={len(optimized_df):,}"
+            f"Row count mismatch: baseline={len(baseline_df):,}, " f"optimized={len(optimized_df):,}"
         )
 
     # Column count
@@ -230,8 +217,7 @@ def compare_datasets(
     else:
         results["passed"] = False
         results["errors"].append(
-            f"Column count mismatch: baseline={len(baseline_df.columns)}, "
-            f"optimized={len(optimized_df.columns)}"
+            f"Column count mismatch: baseline={len(baseline_df.columns)}, " f"optimized={len(optimized_df.columns)}"
         )
 
     # Schema (column names and dtypes)
@@ -279,9 +265,7 @@ def compare_datasets(
                     results["data_match"] = True
                 else:
                     results["passed"] = False
-                    results["errors"].append(
-                        "Data mismatch detected in sample (first 1000 rows)"
-                    )
+                    results["errors"].append("Data mismatch detected in sample (first 1000 rows)")
             else:
                 results["warnings"].append("No common sort columns found for data comparison")
 
@@ -367,13 +351,13 @@ def main() -> int:
         report["schema_check"] = schema_results
 
         if schema_results["passed"]:
-            print(f"   ✅ PASSED")
+            print("   ✅ PASSED")
             print(f"   Code column: {schema_results['code_column']} ({schema_results['code_dtype']})")
             if schema_results["sec_id_dtype"]:
                 print(f"   SecId column: sec_id ({schema_results['sec_id_dtype']})")
         else:
             report["overall_passed"] = False
-            print(f"   ❌ FAILED")
+            print("   ❌ FAILED")
             for error in schema_results["errors"]:
                 print(f"   ERROR: {error}")
 

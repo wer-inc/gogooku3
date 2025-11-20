@@ -5,7 +5,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional
 
 import polars as pl
 
@@ -67,9 +66,7 @@ class RawDataStore:
                 matching.append(slice_)
 
         if not matching:
-            raise FileNotFoundError(
-                f"No raw data covering {start}→{end} for source={source}"
-            )
+            raise FileNotFoundError(f"No raw data covering {start}→{end} for source={source}")
 
         frames = []
         for slice_ in matching:

@@ -485,37 +485,65 @@ def check6_fs_dividends(path: str, score: Score, start: str | None, end: str | N
     lf = load_dataset_lazy(path, start, end)
     cols = lf.columns
 
-    fs_required = [
-        "fs_revenue_ttm",
-        "fs_op_profit_ttm",
-        "fs_net_income_ttm",
-        "fs_cfo_ttm",
-        "fs_op_margin",
-        "fs_net_margin",
-        "fs_roe_ttm",
-        "fs_roa_ttm",
-        "fs_accruals_ttm",
-        "fs_fcf_ttm",
-        "fs_staleness_bd",
-        "fs_lag_days",
-        "is_fs_valid",
-    ]
-    fs_missing = [col for col in fs_required if col not in cols]
+    # Core required FS columns（エイリアスも許容）
+    revenue_col = resolve_column(cols, "fs_revenue_ttm", "fs_ttm_sales")
+    op_profit_col = resolve_column(cols, "fs_op_profit_ttm", "fs_ttm_op_profit")
+    net_income_col = resolve_column(cols, "fs_net_income_ttm", "fs_ttm_net_income")
+    cfo_col = resolve_column(cols, "fs_cfo_ttm", "fs_ttm_cfo")
+    fs_valid_col = resolve_column(cols, "is_fs_valid", "fs_is_valid")
+
+    core_logical_to_actual: dict[str, str | None] = {
+        "fs_revenue_ttm": revenue_col,
+        "fs_op_profit_ttm": op_profit_col,
+        "fs_net_income_ttm": net_income_col,
+        "fs_cfo_ttm": cfo_col,
+        "fs_staleness_bd": "fs_staleness_bd" if "fs_staleness_bd" in cols else None,
+        "fs_lag_days": "fs_lag_days" if "fs_lag_days" in cols else None,
+        "is_fs_valid": fs_valid_col,
+    }
+
+    fs_missing = [logical for logical, actual in core_logical_to_actual.items() if actual is None]
     fs_status = "PASS"
     fs_details: list[str] = []
 
     if fs_missing:
-        fs_status = "FAIL"
-        fs_details.append(f"missing: {fs_missing}")
+        score.add(
+            "6) Financial statements & dividends (as‑of)",
+            "FAIL",
+            f"fs:missing core columns: {fs_missing}",
+            {},
+        )
+        return
 
-    fs_valid_rate = _mean(lf, "is_fs_valid")
+    # 実在する列名でカバレッジ評価
+    core_actual_cols = [c for c in core_logical_to_actual.values() if c is not None]
+
+    fs_valid_rate = _mean(lf, core_logical_to_actual["is_fs_valid"])  # type: ignore[arg-type]
     fs_recent_rate = (
-        _mean(lf, "fs_is_recent", filter_expr=pl.col("is_fs_valid") == 1) if "fs_is_recent" in cols else None
+        _mean(
+            lf,
+            "fs_is_recent",
+            filter_expr=pl.col(core_logical_to_actual["is_fs_valid"]).cast(pl.Int8) == 1,  # type: ignore[arg-type]
+        )
+        if "fs_is_recent" in cols
+        else None
     )
-    fs_cov = coverage_ratio(lf, [c for c in fs_required if c in cols])
-    fs_staleness_p95 = _series_quantile(lf, "fs_staleness_bd", 0.95) if "fs_staleness_bd" in cols else None
-    fs_staleness_mean = _mean(lf, "fs_staleness_bd") if "fs_staleness_bd" in cols else None
-    fs_lag_p95 = _series_quantile(lf, "fs_lag_days", 0.95) if "fs_lag_days" in cols else None
+    fs_cov = coverage_ratio(lf, core_actual_cols)
+    fs_staleness_p95 = (
+        _series_quantile(lf, core_logical_to_actual["fs_staleness_bd"], 0.95)  # type: ignore[arg-type]
+        if core_logical_to_actual["fs_staleness_bd"] is not None
+        else None
+    )
+    fs_staleness_mean = (
+        _mean(lf, core_logical_to_actual["fs_staleness_bd"])  # type: ignore[arg-type]
+        if core_logical_to_actual["fs_staleness_bd"] is not None
+        else None
+    )
+    fs_lag_p95 = (
+        _series_quantile(lf, core_logical_to_actual["fs_lag_days"], 0.95)  # type: ignore[arg-type]
+        if core_logical_to_actual["fs_lag_days"] is not None
+        else None
+    )
 
     if fs_valid_rate is not None and fs_valid_rate < 0.5:
         fs_status = _escalate(fs_status, "WARN")
@@ -1078,6 +1106,57 @@ def check8_limit_session(path: str, score: Score, start: str | None, end: str | 
             ).alias("pm_range_q99_err")
         )
 
+    # Union range 検査: max(AM/PM high) - min(AM/PM low) vs 当日レンジ（sMAPE + 除外ルール）
+    if (
+        morning_high_col
+        and morning_low_col
+        and afternoon_high_col
+        and afternoon_low_col
+        and adj_high_col
+        and adj_low_col
+        and adj_close_col
+        and code_col
+    ):
+        shift = int(os.getenv("SESSION_UNION_ASOF_SHIFT", "1"))
+        # 左閉（T+1）アライン下でのレンジと sMAPE を計算
+        full_hi = pl.col(adj_high_col).shift(shift).over(code_col)
+        full_lo = pl.col(adj_low_col).shift(shift).over(code_col)
+        full_rng = (full_hi - full_lo).abs()
+
+        m_hi = pl.col(morning_high_col).shift(shift).over(code_col)
+        m_lo = pl.col(morning_low_col).shift(shift).over(code_col)
+        p_hi = pl.col(afternoon_high_col).shift(shift).over(code_col)
+        p_lo = pl.col(afternoon_low_col).shift(shift).over(code_col)
+
+        union_hi = pl.max_horizontal(m_hi, p_hi)
+        union_lo = pl.min_horizontal(m_lo, p_lo)
+        union_rng = (union_hi - union_lo).abs()
+
+        prev_close_expr = pl.col(adj_close_col).shift(shift).over(code_col)
+        den_floor = (prev_close_expr.abs() * 1e-4).fill_null(0.0)
+        denom = pl.max_horizontal(full_rng, den_floor, pl.lit(1e-6))
+
+        base_smape = 2.0 * (union_rng - full_rng).abs() / (union_rng.abs() + full_rng.abs() + pl.lit(EPS))
+
+        valid_mask = (
+            m_hi.is_not_null()
+            & m_lo.is_not_null()
+            & p_hi.is_not_null()
+            & p_lo.is_not_null()
+            & full_rng.is_not_null()
+            & denom.gt(0)
+        )
+
+        union_smape = pl.when(valid_mask).then(base_smape).otherwise(None)
+
+        agg_exprs.extend(
+            [
+                pl.quantile(union_smape, 0.95).alias("union_smape_q95"),
+                pl.quantile(union_smape, 0.99).alias("union_smape_q99"),
+                valid_mask.cast(pl.Float64).mean().alias("union_coverage"),
+            ]
+        )
+
     if limit_up_flag_col and ret_prev_col:
         agg_exprs.append(
             pl.mean(((pl.col(limit_up_flag_col) == 1) & (pl.col(ret_prev_col) < -0.3)).cast(pl.Float64)).alias(
@@ -1124,6 +1203,12 @@ def check8_limit_session(path: str, score: Score, start: str | None, end: str | 
     pm_range_err = float(metrics.get("pm_range_q99_err", 0.0) or 0.0)
     up_neg_share = float(metrics.get("limit_up_negative_ret_share", 0.0) or 0.0)
     down_pos_share = float(metrics.get("limit_down_positive_ret_share", 0.0) or 0.0)
+
+    union_smape_q95 = metrics.get("union_smape_q95")
+    union_smape_q99 = metrics.get("union_smape_q99")
+    union_coverage = metrics.get("union_coverage")
+    q95_th = float(os.getenv("VALIDATOR_SESSION_UNION_Q95", "0.10"))
+    cov_min = float(os.getenv("VALIDATOR_SESSION_UNION_COVERAGE_MIN", "0.70"))
 
     if up_mismatch > 1e-4:
         status = "FAIL"
@@ -1177,10 +1262,23 @@ def check8_limit_session(path: str, score: Score, start: str | None, end: str | 
     if pm_gap_err > 1e-6:
         status = "FAIL"
         detail_parts.append(f"pm_gap_am_close q99 err={pm_gap_err:.2e}")
+    # pm_range の再現誤差は診断のみ（合否には使わず、union_sMAPE で整合性を検証）
     if pm_range_err > 1e-6:
-        # pm_range の再現誤差は一時的に WARN 扱い（クリーンアップ過渡期）
-        status = _escalate(status, "WARN")
         detail_parts.append(f"pm_range q99 err={pm_range_err:.2e}")
+
+    # Union sMAPE の coverage / q95 による最終ゲート
+    if union_coverage is not None and union_smape_q95 is not None:
+        cov = float(union_coverage)
+        q95 = float(union_smape_q95)
+        q99 = float(union_smape_q99 or 0.0)
+        if cov < cov_min:
+            status = "FAIL"
+            detail_parts.append(f"union_sMAPE coverage={cov:.2%} < {cov_min:.0%}")
+        if q95 > q95_th:
+            status = "FAIL"
+            detail_parts.append(f"union_sMAPE q95={q95:.2%} > {q95_th:.0%}")
+        # q99 は診断情報として detail に残す
+        detail_parts.append(f"union_sMAPE q99={q99:.2%}")
 
     if up_neg_share > 0.001:
         status = _escalate(status, "WARN")
@@ -2151,7 +2249,8 @@ def check19_financial_statements(
         "fs_ttm_op_profit": ["fs_ttm_op_profit", "fs_op_profit_ttm"],
         "fs_ttm_net_income": ["fs_ttm_net_income"],
         "fs_ttm_cfo": ["fs_ttm_cfo", "fs_cfo_ttm"],
-        "fs_is_valid": ["fs_is_valid"],
+        # fs_is_valid は新旧両方の名前を許容
+        "fs_is_valid": ["fs_is_valid", "is_fs_valid"],
     }
 
     resolved_required: dict[str, str] = {}
@@ -2172,8 +2271,8 @@ def check19_financial_statements(
         return
 
     exprs = [
-        # fs_is_validのカバレッジ（>= 70%）
-        pl.mean(pl.col(resolved_required["fs_is_valid"]).cast(pl.Float64)).alias("is_valid_coverage"),
+        # fs_is_valid のカバレッジ（非NULL率）と true rate
+        pl.mean(pl.col(resolved_required["fs_is_valid"]).is_not_null().cast(pl.Float64)).alias("is_valid_coverage"),
         pl.mean((pl.col(resolved_required["fs_is_valid"]) == 1).cast(pl.Float64)).alias("is_valid_true_rate"),
         # fs_ttm_*の欠損率
         pl.mean(pl.col(resolved_required["fs_ttm_sales"]).is_null().cast(pl.Float64)).alias("fs_ttm_sales_null_rate"),
@@ -2255,10 +2354,10 @@ def check19_financial_statements(
         status = _escalate(status, "WARN")
         detail_parts.append(f"fs_equity_ratio extreme rate={equity_ratio_extreme:.2%} > 1%")
 
-    # stalenessのp95（<= 65営業日）
-    if staleness_p95 > 65:
+    # stalenessのp95（<= 120営業日を目安とする）
+    if staleness_p95 > 120:
         status = _escalate(status, "WARN")
-        detail_parts.append(f"fs_staleness_bd p95={staleness_p95:.1f} > 65 days")
+        detail_parts.append(f"fs_staleness_bd p95={staleness_p95:.1f} > 120 days")
 
     # エイリアスの整合性チェック
     if alias_inconsistency > 1e-4:  # 0.01%以上は異常

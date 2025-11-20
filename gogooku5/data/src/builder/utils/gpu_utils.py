@@ -21,12 +21,10 @@ if str(_GOGOOKU3_SRC) not in sys.path:
     sys.path.insert(0, str(_GOGOOKU3_SRC))
 
 try:
-    from utils.gpu_etl import (
-        _has_cuda,
-        init_rmm_legacy as init_rmm,
-        to_cudf as pl_to_cudf,
-        to_polars as cudf_to_pl,
-    )
+    from utils.gpu_etl import _has_cuda
+    from utils.gpu_etl import init_rmm_legacy as init_rmm
+    from utils.gpu_etl import to_cudf as pl_to_cudf
+    from utils.gpu_etl import to_polars as cudf_to_pl
 
     GPU_AVAILABLE = _has_cuda()
 except ImportError:
@@ -112,8 +110,6 @@ def gpu_rolling_mean(
     """
 
     def gpu_fn(gdf):  # type: ignore[no-untyped-def]
-        import cudf  # type: ignore
-
         if group_col:
             result = gdf.groupby(group_col)[value_col].rolling(window).mean()
         else:
@@ -157,8 +153,6 @@ def gpu_rolling_std(
     """
 
     def gpu_fn(gdf):  # type: ignore[no-untyped-def]
-        import cudf  # type: ignore
-
         if group_col:
             result = gdf.groupby(group_col)[value_col].rolling(window).std()
         else:

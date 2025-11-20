@@ -396,6 +396,7 @@ def _should_skip_chunk(spec: ChunkSpec, resume: bool, force: bool) -> bool:
     - Validates parquet file is readable and has expected row count
     """
     import logging
+
     import polars as pl
 
     logger = logging.getLogger(__name__)
@@ -429,9 +430,7 @@ def _should_skip_chunk(spec: ChunkSpec, resume: bool, force: bool) -> bool:
     # Check parquet file exists
     parquet_path = spec.output_dir / "ml_dataset.parquet"
     if not parquet_path.exists():
-        logger.warning(
-            "[RESUME] Status shows completed but parquet missing for %s → rebuild", spec.chunk_id
-        )
+        logger.warning("[RESUME] Status shows completed but parquet missing for %s → rebuild", spec.chunk_id)
         return False
 
     # Validate parquet file integrity and row count
@@ -451,13 +450,9 @@ def _should_skip_chunk(spec: ChunkSpec, resume: bool, force: bool) -> bool:
             )
             return False
 
-        logger.info(
-            "[RESUME] ✅ Valid completed chunk %s (%d rows) → skip", spec.chunk_id, actual_rows
-        )
+        logger.info("[RESUME] ✅ Valid completed chunk %s (%d rows) → skip", spec.chunk_id, actual_rows)
         return True
 
     except Exception as exc:
-        logger.warning(
-            "[RESUME] Parquet validation failed for %s: %s → rebuild", spec.chunk_id, exc
-        )
+        logger.warning("[RESUME] Parquet validation failed for %s: %s → rebuild", spec.chunk_id, exc)
         return False

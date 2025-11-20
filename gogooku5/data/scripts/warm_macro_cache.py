@@ -29,20 +29,20 @@ Author: gogooku5 migration team
 Date: 2025-11-15
 """
 
-import sys
 import argparse
 import json
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
     import polars as pl
-    from builder.features.macro.vix import load_vix_history
     from builder.features.macro.global_regime import load_global_regime_data
+    from builder.features.macro.vix import load_vix_history
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Run from gogooku5/data directory or install package: pip install -e .")
@@ -53,6 +53,7 @@ def check_yfinance_available() -> bool:
     """Check if yfinance is installed and importable."""
     try:
         import yfinance
+
         print(f"✅ yfinance v{yfinance.__version__} detected")
         return True
     except ImportError:
@@ -72,18 +73,14 @@ def warm_vix_cache(start_date: str, end_date: str, force_refresh: bool = False) 
     print(f"\n📊 Warming VIX cache ({start_date} to {end_date})...")
 
     try:
-        vix_df = load_vix_history(
-            start_date=start_date,
-            end_date=end_date,
-            force_refresh=force_refresh
-        )
+        vix_df = load_vix_history(start_date=start_date, end_date=end_date, force_refresh=force_refresh)
 
         if vix_df is None or len(vix_df) == 0:
             return {
                 "success": False,
                 "rows": 0,
                 "cache_path": None,
-                "error": "Empty DataFrame returned (possible API issue or date range mismatch)"
+                "error": "Empty DataFrame returned (possible API issue or date range mismatch)",
             }
 
         # Verify expected columns
@@ -94,7 +91,7 @@ def warm_vix_cache(start_date: str, end_date: str, force_refresh: bool = False) 
                 "success": False,
                 "rows": len(vix_df),
                 "cache_path": None,
-                "error": f"Missing columns: {missing_cols}"
+                "error": f"Missing columns: {missing_cols}",
             }
 
         # Cache path (inferred from typical cache structure)
@@ -103,20 +100,10 @@ def warm_vix_cache(start_date: str, end_date: str, force_refresh: bool = False) 
         print(f"   ✅ {len(vix_df):,} rows fetched")
         print(f"   📁 Cache: {cache_path}")
 
-        return {
-            "success": True,
-            "rows": len(vix_df),
-            "cache_path": str(cache_path),
-            "error": None
-        }
+        return {"success": True, "rows": len(vix_df), "cache_path": str(cache_path), "error": None}
 
     except Exception as e:
-        return {
-            "success": False,
-            "rows": 0,
-            "cache_path": None,
-            "error": str(e)
-        }
+        return {"success": False, "rows": 0, "cache_path": None, "error": str(e)}
 
 
 def warm_global_regime_cache(start_date: str, end_date: str, force_refresh: bool = False) -> Dict[str, Any]:
@@ -129,18 +116,14 @@ def warm_global_regime_cache(start_date: str, end_date: str, force_refresh: bool
     print(f"\n🌍 Warming Global Regime cache ({start_date} to {end_date})...")
 
     try:
-        regime_df = load_global_regime_data(
-            start_date=start_date,
-            end_date=end_date,
-            force_refresh=force_refresh
-        )
+        regime_df = load_global_regime_data(start_date=start_date, end_date=end_date, force_refresh=force_refresh)
 
         if regime_df is None or len(regime_df) == 0:
             return {
                 "success": False,
                 "rows": 0,
                 "cache_path": None,
-                "error": "Empty DataFrame returned (possible API issue or date range mismatch)"
+                "error": "Empty DataFrame returned (possible API issue or date range mismatch)",
             }
 
         # Verify expected columns (at least one indicator)
@@ -149,7 +132,7 @@ def warm_global_regime_cache(start_date: str, end_date: str, force_refresh: bool
                 "success": False,
                 "rows": len(regime_df),
                 "cache_path": None,
-                "error": f"Insufficient columns: {len(regime_df.columns)} (expected >1)"
+                "error": f"Insufficient columns: {len(regime_df.columns)} (expected >1)",
             }
 
         cache_path = Path("output/macro/global_regime.parquet")
@@ -157,20 +140,10 @@ def warm_global_regime_cache(start_date: str, end_date: str, force_refresh: bool
         print(f"   ✅ {len(regime_df):,} rows fetched")
         print(f"   📁 Cache: {cache_path}")
 
-        return {
-            "success": True,
-            "rows": len(regime_df),
-            "cache_path": str(cache_path),
-            "error": None
-        }
+        return {"success": True, "rows": len(regime_df), "cache_path": str(cache_path), "error": None}
 
     except Exception as e:
-        return {
-            "success": False,
-            "rows": 0,
-            "cache_path": None,
-            "error": str(e)
-        }
+        return {"success": False, "rows": 0, "cache_path": None, "error": str(e)}
 
 
 def save_health_marker(results: Dict[str, Any], output_path: Path):
@@ -179,7 +152,7 @@ def save_health_marker(results: Dict[str, Any], output_path: Path):
         "timestamp": datetime.now().isoformat(),
         "vix": results["vix"],
         "global_regime": results["global_regime"],
-        "overall_success": results["vix"]["success"] and results["global_regime"]["success"]
+        "overall_success": results["vix"]["success"] and results["global_regime"]["success"],
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -193,13 +166,11 @@ def main():
     parser = argparse.ArgumentParser(description="Warm macro feature caches with validation")
     parser.add_argument("--start", type=str, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--validate", action="store_true",
-                       help="Quick validation mode (2-day window)")
-    parser.add_argument("--force-refresh", action="store_true",
-                       help="Force refresh (ignore existing cache)")
-    parser.add_argument("--health-marker", type=str,
-                       default="output/cache/macro/vix_health.json",
-                       help="Path to save health marker")
+    parser.add_argument("--validate", action="store_true", help="Quick validation mode (2-day window)")
+    parser.add_argument("--force-refresh", action="store_true", help="Force refresh (ignore existing cache)")
+    parser.add_argument(
+        "--health-marker", type=str, default="output/cache/macro/vix_health.json", help="Path to save health marker"
+    )
 
     args = parser.parse_args()
 
@@ -237,10 +208,7 @@ def main():
     regime_result = warm_global_regime_cache(start_str, end_str, args.force_refresh)
 
     # Step 4: Save health marker
-    results = {
-        "vix": vix_result,
-        "global_regime": regime_result
-    }
+    results = {"vix": vix_result, "global_regime": regime_result}
     save_health_marker(results, Path(args.health_marker))
 
     # Step 5: Report results
@@ -252,7 +220,7 @@ def main():
         print("✅ ALL MACRO CACHES WARMED SUCCESSFULLY")
         print(f"\n   VIX:           {vix_result['rows']:,} rows")
         print(f"   Global Regime: {regime_result['rows']:,} rows")
-        print(f"\n   Total features: 40 (10 VIX + 30 VVMD)")
+        print("\n   Total features: 40 (10 VIX + 30 VVMD)")
         print("\n✅ Build can proceed with full macro feature set")
         sys.exit(0)
     else:
@@ -266,8 +234,9 @@ def main():
         print("   Fix errors above before running dataset build")
 
         # Determine appropriate exit code
-        if "Empty DataFrame" in str(vix_result.get("error", "")) or \
-           "Empty DataFrame" in str(regime_result.get("error", "")):
+        if "Empty DataFrame" in str(vix_result.get("error", "")) or "Empty DataFrame" in str(
+            regime_result.get("error", "")
+        ):
             sys.exit(3)  # Empty data
         else:
             sys.exit(2)  # Network/API error

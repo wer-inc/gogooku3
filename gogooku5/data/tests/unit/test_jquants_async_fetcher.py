@@ -7,11 +7,10 @@ from types import SimpleNamespace
 
 import aiohttp
 import pytest
-
 from builder.api.jquants_async_fetcher import (
-    JQuantsAsyncFetcher,
     _TOKEN_CACHE,
     _TOKEN_CACHE_LOCK,
+    JQuantsAsyncFetcher,
 )
 
 
@@ -119,9 +118,7 @@ def test_token_cache_persists_across_processes(token_cache_file: Path) -> None:
     assert restored._token_expiry == expiry
 
 
-def test_authenticate_retries_after_rate_limit(
-    token_cache_file: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_authenticate_retries_after_rate_limit(token_cache_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_token_cache(token_cache_file)
     fetcher = JQuantsAsyncFetcher(email="user@example.com", password="secret", max_concurrent=2)
     fetcher.id_token = None

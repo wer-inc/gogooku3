@@ -5,7 +5,7 @@ version: 0
 # Goal: Improve short-term ranking performance with focused training
 
 data:
-  parquet_path: ../output_g5/datasets/ml_dataset_2023_2025_final_pruned.parquet
+  parquet_path: ../output_g5/datasets/ml_dataset_20230101_20241231_20251120_015315_full.parquet
   metadata_path: null
   feature_groups_config: configs/feature_groups_dataset145.yaml
   feature_groups:

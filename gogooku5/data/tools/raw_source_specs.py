@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Sequence
 
-
 DateKind = Literal["date", "datetime", "string"]
 
 

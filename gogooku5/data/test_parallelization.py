@@ -5,7 +5,6 @@ Test script for API parallelization (futures + FS details).
 Usage:
     python test_parallelization.py
 """
-import asyncio
 import logging
 import sys
 import time
@@ -34,7 +33,7 @@ def test_parallel_futures():
     fetcher = AdvancedJQuantsFetcher(settings=settings)
 
     # Test with 1 week of data (2024-01-01 to 2024-01-05, 5 business days)
-    print(f"\n📊 Fetching futures data (2024-01-01 → 2024-01-05)")
+    print("\n📊 Fetching futures data (2024-01-01 → 2024-01-05)")
     print(f"Parallel mode: {settings.index_option_parallel_fetch}")
     print(f"Concurrency: {settings.index_option_parallel_concurrency}")
 
@@ -48,10 +47,13 @@ def test_parallel_futures():
         print(f"Records: {len(df):,}")
         if len(df) > 0:
             print(f"Columns: {df.columns[:5]}...")
-            print(f"Date range: {df['Date'].min() if 'Date' in df.columns else 'N/A'} → {df['Date'].max() if 'Date' in df.columns else 'N/A'}")
+            print(
+                f"Date range: {df['Date'].min() if 'Date' in df.columns else 'N/A'} → {df['Date'].max() if 'Date' in df.columns else 'N/A'}"
+            )
     except Exception as e:
         print(f"\n❌ Futures fetch failed: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -65,7 +67,7 @@ def test_parallel_fs_details():
     fetcher = AdvancedJQuantsFetcher(settings=settings)
 
     # Test with 1 week of data (2024-01-01 to 2024-01-07, 7 days)
-    print(f"\n📊 Fetching FS details (2024-01-01 → 2024-01-07)")
+    print("\n📊 Fetching FS details (2024-01-01 → 2024-01-07)")
     print(f"Parallel mode: {settings.index_option_parallel_fetch}")
     print(f"Concurrency: {settings.index_option_parallel_concurrency}")
 
@@ -83,6 +85,7 @@ def test_parallel_fs_details():
     except Exception as e:
         print(f"\n❌ FS details fetch failed: {e}")
         import traceback
+
         traceback.print_exc()
 
 

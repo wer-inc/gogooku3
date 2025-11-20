@@ -532,6 +532,7 @@ def test_dataset_builder_writes_parquet(builder: DatasetBuilder) -> None:
         "fs_lag_days",
         "fs_is_recent",
         "fs_staleness_bd",
+        "fs_is_valid",
         "is_fs_valid",
     }
     assert fs_expected_cols.issubset(set(df.columns))
@@ -557,7 +558,9 @@ def test_dataset_builder_writes_parquet(builder: DatasetBuilder) -> None:
     assert latest["fs_cfo_to_ni"] == pytest.approx(1.3076923, rel=1e-6)
     assert latest["fs_observation_count"] >= 1
     assert latest["fs_lag_days"] == 0 or latest["fs_lag_days"] is None
+    assert latest["fs_is_valid"] in (0, 1)
     assert latest["is_fs_valid"] in (0, 1)
+    assert latest["is_fs_valid"] == latest["fs_is_valid"]
 
     assert "div_dy_12m" in df.columns
     div_values = (

@@ -38,7 +38,17 @@ def load_indices_allowlist(allowlist_path: Optional[Path] = None) -> dict:
                     {"code": "0101", "name": "日経225", "category": "benchmark", "prefix": "nk225"},
                 ]
             },
-            "spreads": {"pairs": []},
+            # TOPIX(0000) vs NK225(0101) のNT比をデフォルトで有効化
+            "spreads": {
+                "pairs": [
+                    {
+                        "code1": "0101",
+                        "code2": "0000",
+                        "name": "nt_ratio",
+                        "type": "ratio",  # close1/close2 を出力
+                    }
+                ]
+            },
         }
 
     with open(allowlist_path, "r", encoding="utf-8") as f:
@@ -258,8 +268,18 @@ def build_index_spreads(
             ]
         )
 
+        # 任意でレベル比を出力（type == "ratio" のペアのみ）
+        if pair.get("type") == "ratio":
+            spread_df = spread_df.with_columns(
+                [
+                    (pl.col("close1") / (pl.col("close2") + eps)).alias(f"idx_ratio_{name}"),
+                ]
+            )
+
         # 選択列
         keep_cols = ["date", f"idx_spread_{name}_1d"]
+        if pair.get("type") == "ratio":
+            keep_cols.append(f"idx_ratio_{name}")
         spread_df = spread_df.select(keep_cols)
 
         if spread_features:
@@ -353,10 +373,8 @@ def build_index_features(
         return pl.DataFrame(schema={"date": pl.Date})
 
     if "date_right" in result_features.columns:
-        result_features = (
-            result_features.with_columns(
-                pl.when(pl.col("date").is_null()).then(pl.col("date_right")).otherwise(pl.col("date")).alias("date")
-            ).drop("date_right")
-        )
+        result_features = result_features.with_columns(
+            pl.when(pl.col("date").is_null()).then(pl.col("date_right")).otherwise(pl.col("date")).alias("date")
+        ).drop("date_right")
 
     return result_features

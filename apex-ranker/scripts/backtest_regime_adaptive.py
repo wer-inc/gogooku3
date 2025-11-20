@@ -42,6 +42,7 @@ from apex_ranker.backtest import (
     CostCalculator,
     OptimizationConfig,
     Portfolio,
+    Trade,
     generate_target_weights,
     normalise_frequency,
     should_rebalance,
@@ -132,9 +133,7 @@ def run_regime_adaptive_backtest(
         lookback = config["data"]["lookback"]
         print(f"[Regime Backtest] Loaded config: {config_path}")
     elif model_path is not None and not use_mock:
-        raise FileNotFoundError(
-            "Model inference requested but config file not provided."
-        )
+        raise FileNotFoundError("Model inference requested but config file not provided.")
 
     # Load dataset
     frame = load_backtest_frame(
@@ -162,11 +161,7 @@ def run_regime_adaptive_backtest(
     # Initialize inference engine
     inference_engine: BacktestInferenceEngine | None = None
     prediction_dates: set[Date] = set()
-    cache_directory = (
-        Path(panel_cache_dir).expanduser()
-        if panel_cache_dir is not None
-        else Path("cache/panel")
-    )
+    cache_directory = Path(panel_cache_dir).expanduser() if panel_cache_dir is not None else Path("cache/panel")
 
     if model_path is not None and not use_mock:
         inference_engine = BacktestInferenceEngine(
@@ -180,18 +175,13 @@ def run_regime_adaptive_backtest(
         )
         prediction_dates = inference_engine.available_dates()
         print(
-            f"[Regime Backtest] Inference ready on {len(prediction_dates)} dates "
-            f"(device={inference_engine.device})"
+            f"[Regime Backtest] Inference ready on {len(prediction_dates)} dates " f"(device={inference_engine.device})"
         )
     else:
         print("[Regime Backtest] Using mock predictions (returns_5d proxy)")
 
     # Initialize regime components
-    regime_calculator = (
-        RealtimeRegimeCalculator(lookback_days=regime_lookback)
-        if enable_regime_detection
-        else None
-    )
+    regime_calculator = RealtimeRegimeCalculator(lookback_days=regime_lookback) if enable_regime_detection else None
     risk_manager = DefensiveRiskManager() if enable_regime_detection else None
 
     # Initialize portfolio
@@ -303,16 +293,12 @@ def run_regime_adaptive_backtest(
                         if daily_results:
                             latest_pv = daily_results[-1]["portfolio_value"]
                             peak_pv = max(r["portfolio_value"] for r in daily_results)
-                            current_dd = (
-                                (latest_pv - peak_pv) / peak_pv if peak_pv > 0 else 0.0
-                            )
+                            current_dd = (latest_pv - peak_pv) / peak_pv if peak_pv > 0 else 0.0
                         else:
                             current_dd = 0.0
 
                         # Calculate recommended exposure
-                        regime_exposure = risk_manager.calculate_exposure(
-                            signals, current_dd
-                        )
+                        regime_exposure = risk_manager.calculate_exposure(signals, current_dd)
 
                         regime_info = {
                             "date": str(current_date),
@@ -334,22 +320,16 @@ def run_regime_adaptive_backtest(
                         )
 
                     except Exception as e:
-                        print(
-                            f"[Regime] {current_date}: Regime calculation failed: {e}"
-                        )
+                        print(f"[Regime] {current_date}: Regime calculation failed: {e}")
                         regime_exposure = 1.0
                 else:
-                    print(
-                        f"[Regime] {current_date}: Insufficient history ({len(daily_results)} days)"
-                    )
+                    print(f"[Regime] {current_date}: Insufficient history ({len(daily_results)} days)")
                     regime_exposure = 1.0
 
             # Generate predictions (same as base backtest)
             if inference_engine is not None and not use_mock:
                 if current_date not in prediction_dates:
-                    print(
-                        f"[Regime Backtest] {current_date}: insufficient lookback, skipping rebalance"
-                    )
+                    print(f"[Regime Backtest] {current_date}: insufficient lookback, skipping rebalance")
                 else:
                     rankings = inference_engine.predict(
                         target_date=current_date,
@@ -358,38 +338,24 @@ def run_regime_adaptive_backtest(
                     )
 
                     if rankings.is_empty():
-                        print(
-                            f"[Regime Backtest] {current_date}: model produced no candidates"
-                        )
+                        print(f"[Regime Backtest] {current_date}: model produced no candidates")
                     else:
                         available_codes = set(price_map.keys())
-                        filtered = rankings.filter(
-                            pl.col("Code").is_in(list(available_codes))
-                        ).sort("Rank")
+                        filtered = rankings.filter(pl.col("Code").is_in(list(available_codes))).sort("Rank")
                         if filtered.is_empty():
-                            print(
-                                f"[Regime Backtest] {current_date}: "
-                                "no overlap between predictions and price data"
-                            )
+                            print(f"[Regime Backtest] {current_date}: " "no overlap between predictions and price data")
                         else:
-                            pool_limit = optimization_config.candidate_count(
-                                filtered.height
-                            )
+                            pool_limit = optimization_config.candidate_count(filtered.height)
                             if pool_limit <= 0:
-                                print(
-                                    f"[Regime Backtest] {current_date}: candidate pool exhausted"
-                                )
+                                print(f"[Regime Backtest] {current_date}: candidate pool exhausted")
                             else:
                                 filtered = filtered.head(pool_limit)
                                 predictions = {
-                                    row["Code"]: float(row["Score"])
-                                    for row in filtered.iter_rows(named=True)
+                                    row["Code"]: float(row["Score"]) for row in filtered.iter_rows(named=True)
                                 }
                                 prediction_source = "model"
             else:
-                predictions = generate_mock_predictions(
-                    current_frame, candidate_request
-                )
+                predictions = generate_mock_predictions(current_frame, candidate_request)
                 prediction_source = "mock"
 
             # Apply regime-adaptive position sizing
@@ -420,30 +386,21 @@ def run_regime_adaptive_backtest(
                     opt_result.notes.append("turnover_constraint_relaxed")
 
                 if not opt_weights:
-                    fallback_codes = list(predictions.keys())[
-                        : optimization_config.target_top_k
-                    ]
+                    fallback_codes = list(predictions.keys())[: optimization_config.target_top_k]
                     if fallback_codes:
                         weight = 1.0 / len(fallback_codes)
                         opt_weights = dict.fromkeys(fallback_codes, weight)
                         opt_result.selected_codes = list(opt_weights.keys())
-                        fallback_turnover = compute_weight_turnover(
-                            portfolio.weights, opt_weights
-                        )
+                        fallback_turnover = compute_weight_turnover(portfolio.weights, opt_weights)
                         opt_result.unconstrained_turnover = fallback_turnover
                         opt_result.constrained_turnover = fallback_turnover
                         opt_result.applied_alpha = 1.0
                         opt_result.notes.append("fallback_equal_weights")
 
                 if opt_weights:
-                    scaled_weights = {
-                        code: weight * regime_exposure
-                        for code, weight in opt_weights.items()
-                    }
+                    scaled_weights = {code: weight * regime_exposure for code, weight in opt_weights.items()}
                     target_weights = scaled_weights
-                    actual_turnover = compute_weight_turnover(
-                        portfolio.weights, target_weights
-                    )
+                    actual_turnover = compute_weight_turnover(portfolio.weights, target_weights)
                     opt_result.constrained_turnover = actual_turnover
                     optimization_summary = opt_result.to_dict()
                     optimization_summary["regime_exposure"] = regime_exposure
@@ -493,17 +450,11 @@ def run_regime_adaptive_backtest(
             transaction_cost=daily_cost,
         )
         state["prediction_date"] = str(current_date)
-        state["prediction_source"] = (
-            last_prediction_source if last_prediction_source else prediction_source
-        )
+        state["prediction_source"] = last_prediction_source if last_prediction_source else prediction_source
         state["selection_count"] = len(portfolio.positions)
-        state["optimized_top_k"] = (
-            len(target_weights) if target_weights else len(portfolio.positions)
-        )
+        state["optimized_top_k"] = len(target_weights) if target_weights else len(portfolio.positions)
         if target_weights:
-            state["target_weights"] = {
-                code: float(weight) for code, weight in target_weights.items()
-            }
+            state["target_weights"] = {code: float(weight) for code, weight in target_weights.items()}
         if optimization_summary is not None:
             state["optimization"] = optimization_summary
         if portfolio.positions:
@@ -511,15 +462,11 @@ def run_regime_adaptive_backtest(
         else:
             state["selected_codes"] = ""
         state["avg_prediction_score"] = (
-            float(np.mean(list(active_predictions.values())))
-            if active_predictions
-            else None
+            float(np.mean(list(active_predictions.values()))) if active_predictions else None
         )
         state["num_trades"] = len(trades)
         state["rebalanced"] = did_rebalance
-        state["last_rebalance_date"] = (
-            str(last_rebalance_date) if last_rebalance_date else None
-        )
+        state["last_rebalance_date"] = str(last_rebalance_date) if last_rebalance_date else None
 
         # Add regime info to state
         if regime_info:
@@ -535,9 +482,7 @@ def run_regime_adaptive_backtest(
 
         if idx % 5 == 0:
             regime_str = (
-                f"[{state['regime'].upper()}:{state['regime_exposure']:.0%}]"
-                if enable_regime_detection
-                else ""
+                f"[{state['regime'].upper()}:{state['regime_exposure']:.0%}]" if enable_regime_detection else ""
             )
             print(
                 f"[Regime Backtest] {next_date}: "
@@ -591,16 +536,8 @@ def run_regime_adaptive_backtest(
             count = regimes.count(regime_name)
             if count > 0:
                 pct = 100 * count / len(regimes)
-                avg_exp = np.mean(
-                    [
-                        r["exposure"]
-                        for r in regime_diagnostics
-                        if r["regime"] == regime_name
-                    ]
-                )
-                print(
-                    f"  {regime_name.capitalize():>8s}: {count:3d} days ({pct:4.1f}%), Avg Exposure={avg_exp:.0%}"
-                )
+                avg_exp = np.mean([r["exposure"] for r in regime_diagnostics if r["regime"] == regime_name])
+                print(f"  {regime_name.capitalize():>8s}: {count:3d} days ({pct:4.1f}%), Avg Exposure={avg_exp:.0%}")
 
     tx_costs = metrics.get("transaction_costs", {})
     print(
@@ -639,9 +576,7 @@ def run_regime_adaptive_backtest(
         "summary": {
             "trading_days": len(daily_results),
             "total_trades": total_trades,
-            "prediction_days_available": len(prediction_dates)
-            if inference_engine
-            else len(trading_dates),
+            "prediction_days_available": len(prediction_dates) if inference_engine else len(trading_dates),
             "rebalance_count": rebalance_count,
         },
         "performance": metrics,
@@ -655,23 +590,13 @@ def run_regime_adaptive_backtest(
         daily_metrics_path.parent.mkdir(parents=True, exist_ok=True)
         flattened_history = []
         for record in history_records:
-            flat = {
-                k: v
-                for k, v in record.items()
-                if k not in {"positions", "target_weights", "optimization"}
-            }
+            flat = {k: v for k, v in record.items() if k not in {"positions", "target_weights", "optimization"}}
             if "positions" in record:
-                flat["positions_json"] = json.dumps(
-                    record["positions"], ensure_ascii=False
-                )
+                flat["positions_json"] = json.dumps(record["positions"], ensure_ascii=False)
             if "target_weights" in record:
-                flat["target_weights_json"] = json.dumps(
-                    record["target_weights"], ensure_ascii=False
-                )
+                flat["target_weights_json"] = json.dumps(record["target_weights"], ensure_ascii=False)
             if "optimization" in record:
-                flat["optimization_json"] = json.dumps(
-                    record["optimization"], ensure_ascii=False
-                )
+                flat["optimization_json"] = json.dumps(record["optimization"], ensure_ascii=False)
             flattened_history.append(flat)
         if flattened_history:
             pl.DataFrame(flattened_history).write_csv(daily_metrics_path)
@@ -689,9 +614,7 @@ def run_regime_adaptive_backtest(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="APEX-Ranker Phase 4.3.2 Regime-Adaptive Backtest Driver"
-    )
+    parser = argparse.ArgumentParser(description="APEX-Ranker Phase 4.3.2 Regime-Adaptive Backtest Driver")
     parser.add_argument(
         "--data",
         default="output/ml_dataset_latest_full.parquet",
@@ -826,9 +749,7 @@ def main() -> None:
     config_path = Path(args.config) if args.config else None
     output_path = Path(args.output) if args.output else None
     daily_metrics_path = Path(args.daily_csv) if args.daily_csv else None
-    panel_cache_dir = (
-        Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
-    )
+    panel_cache_dir = Path(args.panel_cache_dir).expanduser() if args.panel_cache_dir else None
 
     run_regime_adaptive_backtest(
         data_path=data_path,

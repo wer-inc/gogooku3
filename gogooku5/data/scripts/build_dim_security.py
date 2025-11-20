@@ -79,8 +79,7 @@ def load_listed_info(files: list[Path]) -> pl.DataFrame:
     """
     if not files:
         raise FileNotFoundError(
-            "No listed_info files found. "
-            "Please run dataset build at least once to generate listed_info cache."
+            "No listed_info files found. " "Please run dataset build at least once to generate listed_info cache."
         )
 
     LOGGER.info(f"Loading {len(files)} listed_info files...")
@@ -114,14 +113,16 @@ def normalize_listed_info(df: pl.DataFrame) -> pl.DataFrame:
     LOGGER.info("Normalizing listed_info...")
 
     # Select and normalize columns
-    normalized = df.select([
-        pl.col("Code").str.strip_chars().alias("code"),
-        pl.col("Date").alias("date"),
-        pl.col("MarketCode").str.strip_chars().alias("market_code"),
-        pl.col("MarketCodeName").str.strip_chars().alias("market_name"),
-        pl.col("Sector33Code").str.strip_chars().alias("sector_code"),
-        pl.col("Sector33CodeName").str.strip_chars().alias("sector_name"),
-    ])
+    normalized = df.select(
+        [
+            pl.col("Code").str.strip_chars().alias("code"),
+            pl.col("Date").alias("date"),
+            pl.col("MarketCode").str.strip_chars().alias("market_code"),
+            pl.col("MarketCodeName").str.strip_chars().alias("market_name"),
+            pl.col("Sector33Code").str.strip_chars().alias("sector_code"),
+            pl.col("Sector33CodeName").str.strip_chars().alias("sector_name"),
+        ]
+    )
 
     # Remove rows with null code (should not happen, but defensive)
     null_codes = normalized.filter(pl.col("code").is_null())
@@ -154,15 +155,16 @@ def build_dim_security(df: pl.DataFrame) -> pl.DataFrame:
 
     # Group by code to get unique securities
     dim = (
-        df
-        .group_by("code")
-        .agg([
-            pl.col("market_code").first().alias("market_code"),
-            pl.col("market_name").first().alias("market_name"),
-            pl.col("sector_code").first().alias("sector_code"),
-            pl.col("sector_name").first().alias("sector_name"),
-            pl.col("date").min().alias("effective_date"),
-        ])
+        df.group_by("code")
+        .agg(
+            [
+                pl.col("market_code").first().alias("market_code"),
+                pl.col("market_name").first().alias("market_name"),
+                pl.col("sector_code").first().alias("sector_code"),
+                pl.col("sector_name").first().alias("sector_name"),
+                pl.col("date").min().alias("effective_date"),
+            ]
+        )
         # CRITICAL: Sort by code for deterministic sec_id
         .sort("code")
         # Add row_number as sec_id (1-based)
@@ -172,16 +174,18 @@ def build_dim_security(df: pl.DataFrame) -> pl.DataFrame:
         # Add is_active flag (always True for now)
         .with_columns(pl.lit(True).alias("is_active"))
         # Reorder columns for readability
-        .select([
-            "sec_id",
-            "code",
-            "market_code",
-            "market_name",
-            "sector_code",
-            "sector_name",
-            "effective_date",
-            "is_active",
-        ])
+        .select(
+            [
+                "sec_id",
+                "code",
+                "market_code",
+                "market_name",
+                "sector_code",
+                "sector_name",
+                "effective_date",
+                "is_active",
+            ]
+        )
     )
 
     LOGGER.info(f"Created dim_security with {len(dim):,} securities")
@@ -189,9 +193,7 @@ def build_dim_security(df: pl.DataFrame) -> pl.DataFrame:
     # Validation
     unique_codes = dim["code"].n_unique()
     if unique_codes != len(dim):
-        raise ValueError(
-            f"Duplicate codes detected: {unique_codes} unique codes but {len(dim)} rows"
-        )
+        raise ValueError(f"Duplicate codes detected: {unique_codes} unique codes but {len(dim)} rows")
 
     LOGGER.info(f"✅ Validation passed: {unique_codes} unique codes")
 
@@ -230,15 +232,13 @@ def save_dim_security(dim: pl.DataFrame, output_dir: Path) -> None:
     parquet_size = parquet_path.stat().st_size
     csv_size = csv_path.stat().st_size
 
-    LOGGER.info(f"✅ Saved dim_security:")
+    LOGGER.info("✅ Saved dim_security:")
     LOGGER.info(f"   Parquet: {parquet_path} ({parquet_size / 1024:.1f} KB)")
     LOGGER.info(f"   CSV: {csv_path} ({csv_size / 1024:.1f} KB)")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Build dim_security master table from listed_info"
-    )
+    parser = argparse.ArgumentParser(description="Build dim_security master table from listed_info")
     parser.add_argument(
         "--output-dir",
         type=Path,

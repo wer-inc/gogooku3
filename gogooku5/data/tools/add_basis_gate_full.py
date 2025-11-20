@@ -36,9 +36,7 @@ from pathlib import Path
 from typing import Optional
 
 import polars as pl
-
 from builder.features.utils.rolling import roll_mean_safe, roll_std_safe
-
 
 SECTOR_CANDIDATES = ("sector_code", "SectorCode", "sector33_code", "Sector33Code")
 
@@ -96,9 +94,7 @@ def _add_gap_basis_features(
         (pl.col(fut_overnight_col) * pl.col(beta_col)).alias("gap_predictor"),
         (pl.col(basis_col) * pl.col(beta_col)).alias("basis_gate"),
         pl.when(
-            pl.col(fut_overnight_col).is_not_null()
-            & pl.col(basis_col).is_not_null()
-            & pl.col(beta_col).is_not_null()
+            pl.col(fut_overnight_col).is_not_null() & pl.col(basis_col).is_not_null() & pl.col(beta_col).is_not_null()
         )
         .then(1)
         .otherwise(0)
@@ -123,12 +119,8 @@ def _add_gap_basis_features(
 
     # Sector-relative features
     if sector_col:
-        df = df.with_columns(
-            pl.col("basis_gate").mean().over([date_col, sector_col]).alias("basis_gate_sector_mean")
-        )
-        df = df.with_columns(
-            (pl.col("basis_gate") - pl.col("basis_gate_sector_mean")).alias("basis_gate_sector_rel")
-        )
+        df = df.with_columns(pl.col("basis_gate").mean().over([date_col, sector_col]).alias("basis_gate_sector_mean"))
+        df = df.with_columns((pl.col("basis_gate") - pl.col("basis_gate_sector_mean")).alias("basis_gate_sector_rel"))
     else:
         if "basis_gate_sector_mean" not in df.columns:
             df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("basis_gate_sector_mean"))
@@ -223,4 +215,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

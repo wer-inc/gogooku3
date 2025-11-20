@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Iterable, Iterator, List, Sequence, Tuple
+from typing import Iterator, List, Sequence, Tuple
 
 try:
     import polars as pl
@@ -95,16 +95,12 @@ class PurgedGroupTimeSeriesSplit:
             train_idx = [
                 i
                 for i, dt in enumerate(row_dates)
-                if (
-                    (dt < purge_start or dt > embargo_end)
-                    and row_groups[i] not in val_groups
-                )
+                if ((dt < purge_start or dt > embargo_end) and row_groups[i] not in val_groups)
             ]
 
             if not train_idx or not val_idx:
                 raise ValueError(
-                    "Empty train/validation split encountered; "
-                    "adjust n_splits or reduce purge/embargo windows."
+                    "Empty train/validation split encountered; " "adjust n_splits or reduce purge/embargo windows."
                 )
 
             yield train_idx, val_idx
