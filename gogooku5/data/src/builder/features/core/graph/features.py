@@ -311,7 +311,8 @@ class GraphFeatureEngineer:
         )
         if len(base_dates) < 2:
             return graph_df.head(0)
-        next_map = {base_dates[i]: base_dates[i + 1] for i in range(len(base_dates) - 1)}
+        # Build next_map using zip instead of range(len())
+        next_map = dict(zip(base_dates[:-1], base_dates[1:], strict=False))
         shifted = graph_df.with_columns(
             pl.col(cfg.date_column).replace(next_map, default=None).cast(pl.Date).alias(cfg.date_column)
         ).drop_nulls(subset=[cfg.date_column])

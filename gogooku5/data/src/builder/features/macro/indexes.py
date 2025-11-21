@@ -117,12 +117,6 @@ def build_index_core_features(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-    # codeごとにグループ化して計算
-    if "code" in df.columns:
-        group_by_code = lambda expr: expr.over("code")
-    else:
-        group_by_code = lambda expr: expr
-
     # 2. ATR/NATR（14日）
     df = df.with_columns(
         [

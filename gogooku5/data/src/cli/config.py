@@ -219,11 +219,11 @@ class Config:
         Returns:
             Converted value
         """
-        if type_fn == bool:
+        if type_fn is bool:
             return value.lower() in ("1", "true", "yes", "on")
-        elif type_fn == int:
+        elif type_fn is int:
             return int(value)
-        elif type_fn == float:
+        elif type_fn is float:
             return float(value)
         else:
             return value

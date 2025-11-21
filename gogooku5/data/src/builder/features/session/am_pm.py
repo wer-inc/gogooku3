@@ -77,7 +77,7 @@ class SessionFeatureEngineer:
         am_open = lag(pl.col("morning_open"), lag_amt)
         am_high = lag(pl.col("morning_high"), lag_amt)
         am_low = lag(pl.col("morning_low"), lag_amt)
-        am_close = lag(pl.col("morning_close"), lag_amt)
+        # am_close is defined but not used - removed to reduce memory
         am_volume = lag(pl.col("morning_volume"), lag_amt)
         am_upper_limit = lag(pl.col("morning_upper_limit"), lag_amt)
         am_lower_limit = lag(pl.col("morning_lower_limit"), lag_amt)

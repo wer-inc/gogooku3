@@ -208,16 +208,13 @@ class DatasetBuilder:
     mlflow_tracker: MLflowTracker | None = field(default=None)
 
     def __post_init__(self) -> None:
-        """Initialize GPU-ETL if enabled."""
+        """Initialize GPU-ETL and core services if enabled."""
         if self.settings.use_gpu_etl:
             try:
-                # Import GPU-ETL from gogooku3 codebase
-                import sys
+                # Initialize local GPU-ETL (RMM pool / cuda_async)
+                from ..utils import init_rmm
 
-                sys.path.insert(0, str(Path(__file__).parents[5] / "src"))
-                from utils.gpu_etl import init_rmm_legacy
-
-                success = init_rmm_legacy(self.settings.rmm_pool_size)
+                success = init_rmm(self.settings.rmm_pool_size)
                 if success:
                     LOGGER.info("✅ GPU-ETL enabled: RMM initialized with pool_size=%s", self.settings.rmm_pool_size)
                 else:
@@ -351,7 +348,7 @@ class DatasetBuilder:
 
         Notes:
             - Codes not in dim_security are logged as warnings and excluded
-            - Invalid codes are saved to output_g5/invalid_codes.parquet for debugging
+            - Invalid codes are saved to data/output/invalid_codes.parquet for debugging
             - Categorical encoding improves join performance by 20-40% (4.6M rows benchmark)
         """
         import time
@@ -2853,7 +2850,6 @@ class DatasetBuilder:
             return self._ensure_split_columns(df)
 
         working = df.sort([code_col, date_col])
-        eps = 1e-12
 
         working = working.with_columns(
             [
@@ -9726,8 +9722,11 @@ class DatasetBuilder:
     ]
 
     _L0_SCHEMA = {
+        # NOTE: L0 shards currently persist only the normalized J-Quants payload.
+        # sec_id is attached later in the pipeline (see _attach_sec_id) rather than
+        # being stored in the L0 cache. Including it here would desync the schema
+        # fingerprint from the actual on-disk shards and force perpetual refetches.
         "Code": pl.Utf8,
-        "sec_id": pl.Int32,  # NEW: Integer join key (グローバルに安定な証券ID)
         "Date": pl.Utf8,
         "Open": pl.Float64,
         "High": pl.Float64,
