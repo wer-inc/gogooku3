@@ -1,4 +1,5 @@
 """Logic for determining fetch axes (codes, sectors, etc.)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

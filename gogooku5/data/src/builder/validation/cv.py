@@ -1,4 +1,5 @@
 """Time-series cross validation helpers with purge + embargo."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -100,7 +101,7 @@ class PurgedGroupTimeSeriesSplit:
 
             if not train_idx or not val_idx:
                 raise ValueError(
-                    "Empty train/validation split encountered; " "adjust n_splits or reduce purge/embargo windows."
+                    "Empty train/validation split encountered; adjust n_splits or reduce purge/embargo windows."
                 )
 
             yield train_idx, val_idx

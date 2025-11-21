@@ -102,7 +102,7 @@ class ChunkPlanner:
             # Align with legacy DatasetBuilder fallback so environments without
             # holiday libraries can still produce a dataset (warmup equals output).
             self._logger.warning(
-                "Failed to shift trading days for %s (warmup=%d): %s. " "Falling back to chunk output start.",
+                "Failed to shift trading days for %s (warmup=%d): %s. Falling back to chunk output start.",
                 iso_output,
                 self.warmup_days,
                 exc,

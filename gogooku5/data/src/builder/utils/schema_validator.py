@@ -141,9 +141,7 @@ class SchemaValidator:
         if not missing and not extra and not dtype_mismatches and self.column_order:
             column_order_mismatch = list(df.columns) != self.column_order
 
-        is_valid = (
-            actual_hash == self.manifest_hash and not missing and not extra and not dtype_mismatches
-        )
+        is_valid = actual_hash == self.manifest_hash and not missing and not extra and not dtype_mismatches
 
         return SchemaValidationResult(
             is_valid=is_valid,

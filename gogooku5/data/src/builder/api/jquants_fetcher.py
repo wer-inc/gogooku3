@@ -1,4 +1,5 @@
 """Client for interacting with the J-Quants API."""
+
 from __future__ import annotations
 
 import threading

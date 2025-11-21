@@ -1,4 +1,5 @@
 """Standard dataset build pipeline."""
+
 from __future__ import annotations
 
 from .dataset_builder import DatasetBuilder

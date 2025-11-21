@@ -1,4 +1,5 @@
 """Storage helpers for uploading artifacts."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

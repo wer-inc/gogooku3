@@ -12,9 +12,7 @@ def _find_project_root(markers: Sequence[str] = ("MIGRATION_PLAN.md",)) -> Path:
     for parent in current.parents:
         if any((parent / marker).exists() for marker in markers):
             return parent
-    raise RuntimeError(
-        "Failed to locate gogooku5 project root. Ensure MIGRATION_PLAN.md exists."
-    )
+    raise RuntimeError("Failed to locate gogooku5 project root. Ensure MIGRATION_PLAN.md exists.")
 
 
 def _candidate_paths(
@@ -58,9 +56,7 @@ def resolve_artifact_path(
         if candidate.exists():
             return candidate
 
-    raise FileNotFoundError(
-        f"Unable to locate {kind}. Checked: {', '.join(str(path) for path in candidates)}"
-    )
+    raise FileNotFoundError(f"Unable to locate {kind}. Checked: {', '.join(str(path) for path in candidates)}")
 
 
 def resolve_dataset_path(
@@ -73,6 +69,8 @@ def resolve_dataset_path(
     return resolve_artifact_path(
         parquet_path,
         (
+            "data/output/datasets/ml_dataset_latest_full.parquet",
+            "data/output/datasets/ml_dataset_latest.parquet",
             "data/output/ml_dataset_latest_full.parquet",
             "data/output/ml_dataset_latest.parquet",
             "data/output/ml_dataset.parquet",

@@ -4,6 +4,7 @@ Phase 2 Patch E: ADV (Average Daily Volume) filter from raw quotes.
 Computes 60-day trailing ADV (in JPY) excluding current day to prevent look-ahead bias.
 Filters ML dataset to include only stocks with sufficient liquidity.
 """
+
 from __future__ import annotations
 
 import logging
@@ -82,31 +83,25 @@ def compute_adv60_from_raw(
     required = {"code", "date", "turnovervalue"}
     missing = required - set(q.columns)
     if missing:
-        raise ValueError(
-            f"Raw quotes missing required columns: {missing}. "
-            f"Available: {q.columns}"
-        )
+        raise ValueError(f"Raw quotes missing required columns: {missing}. Available: {q.columns}")
 
     # 3) Normalize code (zero-pad to 4 digits) and ensure date is Date type
-    q = q.select([
-        pl.col("code").cast(pl.Utf8).str.zfill(4).alias("code"),
-        pl.col("date").cast(pl.Date).alias("date"),
-        pl.col("turnovervalue").cast(pl.Float64).alias("turnover_yen"),
-    ])
+    q = q.select(
+        [
+            pl.col("code").cast(pl.Utf8).str.zfill(4).alias("code"),
+            pl.col("date").cast(pl.Date).alias("date"),
+            pl.col("turnovervalue").cast(pl.Float64).alias("turnover_yen"),
+        ]
+    )
 
     # 4) Sort by (code, date) for rolling operations
     q = q.sort(["code", "date"])
 
     # 5) Compute 60-day trailing ADV (Phase 2 Patch C: exclude current day)
     # Use roll_mean_safe which applies shift(1) before rolling_mean
-    q = q.with_columns([
-        roll_mean_safe(
-            pl.col("turnover_yen"),
-            window=60,
-            min_periods=min_periods,
-            by="code"
-        ).alias("adv60_yen")
-    ])
+    q = q.with_columns(
+        [roll_mean_safe(pl.col("turnover_yen"), window=60, min_periods=min_periods, by="code").alias("adv60_yen")]
+    )
 
     # 6) Collect and return
     result = q.select(["code", "date", "adv60_yen"]).collect()
@@ -224,9 +219,7 @@ def get_raw_quotes_paths(
     matches = sorted(cache_path.glob(pattern))
 
     if not matches:
-        raise FileNotFoundError(
-            f"No raw quotes files found: {cache_path}/{pattern}"
-        )
+        raise FileNotFoundError(f"No raw quotes files found: {cache_path}/{pattern}")
 
     LOGGER.debug("Found %d raw quotes file(s): %s", len(matches), [p.name for p in matches])
 

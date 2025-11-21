@@ -1,4 +1,5 @@
 """Datetime helpers for dataset builder."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -23,6 +24,7 @@ def _is_business_day(dt: datetime) -> bool:
     if jpholiday is not None and jpholiday.is_holiday(dt.date()):
         return False
     return True
+
 
 def date_range(start: str, end: str) -> List[str]:
     """Return a list of ISO date strings inclusive of start/end."""
@@ -52,10 +54,7 @@ def business_date_range(start: str, end: str) -> List[str]:
 
     if jpholiday is None and JapanHolidayCalendar is not None:
         calendar = JapanHolidayCalendar()
-        holidays = {
-            day.strftime("%Y-%m-%d")
-            for day in calendar.holidays(start=start_dt, end=end_dt)
-        }
+        holidays = {day.strftime("%Y-%m-%d") for day in calendar.holidays(start=start_dt, end=end_dt)}
         while current <= end_dt:
             iso_current = current.strftime("%Y-%m-%d")
             if current.weekday() < 5 and iso_current not in holidays:
@@ -92,9 +91,7 @@ def shift_trading_days(date: str, days: int) -> str:
     dt = datetime.strptime(date, "%Y-%m-%d")
 
     if jpholiday is None and JapanHolidayCalendar is None:
-        raise RuntimeError(
-            "Japanese holiday calendar unavailable. Install 'jpholiday' or pandas holiday extras."
-        )
+        raise RuntimeError("Japanese holiday calendar unavailable. Install 'jpholiday' or pandas holiday extras.")
 
     direction = 1 if days > 0 else -1
     remaining = abs(days)

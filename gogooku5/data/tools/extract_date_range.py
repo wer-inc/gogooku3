@@ -4,8 +4,8 @@ Extract specific date range from a merged dataset.
 
 Usage:
     python extract_date_range.py \
-        --input output_g5/datasets/ml_dataset_2022_2024_merged.parquet \
-        --output output_g5/datasets/ml_dataset_2023_2024_extracted.parquet \
+        --input data/output/datasets/ml_dataset_2022_2024_merged.parquet \
+        --output data/output/datasets/ml_dataset_2023_2024_extracted.parquet \
         --start-date 2023-01-01 \
         --end-date 2024-12-31
 """
@@ -93,8 +93,8 @@ def main():
 Examples:
     # Extract 2023-2024 from 2022-2024 merged dataset
     python extract_date_range.py \\
-        --input output_g5/datasets/ml_dataset_2022_2024_merged.parquet \\
-        --output output_g5/datasets/ml_dataset_2023_2024_extracted.parquet \\
+        --input data/output/datasets/ml_dataset_2022_2024_merged.parquet \\
+        --output data/output/datasets/ml_dataset_2023_2024_extracted.parquet \\
         --start-date 2023-01-01 \\
         --end-date 2024-12-31
         """,

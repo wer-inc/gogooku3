@@ -40,7 +40,7 @@ clean:
 	@rm -rf output/cache/* output/raw/*
 
 clean-logs:
-	@rm -rf logs/*
+	@rm -rf ../logs/data/*
 
 clean-tests:
 	@rm -rf .pytest_cache htmlcov

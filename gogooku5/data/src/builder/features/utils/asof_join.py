@@ -3,6 +3,7 @@
 Phase 2 as-of utilities now live under :mod:`builder.utils.asof`. This module
 re-exports the public helpers so existing imports continue to work.
 """
+
 from builder.utils.asof import (
     add_asof_timestamp,
     forward_fill_after_publication,

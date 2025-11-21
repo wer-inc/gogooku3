@@ -1,4 +1,5 @@
 """Financial statement as-of utilities and feature engineering."""
+
 from __future__ import annotations
 
 from typing import Sequence

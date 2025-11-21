@@ -42,7 +42,9 @@ class MLflowTracker:
                 return value
         return None
 
-    def _apply_base_tags(self, stage: str, dagster_run_id: Optional[str], extra: Optional[Dict[str, str]]) -> Dict[str, str]:
+    def _apply_base_tags(
+        self, stage: str, dagster_run_id: Optional[str], extra: Optional[Dict[str, str]]
+    ) -> Dict[str, str]:
         tags: Dict[str, str] = {
             "stage": stage,
             "host": self._hostname,

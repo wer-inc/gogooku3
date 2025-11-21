@@ -1,4 +1,5 @@
 """Dataset artifact management utilities."""
+
 from __future__ import annotations
 
 import hashlib
@@ -74,8 +75,7 @@ class DatasetArtifactWriter:
         # Phase 1-4 Fix: Warn if dataset is suspiciously small
         if df.height < 100:
             LOGGER.warning(
-                "Dataset has only %d rows (expected thousands). "
-                "This might indicate a data fetching issue. Columns: %d",
+                "Dataset has only %d rows (expected thousands). This might indicate a data fetching issue. Columns: %d",
                 df.height,
                 df.width,
             )
@@ -157,7 +157,7 @@ class DatasetArtifactWriter:
             tagged_symlink = self.output_dir / f"ml_dataset_latest_{self.tag}.parquet"
             latest_feature_index_symlink = self.output_dir / self.settings.latest_feature_index_symlink
             LOGGER.info(
-                "⚠️  Skipped 'latest' symlink update (safety gate). " "Dataset saved to %s (%d rows, %d cols)",
+                "⚠️  Skipped 'latest' symlink update (safety gate). Dataset saved to %s (%d rows, %d cols)",
                 parquet_path.name,
                 df.height,
                 df.width,
@@ -177,31 +177,48 @@ class DatasetArtifactWriter:
         )
 
     def _build_metadata(self, df: pl.DataFrame) -> dict:
-        """Reuse gogooku3 metadata builder for schema parity."""
-        try:
-            from src.gogooku3.pipeline.builder import MLDatasetBuilder
-        except Exception:
-            import sys
-            from pathlib import Path
+        """Build dataset metadata without relying on the legacy gogooku3 codebase.
 
-            root = Path(__file__).resolve().parents[5]
-            if str(root) not in sys.path:
-                sys.path.insert(0, str(root))
+        The structure mirrors the lightweight :class:`MLDatasetBuilder` metadata
+        used in the original system:
+
+        - ``rows``: total number of rows
+        - ``cols``: total number of columns
+        - ``stocks``: distinct codes (when ``Code`` column is present)
+        - ``date_range``: min/max date (when ``Date`` column is present)
+        - ``features.count``: number of numeric columns
+        """
+
+        n_rows = df.height
+        n_cols = len(df.columns)
+
+        n_codes = 0
+        if "Code" in df.columns:
             try:
-                from src.gogooku3.pipeline.builder import (
-                    MLDatasetBuilder,  # type: ignore
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                LOGGER.warning("Failed to import legacy MLDatasetBuilder for metadata: %s", exc)
-                return {
-                    "rows": df.height,
-                    "cols": len(df.columns),
-                    "features": {"count": len(df.columns)},
-                }
+                n_codes = int(df["Code"].n_unique())
+            except Exception:
+                n_codes = 0
 
-        metadata_builder = MLDatasetBuilder(output_dir=self.output_dir)
-        prepared = self._prepare_for_metadata(df)
-        return metadata_builder.create_metadata(prepared)
+        start_date: str | None = None
+        end_date: str | None = None
+        if "Date" in df.columns and n_rows > 0:
+            try:
+                start_date = str(df["Date"].min())
+                end_date = str(df["Date"].max())
+            except Exception:
+                start_date = None
+                end_date = None
+
+        numeric_cols = [name for name, dtype in df.schema.items() if dtype.is_numeric()]
+
+        return {
+            "rows": n_rows,
+            "cols": n_cols,
+            "stocks": n_codes,
+            "date_range": {"start": start_date, "end": end_date},
+            "features": {"count": len(numeric_cols)},
+            "fixes_applied": [],
+        }
 
     @staticmethod
     def _build_feature_index_payload(*, df: pl.DataFrame, dataset_path: Path) -> dict:

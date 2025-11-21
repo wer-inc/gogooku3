@@ -3,6 +3,7 @@ Git metadata utilities for dataset reproducibility.
 
 Provides robust Git SHA and branch retrieval with environment variable fallbacks.
 """
+
 import os
 import subprocess
 from typing import Dict
@@ -43,25 +44,16 @@ def get_git_metadata() -> Dict[str, str]:
         try:
             if not sha:
                 sha = subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"],
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                    text=True
+                    ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, timeout=5, text=True
                 ).strip()
 
             if not branch:
                 branch = subprocess.check_output(
-                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                    stderr=subprocess.DEVNULL,
-                    timeout=5,
-                    text=True
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL, timeout=5, text=True
                 ).strip()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
             # Fallback to "unknown" if git is unavailable or fails
             sha = sha or "unknown"
             branch = branch or "unknown"
 
-    return {
-        "git_sha": sha,
-        "git_branch": branch
-    }
+    return {"git_sha": sha, "git_branch": branch}

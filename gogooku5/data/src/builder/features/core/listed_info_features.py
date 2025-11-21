@@ -1,4 +1,5 @@
 """Listed info (上場銘柄一覧) feature engineering."""
+
 from __future__ import annotations
 
 import polars as pl

@@ -5,17 +5,17 @@ Validation script for categorical optimization in lazy_io.save_with_cache.
 This script can be run directly without pytest to verify functionality.
 """
 
-import os
 import sys
-import tempfile
 from pathlib import Path
 
-import polars as pl
-
-# Add src to path
+# Add src to path (must be before other imports)
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from builder.utils.lazy_io import save_with_cache
+import os  # noqa: E402
+import tempfile  # noqa: E402
+
+import polars as pl  # noqa: E402
+from builder.utils.lazy_io import save_with_cache  # noqa: E402
 
 
 def test_categorical_encoding_basic():
@@ -217,7 +217,7 @@ def test_production_dim_security():
     """Test with production dim_security data (if available)."""
     print("\n6. Testing with production dim_security data...")
 
-    dim_security_path = Path("output_g5/dim_security.parquet")
+    dim_security_path = Path("data/output/dim_security.parquet")
     if not dim_security_path.exists():
         print("   ⏭️  Skipped (dim_security.parquet not found)")
         return True

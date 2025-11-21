@@ -11,8 +11,8 @@ Example:
 
     PYTHONPATH=gogooku5/data/src \\
       python gogooku5/data/tools/drop_all_null_columns.py \\
-        --input  output_g5/datasets/ml_dataset_2025_with_graph33_basis.parquet \\
-        --output output_g5/datasets/ml_dataset_2025_pruned.parquet \\
+        --input  data/output/datasets/ml_dataset_2025_with_graph33_basis.parquet \\
+        --output data/output/datasets/ml_dataset_2025_pruned.parquet \\
         --keep-col Date --keep-col Code --keep-col target_1d --keep-col target_5d
 """
 
@@ -142,4 +142,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

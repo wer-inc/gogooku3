@@ -1,4 +1,5 @@
 """Polars-native quality feature generator migrated from gogooku3."""
+
 from __future__ import annotations
 
 import logging
@@ -65,16 +66,12 @@ def add_robust_clipping(
         ).row(0)
 
         # Clipped column
-        df = df.with_columns(
-            pl.col(col).clip(q_values[0], q_values[1]).alias(f"{col}_clipped")
-        )
+        df = df.with_columns(pl.col(col).clip(q_values[0], q_values[1]).alias(f"{col}_clipped"))
 
         # Anomaly score (absolute z-score)
         # Handle division by zero with fallback
         std_val = q_values[3] if q_values[3] and q_values[3] > 1e-8 else 1.0
-        df = df.with_columns(
-            ((pl.col(col) - q_values[2]) / std_val).abs().alias(f"{col}_anomaly_score")
-        )
+        df = df.with_columns(((pl.col(col) - q_values[2]) / std_val).abs().alias(f"{col}_anomaly_score"))
 
     return df
 
@@ -221,7 +218,9 @@ class QualityFinancialFeaturesGeneratorPolars:
 
     def _add_cross_sectional_quantiles_gpu(self, df: pl.DataFrame, features: List[str]) -> pl.DataFrame:
         """GPU implementation using cuDF for 10x speedup."""
-        from src.utils.gpu_etl import init_rmm, to_cudf, to_polars
+        from ...utils import cudf_to_pl as to_polars
+        from ...utils import init_rmm
+        from ...utils import pl_to_cudf as to_cudf
 
         # Initialize RMM pool
         init_rmm(None)

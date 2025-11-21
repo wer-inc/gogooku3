@@ -687,9 +687,12 @@ class JQuantsAsyncFetcher:
                 if exc.status == 429 and self.id_token:
                     self._logger.warning("[AUTH] Received 429 during auth_refresh; reusing cached id_token")
                     return True
-                if exc.status in (401, 403, 404):
-                    # Refresh token expired; force full auth
-                    self._logger.info("[AUTH] Refresh token expired; requesting new credentials")
+                if exc.status in (400, 401, 403, 404):
+                    # Refresh token expired or invalid; force full auth
+                    self._logger.info(
+                        "[AUTH] Refresh token invalid/expired during auth_refresh (status=%s); requesting new credentials",
+                        exc.status,
+                    )
                     self._drop_cached_tokens()
                     return False
                 raise

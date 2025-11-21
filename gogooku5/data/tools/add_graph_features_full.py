@@ -25,8 +25,8 @@ Intended usage (example for 2025 dataset):
 
     PYTHONPATH=gogooku5/data/src \\
       python gogooku5/data/tools/add_graph_features_full.py \\
-        --input  output_g5/datasets/ml_dataset_2025_base.parquet \\
-        --output output_g5/datasets/ml_dataset_2025_with_graph33.parquet \\
+        --input  data/output/datasets/ml_dataset_2025_base.parquet \\
+        --output data/output/datasets/ml_dataset_2025_with_graph33.parquet \\
         --date-col Date --code-col Code \\
         --window-days 60 --min-observations 20 --correlation-threshold 0.3 \\
         --with-derived
@@ -84,6 +84,9 @@ def _add_base_graph_features(
 
     if not {date_col, code_col, "ret_prev_1d"}.issubset(df.columns):
         return df
+
+    # Ensure join keys are string-typed to avoid Categorical/Utf8 mismatches during graph joins
+    df = df.with_columns(pl.col(code_col).cast(pl.Utf8))
 
     config = GraphFeatureConfig(
         code_column=code_col,

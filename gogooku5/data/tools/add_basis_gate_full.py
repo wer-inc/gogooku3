@@ -24,8 +24,8 @@ add_beta_alpha_bd_features_full.py):
 
     PYTHONPATH=gogooku5/data/src \\
       python gogooku5/data/tools/add_basis_gate_full.py \\
-        --input  output_g5/datasets/ml_dataset_2025_with_graph33.parquet \\
-        --output output_g5/datasets/ml_dataset_2025_with_graph33_basis.parquet \\
+        --input  data/output/datasets/ml_dataset_2025_with_graph33.parquet \\
+        --output data/output/datasets/ml_dataset_2025_with_graph33_basis.parquet \\
         --date-col Date --code-col Code
 """
 

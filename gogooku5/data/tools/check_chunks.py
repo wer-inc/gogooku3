@@ -167,10 +167,11 @@ def summarize(chunks: Iterable[ChunkStatus], show_schema: bool = False) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Inspect dataset chunk health.")
+    default_chunks_dir = Path(__file__).parents[1] / "output" / "chunks"
     parser.add_argument(
         "--chunks-dir",
         type=Path,
-        default=Path("/workspace/gogooku3/gogooku5/data/output/chunks"),
+        default=default_chunks_dir,
         help="Path to the chunk output directory (default: %(default)s)",
     )
     parser.add_argument(

@@ -1,4 +1,5 @@
 """Base utilities for API clients used in dataset generation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

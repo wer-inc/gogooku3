@@ -23,8 +23,8 @@ Example
 
     PYTHONPATH=gogooku5/data/src \\
       python gogooku5/data/tools/build_static_graph.py \\
-        --input output_g5/datasets/ml_dataset_latest.parquet \\
-        --output output_g5/datasets/edges_static.parquet \\
+        --input data/output/datasets/ml_dataset_latest.parquet \\
+        --output data/output/datasets/edges_static.parquet \\
         --k 5 --tau 0.2
 """
 
@@ -50,13 +50,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("output_g5/datasets/ml_dataset_latest.parquet"),
+        default=Path("data/output/datasets/ml_dataset_latest.parquet"),
         help=("Input Parquet dataset (merged ML dataset with SecId, SectorCode, " "beta60_topix)."),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("output_g5/datasets/edges_static.parquet"),
+        default=Path("data/output/datasets/edges_static.parquet"),
         help="Output Parquet file to save the static graph edges.",
     )
     parser.add_argument(

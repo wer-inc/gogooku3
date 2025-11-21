@@ -1,4 +1,5 @@
 """Dataset quality checks shared by CLI and builders."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

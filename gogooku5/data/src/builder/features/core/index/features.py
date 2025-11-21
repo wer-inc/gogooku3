@@ -1,4 +1,5 @@
 """Market index regime feature engineering (TOPIX, Nikkei, etc.)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

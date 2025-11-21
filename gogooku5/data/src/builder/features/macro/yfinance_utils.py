@@ -1,4 +1,5 @@
 """Utility helpers for retrieving market data via yfinance."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -56,10 +57,7 @@ def flatten_yfinance_columns(
 
     # 2) MultiIndex (no ticker provided): flatten
     if isinstance(out.columns, pd.MultiIndex):
-        out.columns = [
-            sep.join(str(x) for x in tup if x not in (None, ""))
-            for tup in out.columns.to_list()
-        ]
+        out.columns = [sep.join(str(x) for x in tup if x not in (None, "")) for tup in out.columns.to_list()]
 
     # 3) Flat columns + ticker: remove token no matter where it appears
     if ticker is not None:

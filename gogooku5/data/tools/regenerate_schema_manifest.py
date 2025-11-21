@@ -47,10 +47,11 @@ def build_manifest(parquet_path: Path, version: str, column_order_enforced: bool
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Regenerate feature_schema_manifest.json")
+    default_ref = Path(__file__).resolve().parents[1] / "output" / "chunks" / "2020Q1" / "ml_dataset.parquet"
     parser.add_argument(
         "--reference-chunk",
         type=Path,
-        default=Path("/workspace/gogooku3/output/chunks/2020Q1/ml_dataset.parquet"),
+        default=default_ref,
         help="Path to the reference chunk Parquet file",
     )
     parser.add_argument(
@@ -62,7 +63,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/workspace/gogooku3/gogooku5/data/schema/feature_schema_manifest.json"),
+        default=REPO_ROOT / "gogooku5" / "data" / "schema" / "feature_schema_manifest.json",
         help="Destination manifest path",
     )
     parser.add_argument(

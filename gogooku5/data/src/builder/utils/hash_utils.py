@@ -1,4 +1,5 @@
 """Hash utilities for dataset artifacts."""
+
 from __future__ import annotations
 
 import hashlib

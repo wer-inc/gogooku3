@@ -237,8 +237,7 @@ class BuildCommand:
             logger.debug("DatasetBuilder imported from gogooku5/data")
         except ImportError as e:
             logger.error(
-                "DatasetBuilder not found. "
-                "Please ensure gogooku5/data/src/builder/pipelines/dataset_builder.py exists."
+                "DatasetBuilder not found. Please ensure gogooku5/data/src/builder/pipelines/dataset_builder.py exists."
             )
             logger.error(f"Import error: {e}")
             return 1

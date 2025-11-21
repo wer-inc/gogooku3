@@ -1,4 +1,5 @@
 """Advanced J-Quants fetchers wrapping legacy async client."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -9,6 +9,7 @@ This script validates that the dataset build correctly:
 4. Maintained data integrity
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -209,7 +210,8 @@ def main():
     print("=" * 80)
 
     # Check for dataset file (use 2024Q1 instead of 2024Q1_smoke)
-    chunk_dir = Path("/workspace/gogooku3/output_g5/chunks/2024Q1")
+    base_dir = Path(os.getenv("DATA_OUTPUT_DIR", Path(__file__).resolve().parents[2] / "data" / "output"))
+    chunk_dir = base_dir / "chunks" / "2024Q1"
     dataset_files = list(chunk_dir.glob("*.parquet")) if chunk_dir.exists() else []
 
     if not dataset_files:

@@ -29,6 +29,7 @@ Example:
     ...     create_ipc=True
     ... )
 """
+
 from __future__ import annotations
 
 import logging
@@ -114,7 +115,7 @@ def lazy_load(
     missing = [p for p in paths if not p.exists()]
     if missing:
         raise FileNotFoundError(
-            f"Dataset file(s) not found: {missing}. " f"Ensure data pipeline has completed successfully."
+            f"Dataset file(s) not found: {missing}. Ensure data pipeline has completed successfully."
         )
 
     LOGGER.debug("Lazy scanning Parquet file(s): %s", parquet_paths)

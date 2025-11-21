@@ -1,4 +1,5 @@
 """Higher-level data source helpers backed by J-Quants advanced fetcher."""
+
 from __future__ import annotations
 
 import logging
@@ -784,6 +785,68 @@ class DataSourceManager:
     def _raw_enabled(self) -> bool:
         return bool(self.raw_store is not None and self.settings.use_raw_store)
 
+    def _load_raw_source_from_files(
+        self,
+        source: str,
+        start: str,
+        end: str,
+        *,
+        date_columns: Sequence[str],
+    ) -> pl.DataFrame | None:
+        """
+        Fallback loader that scans raw/<source> snapshots directly when the manifest
+        does not contain entries for the requested source.
+
+        This enables reuse of previously saved raw snapshots (via save_raw_snapshot)
+        even when raw_manifest.json only tracks a subset of sources (e.g., prices).
+        """
+        raw_root = self.settings.raw_data_dir / source
+        if not raw_root.exists():
+            return None
+
+        start_dt = self._safe_iso_date(start)
+        end_dt = self._safe_iso_date(end)
+        if start_dt is None and end_dt is None:
+            return None
+
+        candidates: list[Path] = []
+        for path in raw_root.glob(f"{source}_*.parquet"):
+            stem = path.stem  # e.g., dividends_2022-08-22_2024-01-31_20251121_073906
+            parts = stem.split("_")
+            if len(parts) < 3:
+                continue
+            raw_start, raw_end = parts[1], parts[2]
+            raw_start_dt = self._safe_iso_date(raw_start)
+            raw_end_dt = self._safe_iso_date(raw_end)
+            if raw_start_dt is None or raw_end_dt is None:
+                continue
+            if start_dt is not None and raw_end_dt < start_dt:
+                continue
+            if end_dt is not None and raw_start_dt > end_dt:
+                continue
+            if path.exists():
+                candidates.append(path)
+
+        if not candidates:
+            return None
+
+        frames = [pl.read_parquet(path) for path in sorted(candidates)]
+        df = pl.concat(frames, how="vertical")
+        if df.is_empty():
+            return pl.DataFrame()
+
+        filtered = self._filter_raw_dates(df, date_columns, start, end)
+        self._logger.debug(
+            "[RAW] %s served from raw/%s files (%d rows, %s→%s, files=%d)",
+            source,
+            source,
+            filtered.height,
+            start,
+            end,
+            len(candidates),
+        )
+        return filtered
+
     def _load_raw_source(
         self,
         source: str,
@@ -792,29 +855,35 @@ class DataSourceManager:
         *,
         date_columns: Sequence[str],
     ) -> pl.DataFrame | None:
-        if not self._raw_enabled():
-            return None
-        assert self.raw_store is not None  # mypy hint
-        try:
-            df = self.raw_store.load_range(source=source, start=start, end=end)
-        except FileNotFoundError:
-            return None
-        except Exception as exc:  # pragma: no cover - defensive
-            self._logger.warning("[RAW] Failed to load %s from manifest: %s", source, exc)
-            return None
+        df: pl.DataFrame | None = None
 
-        if df.is_empty():
-            return pl.DataFrame()
+        # Primary path: use manifest-backed RawDataStore when available.
+        if self._raw_enabled():
+            assert self.raw_store is not None  # mypy hint
+            try:
+                df = self.raw_store.load_range(source=source, start=start, end=end)
+            except FileNotFoundError:
+                df = None
+            except Exception as exc:  # pragma: no cover - defensive
+                self._logger.warning("[RAW] Failed to load %s from manifest: %s", source, exc)
+                df = None
 
-        filtered = self._filter_raw_dates(df, date_columns, start, end)
-        self._logger.debug(
-            "[RAW] %s served from manifest (%d rows, %s→%s)",
-            source,
-            filtered.height,
-            start,
-            end,
-        )
-        return filtered
+            if df is not None:
+                if df.is_empty():
+                    return pl.DataFrame()
+                filtered = self._filter_raw_dates(df, date_columns, start, end)
+                self._logger.debug(
+                    "[RAW] %s served from manifest (%d rows, %s→%s)",
+                    source,
+                    filtered.height,
+                    start,
+                    end,
+                )
+                return filtered
+
+        # Fallback path: scan raw/<source> snapshots directly when manifest does not
+        # contain entries for this source (common for non-price datasets).
+        return self._load_raw_source_from_files(source, start, end, date_columns=date_columns)
 
     def _filter_raw_dates(
         self,

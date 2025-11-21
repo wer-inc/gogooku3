@@ -1,4 +1,5 @@
 """Detect corporate actions or market events."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

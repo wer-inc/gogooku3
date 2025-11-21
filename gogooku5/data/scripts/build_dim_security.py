@@ -242,14 +242,14 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("output_g5"),
-        help="Output directory (default: output_g5)",
+        default=Path("data/output"),
+        help="Output directory (default: data/output)",
     )
     parser.add_argument(
         "--search-dirs",
         type=Path,
         nargs="+",
-        default=[Path("output_g5"), Path("output")],
+        default=[Path("data/output"), Path("output")],
         help="Directories to search for listed_info files",
     )
 

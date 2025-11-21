@@ -14,23 +14,22 @@ def test_categorical_encoding_explicit():
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
     # Create sample data with low-cardinality string columns
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333", "1301", "1332"],
-        "Date": ["2024-01-01", "2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"],
-        "sector_code": ["0050", "0050", "0050", "0050", "0050"],
-        "market_code": ["0101", "0101", "0101", "0101", "0101"],
-        "Close": [100.0, 200.0, 300.0, 105.0, 210.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333", "1301", "1332"],
+            "Date": ["2024-01-01", "2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"],
+            "sector_code": ["0050", "0050", "0050", "0050", "0050"],
+            "market_code": ["0101", "0101", "0101", "0101", "0101"],
+            "Close": [100.0, 200.0, 300.0, 105.0, 210.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_categorical.parquet"
 
         # Save with categorical encoding
         parquet_path, _ = save_with_cache(
-            sample_data,
-            output_path,
-            create_ipc=False,
-            categorical_columns=["Code", "sector_code", "market_code"]
+            sample_data, output_path, create_ipc=False, categorical_columns=["Code", "sector_code", "market_code"]
         )
 
         # Load back and verify types
@@ -53,11 +52,13 @@ def test_categorical_encoding_env_variable():
     """Test that categorical encoding respects CATEGORICAL_COLUMNS environment variable."""
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333"],
-        "sector_code": ["0050", "0050", "0051"],
-        "Close": [100.0, 200.0, 300.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333"],
+            "sector_code": ["0050", "0050", "0051"],
+            "Close": [100.0, 200.0, 300.0],
+        }
+    )
 
     # Set environment variable
     os.environ["CATEGORICAL_COLUMNS"] = "Code,sector_code"
@@ -67,11 +68,7 @@ def test_categorical_encoding_env_variable():
             output_path = Path(tmpdir) / "test_env_categorical.parquet"
 
             # Save without explicit categorical_columns (should use env var)
-            parquet_path, _ = save_with_cache(
-                sample_data,
-                output_path,
-                create_ipc=False
-            )
+            parquet_path, _ = save_with_cache(sample_data, output_path, create_ipc=False)
 
             # Load back and verify
             loaded = pl.read_parquet(parquet_path)
@@ -87,10 +84,12 @@ def test_categorical_encoding_invalid_columns():
     """Test that invalid categorical columns are handled gracefully."""
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333"],
-        "Close": [100.0, 200.0, 300.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333"],
+            "Close": [100.0, 200.0, 300.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_invalid_categorical.parquet"
@@ -100,7 +99,7 @@ def test_categorical_encoding_invalid_columns():
             sample_data,
             output_path,
             create_ipc=False,
-            categorical_columns=["Code", "sector_code", "market_code"]  # sector_code, market_code don't exist
+            categorical_columns=["Code", "sector_code", "market_code"],  # sector_code, market_code don't exist
         )
 
         # Load back and verify
@@ -115,21 +114,18 @@ def test_categorical_encoding_no_columns():
     """Test that save_with_cache works when no categorical columns specified."""
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333"],
-        "Close": [100.0, 200.0, 300.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333"],
+            "Close": [100.0, 200.0, 300.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_no_categorical.parquet"
 
         # Save without categorical encoding
-        parquet_path, _ = save_with_cache(
-            sample_data,
-            output_path,
-            create_ipc=False,
-            categorical_columns=None
-        )
+        parquet_path, _ = save_with_cache(sample_data, output_path, create_ipc=False, categorical_columns=None)
 
         # Load back and verify (all columns should remain original types)
         loaded = pl.read_parquet(parquet_path)
@@ -142,30 +138,24 @@ def test_categorical_encoding_size_reduction():
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
     # Create data with high repetition (ideal for categorical compression)
-    sample_data = pl.DataFrame({
-        "Code": ["1301"] * 500 + ["1332"] * 500 + ["1333"] * 500,
-        "sector_code": ["0050"] * 1500,
-        "market_code": ["0101"] * 1500,
-        "Close": list(range(1500)),
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301"] * 500 + ["1332"] * 500 + ["1333"] * 500,
+            "sector_code": ["0050"] * 1500,
+            "market_code": ["0101"] * 1500,
+            "Close": list(range(1500)),
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Save without categorical encoding
         path_no_cat = Path(tmpdir) / "no_categorical.parquet"
-        save_with_cache(
-            sample_data,
-            path_no_cat,
-            create_ipc=False,
-            categorical_columns=None
-        )
+        save_with_cache(sample_data, path_no_cat, create_ipc=False, categorical_columns=None)
 
         # Save with categorical encoding
         path_with_cat = Path(tmpdir) / "with_categorical.parquet"
         save_with_cache(
-            sample_data,
-            path_with_cat,
-            create_ipc=False,
-            categorical_columns=["Code", "sector_code", "market_code"]
+            sample_data, path_with_cat, create_ipc=False, categorical_columns=["Code", "sector_code", "market_code"]
         )
 
         # Compare file sizes
@@ -182,32 +172,33 @@ def test_categorical_encoding_data_integrity():
     """Test that categorical encoding preserves data integrity."""
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333", "1301", "1332", "1333"],
-        "Date": ["2024-01-01"] * 6,
-        "sector_code": ["0050", "0051", "0052", "0050", "0051", "0052"],
-        "Close": [100.0, 200.0, 300.0, 105.0, 210.0, 315.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333", "1301", "1332", "1333"],
+            "Date": ["2024-01-01"] * 6,
+            "sector_code": ["0050", "0051", "0052", "0050", "0051", "0052"],
+            "Close": [100.0, 200.0, 300.0, 105.0, 210.0, 315.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_integrity.parquet"
 
         # Save with categorical encoding
         parquet_path, _ = save_with_cache(
-            sample_data,
-            output_path,
-            create_ipc=False,
-            categorical_columns=["Code", "sector_code"]
+            sample_data, output_path, create_ipc=False, categorical_columns=["Code", "sector_code"]
         )
 
         # Load back and verify exact match
         loaded = pl.read_parquet(parquet_path)
 
         # Cast categorical back to string for comparison
-        loaded_str = loaded.with_columns([
-            pl.col("Code").cast(pl.String),
-            pl.col("sector_code").cast(pl.String),
-        ])
+        loaded_str = loaded.with_columns(
+            [
+                pl.col("Code").cast(pl.String),
+                pl.col("sector_code").cast(pl.String),
+            ]
+        )
 
         assert loaded_str.equals(sample_data), "Data should be identical after categorical encoding"
 
@@ -216,21 +207,20 @@ def test_categorical_encoding_with_ipc():
     """Test that categorical encoding works with IPC cache creation."""
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
-    sample_data = pl.DataFrame({
-        "Code": ["1301", "1332", "1333"],
-        "sector_code": ["0050", "0050", "0051"],
-        "Close": [100.0, 200.0, 300.0],
-    })
+    sample_data = pl.DataFrame(
+        {
+            "Code": ["1301", "1332", "1333"],
+            "sector_code": ["0050", "0050", "0051"],
+            "Close": [100.0, 200.0, 300.0],
+        }
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_ipc_categorical.parquet"
 
         # Save with both categorical encoding and IPC cache
         parquet_path, ipc_path = save_with_cache(
-            sample_data,
-            output_path,
-            create_ipc=True,
-            categorical_columns=["Code", "sector_code"]
+            sample_data, output_path, create_ipc=True, categorical_columns=["Code", "sector_code"]
         )
 
         # Verify both files exist
@@ -246,35 +236,38 @@ def test_categorical_encoding_with_ipc():
         assert loaded_ipc["Code"].dtype == pl.Categorical
 
         # Data should be identical
-        assert loaded_parquet.with_columns([
-            pl.col("Code").cast(pl.String),
-            pl.col("sector_code").cast(pl.String),
-        ]).equals(loaded_ipc.with_columns([
-            pl.col("Code").cast(pl.String),
-            pl.col("sector_code").cast(pl.String),
-        ])), "Parquet and IPC data should match"
+        assert loaded_parquet.with_columns(
+            [
+                pl.col("Code").cast(pl.String),
+                pl.col("sector_code").cast(pl.String),
+            ]
+        ).equals(
+            loaded_ipc.with_columns(
+                [
+                    pl.col("Code").cast(pl.String),
+                    pl.col("sector_code").cast(pl.String),
+                ]
+            )
+        ), "Parquet and IPC data should match"
 
 
 @pytest.mark.skipif(
-    not Path("output_g5/dim_security.parquet").exists(),
-    reason="dim_security.parquet not found (run build_dim_security.py first)"
+    not Path("data/output/dim_security.parquet").exists(),
+    reason="dim_security.parquet not found (run build_dim_security.py first)",
 )
 def test_categorical_encoding_production():
     """Test categorical encoding with production-like data."""
     from gogooku5.data.src.builder.utils.lazy_io import save_with_cache
 
     # Load dim_security as sample production data
-    dim_security = pl.read_parquet("output_g5/dim_security.parquet")
+    dim_security = pl.read_parquet("data/output/dim_security.parquet")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = Path(tmpdir) / "test_production.parquet"
 
         # Save with categorical encoding
         parquet_path, _ = save_with_cache(
-            dim_security,
-            output_path,
-            create_ipc=False,
-            categorical_columns=["code", "sector_code", "market_code"]
+            dim_security, output_path, create_ipc=False, categorical_columns=["code", "sector_code", "market_code"]
         )
 
         # Load back and verify
@@ -286,9 +279,11 @@ def test_categorical_encoding_production():
         assert loaded["market_code"].dtype == pl.Categorical, "market_code should be Categorical"
 
         # Check data integrity (cast back to string for comparison)
-        loaded_str = loaded.with_columns([
-            pl.col("code").cast(pl.String),
-            pl.col("sector_code").cast(pl.String),
-            pl.col("market_code").cast(pl.String),
-        ])
+        loaded_str = loaded.with_columns(
+            [
+                pl.col("code").cast(pl.String),
+                pl.col("sector_code").cast(pl.String),
+                pl.col("market_code").cast(pl.String),
+            ]
+        )
         assert loaded_str.equals(dim_security), "Production data should be identical after categorical encoding"

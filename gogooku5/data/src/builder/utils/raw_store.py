@@ -1,4 +1,5 @@
 """Raw data access utilities backed by the raw manifest."""
+
 from __future__ import annotations
 
 import json

@@ -1,4 +1,5 @@
 """決算発表予定特徴量生成モジュール（P0: 最小構成）"""
+
 from __future__ import annotations
 
 import logging

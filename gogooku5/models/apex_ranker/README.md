@@ -20,9 +20,10 @@ models/apex_ranker/
 ## Quick start
 
 The commands below assume you run them from the repository root. The defaults
-expect a dataset at `data/output/ml_dataset_latest_full.parquet`. The helper
-functions automatically resolve alternative locations such as
-`ml_dataset_latest_full.parquet` at the workspace root.
+expect a final training dataset under `data/output/datasets/` (for example
+`data/output/datasets/ml_dataset_latest_full.parquet`). The helper functions
+automatically resolve alternative locations such as `data/output/ml_dataset_latest_full.parquet`
+or `ml_dataset_latest_full.parquet` at the workspace root.
 
 ```bash
 # Full training run (see configs/v0_base.yaml for hyper-parameters)

@@ -2,6 +2,7 @@
 
 Simple utility to check if GPU/CUDA is available for accelerated operations.
 """
+
 from __future__ import annotations
 
 

@@ -21,6 +21,11 @@ make build START=2024-01-01 END=2024-01-31
 
 # Warm caches without writing parquet output
 make build-optimized START=2024-01-01 END=2024-01-31 CACHE_ONLY=1
+
+# Output location
+# - Default (no env): data/output
+# - Monorepo compatibility: set DATA_OUTPUT_DIR=/workspace/gogooku3/output_g5 in .env
+# - Legacy scripts can temporarily rely on a symlink output_g5 -> gogooku5/data/output
 ```
 
 ## Output Artifacts
@@ -159,8 +164,12 @@ Detailed pipeline behavior, feature coverage, and validation routines will be do
 
 ```bash
 python gogooku5/data/tools/check_chunks.py \
-  --chunks-dir /workspace/gogooku3/output/chunks \
+  --chunks-dir gogooku5/data/output/chunks \
   --fail-on-warning
+
+# Monorepo (DATA_OUTPUT_DIR=/workspace/gogooku3/output_g5) での例
+DATA_OUTPUT_DIR=/workspace/gogooku3/output_g5 \
+python gogooku5/data/tools/check_chunks.py --fail-on-warning
 ```
 
 `status.json`/`metadata.json`/Parquet の欠落や `rows=0`、`state!="completed"` などを一覧化し、`--fail-on-warning` を付けると異常時に終了コード1を返します。
@@ -172,7 +181,7 @@ python gogooku5/data/tools/check_chunks.py \
 - `dataset_hash`（Parquet本体のSHA256）
 - `feature_schema_version`（列名+dtype hash）
 
-をメタデータへ埋め込み、Dagster asset／学習スクリプトはこの情報を MLflow タグに記録します。  
+をメタデータへ埋め込み、Dagster asset／学習スクリプトはこの情報を MLflow タグに記録します。
 `metadata.json` に両方の値が無い場合は学習を開始できないので、常に最新のデータビルダーでチャンクを作成してください。
 
 ### Dataset quality checker

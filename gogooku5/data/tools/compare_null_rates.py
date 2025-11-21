@@ -10,8 +10,8 @@ Example:
 
     PYTHONPATH=gogooku5/data/src \\
       python gogooku5/data/tools/compare_null_rates.py \\
-        --before output_g5/datasets/ml_dataset_2023_2025_final_pruned.parquet \\
-        --after  output_g5/datasets/ml_dataset_2023_2024_clean.parquet \\
+        --before data/output/datasets/ml_dataset_2023_2025_final_pruned.parquet \\
+        --after  data/output/datasets/ml_dataset_2023_2024_clean.parquet \\
         --output gogooku5/docs/NULL_RATE_IMPROVEMENT_REPORT.md
 """
 
@@ -147,9 +147,7 @@ def main() -> int:
             f.write("| 特徴量 | Before | After | 差分 (After-Before) |\n")
             f.write("|--------|--------|-------|---------------------|\n")
             for name, b_rate, a_rate, diff in improvements[:20]:
-                f.write(
-                    f"| `{name}` | {b_rate:.2f}% | {a_rate:.2f}% | {diff:+.2f}% |\n"
-                )
+                f.write(f"| `{name}` | {b_rate:.2f}% | {a_rate:.2f}% | {diff:+.2f}% |\n")
 
     print(f"📝 NULL率比較レポートを書き出しました: {out_path}")
     return 0
@@ -157,4 +155,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

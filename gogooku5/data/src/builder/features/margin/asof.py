@@ -1,4 +1,5 @@
 """As-of utilities for margin datasets (daily & weekly)."""
+
 from __future__ import annotations
 
 from typing import Iterable

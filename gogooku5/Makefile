@@ -57,7 +57,7 @@ endif
 
 # Common variables ---------------------------------------------------------
 
-_output_dir := $(CURDIR)/../output_g5
+_output_dir := $(CURDIR)/data/output
 _data_dir := $(CURDIR)/data
 _tests_dir := $(CURDIR)/data/tests
 _scripts_dir := $(CURDIR)/data/scripts

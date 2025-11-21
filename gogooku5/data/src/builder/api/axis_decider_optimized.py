@@ -87,9 +87,7 @@ class AxisDeciderOptimized:
                 if self.api_client:
                     await self.api_client.authenticate(session)
                 else:
-                    raise RuntimeError(
-                        "AxisDecider requires authenticated JQuantsAsyncFetcher"
-                    )
+                    raise RuntimeError("AxisDecider requires authenticated JQuantsAsyncFetcher")
 
             # サンプルデータの準備
             if not sample_days:
@@ -100,14 +98,10 @@ class AxisDeciderOptimized:
             # 両軸での計測
             date_metrics = await self._measure_date_axis(session, sample_days)
 
-            code_metrics = await self._measure_code_axis(
-                session, sample_codes, sample_days[0], sample_days[-1]
-            )
+            code_metrics = await self._measure_code_axis(session, sample_codes, sample_days[0], sample_days[-1])
 
             # 最適軸の決定
-            axis, decision_reason = self._decide_optimal_axis(
-                date_metrics, code_metrics, market_filter
-            )
+            axis, decision_reason = self._decide_optimal_axis(date_metrics, code_metrics, market_filter)
 
             # 結果をキャッシュ
             result = {
@@ -124,14 +118,8 @@ class AxisDeciderOptimized:
 
             # ログ出力
             logger.info(f"Axis decision: {axis}")
-            logger.info(
-                f"  Date axis: {date_metrics['total_pages']} pages, "
-                f"{date_metrics['total_calls']} calls"
-            )
-            logger.info(
-                f"  Code axis: {code_metrics['total_pages']} pages, "
-                f"{code_metrics['total_calls']} calls"
-            )
+            logger.info(f"  Date axis: {date_metrics['total_pages']} pages, {date_metrics['total_calls']} calls")
+            logger.info(f"  Code axis: {code_metrics['total_pages']} pages, {code_metrics['total_calls']} calls")
             logger.info(f"  Decision reason: {decision_reason}")
 
             return axis, result
@@ -146,9 +134,7 @@ class AxisDeciderOptimized:
                 "timestamp": datetime.now().isoformat(),
             }
 
-    async def _measure_date_axis(
-        self, session: aiohttp.ClientSession, sample_days: list[str]
-    ) -> dict:
+    async def _measure_date_axis(self, session: aiohttp.ClientSession, sample_days: list[str]) -> dict:
         """date軸での計測"""
         url = f"{self.base_url}/prices/daily_quotes"
         headers = {"Authorization": f"Bearer {self.api_client.id_token}"}
@@ -169,15 +155,11 @@ class AxisDeciderOptimized:
                     params["pagination_key"] = pagination_key
 
                 try:
-                    async with session.get(
-                        url, headers=headers, params=params
-                    ) as response:
+                    async with session.get(url, headers=headers, params=params) as response:
                         total_calls += 1
 
                         if response.status != 200:
-                            logger.warning(
-                                f"Date axis measurement failed for {date}: HTTP {response.status}"
-                            )
+                            logger.warning(f"Date axis measurement failed for {date}: HTTP {response.status}")
                             break
 
                         data = await response.json()
@@ -199,9 +181,7 @@ class AxisDeciderOptimized:
         elapsed = time.time() - start_time
 
         # 全期間への推定
-        estimated_total_pages = total_pages * (
-            len(sample_days) / min(3, len(sample_days))
-        )
+        estimated_total_pages = total_pages * (len(sample_days) / min(3, len(sample_days)))
 
         return {
             "total_pages": int(estimated_total_pages),
@@ -240,15 +220,11 @@ class AxisDeciderOptimized:
                     params["pagination_key"] = pagination_key
 
                 try:
-                    async with session.get(
-                        url, headers=headers, params=params
-                    ) as response:
+                    async with session.get(url, headers=headers, params=params) as response:
                         total_calls += 1
 
                         if response.status != 200:
-                            logger.warning(
-                                f"Code axis measurement failed for {code}: HTTP {response.status}"
-                            )
+                            logger.warning(f"Code axis measurement failed for {code}: HTTP {response.status}")
                             break
 
                         data = await response.json()
@@ -320,9 +296,7 @@ class AxisDeciderOptimized:
                     with open(cache_file) as f:
                         cached = json.load(f)
                         cached_time = datetime.fromisoformat(cached["timestamp"])
-                        if (
-                            datetime.now() - cached_time
-                        ).total_seconds() < self.measurement_ttl:
+                        if (datetime.now() - cached_time).total_seconds() < self.measurement_ttl:
                             self.last_measurement = cached
                             self.measurement_timestamp = cached_time
                             return True
@@ -359,9 +333,7 @@ class AxisDeciderOptimized:
 
         return days
 
-    async def _get_default_sample_codes(
-        self, session: aiohttp.ClientSession
-    ) -> list[str]:
+    async def _get_default_sample_codes(self, session: aiohttp.ClientSession) -> list[str]:
         """デフォルトのサンプル銘柄を取得"""
         # 主要な銘柄コード（日経225採用銘柄の一部）
         return [

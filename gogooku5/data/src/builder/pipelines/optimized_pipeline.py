@@ -1,4 +1,5 @@
 """Optimized dataset pipeline placeholder."""
+
 from __future__ import annotations
 
 from .dataset_builder import DatasetBuilder

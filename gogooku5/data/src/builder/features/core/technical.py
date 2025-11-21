@@ -1,4 +1,5 @@
 """Technical indicator features (KAMA, VIDYA, fractional diff, rolling quantiles)."""
+
 from __future__ import annotations
 
 import os
@@ -177,7 +178,7 @@ def _fractional_diff(series: pd.Series, d: float, window: int) -> pd.Series:
 
 def _rolling_quantiles(series: pd.Series, window: int, quants: Sequence[float]) -> pd.DataFrame:
     r = series.rolling(window=window, min_periods=window)
-    data = {f"rq_{window}_{int(q*100):02d}": r.quantile(q) for q in quants}
+    data = {f"rq_{window}_{int(q * 100):02d}": r.quantile(q) for q in quants}
     return pd.DataFrame(data, index=series.index)
 
 

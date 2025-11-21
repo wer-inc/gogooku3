@@ -1,4 +1,5 @@
 """Advanced volatility feature generation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -91,7 +92,9 @@ class AdvancedVolatilityFeatures:
         vov_exprs: list[pl.Expr] = []
         for win in valid_windows:
             min_p = max(win // 2, 5)
-            vov_exprs.append(roll_std_safe(pl.col(f"yz_vol_{win}"), win, min_periods=min_p, by=code).alias(f"vov_{win}"))
+            vov_exprs.append(
+                roll_std_safe(pl.col(f"yz_vol_{win}"), win, min_periods=min_p, by=code).alias(f"vov_{win}")
+            )
         if vov_exprs:
             x = x.with_columns(vov_exprs)
 

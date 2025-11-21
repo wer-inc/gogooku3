@@ -3,6 +3,7 @@
 Phase 1: 14 core features from US and global markets (SPY, QQQ, VIX, DXY, BTC)
 to capture market regime dynamics for Japanese stock prediction.
 """
+
 from __future__ import annotations
 
 import logging

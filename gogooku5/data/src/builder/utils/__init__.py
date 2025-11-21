@@ -15,6 +15,7 @@ from .git_metadata import get_git_metadata
 from .logger import configure_logger, get_logger
 from .mlflow_tracker import MLflowTracker
 from .raw_snapshot import save_raw_snapshot
+from .raw_store import RawDataSlice, RawDataStore
 from .storage import StorageClient
 
 # GPU-ETL utilities (optional, may not be present in clean checkout)
@@ -106,6 +107,8 @@ __all__ = [
     "forward_fill_after_publication",
     "get_git_metadata",
     "save_raw_snapshot",
+    "RawDataSlice",
+    "RawDataStore",
     "ensure_cache_dir",
     "ensure_env_loaded",
     "gather_limited",

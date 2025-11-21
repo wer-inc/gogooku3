@@ -1,4 +1,5 @@
 """投資部門別売買状況特徴量生成モジュール（MVP: 最小構成）"""
+
 from __future__ import annotations
 
 import logging

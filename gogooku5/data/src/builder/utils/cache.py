@@ -12,6 +12,7 @@ Performance gains:
 - Backward compatible: Parquet-only mode available
 - Disk usage: +10-20% for IPC cache (configurable)
 """
+
 from __future__ import annotations
 
 import fcntl

@@ -1,6 +1,6 @@
 # ATFT-GAT-FAN Model Package (Skeleton)
 
-This package will host the modularized ATFT-GAT-FAN implementation. It consumes the shared dataset located at `../../data/output/ml_dataset_latest.parquet`.
+This package will host the modularized ATFT-GAT-FAN implementation. It consumes the shared dataset located at `../../data/output/datasets/ml_dataset_latest.parquet`.
 
 ## Planned Modules
 - `src/atft_gat_fan/models/`: neural network architectures and layers.

@@ -4,6 +4,7 @@ Phase 2 Patch B: Forward return labels generation.
 IMPORTANT: These are LABELS for training, NOT features.
 They contain future information and must NEVER be used as model inputs.
 """
+
 from __future__ import annotations
 
 import polars as pl

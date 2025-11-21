@@ -4,6 +4,7 @@ Phase 2 Patch C: Safe rolling statistics utilities (left-closed, exclude current
 All rolling operations must exclude the current day to prevent look-ahead bias.
 Use these utilities instead of direct rolling operations.
 """
+
 from __future__ import annotations
 
 import polars as pl
@@ -136,13 +137,9 @@ def roll_quantile_safe(
     """
     min_p = min_periods if min_periods is not None else window
     if by is None:
-        return expr.shift(1).rolling_quantile(
-            quantile=quantile, window_size=window, min_periods=min_p
-        )
+        return expr.shift(1).rolling_quantile(quantile=quantile, window_size=window, min_periods=min_p)
     else:
-        return expr.shift(1).over(by).rolling_quantile(
-            quantile=quantile, window_size=window, min_periods=min_p
-        )
+        return expr.shift(1).over(by).rolling_quantile(quantile=quantile, window_size=window, min_periods=min_p)
 
 
 def ewm_mean_safe(

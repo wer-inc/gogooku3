@@ -1,4 +1,5 @@
 """Enhanced investor flow features adapted for gogooku5."""
+
 from __future__ import annotations
 
 import logging

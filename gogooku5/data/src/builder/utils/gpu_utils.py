@@ -1,13 +1,13 @@
 """GPU-ETL utilities for gogooku5 dataset builder.
 
-Thin wrapper around gogooku3's gpu_etl module to enable GPU-accelerated
-feature engineering with cuDF/RAPIDS.
+Thin wrapper around the local :mod:`gpu_etl` module to enable GPU-accelerated
+feature engineering with cuDF/RAPIDS while keeping a clean separation from
+the legacy gogooku3 codebase.
 """
+
 from __future__ import annotations
 
 import logging
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -15,16 +15,11 @@ import polars as pl
 if TYPE_CHECKING:
     import cudf
 
-# Add gogooku3/src to path to import gpu_etl
-_GOGOOKU3_SRC = Path(__file__).parents[6] / "src"
-if str(_GOGOOKU3_SRC) not in sys.path:
-    sys.path.insert(0, str(_GOGOOKU3_SRC))
-
 try:
-    from utils.gpu_etl import _has_cuda
-    from utils.gpu_etl import init_rmm_legacy as init_rmm
-    from utils.gpu_etl import to_cudf as pl_to_cudf
-    from utils.gpu_etl import to_polars as cudf_to_pl
+    # Use the gogooku5-local GPU-ETL implementation
+    from .gpu_etl import _has_cuda, init_rmm
+    from .gpu_etl import to_cudf as pl_to_cudf
+    from .gpu_etl import to_polars as cudf_to_pl
 
     GPU_AVAILABLE = _has_cuda()
 except ImportError:
@@ -36,10 +31,10 @@ except ImportError:
     def init_rmm(pool_size: str | None = None) -> bool:  # type: ignore[misc]
         return False
 
-    def pl_to_cudf(df: pl.DataFrame) -> cudf.DataFrame | None:  # type: ignore[misc]
+    def pl_to_cudf(df: pl.DataFrame) -> "cudf.DataFrame | None":  # type: ignore[misc]
         return None
 
-    def cudf_to_pl(gdf: cudf.DataFrame) -> pl.DataFrame | None:  # type: ignore[misc]
+    def cudf_to_pl(gdf: "cudf.DataFrame") -> pl.DataFrame | None:  # type: ignore[misc]
         return None
 
 

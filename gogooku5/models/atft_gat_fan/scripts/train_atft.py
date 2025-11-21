@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--dataset",
-        default="../../data/output/ml_dataset_latest.parquet",
+        default="../../data/output/datasets/ml_dataset_latest.parquet",
         help="Path to the pre-built dataset parquet file.",
     )
     parser.add_argument(

@@ -1,4 +1,5 @@
 """Schema normalization utilities for duplicate column handling."""
+
 from __future__ import annotations
 
 from collections import Counter

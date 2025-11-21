@@ -1,4 +1,5 @@
 """High-level orchestration for dataset creation."""
+
 from __future__ import annotations
 
 import json
@@ -319,8 +320,7 @@ class DatasetBuilder:
         # Validation
         if "sec_id" not in dim.columns or "code" not in dim.columns:
             raise ValueError(
-                f"Invalid dim_security schema: missing required columns (sec_id, code)\n"
-                f"Found columns: {dim.columns}"
+                f"Invalid dim_security schema: missing required columns (sec_id, code)\nFound columns: {dim.columns}"
             )
 
         LOGGER.info(
@@ -9450,6 +9450,12 @@ class DatasetBuilder:
                 LOGGER.warning("cuDF→Polars conversion failed, using CPU")
                 return df
 
+            # Avoid join conflicts when previous stages already introduced columns like `code_right`.
+            # We only need `sec_id` and `date` as join keys, so drop the duplicate `code` column
+            # from the feature frame before joining back to the main DataFrame.
+            if "code" in result_features.columns:
+                result_features = result_features.drop("code")
+
             # Fix date type if cuDF changed it (Date → Datetime[ms])
             if "date" in result_features.columns:
                 original_date_type = df.schema["date"]
@@ -9484,7 +9490,7 @@ class DatasetBuilder:
         # Patch F: Fail-fast validation
         if df.is_empty():
             raise ValueError(
-                "Cannot persist empty dataset. " "Check data pipeline for issues (start=%s, end=%s)" % (start, end)
+                "Cannot persist empty dataset. Check data pipeline for issues (start=%s, end=%s)" % (start, end)
             )
 
         # Check core columns
@@ -9497,9 +9503,7 @@ class DatasetBuilder:
         ]
         missing_cores = [col for col in core_columns if col not in df.columns]
         if missing_cores:
-            raise ValueError(
-                f"Missing required core columns: {missing_cores}. " f"Available columns: {df.columns[:20]}"
-            )
+            raise ValueError(f"Missing required core columns: {missing_cores}. Available columns: {df.columns[:20]}")
 
         # Check non-null rates for core columns
         for col in core_columns:

@@ -27,8 +27,8 @@ The script is designed to be idempotent and conservative:
 Example usage:
 
     python gogooku5/data/tools/add_beta_alpha_bd_features_full.py \\
-        --input output_g5/datasets/ml_dataset_2024_full.parquet \\
-        --output output_g5/datasets/ml_dataset_2024_full_with_beta_bd.parquet
+        --input data/output/datasets/ml_dataset_2024_full.parquet \\
+        --output data/output/datasets/ml_dataset_2024_full_with_beta_bd.parquet
 """
 from __future__ import annotations
 

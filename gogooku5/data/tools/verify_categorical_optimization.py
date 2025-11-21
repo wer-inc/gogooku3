@@ -10,19 +10,19 @@ Usage:
 
     # Full validation on 2023Q1 chunk (3 months)
     PYTHONPATH=data/src python data/tools/verify_categorical_optimization.py \
-      --chunk-path output_g5/chunks/2023Q1/ml_dataset.parquet \
+      --chunk-path data/output/chunks/2023Q1/ml_dataset.parquet \
       --report-json /tmp/categorical_verification.json
 
     # Quick schema-only check
     PYTHONPATH=data/src python data/tools/verify_categorical_optimization.py \
-      --chunk-path output_g5/chunks/2023Q1/ml_dataset.parquet \
+      --chunk-path data/output/chunks/2023Q1/ml_dataset.parquet \
       --schema-only
 
     # Benchmark performance (requires baseline comparison)
     PYTHONPATH=data/src python data/tools/verify_categorical_optimization.py \
       --benchmark \
-      --baseline-chunk output_g5/chunks_baseline/2023Q1/ml_dataset.parquet \
-      --optimized-chunk output_g5/chunks/2023Q1/ml_dataset.parquet
+      --baseline-chunk data/output/chunks_baseline/2023Q1/ml_dataset.parquet \
+      --optimized-chunk data/output/chunks/2023Q1/ml_dataset.parquet
 """
 
 from __future__ import annotations

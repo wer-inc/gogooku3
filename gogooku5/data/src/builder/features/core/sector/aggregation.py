@@ -1,4 +1,5 @@
 """Sector aggregation features."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

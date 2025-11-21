@@ -4,9 +4,10 @@
 set -euo pipefail
 
 LOG_FILE="/tmp/build_2022_2024_full.log"
-CHUNKS_DIR="/workspace/gogooku3/output_g5/chunks"
-OUTPUT_DIR="/workspace/gogooku3/output_g5/datasets"
-GOGOOKU5_ROOT="/workspace/gogooku3/gogooku5"
+# Default to gogooku5-local data/output when DATA_OUTPUT_DIR/GOGOOKU5_ROOT are unset
+CHUNKS_DIR="${CHUNKS_DIR:-${DATA_OUTPUT_DIR:-data/output}/chunks}"
+OUTPUT_DIR="${OUTPUT_DIR:-${DATA_OUTPUT_DIR:-data/output}/datasets}"
+GOGOOKU5_ROOT="${GOGOOKU5_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
 echo "========================================================================"
 echo "📊 Phase B' Build Monitor & Auto-Executor"
@@ -122,9 +123,9 @@ while true; do
         echo "───────────────────────────────────────────────────────────────────────"
         cd "$GOGOOKU5_ROOT"
         PYTHONPATH=data/src python data/tools/merge_chunks.py \
-            --chunks-dir output_g5/chunks \
-            --pattern "202[234]Q[1234]" \
-            --output output_g5/datasets/ml_dataset_2022_2024_merged.parquet
+            --chunks-dir "${CHUNKS_DIR}" \
+            --output-dir "${OUTPUT_DIR}" \
+            --allow-partial
 
         # Step 2b: Extract 2023-2024
         echo ""
@@ -132,8 +133,8 @@ while true; do
         echo "Step 2b/5: Extracting 2023-2024 date range..."
         echo "───────────────────────────────────────────────────────────────────────"
         python data/tools/extract_date_range.py \
-            --input output_g5/datasets/ml_dataset_2022_2024_merged.parquet \
-            --output output_g5/datasets/ml_dataset_2023_2024_extracted.parquet \
+            --input "${OUTPUT_DIR}/ml_dataset_2022_2024_merged.parquet" \
+            --output "${OUTPUT_DIR}/ml_dataset_2023_2024_extracted.parquet" \
             --start-date 2023-01-01 \
             --end-date 2024-12-31
 
@@ -145,8 +146,8 @@ while true; do
         # (This will be implemented once post-processing scripts are ready)
         echo "⚠️  Post-processing scripts not yet ready - skipping for now"
         echo "   Using extracted dataset as-is"
-        cp output_g5/datasets/ml_dataset_2023_2024_extracted.parquet \
-           output_g5/datasets/ml_dataset_2023_2024_final.parquet
+        cp "${OUTPUT_DIR}/ml_dataset_2023_2024_extracted.parquet" \
+           "${OUTPUT_DIR}/ml_dataset_2023_2024_final.parquet"
 
         # Step 4: Drop high NULL columns
         echo ""
@@ -154,8 +155,8 @@ while true; do
         echo "Step 4/5: Dropping columns with NULL rate ≥90%..."
         echo "───────────────────────────────────────────────────────────────────────"
         PYTHONPATH=data/src python data/tools/drop_high_null_columns.py \
-            --input output_g5/datasets/ml_dataset_2023_2024_final.parquet \
-            --output output_g5/datasets/ml_dataset_2023_2024_clean.parquet \
+            --input "${OUTPUT_DIR}/ml_dataset_2023_2024_final.parquet" \
+            --output "${OUTPUT_DIR}/ml_dataset_2023_2024_clean.parquet" \
             --threshold 90.0 \
             --keep-col date --keep-col code
 
@@ -165,8 +166,8 @@ while true; do
         echo "Step 5/5: Generating NULL rate improvement report..."
         echo "───────────────────────────────────────────────────────────────────────"
         PYTHONPATH=data/src python data/tools/compare_null_rates.py \
-            --before output_g5/datasets/ml_dataset_2023_2025_final_pruned.parquet \
-            --after output_g5/datasets/ml_dataset_2023_2024_clean.parquet \
+            --before "${OUTPUT_DIR}/ml_dataset_2023_2025_final_pruned.parquet" \
+            --after "${OUTPUT_DIR}/ml_dataset_2023_2024_clean.parquet" \
             --output docs/NULL_RATE_IMPROVEMENT_REPORT_20251119.md
 
         echo ""
@@ -175,7 +176,7 @@ while true; do
         echo "========================================================================"
         echo ""
         echo "📊 Final Output:"
-        echo "   Clean dataset: output_g5/datasets/ml_dataset_2023_2024_clean.parquet"
+        echo "   Clean dataset: ${OUTPUT_DIR}/ml_dataset_2023_2024_clean.parquet"
         echo "   NULL report: docs/NULL_RATE_IMPROVEMENT_REPORT_20251119.md"
         echo ""
         echo "📋 Next Steps:"

@@ -6,14 +6,24 @@ Validates that all 2025 chunks are built with schema v1.4.0
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Dict, List
+
+
+def _default_chunks_dir() -> Path:
+    """Resolve default chunks directory relative to DATA_OUTPUT_DIR or repo root."""
+    env_dir = os.getenv("DATA_OUTPUT_DIR")
+    if env_dir:
+        return Path(env_dir) / "chunks"
+    # Fallback: gogooku5/data/output/chunks
+    return Path(__file__).resolve().parents[2] / "data" / "output" / "chunks"
 
 
 def validate_2025_complete() -> bool:
     """Validate all 2025 chunks with manifest v1.4.0"""
 
-    base_dir = Path("/workspace/gogooku3/output_g5/chunks")
+    base_dir = _default_chunks_dir()
     expected_hash = "81c029b120e9c5e2"
     expected_version = "1.4.0"
     expected_quarters = ["2025Q1", "2025Q2", "2025Q3", "2025Q4"]
@@ -32,11 +42,7 @@ def validate_2025_complete() -> bool:
 
         if not status_file.exists():
             print(f"❌ {quarter}: Status file not found")
-            results.append({
-                "quarter": quarter,
-                "status": "missing",
-                "passed": False
-            })
+            results.append({"quarter": quarter, "status": "missing", "passed": False})
             all_passed = False
             continue
 
@@ -46,11 +52,7 @@ def validate_2025_complete() -> bool:
         # Validate state
         if status.get("state") != "completed":
             print(f"❌ {quarter}: Build not completed (state={status.get('state')})")
-            results.append({
-                "quarter": quarter,
-                "status": "incomplete",
-                "passed": False
-            })
+            results.append({"quarter": quarter, "status": "incomplete", "passed": False})
             all_passed = False
             continue
 
@@ -58,12 +60,9 @@ def validate_2025_complete() -> bool:
         schema_version = status.get("feature_schema_version")
         if schema_version != expected_version:
             print(f"❌ {quarter}: Wrong schema version (got {schema_version}, expected {expected_version})")
-            results.append({
-                "quarter": quarter,
-                "status": "wrong_version",
-                "schema_version": schema_version,
-                "passed": False
-            })
+            results.append(
+                {"quarter": quarter, "status": "wrong_version", "schema_version": schema_version, "passed": False}
+            )
             all_passed = False
             continue
 
@@ -71,12 +70,7 @@ def validate_2025_complete() -> bool:
         schema_hash = status.get("feature_schema_hash")
         if schema_hash != expected_hash:
             print(f"❌ {quarter}: Wrong schema hash (got {schema_hash}, expected {expected_hash})")
-            results.append({
-                "quarter": quarter,
-                "status": "wrong_hash",
-                "schema_hash": schema_hash,
-                "passed": False
-            })
+            results.append({"quarter": quarter, "status": "wrong_hash", "schema_hash": schema_hash, "passed": False})
             all_passed = False
             continue
 
@@ -92,16 +86,18 @@ def validate_2025_complete() -> bool:
         print(f"   - Schema: v{schema_version} (hash: {schema_hash})")
         print()
 
-        results.append({
-            "quarter": quarter,
-            "status": "valid",
-            "rows": rows,
-            "duration_seconds": duration,
-            "timestamp": timestamp,
-            "schema_version": schema_version,
-            "schema_hash": schema_hash,
-            "passed": True
-        })
+        results.append(
+            {
+                "quarter": quarter,
+                "status": "valid",
+                "rows": rows,
+                "duration_seconds": duration,
+                "timestamp": timestamp,
+                "schema_version": schema_version,
+                "schema_hash": schema_hash,
+                "passed": True,
+            }
+        )
 
     # Summary
     print("=" * 80)

@@ -127,7 +127,7 @@ class StatusManager:
             logger.info(f"⏭️  Skipping completed chunk: {status_file.parent.name}")
             return True
         elif state == ChunkStatus.RUNNING:
-            logger.warning(f"⚠️  Chunk {status_file.parent.name} was interrupted (state=running). " "Will re-execute.")
+            logger.warning(f"⚠️  Chunk {status_file.parent.name} was interrupted (state=running). Will re-execute.")
             return False
         elif state == ChunkStatus.FAILED:
             logger.info(f"🔄 Retrying failed chunk: {status_file.parent.name}")

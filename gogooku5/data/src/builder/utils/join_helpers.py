@@ -41,10 +41,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def prepare_join_keys(
-    df: pl.DataFrame | pl.LazyFrame,
-    keys: List[str],
-    *,
-    lazy: bool = False
+    df: pl.DataFrame | pl.LazyFrame, keys: List[str], *, lazy: bool = False
 ) -> pl.DataFrame | pl.LazyFrame:
     """Convert join keys to Categorical dtype for faster joins.
 
@@ -93,10 +90,7 @@ def prepare_join_keys(
 
 
 def prepare_dim_security(
-    dim_path: Path,
-    *,
-    lazy: bool = False,
-    columns: List[str] | None = None
+    dim_path: Path, *, lazy: bool = False, columns: List[str] | None = None
 ) -> pl.DataFrame | pl.LazyFrame:
     """Load and prepare dim_security with Categorical-encoded keys for reuse.
 
@@ -158,19 +152,11 @@ def prepare_dim_security(
         if cat_exprs:
             df = df.with_columns(cat_exprs)
 
-        LOGGER.info(
-            f"Loaded dim_security: {len(df):,} rows, "
-            f"categorized {len(cat_exprs)} columns: {available_cols}"
-        )
+        LOGGER.info(f"Loaded dim_security: {len(df):,} rows, categorized {len(cat_exprs)} columns: {available_cols}")
         return df
 
 
-def collect_smart(
-    lf: pl.LazyFrame,
-    *,
-    expected_rows: int | None = None,
-    threshold: int = 100_000
-) -> pl.DataFrame:
+def collect_smart(lf: pl.LazyFrame, *, expected_rows: int | None = None, threshold: int = 100_000) -> pl.DataFrame:
     """Collect LazyFrame with automatic streaming decision and fallback.
 
     This function automatically decides whether to use streaming execution
@@ -207,9 +193,7 @@ def collect_smart(
             LOGGER.debug(f"Collected with streaming=True ({len(result):,} rows)")
             return result
         except Exception as e:
-            LOGGER.warning(
-                f"Streaming collection failed, falling back to eager mode: {e}"
-            )
+            LOGGER.warning(f"Streaming collection failed, falling back to eager mode: {e}")
             result = lf.collect(streaming=False)
             LOGGER.debug(f"Collected with streaming=False ({len(result):,} rows)")
             return result

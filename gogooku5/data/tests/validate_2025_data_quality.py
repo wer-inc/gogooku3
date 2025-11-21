@@ -10,16 +10,24 @@ Validates data quality for all 2025 chunks:
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Dict
 
 import polars as pl
 
 
+def _default_chunks_dir() -> Path:
+    env_dir = os.getenv("DATA_OUTPUT_DIR")
+    if env_dir:
+        return Path(env_dir) / "chunks"
+    return Path(__file__).resolve().parents[2] / "data" / "output" / "chunks"
+
+
 def validate_quarter_data_quality(chunk_id: str) -> Dict:
     """Validate data quality for a single quarter"""
 
-    base_dir = Path("/workspace/gogooku3/output_g5/chunks")
+    base_dir = _default_chunks_dir()
     chunk_dir = base_dir / chunk_id
     parquet_path = chunk_dir / "ml_dataset.parquet"
     metadata_path = chunk_dir / "metadata.json"

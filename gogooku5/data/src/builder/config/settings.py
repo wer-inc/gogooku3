@@ -1,4 +1,5 @@
 """Configuration objects for the dataset builder."""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -18,7 +19,10 @@ class DatasetBuilderSettings(BaseSettings):
     jquants_auth_password: str = Field(..., env="JQUANTS_AUTH_PASSWORD")
     jquants_plan_tier: str = Field("standard", env="JQUANTS_PLAN_TIER")
 
-    data_output_dir: Path = Field(default_factory=lambda: Path("output_g5"), env="DATA_OUTPUT_DIR")
+    # NOTE: Default is a repo-local output so gogooku5 can run standalone.
+    # In the monorepo, set DATA_OUTPUT_DIR=/workspace/gogooku3/output_g5 via .env
+    # to preserve existing paths during the transition.
+    data_output_dir: Path = Field(default_factory=lambda: Path("output"), env="DATA_OUTPUT_DIR")
     data_cache_dir: Path = Field(default_factory=lambda: Path("output/cache"), env="DATA_CACHE_DIR")
     raw_data_dir: Path = Field(default_factory=lambda: Path("output/raw"), env="RAW_DATA_DIR")
 
@@ -116,9 +120,7 @@ class DatasetBuilderSettings(BaseSettings):
     def _ensure_directories(self) -> "DatasetBuilderSettings":
         """Make sure important directories exist to avoid runtime surprises."""
 
-        if "data_cache_dir" not in self.model_fields_set or (
-            self.data_cache_dir == Path("output/cache")
-        ):
+        if "data_cache_dir" not in self.model_fields_set or (self.data_cache_dir == Path("output/cache")):
             self.data_cache_dir = self.data_output_dir / "cache"
         if "raw_data_dir" not in self.model_fields_set or (self.raw_data_dir == Path("output/raw")):
             self.raw_data_dir = self.data_output_dir / "raw"

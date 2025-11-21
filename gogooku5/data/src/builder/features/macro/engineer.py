@@ -1,4 +1,5 @@
 """Combine macro feature tables with the dataset."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

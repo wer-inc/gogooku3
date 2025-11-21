@@ -126,7 +126,7 @@ class Validator:
             days = (end - start).days
             if days > 3650:
                 self.warnings.append(
-                    f"Date range is {days} days (~{days//365} years). " "Consider using chunked execution."
+                    f"Date range is {days} days (~{days // 365} years). Consider using chunked execution."
                 )
 
         except ValueError as e:
@@ -159,7 +159,7 @@ class Validator:
 
             if importlib.util.find_spec("cudf") is None or importlib.util.find_spec("cugraph") is None:
                 self.warnings.append(
-                    "Graph features enabled but cuDF/cuGraph not installed. " "Graph features will be skipped."
+                    "Graph features enabled but cuDF/cuGraph not installed. Graph features will be skipped."
                 )
 
     def _validate_jquants_credentials(self) -> None:
@@ -171,9 +171,7 @@ class Validator:
         password = self.config.jquants_password if hasattr(self.config, "jquants_password") else None
 
         if not email or not password:
-            self.errors.append(
-                "JQuants credentials missing. Set JQUANTS_AUTH_EMAIL and " "JQUANTS_AUTH_PASSWORD in .env"
-            )
+            self.errors.append("JQuants credentials missing. Set JQUANTS_AUTH_EMAIL and JQUANTS_AUTH_PASSWORD in .env")
 
     def _validate_features(self) -> None:
         """Validate feature configuration."""

@@ -10,15 +10,23 @@ Validates that Phase 1 features are correctly implemented in actual data:
 """
 
 import json
+import os
 from pathlib import Path
 
 import polars as pl
 
 
+def _default_chunks_dir() -> Path:
+    env_dir = os.getenv("DATA_OUTPUT_DIR")
+    if env_dir:
+        return Path(env_dir) / "chunks"
+    return Path(__file__).resolve().parents[2] / "data" / "output" / "chunks"
+
+
 def validate_phase1_data_quality(chunk_id: str = "2025Q4") -> bool:
     """Validate Phase 1 implementation in actual chunk data"""
 
-    base_dir = Path("/workspace/gogooku3/output_g5/chunks")
+    base_dir = _default_chunks_dir()
     chunk_dir = base_dir / chunk_id
     parquet_path = chunk_dir / "ml_dataset.parquet"
     metadata_path = chunk_dir / "metadata.json"

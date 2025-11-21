@@ -4,8 +4,8 @@ from __future__ import annotations
 import argparse
 from typing import List
 
-from builder.pipelines.full_pipeline import run_full_pipeline
 from builder.utils import ensure_env_loaded
+from cli.main import main as cli_main
 
 
 def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
@@ -23,8 +23,18 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
 def main(argv: List[str] | None = None) -> int:
     args = parse_args(argv)
     ensure_env_loaded()
-    run_full_pipeline(start=args.start, end=args.end, refresh_listed=args.refresh_listed)
-    return 0
+    # Delegate to unified CLI (automatic chunking + auto-merge to avoid OOM on long ranges)
+    cli_argv: List[str] = [
+        "build",
+        "--start",
+        args.start,
+        "--end",
+        args.end,
+        "--merge",
+    ]
+    if args.refresh_listed:
+        cli_argv.append("--refresh-listed")
+    return cli_main(cli_argv)
 
 
 if __name__ == "__main__":

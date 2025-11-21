@@ -6,6 +6,7 @@ Ensures weekly/snapshot data is joined with correct temporal alignment:
 - Snapshot data (e.g., statements): Available at T+1 15:00 JST
 - Never joins future data into current row
 """
+
 from __future__ import annotations
 
 import logging
@@ -274,7 +275,7 @@ def _detect_temporal_leaks(
     if not leak_check.is_empty():
         n_leaks = len(leak_check)
         sample = leak_check.head(5).select([backbone_ts, snapshot_ts])
-        raise ValueError(f"T-leak detected: {n_leaks} rows have future snapshot data\n" f"Sample violations:\n{sample}")
+        raise ValueError(f"T-leak detected: {n_leaks} rows have future snapshot data\nSample violations:\n{sample}")
 
     LOGGER.debug("T-leak check passed: No future data detected")
 

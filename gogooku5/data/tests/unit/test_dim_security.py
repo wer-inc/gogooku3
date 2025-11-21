@@ -240,12 +240,12 @@ def _build_dim_security_from_df(df: pl.DataFrame) -> pl.DataFrame:
 
 
 @pytest.mark.skipif(
-    not Path("output_g5/dim_security.parquet").exists(),
+    not Path("data/output/dim_security.parquet").exists(),
     reason="dim_security.parquet not found (run build_dim_security.py first)",
 )
 def test_dim_security_file_exists():
     """Test that generated dim_security file exists and is valid."""
-    dim_path = Path("output_g5/dim_security.parquet")
+    dim_path = Path("data/output/dim_security.parquet")
     dim = pl.read_parquet(dim_path)
 
     # Basic validation

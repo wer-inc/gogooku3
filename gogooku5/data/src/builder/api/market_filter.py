@@ -1,4 +1,5 @@
 """Utilities for filtering securities by market codes."""
+
 from __future__ import annotations
 
 from typing import Iterable, List, MutableMapping

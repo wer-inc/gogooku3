@@ -1,4 +1,5 @@
 """L0 (monthly) quote shard utilities."""
+
 from __future__ import annotations
 
 import contextlib
@@ -130,7 +131,11 @@ class QuoteShardIndex:
     def _ensure_initialized(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as con:
-            con.execute("PRAGMA journal_mode=WAL;")
+            try:
+                con.execute("PRAGMA journal_mode=WAL;")
+            except sqlite3.OperationalError as exc:
+                LOGGER.warning("WAL unavailable for %s (%s); falling back to DELETE journal", self.path, exc)
+                con.execute("PRAGMA journal_mode=DELETE;")
             con.execute("PRAGMA synchronous=NORMAL;")
             con.execute("PRAGMA temp_store=MEMORY;")
             con.executescript(

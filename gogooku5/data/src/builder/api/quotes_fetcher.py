@@ -1,4 +1,5 @@
 """High-level helpers for fetching quote data."""
+
 from __future__ import annotations
 
 import logging
@@ -85,7 +86,9 @@ class QuotesFetcher:
             result.extend(rows)
         return result
 
-    def _fetch_by_date_parallel(self, date_list: List[str], codes: set[str] | None, max_workers: int) -> List[dict[str, str]]:
+    def _fetch_by_date_parallel(
+        self, date_list: List[str], codes: set[str] | None, max_workers: int
+    ) -> List[dict[str, str]]:
         """Parallel fetch using ThreadPoolExecutor."""
         total = len(date_list)
         timer_start = perf_counter()
