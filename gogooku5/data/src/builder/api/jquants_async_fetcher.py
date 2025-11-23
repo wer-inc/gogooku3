@@ -13,7 +13,8 @@ from collections.abc import Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import aiohttp
 import polars as pl

@@ -20,8 +20,8 @@ class DatasetBuilderSettings(BaseSettings):
     jquants_plan_tier: str = Field("standard", env="JQUANTS_PLAN_TIER")
 
     # NOTE: Default is a repo-local output so gogooku5 can run standalone.
-    # In the monorepo, set DATA_OUTPUT_DIR=/workspace/gogooku3/output_g5 via .env
-    # to preserve existing paths during the transition.
+    # In the monorepo, set DATA_OUTPUT_DIR=/workspace/gogooku3/gogooku5/data/output
+    # to keep all artifacts under this repository.
     data_output_dir: Path = Field(default_factory=lambda: Path("output"), env="DATA_OUTPUT_DIR")
     data_cache_dir: Path = Field(default_factory=lambda: Path("output/cache"), env="DATA_CACHE_DIR")
     raw_data_dir: Path = Field(default_factory=lambda: Path("output/raw"), env="RAW_DATA_DIR")

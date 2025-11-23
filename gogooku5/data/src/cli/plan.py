@@ -5,10 +5,11 @@ Defines ExecutionPlan and related classes for representing
 dataset build plans with automatic chunking.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import List, Optional
 
 
 @dataclass
@@ -37,8 +38,8 @@ class ExecutionPlan:
     features: str
 
     # Chunking-specific (None for full mode)
-    chunk_months: Optional[int] = None
-    num_chunks: Optional[int] = None
+    chunk_months: int | None = None
+    num_chunks: int | None = None
     resume: bool = False
     force: bool = False
 
@@ -156,7 +157,7 @@ def calculate_chunk_specs(
     chunk_months: int,
     warmup_days: int,
     output_dir: Path,
-) -> List[ChunkSpec]:
+) -> list[ChunkSpec]:
     """
     Calculate chunk specifications for chunked execution.
 
@@ -206,7 +207,7 @@ def calculate_chunk_specs(
     return chunks
 
 
-def display_plan(plan: ExecutionPlan, chunks: Optional[List[ChunkSpec]] = None) -> None:
+def display_plan(plan: ExecutionPlan, chunks: list[ChunkSpec] | None = None) -> None:
     """
     Display execution plan in human-readable format.
 

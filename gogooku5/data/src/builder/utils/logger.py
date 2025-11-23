@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from logging import Logger
-from typing import Optional
 
 _DEFAULT_LOG_FORMAT = "[%(asctime)s] %(levelname)s %(name)s - %(message)s"
 
@@ -23,7 +22,7 @@ def configure_logger(name: str = "builder", level: int = logging.INFO) -> Logger
     return logger
 
 
-def get_logger(name: Optional[str] = None) -> Logger:
+def get_logger(name: str | None = None) -> Logger:
     """Return a child logger derived from the root builder logger."""
 
     root = configure_logger()

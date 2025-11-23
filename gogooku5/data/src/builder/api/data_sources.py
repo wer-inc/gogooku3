@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from collections.abc import Callable, Sequence
 
 import polars as pl
 
@@ -610,7 +610,7 @@ class DataSourceManager:
         *,
         start: str,
         end: str,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Return short selling aggregates."""
 
@@ -666,7 +666,7 @@ class DataSourceManager:
         *,
         start: str,
         end: str,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         """Return sector-level short selling metrics."""
 
@@ -691,7 +691,7 @@ class DataSourceManager:
         *,
         start: str,
         end: str,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         df = self.fetcher.fetch_short_selling(start=start, end=end, business_days=business_days)
         if self.settings.save_raw_data:
@@ -709,7 +709,7 @@ class DataSourceManager:
         *,
         start: str,
         end: str,
-        business_days: Optional[list[str]] = None,
+        business_days: list[str] | None = None,
     ) -> pl.DataFrame:
         df = self.fetcher.fetch_sector_short_selling(start=start, end=end, business_days=business_days)
         if self.settings.save_raw_data:
@@ -760,7 +760,7 @@ class DataSourceManager:
         *,
         dataset: str,
         cache_key: str,
-        ttl_days: Optional[int],
+        ttl_days: int | None,
         fetch_fn: Callable[[], pl.DataFrame],
         allow_empty: bool = False,
         extra_force_refresh: bool = False,
@@ -924,7 +924,7 @@ class DataSourceManager:
         except ValueError:
             return None
 
-    def _build_policy(self, *, dataset: str, ttl_days: Optional[int]) -> SourceCachePolicy:
+    def _build_policy(self, *, dataset: str, ttl_days: int | None) -> SourceCachePolicy:
         return SourceCachePolicy.from_settings(
             dataset=dataset,
             ttl_days=ttl_days,

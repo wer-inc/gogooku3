@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -32,7 +31,7 @@ def require_env_var(name: str) -> str:
     return value
 
 
-def ensure_env_loaded(env_file: Optional[str | Path] = None) -> None:
+def ensure_env_loaded(env_file: str | Path | None = None) -> None:
     """Best-effort load for tooling scripts before settings are instantiated."""
 
     candidate = env_file or ".env"

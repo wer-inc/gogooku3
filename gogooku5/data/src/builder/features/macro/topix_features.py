@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import polars as pl
 
@@ -15,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 
 def build_topix_features(
     topix_df: pl.DataFrame,
-    trading_calendar: Optional[pl.DataFrame] = None,
+    trading_calendar: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """
     TOPIX派生特徴量を生成（P0: 最小構成）。

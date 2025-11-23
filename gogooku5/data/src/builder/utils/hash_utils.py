@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def file_sha256(path: Path, *, chunk_size: int = 8 * 1024 * 1024) -> str:

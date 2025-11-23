@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import polars as pl
 
@@ -106,8 +105,8 @@ def load_index_option_225(df: pl.DataFrame) -> pl.DataFrame:
 
 def build_index_option_225_features(
     opt: pl.DataFrame,
-    topix_df: Optional[pl.DataFrame] = None,
-    trading_calendar: Optional[pl.DataFrame] = None,
+    topix_df: pl.DataFrame | None = None,
+    trading_calendar: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """
     日経225オプションのP0特徴量を生成。

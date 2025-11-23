@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Union
 
 import polars as pl
 from polars import LazyFrame
@@ -43,10 +43,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 def lazy_load(
-    path: Union[str, Path, List[Union[str, Path]]],
+    path: Union[str, Path, list[Union[str, Path]]],
     *,
-    filters: Optional[pl.Expr] = None,
-    columns: Optional[List[str]] = None,
+    filters: pl.Expr | None = None,
+    columns: list[str] | None = None,
     prefer_ipc: bool = True,
 ) -> pl.DataFrame:
     """
@@ -129,8 +129,8 @@ def lazy_load(
 
 def _apply_pushdown(
     lf: LazyFrame,
-    filters: Optional[pl.Expr],
-    columns: Optional[List[str]],
+    filters: pl.Expr | None,
+    columns: list[str] | None,
 ) -> LazyFrame:
     """
     Apply predicate pushdown and column pruning to LazyFrame.
@@ -174,8 +174,8 @@ def save_with_cache(
     path: Union[str, Path],
     *,
     create_ipc: bool = True,
-    parquet_kwargs: Optional[dict] = None,
-) -> tuple[Path, Optional[Path]]:
+    parquet_kwargs: dict | None = None,
+) -> tuple[Path, Path | None]:
     """
     Save DataFrame as Parquet + optional Arrow IPC cache.
 

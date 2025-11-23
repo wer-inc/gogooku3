@@ -6,7 +6,7 @@ import math
 from collections import deque
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Deque, Dict, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 import polars as pl
@@ -80,7 +80,7 @@ class GraphFeatureEngineer:
             .sort("date")
         )
 
-        window: Deque[_WindowSlice] = deque()
+        window: deque[_WindowSlice] = deque()
         max_age = timedelta(days=cfg.window_days)
         feature_frames: list[pl.DataFrame] = []
 
@@ -154,7 +154,7 @@ class GraphFeatureEngineer:
         self,
         codes: Sequence[str],
         returns: Sequence[float],
-        code_to_idx: Dict[str, int],
+        code_to_idx: dict[str, int],
     ) -> tuple[np.ndarray, np.ndarray] | None:
         mapped_idx: list[int] = []
         mapped_ret: list[float] = []
@@ -178,7 +178,7 @@ class GraphFeatureEngineer:
 
     def _compute_window_graph_statistics(
         self,
-        slices: Deque[_WindowSlice],
+        slices: deque[_WindowSlice],
         universe_size: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
         active_indices = self._active_indices(slices)

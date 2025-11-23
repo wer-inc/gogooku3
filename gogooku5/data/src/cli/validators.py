@@ -8,11 +8,12 @@ Performs comprehensive validation of:
 - Feature compatibility (e.g., Futures API Premium requirement)
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 from .config import Config
 
@@ -38,10 +39,10 @@ class Validator:
         """
         self.config = config
         self.strict = strict
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
 
-    def validate_all(self) -> Tuple[bool, List[str], List[str]]:
+    def validate_all(self) -> tuple[bool, list[str], list[str]]:
         """
         Run all validations.
 
@@ -218,7 +219,7 @@ def validate_config(config: Config, strict: bool = False) -> None:
         logger.info("✅ Validation passed")
 
 
-def check_environment(config: Config, strict: bool = False) -> Tuple[bool, dict]:
+def check_environment(config: Config, strict: bool = False) -> tuple[bool, dict]:
     """
     Comprehensive environment check (for --check command).
 

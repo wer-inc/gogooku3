@@ -11,7 +11,6 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import polars as pl
 
@@ -23,9 +22,9 @@ class SchemaValidationResult:
     is_valid: bool
     schema_hash: str
     manifest_hash: str
-    missing_columns: List[str]
-    extra_columns: List[str]
-    dtype_mismatches: Dict[str, tuple[str, str]]  # column -> (expected, actual)
+    missing_columns: list[str]
+    extra_columns: list[str]
+    dtype_mismatches: dict[str, tuple[str, str]]  # column -> (expected, actual)
     column_count: int
     manifest_column_count: int
     column_order_mismatch: bool = False
@@ -71,7 +70,7 @@ class SchemaValidationResult:
 class SchemaValidator:
     """Validates dataset schemas against a reference manifest."""
 
-    def __init__(self, manifest_path: Optional[Path] = None):
+    def __init__(self, manifest_path: Path | None = None):
         if manifest_path is None:
             manifest_path = Path(__file__).parents[3] / "schema" / "feature_schema_manifest.json"
 
@@ -91,10 +90,10 @@ class SchemaValidator:
 
     @staticmethod
     def _compute_hash(
-        columns: Dict[str, str],
+        columns: dict[str, str],
         *,
         enforce_order: bool,
-        column_order: Optional[List[str]] = None,
+        column_order: list[str] | None = None,
     ) -> str:
         if enforce_order and column_order:
             ordered = [f"{name}:{columns.get(name, '')}" for name in column_order]
@@ -105,10 +104,10 @@ class SchemaValidator:
 
     @staticmethod
     def compute_hash_for_columns(
-        columns: Dict[str, str],
+        columns: dict[str, str],
         *,
         enforce_order: bool = False,
-        column_order: Optional[List[str]] = None,
+        column_order: list[str] | None = None,
     ) -> str:
         """Public helper for computing schema hashes."""
 
@@ -130,7 +129,7 @@ class SchemaValidator:
 
         missing = [col for col in self.expected_columns if col not in actual_columns]
         extra = [col for col in actual_columns if col not in self.expected_columns]
-        dtype_mismatches: Dict[str, tuple[str, str]] = {}
+        dtype_mismatches: dict[str, tuple[str, str]] = {}
         for col in set(self.expected_columns) & set(actual_columns):
             expected_dtype = self.expected_columns[col]
             actual_dtype = actual_columns[col]
@@ -189,7 +188,7 @@ class SchemaValidator:
 
 def validate_chunks_directory(
     chunks_dir: Path,
-    manifest_path: Optional[Path] = None,
+    manifest_path: Path | None = None,
     fail_fast: bool = False,
 ) -> dict[str, SchemaValidationResult]:
     """Validate all chunks in a directory."""

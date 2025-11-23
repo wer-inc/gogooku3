@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, MutableMapping
+from collections.abc import Iterable, MutableMapping
 
 MarketCode = str
 Instrument = MutableMapping[str, object]
@@ -14,15 +14,15 @@ class MarketFilter:
     def __init__(self, allowed_markets: Iterable[MarketCode]) -> None:
         self.allowed_markets = {code for code in allowed_markets}
 
-    def filter(self, instruments: Iterable[Instrument]) -> List[Instrument]:
+    def filter(self, instruments: Iterable[Instrument]) -> list[Instrument]:
         """Return instruments whose `market_code` is allowed."""
 
         return [inst for inst in instruments if self._is_allowed(inst)]
 
-    def group_by_market(self, instruments: Iterable[Instrument]) -> dict[MarketCode, List[Instrument]]:
+    def group_by_market(self, instruments: Iterable[Instrument]) -> dict[MarketCode, list[Instrument]]:
         """Group instruments by their market code."""
 
-        grouped: dict[MarketCode, List[Instrument]] = {}
+        grouped: dict[MarketCode, list[Instrument]] = {}
         for inst in instruments:
             code = str(inst.get("market_code", ""))
             grouped.setdefault(code, []).append(inst)

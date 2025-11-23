@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, MutableMapping
+from typing import Any, ClassVar
+from collections.abc import MutableMapping
 
 import polars as pl
 

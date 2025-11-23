@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Iterator, List, Sequence, Tuple
+from collections.abc import Iterator, Sequence
 
 try:
     import polars as pl
@@ -59,7 +59,7 @@ class PurgedGroupTimeSeriesSplit:
         X: object,
         y: Sequence | None = None,  # parity with sklearn API
         groups: Sequence | None = None,
-    ) -> Iterator[Tuple[List[int], List[int]]]:
+    ) -> Iterator[tuple[list[int], list[int]]]:
         if self.n_splits < 2:
             raise ValueError("n_splits must be >= 2")
 
@@ -110,11 +110,11 @@ class PurgedGroupTimeSeriesSplit:
         return self.n_splits
 
 
-def _split_indices(n: int, n_splits: int) -> List[Tuple[int, int]]:
+def _split_indices(n: int, n_splits: int) -> list[tuple[int, int]]:
     """Return start/end index tuples that partition ``range(n)`` into ``n_splits`` contiguous blocks."""
     base = n // n_splits
     remainder = n % n_splits
-    boundaries: List[Tuple[int, int]] = []
+    boundaries: list[tuple[int, int]] = []
     start = 0
     for fold in range(n_splits):
         extra = 1 if fold < remainder else 0

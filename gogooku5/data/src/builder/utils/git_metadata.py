@@ -4,12 +4,13 @@ Git metadata utilities for dataset reproducibility.
 Provides robust Git SHA and branch retrieval with environment variable fallbacks.
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
-from typing import Dict
 
 
-def get_git_metadata() -> Dict[str, str]:
+def get_git_metadata() -> dict[str, str]:
     """
     Git metadata 取得 (例外安全)
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 
@@ -14,7 +13,7 @@ from ..utils.rolling import roll_mean_safe, roll_std_safe
 LOGGER = logging.getLogger(__name__)
 
 
-def load_indices_allowlist(allowlist_path: Optional[Path] = None) -> dict:
+def load_indices_allowlist(allowlist_path: Path | None = None) -> dict:
     """
     インデックスコードのallowlistを読み込む。
 
@@ -188,7 +187,7 @@ def build_index_core_features(df: pl.DataFrame) -> pl.DataFrame:
 
 def build_index_spreads(
     df: pl.DataFrame | pl.LazyFrame,
-    allowlist: Optional[dict] = None,
+    allowlist: dict | None = None,
 ) -> pl.DataFrame:
     """
     インデックス間のスプレッド特徴量を生成（P0）。
@@ -290,7 +289,7 @@ def build_index_spreads(
 
 def build_index_features(
     indices_df: pl.DataFrame,
-    allowlist: Optional[dict] = None,
+    allowlist: dict | None = None,
 ) -> pl.DataFrame:
     """
     インデックス特徴量を生成（P0: 中核＋スプレッド）。

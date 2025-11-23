@@ -8,8 +8,10 @@ Executes chunk builds with:
 - Error handling and retry
 """
 
+from __future__ import annotations
+
 import logging
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -45,7 +47,7 @@ class ChunkExecutor:
         self.status_mgr = StatusManager()
         self.builder = self._create_builder()
 
-    def execute(self, chunks: List["ChunkSpec"]) -> int:
+    def execute(self, chunks: list["ChunkSpec"]) -> int:
         """
         Execute chunk builds.
 
@@ -105,7 +107,7 @@ class ChunkExecutor:
             logger.info("\n✅ All chunks completed successfully")
             return 0
 
-    def _filter_chunks(self, chunks: List["ChunkSpec"]) -> List["ChunkSpec"]:
+    def _filter_chunks(self, chunks: list["ChunkSpec"]) -> list["ChunkSpec"]:
         """
         Filter chunks based on resume/force logic.
 

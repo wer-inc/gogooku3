@@ -12,7 +12,6 @@ Handles:
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .args import build_parser, validate_args
 from .config import load_config
@@ -24,7 +23,7 @@ from .validators import (
 )
 
 
-def setup_logging(level: str = "INFO", log_file: Optional[Path] = None) -> None:
+def setup_logging(level: str = "INFO", log_file: Path | None = None) -> None:
     """
     Configure logging for CLI.
 
@@ -48,7 +47,7 @@ def setup_logging(level: str = "INFO", log_file: Optional[Path] = None) -> None:
     )
 
 
-def main(argv: Optional[list] = None) -> int:
+def main(argv: list | None = None) -> int:
     """
     Main entry point for CLI.
 

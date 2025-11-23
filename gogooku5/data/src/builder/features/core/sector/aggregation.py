@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import polars as pl
 
@@ -23,7 +22,7 @@ class SectorAggregationFeatures:
     def __init__(self, config: SectorAggregationConfig | None = None) -> None:
         self.config = config or SectorAggregationConfig()
 
-    def _sector_column(self, df: pl.DataFrame) -> Optional[str]:
+    def _sector_column(self, df: pl.DataFrame) -> str | None:
         cfg = self.config
         if cfg.sector_column in df.columns:
             return cfg.sector_column

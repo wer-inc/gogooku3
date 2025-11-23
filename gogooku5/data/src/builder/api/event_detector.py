@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Mapping
+from collections.abc import Iterable, Mapping
 
 EventRecord = Mapping[str, object]
 
@@ -12,9 +12,9 @@ EventRecord = Mapping[str, object]
 class EventDetector:
     """Simple event detector placeholder."""
 
-    event_types: List[str]
+    event_types: list[str]
 
-    def detect(self, events: Iterable[EventRecord]) -> List[EventRecord]:
+    def detect(self, events: Iterable[EventRecord]) -> list[EventRecord]:
         """Filter events to those we currently care about."""
 
         return [event for event in events if event.get("eventType") in self.event_types]

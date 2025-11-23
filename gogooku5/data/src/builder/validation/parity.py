@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -38,7 +38,7 @@ class ParityResult:
     rows_candidate: int
     rows_only_reference: int
     rows_only_candidate: int
-    column_diffs: List[ColumnDiff]
+    column_diffs: list[ColumnDiff]
     schema_mismatch: bool
 
     def to_json(self) -> str:
@@ -156,7 +156,7 @@ def _compute_numeric_diff(
     cand_df: pl.DataFrame,
     column: str,
     key_columns: Sequence[str],
-) -> Dict[str, float] | None:
+) -> dict[str, float] | None:
     """Compute numeric difference metrics for a shared column."""
 
     keys = [k for k in key_columns if k in ref_df.columns and k in cand_df.columns]

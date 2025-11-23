@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import polars as pl
 
@@ -63,7 +62,7 @@ def load_earnings_announcement(df: pl.DataFrame) -> pl.DataFrame:
 
 def build_earnings_announcement_features(
     earnings_df: pl.DataFrame,
-    trading_calendar: Optional[pl.DataFrame] = None,
+    trading_calendar: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """
     決算発表予定のP0特徴量を生成。
@@ -165,7 +164,7 @@ def build_earnings_announcement_features(
 def attach_earnings_features_to_base(
     base_df: pl.DataFrame,
     earnings_features: pl.DataFrame,
-    trading_calendar: Optional[pl.DataFrame] = None,
+    trading_calendar: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """
     決算発表予定特徴量をベースDataFrameに結合し、P0特徴量を生成。

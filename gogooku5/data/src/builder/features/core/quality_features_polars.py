@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List, Optional, Sequence, Union
+from typing import Union
+from collections.abc import Iterable, Sequence
 
 import polars as pl
 
@@ -15,7 +16,7 @@ LOGGER = logging.getLogger(__name__)
 
 def add_robust_clipping(
     df: pl.DataFrame,
-    features: List[str],
+    features: list[str],
     quantile_range: tuple[float, float] = (0.01, 0.99),
 ) -> pl.DataFrame:
     """
@@ -96,15 +97,15 @@ class QualityFinancialFeaturesGeneratorPolars:
         self.date_column = date_column
         self.code_column = code_column
 
-        self.numeric_features: List[str] = []
-        self.generated_features: List[str] = []
-        self._zscore_features: List[str] = []
+        self.numeric_features: list[str] = []
+        self.generated_features: list[str] = []
+        self._zscore_features: list[str] = []
 
     def generate_quality_features(
         self,
         df: Union[pl.DataFrame, pl.LazyFrame],
         *,
-        target_column: Optional[str] = None,
+        target_column: str | None = None,
     ) -> Union[pl.DataFrame, pl.LazyFrame]:
         is_lazy = isinstance(df, pl.LazyFrame)
         working_df: pl.LazyFrame
@@ -180,7 +181,7 @@ class QualityFinancialFeaturesGeneratorPolars:
         # CPU fallback (existing implementation)
         return self._add_cross_sectional_quantiles_cpu(df, features_to_process)
 
-    def _add_cross_sectional_quantiles_cpu(self, df: pl.LazyFrame, features: List[str]) -> pl.LazyFrame:
+    def _add_cross_sectional_quantiles_cpu(self, df: pl.LazyFrame, features: list[str]) -> pl.LazyFrame:
         """CPU implementation using Polars (existing logic)."""
         for feature in features:
             rank_col = f"{feature}_cs_rank"
@@ -216,7 +217,7 @@ class QualityFinancialFeaturesGeneratorPolars:
 
         return df
 
-    def _add_cross_sectional_quantiles_gpu(self, df: pl.DataFrame, features: List[str]) -> pl.DataFrame:
+    def _add_cross_sectional_quantiles_gpu(self, df: pl.DataFrame, features: list[str]) -> pl.DataFrame:
         """GPU implementation using cuDF for 10x speedup."""
         from ...utils import cudf_to_pl as to_polars
         from ...utils import init_rmm

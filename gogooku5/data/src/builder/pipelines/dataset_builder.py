@@ -11,7 +11,8 @@ from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable, Iterable
 
 import polars as pl
 from polars.datatypes import Date as PlDateType
@@ -991,9 +992,9 @@ class DatasetBuilder:
 
     def _merge_listed_metadata(
         self,
-        listed_entries: List[dict[str, Any]] | None,
+        listed_entries: list[dict[str, Any]] | None,
         listed_info_df: pl.DataFrame,
-    ) -> List[dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Augment ListedManager payload with as-of snapshots for delisted symbols."""
 
         if not listed_entries:
@@ -1037,12 +1038,12 @@ class DatasetBuilder:
 
     def _choose_symbol_universe(
         self,
-        listed_entries: List[dict[str, Any]],
+        listed_entries: list[dict[str, Any]],
         listed_info_df: pl.DataFrame,
         *,
         start: str,
         end: str,
-    ) -> List[str]:
+    ) -> list[str]:
         """Select symbol universe using as-of snapshots when available."""
 
         symbols = self._extract_symbols_from_snapshots(listed_info_df)
@@ -1059,7 +1060,7 @@ class DatasetBuilder:
         decider = AxisDecider.from_listed_symbols(listed_entries)
         return decider.choose_symbols()
 
-    def _extract_symbols_from_snapshots(self, listed_info_df: pl.DataFrame) -> List[str]:
+    def _extract_symbols_from_snapshots(self, listed_info_df: pl.DataFrame) -> list[str]:
         """Return union of codes observed in listed_info snapshots (filtered by market)."""
 
         if listed_info_df.is_empty() or "Code" not in listed_info_df.columns:
@@ -1078,7 +1079,7 @@ class DatasetBuilder:
             return []
         return codes_df.get_column("code").to_list()
 
-    def _maybe_run_quality_checks(self, dataset_path: Path, *, context: str) -> dict[str, Dict[str, object]] | None:
+    def _maybe_run_quality_checks(self, dataset_path: Path, *, context: str) -> dict[str, dict[str, object]] | None:
         if not self.settings.enable_dataset_quality_check:
             return None
 
@@ -1795,7 +1796,7 @@ class DatasetBuilder:
 
         self._rate_limit_checked = True
 
-    def _format_quotes(self, quotes: List[dict[str, str]]) -> pl.DataFrame:
+    def _format_quotes(self, quotes: list[dict[str, str]]) -> pl.DataFrame:
         if not quotes:
             LOGGER.warning("No quotes returned for requested range")
             return pl.DataFrame({"code": [], "date": [], "close": []})
@@ -2028,7 +2029,7 @@ class DatasetBuilder:
         existing_columns = [col for col in columns if col in df.columns]
         return df.select(existing_columns)
 
-    def _prepare_listed_dataframe(self, listed: List[dict[str, str]]) -> pl.DataFrame:
+    def _prepare_listed_dataframe(self, listed: list[dict[str, str]]) -> pl.DataFrame:
         """Prepare listed info DataFrame with basic normalization (legacy method).
 
         Note: This method is kept for backward compatibility. For full feature engineering

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import List
 
 try:
     import jpholiday
@@ -26,7 +25,7 @@ def _is_business_day(dt: datetime) -> bool:
     return True
 
 
-def date_range(start: str, end: str) -> List[str]:
+def date_range(start: str, end: str) -> list[str]:
     """Return a list of ISO date strings inclusive of start/end."""
 
     start_dt = datetime.strptime(start, "%Y-%m-%d")
@@ -37,7 +36,7 @@ def date_range(start: str, end: str) -> List[str]:
     return [(start_dt + timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(delta.days + 1)]
 
 
-def business_date_range(start: str, end: str) -> List[str]:
+def business_date_range(start: str, end: str) -> list[str]:
     """Return ISO dates that fall on JP trading days between start/end (inclusive)."""
 
     start_dt = datetime.strptime(start, "%Y-%m-%d")
@@ -45,7 +44,7 @@ def business_date_range(start: str, end: str) -> List[str]:
     if end_dt < start_dt:
         raise ValueError("start date must be before end date")
 
-    dates: List[str] = []
+    dates: list[str] = []
     current = start_dt
     if jpholiday is None and JapanHolidayCalendar is None:
         raise RuntimeError(

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Dict, Optional
 
 
-def _parse_asof(value: str | None) -> Optional[date]:
+def _parse_asof(value: str | None) -> date | None:
     if not value:
         return None
     value = value.strip()
@@ -24,12 +23,12 @@ class SourceCachePolicy:
     """Policy describing how builder data sources should interact with the cache."""
 
     dataset: str
-    ttl_days: Optional[int]
+    ttl_days: int | None
     enable_read: bool = True
     enable_write: bool = True
     force_refresh: bool = False
-    asof: Optional[date] = None
-    tag: Optional[str] = None
+    asof: date | None = None
+    tag: str | None = None
 
     def decorate_key(self, base_key: str) -> str:
         """Append as-of/tag segments to the provided cache key."""
@@ -43,10 +42,10 @@ class SourceCachePolicy:
             return base_key
         return "_".join([base_key] + suffix)
 
-    def metadata(self) -> Dict[str, str]:
+    def metadata(self) -> dict[str, str]:
         """Return metadata recorded alongside cache entries."""
 
-        meta: Dict[str, str] = {"dataset": self.dataset}
+        meta: dict[str, str] = {"dataset": self.dataset}
         if self.asof:
             meta["asof"] = self.asof.isoformat()
         if self.tag:
@@ -58,12 +57,12 @@ class SourceCachePolicy:
         cls,
         *,
         dataset: str,
-        ttl_days: Optional[int],
+        ttl_days: int | None,
         mode: str,
         force_refresh: bool,
-        asof_value: Optional[str],
-        tag: Optional[str],
-        ttl_override: Optional[int] = None,
+        asof_value: str | None,
+        tag: str | None,
+        ttl_override: int | None = None,
     ) -> "SourceCachePolicy":
         """Construct a policy from DatasetBuilderSettings."""
 

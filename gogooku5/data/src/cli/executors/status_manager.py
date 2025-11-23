@@ -7,11 +7,13 @@ Manages status.json files for tracking chunk build progress:
 - Resume/force logic
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ class StatusManager:
         """Initialize status manager."""
         pass
 
-    def read_status(self, status_file: Path) -> Optional[Dict[str, Any]]:
+    def read_status(self, status_file: Path) -> dict[str, Any] | None:
         """
         Read status from status.json file.
 
@@ -150,7 +152,7 @@ class StatusManager:
             state=ChunkStatus.RUNNING,
         )
 
-    def mark_completed(self, status_file: Path, chunk_id: str, rows: Optional[int] = None, **kwargs) -> None:
+    def mark_completed(self, status_file: Path, chunk_id: str, rows: int | None = None, **kwargs) -> None:
         """
         Mark chunk as completed.
 
@@ -179,7 +181,7 @@ class StatusManager:
         """
         self.write_status(status_file, chunk_id=chunk_id, state=ChunkStatus.FAILED, error=error, **kwargs)
 
-    def get_chunk_summary(self, chunks_dir: Path) -> Dict[str, int]:
+    def get_chunk_summary(self, chunks_dir: Path) -> dict[str, int]:
         """
         Get summary of chunk states.
 

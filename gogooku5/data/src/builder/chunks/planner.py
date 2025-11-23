@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import List
 
 from ..config import DatasetBuilderSettings, get_settings
 from ..utils.datetime import shift_trading_days
@@ -58,7 +57,7 @@ class ChunkPlanner:
         self.months_per_chunk = months_per_chunk
         self._logger = get_logger("builder.chunks")
 
-    def plan(self, *, start: str, end: str) -> List[ChunkSpec]:
+    def plan(self, *, start: str, end: str) -> list[ChunkSpec]:
         """Return chunk specs covering start..end inclusive."""
 
         start_date = _parse_date(start)
@@ -66,7 +65,7 @@ class ChunkPlanner:
         if end_date < start_date:
             raise ValueError("end date must be on or after start date")
 
-        specs: List[ChunkSpec] = []
+        specs: list[ChunkSpec] = []
         chunk_start = _align_chunk_start(start_date, self.months_per_chunk)
         while chunk_start <= end_date:
             chunk_end = _chunk_end(chunk_start, self.months_per_chunk)

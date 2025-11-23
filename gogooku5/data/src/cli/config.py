@@ -12,7 +12,7 @@ Handles environment variable mappings and type conversions.
 import os
 from argparse import Namespace
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -45,7 +45,7 @@ class Config:
         All settings from CLI args, environment, and defaults.
     """
 
-    def __init__(self, args: Namespace, env_file: Optional[Path] = None):
+    def __init__(self, args: Namespace, env_file: Path | None = None):
         """
         Initialize configuration.
 
@@ -57,7 +57,7 @@ class Config:
         self._load_env(env_file)
         self._merge_settings()
 
-    def _load_env(self, env_file: Optional[Path]) -> None:
+    def _load_env(self, env_file: Path | None) -> None:
         """Load environment variables from .env file."""
         if env_file:
             load_dotenv(env_file)
@@ -250,7 +250,7 @@ class Config:
         return "Config(\n  " + ",\n  ".join(lines) + "\n)"
 
 
-def load_config(args: Namespace, env_file: Optional[Path] = None) -> Config:
+def load_config(args: Namespace, env_file: Path | None = None) -> Config:
     """
     Load and validate configuration.
 

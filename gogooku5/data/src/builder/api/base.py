@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from typing import Any
+from collections.abc import Mapping
 
 import requests
 from requests import Response, Session
@@ -29,9 +30,9 @@ class APIClient:
         method: str,
         endpoint: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Response:
         """Execute an HTTP request with standardized defaults."""
 

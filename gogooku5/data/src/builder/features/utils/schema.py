@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, MutableMapping
+from typing import Any
+from collections.abc import MutableMapping
 
 import polars as pl
 

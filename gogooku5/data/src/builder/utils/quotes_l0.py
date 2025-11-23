@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from collections.abc import Iterable, Iterator
 
 import polars as pl
 
@@ -281,7 +281,7 @@ class QuoteShardIndex:
                 ),
             )
 
-    def months_for_window(self, window_id: str) -> Optional[list[str]]:
+    def months_for_window(self, window_id: str) -> list[str] | None:
         """Return cached month list for window id if present."""
 
         with self._connect() as con:
@@ -390,9 +390,9 @@ class QuoteShardStore:
         self,
         months: Iterable[str],
         *,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        codes: Optional[set[str]] = None,
+        start: str | None = None,
+        end: str | None = None,
+        codes: set[str] | None = None,
     ) -> pl.DataFrame:
         """Read requested months with optional predicate pushdown and streaming execution.
 

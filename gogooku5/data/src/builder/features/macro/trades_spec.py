@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import polars as pl
 
@@ -134,7 +133,7 @@ def load_trades_spec(df: pl.DataFrame) -> pl.DataFrame:
 
 def build_trades_spec_features(
     trades_spec_df: pl.DataFrame,
-    trading_calendar: Optional[pl.DataFrame] = None,
+    trading_calendar: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """
     投資部門別売買状況のMVP特徴量を生成。
@@ -179,7 +178,7 @@ def build_trades_spec_features(
     trades_spec_df = trades_spec_df.sort(["section", "date"])
 
     # 投資主体別の列名解決（Valueサフィックス付きを優先）
-    def _resolve_col(candidates: list[str]) -> Optional[str]:
+    def _resolve_col(candidates: list[str]) -> str | None:
         for candidate in candidates:
             if candidate in trades_spec_df.columns:
                 return candidate

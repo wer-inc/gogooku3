@@ -5,10 +5,12 @@ Wraps gogooku5/data/tools/merge_chunks.py so CLI users can merge
 completed chunks into a final dataset artifact.
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -58,9 +60,9 @@ class MergeCommand:
             logger.error("❌ Merge command returned exit code %s", exit_code)
         return exit_code
 
-    def _build_argv(self) -> List[str]:
+    def _build_argv(self) -> list[str]:
         """Construct argument list for merge_chunks.main"""
-        argv: List[str] = []
+        argv: list[str] = []
 
         chunks_dir = Path(self.config.chunks_dir)
         output_dir = Path(self.config.output_dir)

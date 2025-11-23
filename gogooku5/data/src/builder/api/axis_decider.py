@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List
+from collections.abc import Iterable
 
 
 @dataclass
 class AxisDecider:
     """Determine which axes (symbols, sectors, markets) to query."""
 
-    symbols: List[str]
-    sectors: List[str]
+    symbols: list[str]
+    sectors: list[str]
 
-    def choose_symbols(self, *, limit: int | None = None) -> List[str]:
+    def choose_symbols(self, *, limit: int | None = None) -> list[str]:
         """Return a symbol list capped by `limit` if provided."""
 
         return self.symbols[:limit] if limit else list(self.symbols)
 
-    def choose_sectors(self, include_delisted: bool = False) -> List[str]:
+    def choose_sectors(self, include_delisted: bool = False) -> list[str]:
         """Return sectors to process, optionally excluding delisted entries."""
 
         if include_delisted:

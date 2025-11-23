@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 import polars as pl
 
@@ -18,9 +18,9 @@ def _ensure_datetime(value):
     raise TypeError(f"Unsupported date type: {type(value)!r}")
 
 
-def parse_asof_specs(specs: Sequence[str]) -> List[Tuple[str, str]]:
+def parse_asof_specs(specs: Sequence[str]) -> list[tuple[str, str]]:
     """Convert CLI-style 'column<=reference' specs into tuples."""
-    pairs: List[Tuple[str, str]] = []
+    pairs: list[tuple[str, str]] = []
     for spec in specs:
         item = spec.strip()
         if not item:
@@ -39,11 +39,11 @@ def parse_asof_specs(specs: Sequence[str]) -> List[Tuple[str, str]]:
 @dataclass
 class CheckResult:
     status: str
-    details: Dict[str, object] = field(default_factory=dict)
-    message: Optional[str] = None
+    details: dict[str, object] = field(default_factory=dict)
+    message: str | None = None
 
-    def to_dict(self) -> Dict[str, object]:
-        payload: Dict[str, object] = {"status": self.status}
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {"status": self.status}
         if self.message:
             payload["message"] = self.message
         if self.details:
@@ -104,7 +104,7 @@ def _check_target_nulls(lf: pl.LazyFrame, targets: Sequence[str]) -> CheckResult
     offenders = {k: v for k, v in nulls.items() if v > 0}
     status = "ok" if not offenders else "error"
     message = None if status == "ok" else f"Targets contain nulls: {offenders}"
-    details: Dict[str, object] = nulls
+    details: dict[str, object] = nulls
     if missing:
         status = "warning" if status == "ok" else status
         message = (message or "Targets checked").strip()
@@ -116,15 +116,15 @@ def _check_target_nulls(lf: pl.LazyFrame, targets: Sequence[str]) -> CheckResult
 
 def _check_asof_pairs(
     lf: pl.LazyFrame,
-    pairs: Sequence[Tuple[str, str]],
+    pairs: Sequence[tuple[str, str]],
     sample_rows: int,
 ) -> CheckResult:
     if not pairs:
         return CheckResult(status="ok")
 
     available = set(lf.columns)
-    violations: Dict[str, Dict[str, object]] = {}
-    missing_pairs: Dict[str, List[str]] = {}
+    violations: dict[str, dict[str, object]] = {}
+    missing_pairs: dict[str, list[str]] = {}
     for left, right in pairs:
         if left not in available or right not in available:
             missing_pairs[f"{left}<={right}"] = [col for col in (left, right) if col not in available]
@@ -159,7 +159,7 @@ def _check_feature_missingness(
     targets: Sequence[str],
     sample_rows: int,
     *,
-    exclude_columns: Optional[Sequence[str]] = None,
+    exclude_columns: Sequence[str] | None = None,
 ) -> CheckResult:
     """Lightweight feature-level missingness check.
 
@@ -217,7 +217,7 @@ def _check_feature_missingness(
     null_exprs = [pl.col(col).is_null().sum().alias(col) for col in feature_cols]
     null_counts_row = lf.select(null_exprs).collect().row(0)
 
-    missing_stats: List[Dict[str, object]] = []
+    missing_stats: list[dict[str, object]] = []
     max_rate = 0.0
     for idx, col in enumerate(feature_cols):
         null_count = int(null_counts_row[idx])
@@ -243,7 +243,7 @@ def _check_feature_missingness(
     error_threshold = 0.25  # 25%+
 
     status = "ok"
-    message: Optional[str] = None
+    message: str | None = None
     if max_rate >= error_threshold:
         status = "warning"
         message = f"Some features have missing_rate >= {error_threshold:.0%}"
@@ -251,7 +251,7 @@ def _check_feature_missingness(
         status = "warning"
         message = f"Some features have missing_rate >= {warn_threshold:.0%}"
 
-    details: Dict[str, object] = {
+    details: dict[str, object] = {
         "total_rows": total_rows,
         "feature_count": len(feature_cols),
         "max_missing_rate": max_rate,
@@ -265,19 +265,19 @@ def run_quality_checks(
     *,
     date_col: str = "date",
     code_col: str = "code",
-    targets: Optional[Sequence[str]] = None,
-    asof_pairs: Optional[Sequence[Tuple[str, str]]] = None,
+    targets: Sequence[str] | None = None,
+    asof_pairs: Sequence[tuple[str, str]] | None = None,
     allow_future_days: int = 0,
     sample_rows: int = 5,
-    exclude_columns: Optional[Sequence[str]] = None,
-) -> Tuple[Dict[str, Dict[str, object]], List[str], List[str]]:
+    exclude_columns: Sequence[str] | None = None,
+) -> tuple[dict[str, dict[str, object]], list[str], list[str]]:
     """Run all dataset quality checks and return summary + errors + warnings."""
 
     lf = pl.scan_parquet(str(dataset_path))
 
-    results: Dict[str, CheckResult] = {}
-    errors: List[str] = []
-    warnings: List[str] = []
+    results: dict[str, CheckResult] = {}
+    errors: list[str] = []
+    warnings: list[str] = []
 
     pk_res = _check_primary_key(lf, date_col, code_col, sample_rows)
     results["primary_key"] = pk_res

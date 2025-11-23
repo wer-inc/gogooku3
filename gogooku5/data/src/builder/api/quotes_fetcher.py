@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from threading import Lock
 from time import perf_counter
-from typing import Iterable, List, Literal
+from typing import Literal
+from collections.abc import Iterable
 
 from .jquants_fetcher import JQuantsFetcher
 
@@ -21,7 +22,7 @@ class QuotesFetcher:
     def __init__(self, *, client: JQuantsFetcher | None = None) -> None:
         self.client = client or JQuantsFetcher()
 
-    def fetch_batch(self, *, codes: Iterable[str], start: str, end: str) -> List[dict[str, str]]:
+    def fetch_batch(self, *, codes: Iterable[str], start: str, end: str) -> list[dict[str, str]]:
         """Legacy method: by-code fetching (use fetch_batch_optimized for better performance)."""
 
         codes_list = list(codes)
@@ -30,7 +31,7 @@ class QuotesFetcher:
             LOGGER.warning("fetch_batch called with empty symbol list (%s to %s)", start, end)
             return []
 
-        result: List[dict[str, str]] = []
+        result: list[dict[str, str]] = []
         timer_start = perf_counter()
         for idx, code in enumerate(codes_list, start=1):
             if idx == 1 or idx == total or idx % 25 == 0:
@@ -45,7 +46,7 @@ class QuotesFetcher:
             result.extend(rows)
         return result
 
-    def fetch_by_date(self, *, dates: Iterable[str], codes: set[str] | None = None) -> List[dict[str, str]]:
+    def fetch_by_date(self, *, dates: Iterable[str], codes: set[str] | None = None) -> list[dict[str, str]]:
         """Fetch quotes by date axis (営業日ごと取得) with parallel execution."""
 
         date_list = list(dates)
@@ -64,9 +65,9 @@ class QuotesFetcher:
             # Sequential fallback (original behavior)
             return self._fetch_by_date_sequential(date_list, codes)
 
-    def _fetch_by_date_sequential(self, date_list: List[str], codes: set[str] | None) -> List[dict[str, str]]:
+    def _fetch_by_date_sequential(self, date_list: list[str], codes: set[str] | None) -> list[dict[str, str]]:
         """Sequential fetch (original implementation)."""
-        result: List[dict[str, str]] = []
+        result: list[dict[str, str]] = []
         timer_start = perf_counter()
         total = len(date_list)
 
@@ -87,17 +88,17 @@ class QuotesFetcher:
         return result
 
     def _fetch_by_date_parallel(
-        self, date_list: List[str], codes: set[str] | None, max_workers: int
-    ) -> List[dict[str, str]]:
+        self, date_list: list[str], codes: set[str] | None, max_workers: int
+    ) -> list[dict[str, str]]:
         """Parallel fetch using ThreadPoolExecutor."""
         total = len(date_list)
         timer_start = perf_counter()
-        result: List[dict[str, str]] = []
+        result: list[dict[str, str]] = []
         result_lock = Lock()
         counter = {"done": 0}
         counter_lock = Lock()
 
-        def fetch_single_date(date: str) -> List[dict[str, str]]:
+        def fetch_single_date(date: str) -> list[dict[str, str]]:
             """Fetch quotes for a single date."""
             date_api = date.replace("-", "")
             rows = self.client.fetch_quotes_by_date_paginated(date=date_api)
@@ -148,7 +149,7 @@ class QuotesFetcher:
         start: str,
         end: str,
         axis_override: Literal["by_date", "by_code"] | None = None,
-    ) -> List[dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Optimized batch fetching with automatic axis selection.
 
@@ -227,7 +228,7 @@ class QuotesFetcher:
         # Rough estimate: ~71% of days are business days
         return max(1, int(total_days * 0.71))
 
-    def _generate_date_list(self, start: str, end: str) -> List[str]:
+    def _generate_date_list(self, start: str, end: str) -> list[str]:
         """Generate list of dates between start and end (inclusive)."""
         start_dt = datetime.strptime(start, "%Y-%m-%d")
         end_dt = datetime.strptime(end, "%Y-%m-%d")

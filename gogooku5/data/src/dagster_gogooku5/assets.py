@@ -8,7 +8,6 @@ import sys
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
 
 from builder.chunks import ChunkPlanner, ChunkSpec
 from builder.config.settings import DatasetBuilderSettings
@@ -23,9 +22,9 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 class _ChunkIds:
     output_dir: Path
     chunks_dir: Path
-    chunk_ids: List[str]
+    chunk_ids: list[str]
 
-    def as_jsonable(self) -> Dict[str, str | List[str]]:
+    def as_jsonable(self) -> dict[str, str | list[str]]:
         return {
             "output_dir": str(self.output_dir),
             "chunks_dir": str(self.chunks_dir),
@@ -81,11 +80,11 @@ def build_dataset_chunks(
         output_root=settings.data_output_dir / "chunks",
     )
 
-    chunk_specs: List[ChunkSpec] = planner.plan(start=config["start"], end=config["end"])
+    chunk_specs: list[ChunkSpec] = planner.plan(start=config["start"], end=config["end"])
     if config.get("latest_only") and chunk_specs:
         chunk_specs = [chunk_specs[-1]]
 
-    executed: List[ChunkSpec] = []
+    executed: list[ChunkSpec] = []
     refresh_flag = bool(config.get("refresh_listed")) or getattr(dataset_builder, "_dagster_refresh_listed", False)
     mlflow_cm = (
         tracker.start_run(
@@ -193,8 +192,8 @@ def validate_chunk_schemas(context, g5_dataset_chunks):
         context.log.warning("g5_schema_gate: chunks directory %s does not exist", chunks_dir)
         return {"schema_hash": None, "validated_chunks": []}
 
-    completed_hashes: Dict[str, List[str]] = {}
-    schema_failed: List[str] = []
+    completed_hashes: dict[str, list[str]] = {}
+    schema_failed: list[str] = []
     completed_count = 0
 
     for chunk_dir in sorted(chunks_dir.iterdir()):

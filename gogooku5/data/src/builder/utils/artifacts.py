@@ -8,7 +8,6 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 
@@ -494,7 +493,7 @@ class DatasetArtifactWriter:
                 LOGGER.debug("Failed to prune %s: %s", obsolete, exc)
 
 
-def resolve_latest_dataset(*, settings: Optional[DatasetBuilderSettings] = None) -> Optional[Path]:
+def resolve_latest_dataset(*, settings: DatasetBuilderSettings | None = None) -> Path | None:
     """Return the resolved path to the latest dataset symlink, if present."""
 
     current_settings = settings or get_settings()

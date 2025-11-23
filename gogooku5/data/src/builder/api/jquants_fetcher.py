@@ -5,7 +5,8 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any
+from collections.abc import Iterable
 
 from requests.exceptions import HTTPError, ReadTimeout
 
@@ -31,8 +32,8 @@ class JQuantsFetcher(APIClient):
     """J-Quants API client with minimal pagination helpers."""
 
     base_url: str = "https://api.jquants.com/v1"
-    _refresh_token: Optional[str] = field(default=None, init=False)
-    _token: Optional[str] = field(default=None, init=False)
+    _refresh_token: str | None = field(default=None, init=False)
+    _token: str | None = field(default=None, init=False)
     _token_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
 
     # ------------------------------------------------------------------
@@ -81,22 +82,22 @@ class JQuantsFetcher(APIClient):
     # ------------------------------------------------------------------
     # Data endpoints
     # ------------------------------------------------------------------
-    def fetch_listed_info(self) -> Dict[str, Any]:
+    def fetch_listed_info(self) -> dict[str, Any]:
         payload = self._collect_paginated(LISTED_ENDPOINT, data_key="info")
         return payload
 
     def fetch_daily_quotes(
-        self, *, code: str, from_: str, to: str, pagination_key: Optional[str] = None
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {"code": code, "from": from_, "to": to}
+        self, *, code: str, from_: str, to: str, pagination_key: str | None = None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"code": code, "from": from_, "to": to}
         if pagination_key:
             params["pagination_key"] = pagination_key
         response = self._authorized_request("GET", DAILY_QUOTES_ENDPOINT, params=params)
         return response.json()
 
-    def fetch_daily_quotes_by_date(self, *, date: str, pagination_key: Optional[str] = None) -> Dict[str, Any]:
+    def fetch_daily_quotes_by_date(self, *, date: str, pagination_key: str | None = None) -> dict[str, Any]:
         """Fetch daily quotes for a specific date (all stocks)."""
-        params: Dict[str, Any] = {"date": date}
+        params: dict[str, Any] = {"date": date}
         if pagination_key:
             params["pagination_key"] = pagination_key
         response = self._authorized_request("GET", DAILY_QUOTES_ENDPOINT, params=params)
@@ -105,14 +106,14 @@ class JQuantsFetcher(APIClient):
     def fetch_margin_daily(
         self,
         *,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        code: Optional[str] = None,
-        date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        start: str | None = None,
+        end: str | None = None,
+        code: str | None = None,
+        date: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch daily margin interest over a window (fallback `date` kept for compat)."""
 
-        params: Dict[str, Any] = {}
+        params: dict[str, Any] = {}
         if date and not start:
             params["date"] = date
         else:
@@ -132,12 +133,12 @@ class JQuantsFetcher(APIClient):
     def fetch_margin_weekly(
         self,
         *,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        code: Optional[str] = None,
-        date: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {}
+        start: str | None = None,
+        end: str | None = None,
+        code: str | None = None,
+        date: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
         if date and not start:
             params["date"] = date
         else:
@@ -157,7 +158,7 @@ class JQuantsFetcher(APIClient):
     def check_rate_limit(self, *, code: str, date: str) -> None:
         """Probe the quotes endpoint to detect rate limiting before bulk fetches."""
 
-        params: Dict[str, Any] = {"code": code, "from": date, "to": date}
+        params: dict[str, Any] = {"code": code, "from": date, "to": date}
         for attempt in range(2):
             token = self._ensure_token()
             headers = {"Authorization": f"Bearer {token}"}
@@ -176,10 +177,10 @@ class JQuantsFetcher(APIClient):
     # ------------------------------------------------------------------
     # Pagination helpers
     # ------------------------------------------------------------------
-    def fetch_quotes_paginated(self, *, code: str, from_: str, to: str) -> List[Dict[str, Any]]:
-        all_rows: List[Dict[str, Any]] = []
-        pagination_key: Optional[str] = None
-        seen_keys: Set[str] = set()
+    def fetch_quotes_paginated(self, *, code: str, from_: str, to: str) -> list[dict[str, Any]]:
+        all_rows: list[dict[str, Any]] = []
+        pagination_key: str | None = None
+        seen_keys: set[str] = set()
         for page in range(1, MAX_PAGINATION_PAGES + 1):
             payload = self.fetch_daily_quotes(code=code, from_=from_, to=to, pagination_key=pagination_key)
             rows = payload.get("daily_quotes", [])
@@ -195,11 +196,11 @@ class JQuantsFetcher(APIClient):
             )
         return all_rows
 
-    def fetch_quotes_by_date_paginated(self, *, date: str) -> List[Dict[str, Any]]:
+    def fetch_quotes_by_date_paginated(self, *, date: str) -> list[dict[str, Any]]:
         """Fetch all quotes for a specific date with pagination."""
-        all_rows: List[Dict[str, Any]] = []
-        pagination_key: Optional[str] = None
-        seen_keys: Set[str] = set()
+        all_rows: list[dict[str, Any]] = []
+        pagination_key: str | None = None
+        seen_keys: set[str] = set()
         for page in range(1, MAX_PAGINATION_PAGES + 1):
             payload = self.fetch_daily_quotes_by_date(date=date, pagination_key=pagination_key)
             rows = payload.get("daily_quotes", [])
@@ -215,8 +216,8 @@ class JQuantsFetcher(APIClient):
             )
         return all_rows
 
-    def fetch_margin_daily_window(self, *, dates: Iterable[str]) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
+    def fetch_margin_daily_window(self, *, dates: Iterable[str]) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
         for date in dates:
             payload = self.fetch_margin_daily(start=date, end=date)
             results.extend(payload.get("daily_margin_interest", []))
@@ -229,13 +230,13 @@ class JQuantsFetcher(APIClient):
         self,
         endpoint: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        data_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        aggregated: List[Dict[str, Any]] = []
-        pagination_key: Optional[str] = None
-        last_payload: Optional[Dict[str, Any]] = None
-        seen_keys: Set[str] = set()
+        params: dict[str, Any] | None = None,
+        data_key: str | None = None,
+    ) -> dict[str, Any]:
+        aggregated: list[dict[str, Any]] = []
+        pagination_key: str | None = None
+        last_payload: dict[str, Any] | None = None
+        seen_keys: set[str] = set()
         for page in range(1, MAX_PAGINATION_PAGES + 1):
             query = dict(params or {})
             if pagination_key:
@@ -252,7 +253,7 @@ class JQuantsFetcher(APIClient):
         else:
             raise RuntimeError(f"Exceeded maximum pagination depth ({MAX_PAGINATION_PAGES}) for endpoint {endpoint}")
         if data_key:
-            base: Dict[str, Any] = dict(last_payload or {})
+            base: dict[str, Any] = dict(last_payload or {})
             base[data_key] = aggregated
             base.pop("pagination_key", None)
             return base
@@ -261,7 +262,7 @@ class JQuantsFetcher(APIClient):
     def _validate_pagination_key(
         self,
         pagination_key: Any,
-        seen_keys: Set[str],
+        seen_keys: set[str],
         page: int,
     ) -> str:
         """Validate pagination key values before re-use."""
@@ -278,8 +279,8 @@ class JQuantsFetcher(APIClient):
         method: str,
         endpoint: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
     ):
         backoff = 1.0
         for attempt in range(MAX_RETRIES):
@@ -298,7 +299,7 @@ class JQuantsFetcher(APIClient):
                     self.refresh()
                     continue
                 if status == 429:
-                    retry_after: Optional[float] = None
+                    retry_after: float | None = None
                     if exc.response is not None:
                         header = exc.response.headers.get("Retry-After")
                         if header is not None:

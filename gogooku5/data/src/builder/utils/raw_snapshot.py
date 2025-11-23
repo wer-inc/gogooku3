@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 
@@ -18,9 +17,9 @@ def save_raw_snapshot(
     root: Path,
     source: str,
     df: pl.DataFrame,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    filename: Optional[str] = None,
+    start: str | None = None,
+    end: str | None = None,
+    filename: str | None = None,
     overwrite: bool = True,
 ) -> Path | None:
     """

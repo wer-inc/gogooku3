@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from ..config import DatasetBuilderSettings, get_settings
 from .artifacts import DatasetArtifactWriter
@@ -17,7 +16,7 @@ LOGGER = get_logger("storage")
 class StorageClient:
     """Manage persistence and optional remote uploads."""
 
-    bucket: Optional[str] = None
+    bucket: str | None = None
     settings: DatasetBuilderSettings = field(default_factory=get_settings)
     _writer: DatasetArtifactWriter | None = field(default=None, init=False, repr=False)
 
@@ -44,7 +43,7 @@ class StorageClient:
             extra_metadata=extra_metadata,
         )
 
-    def upload_file(self, path: Path, *, destination: Optional[str] = None) -> None:
+    def upload_file(self, path: Path, *, destination: str | None = None) -> None:
         """Upload `path` to remote storage (currently a no-op).
 
         Implement GCS or S3 upload logic here during later phases.

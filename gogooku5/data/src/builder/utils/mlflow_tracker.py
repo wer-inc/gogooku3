@@ -6,7 +6,7 @@ import os
 import socket
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class MLflowTracker:
@@ -16,8 +16,8 @@ class MLflowTracker:
         self,
         *,
         enabled: bool,
-        experiment_name: Optional[str] = None,
-        tracking_uri: Optional[str] = None,
+        experiment_name: str | None = None,
+        tracking_uri: str | None = None,
     ) -> None:
         self.enabled = bool(enabled)
         self.experiment_name = experiment_name or os.getenv("MLFLOW_EXPERIMENT_NAME")
@@ -35,17 +35,15 @@ class MLflowTracker:
         return cls(enabled=enabled, experiment_name=experiment, tracking_uri=tracking_uri)
 
     @staticmethod
-    def _resolve_git_sha() -> Optional[str]:
+    def _resolve_git_sha() -> str | None:
         for var in ("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA"):
             value = os.getenv(var)
             if value:
                 return value
         return None
 
-    def _apply_base_tags(
-        self, stage: str, dagster_run_id: Optional[str], extra: Optional[Dict[str, str]]
-    ) -> Dict[str, str]:
-        tags: Dict[str, str] = {
+    def _apply_base_tags(self, stage: str, dagster_run_id: str | None, extra: dict[str, str] | None) -> dict[str, str]:
+        tags: dict[str, str] = {
             "stage": stage,
             "host": self._hostname,
         }
@@ -62,9 +60,9 @@ class MLflowTracker:
         self,
         *,
         stage: str,
-        dagster_run_id: Optional[str],
-        params: Optional[Dict[str, Any]] = None,
-        tags: Optional[Dict[str, str]] = None,
+        dagster_run_id: str | None,
+        params: dict[str, Any] | None = None,
+        tags: dict[str, str] | None = None,
     ):
         """Start an MLflow run if enabled."""
 
@@ -90,7 +88,7 @@ class MLflowTracker:
         finally:
             mlflow.end_run()
 
-    def log_params(self, params: Dict[str, Any]) -> None:
+    def log_params(self, params: dict[str, Any]) -> None:
         if not self.enabled or not params:
             return
         import mlflow
@@ -98,14 +96,14 @@ class MLflowTracker:
         flat_params = {k: self._stringify_param(v) for k, v in params.items()}
         mlflow.log_params(flat_params)
 
-    def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None) -> None:
+    def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
         if not self.enabled or not metrics:
             return
         import mlflow
 
         mlflow.log_metrics(metrics, step=step)
 
-    def log_artifact(self, path: str, artifact_path: Optional[str] = None) -> None:
+    def log_artifact(self, path: str, artifact_path: str | None = None) -> None:
         if not self.enabled or not path:
             return
         import mlflow
@@ -115,7 +113,7 @@ class MLflowTracker:
         else:
             mlflow.log_artifact(path)
 
-    def set_tags(self, tags: Dict[str, Optional[str]]) -> None:
+    def set_tags(self, tags: dict[str, str | None]) -> None:
         if not self.enabled or not tags:
             return
         import mlflow

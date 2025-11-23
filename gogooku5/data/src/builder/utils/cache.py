@@ -21,7 +21,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, Literal, Optional, Tuple
+from typing import Any, Literal
+from collections.abc import Callable, Iterator
 
 import polars as pl
 
@@ -43,7 +44,7 @@ class CacheManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self.settings.default_cache_index_path
 
-    def load_index(self) -> Dict[str, Any]:
+    def load_index(self) -> dict[str, Any]:
         """Load cache metadata from disk if it exists."""
 
         if not self._index_path.exists():
@@ -56,7 +57,7 @@ class CacheManager:
                 LOGGER.warning("Failed to decode cache index: %s", exc)
                 return {}
 
-    def save_index(self, index: Dict[str, Any]) -> None:
+    def save_index(self, index: dict[str, Any]) -> None:
         """Persist cache metadata to disk."""
 
         with self._index_lock(shared=False):
@@ -81,7 +82,7 @@ class CacheManager:
         filename = f"{key}{ext}"
         return self.cache_dir / filename
 
-    def load_dataframe(self, key: str, prefer_ipc: bool = True) -> Optional[pl.DataFrame]:
+    def load_dataframe(self, key: str, prefer_ipc: bool = True) -> pl.DataFrame | None:
         """Load a cached dataframe if present.
 
         Strategy:
@@ -132,7 +133,7 @@ class CacheManager:
         df: pl.DataFrame,
         format: Literal["parquet", "ipc"] = "ipc",
         dual_format: bool = True,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Path:
         """Store a dataframe in the cache.
 
@@ -180,7 +181,7 @@ class CacheManager:
                 LOGGER.warning("Failed to save secondary format %s: %s", secondary_path, exc)
 
         # Update cache index with format information
-        def _mutator(idx: Dict[str, Any]) -> None:
+        def _mutator(idx: dict[str, Any]) -> None:
             idx[key] = {
                 "rows": df.height,
                 "format": format,
@@ -221,7 +222,7 @@ class CacheManager:
         LOGGER.debug("Cache %s exists=%s (any_format=%s)", key, exists, any_format)
         return exists
 
-    def invalidate(self, key: Optional[str] = None) -> None:
+    def invalidate(self, key: str | None = None) -> None:
         """Remove cache files (both IPC and Parquet if present).
 
         Args:
@@ -280,7 +281,7 @@ class CacheManager:
         key: str,
         fetch_fn: Callable[[], pl.DataFrame],
         *,
-        ttl_days: Optional[int] = None,
+        ttl_days: int | None = None,
         prefer_ipc: bool = True,
         save_format: Literal["parquet", "ipc"] = "ipc",
         dual_format: bool = True,
@@ -288,8 +289,8 @@ class CacheManager:
         force_refresh: bool = False,
         enable_read: bool = True,
         enable_write: bool = True,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[pl.DataFrame, bool]:
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[pl.DataFrame, bool]:
         """Return cached dataframe or fetch and persist a fresh copy.
 
         Args:
@@ -353,7 +354,7 @@ class CacheManager:
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
-    def _update_index(self, mutator: Callable[[Dict[str, Any]], None]) -> None:
+    def _update_index(self, mutator: Callable[[dict[str, Any]], None]) -> None:
         """Atomically mutate cache index with exclusive locking."""
 
         with self._index_lock(shared=False):
@@ -367,7 +368,7 @@ class CacheManager:
             mutator(current)
             self._write_index(current)
 
-    def _write_index(self, index: Dict[str, Any]) -> None:
+    def _write_index(self, index: dict[str, Any]) -> None:
         """Write cache index atomically via temp file replace while lock is held."""
 
         tmp_path = self._index_path.with_suffix(".tmp")

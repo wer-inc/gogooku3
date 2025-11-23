@@ -6,7 +6,8 @@ import logging
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable, Generic, TypeVar
+from typing import Generic, TypeVar
+from collections.abc import Callable
 
 T = TypeVar("T")
 
