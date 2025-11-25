@@ -1,0 +1,55 @@
+version: 1
+description: Fast v1 feature preset for 20d-ahead ranking (data_v2/features_daily-based).
+
+groups:
+  fast_v1:
+    description: Core price/vol/volume/demand/session features (lightweight)
+    include:
+      # Price / Momentum
+      - ret_1d
+      - ret_5d
+      - ret_20d
+      - logret_1d
+      - price_pos_20
+
+      # Volatility
+      - rv_5
+      - rv_20
+      - rv_ratio
+      - range_z_20
+
+      # Volume / Liquidity
+      - vol_ratio_5
+      - vol_ratio_20
+      - val_ratio_5
+      - val_ratio_20
+      - log_amihud_20
+
+      # Technical (TA)
+      - rsi_14
+      - macd_hist
+      - macd_hist_diff_1
+      - adx_14
+
+      # Demand / Flow (breakdown + margin)
+      - breakdown_buy_ratio
+      - sell_short_ratio
+      - inst_short_ratio_value
+      - retail_lev_ratio_value
+      - flow_imbalance
+      - margin_flow_intensity
+      - short_overhang_days
+      - short_squeeze_risk
+
+      # Margin capitulation
+      - margin_capitulation_ratio
+      - margin_capitulation_spike
+
+      # Session (intra-day microstructure)
+      - ret_morning
+      - ret_afternoon
+      - session_corr_20
+      - morning_trend_eff
+      - session_volume_ratio
+
+    masks: []  # no additional boolean masks; filtering is done via has_* flags in features_daily

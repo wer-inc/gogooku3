@@ -40,8 +40,19 @@ from apex_ranker.utils import (
 from torch.utils.data import DataLoader
 
 from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
-from gogooku5.data.src.builder.utils.lazy_io import lazy_load
-from gogooku5.data.src.builder.utils.mlflow_tracker import MLflowTracker
+
+# NOTE:
+# - Newer gogooku5 data pipeline lives under gogooku5.data.src.
+# - In this repo, the shared lazy I/O and MLflow helpers are still under
+#   gogooku5.data_deprecated.src.builder.utils.
+# - To keep train_v0 working across both layouts, try the new path first
+#   and fall back to the deprecated location.
+try:
+    from gogooku5.data.src.builder.utils.lazy_io import lazy_load
+    from gogooku5.data.src.builder.utils.mlflow_tracker import MLflowTracker
+except ModuleNotFoundError:  # pragma: no cover - environment-dependent
+    from gogooku5.data_deprecated.src.builder.utils.lazy_io import lazy_load
+    from gogooku5.data_deprecated.src.builder.utils.mlflow_tracker import MLflowTracker
 
 DEFAULT_SEED = 42
 

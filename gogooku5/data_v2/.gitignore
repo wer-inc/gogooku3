@@ -1,0 +1,13 @@
+# Environment files
+.env
+
+# Temporary files
+.tmp_*
+__pycache__/
+*.pyc
+
+# Output data (large files)
+output/
+
+# Dagster artifacts
+.dagster/

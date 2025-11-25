@@ -1,0 +1,3 @@
+repository:
+  name: data_v2_repo
+  module: data_v2.dagster_project

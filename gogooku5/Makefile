@@ -1,49 +1,60 @@
-.PHONY: help dataset train-atft train-apex health-check status \
+.PHONY: help dataset dataset-quick train-atft train-apex health-check status \
         build-2025 build-2024 build-2020-2024 build-all \
         build-2025-year-with-graph build-2023-2025-dataset \
-        build-raw \
+        build-raw fetch-raw data-health \
         validate validate-meta validate-quality validate-phase1 \
         clean-chunks list-chunks
 
 help:
-	@echo "gogooku5 migration helper targets"
+	@echo "gogooku5 - Japanese Stock Market ML Pipeline"
+	@echo "============================================="
 	@echo ""
-	@echo "Dataset Building:"
+	@echo "🚀 Quick Start (data_v2 DuckDB pipeline):"
+	@echo "  make dataset            -> Full dataset build (DuckDB-based)"
+	@echo "  make dataset-quick      -> Quick test (last 30 days)"
+	@echo "  make status             -> Show project status"
+	@echo "  make health-check       -> Run diagnostics"
+	@echo ""
+	@echo "📊 Data V2 Commands (Current Infrastructure):"
+	@echo "  make -C data_v2 duckdb-init              -> Initialize DuckDB"
+	@echo "  make -C data_v2 duckdb-fetch-listed      -> Fetch listed info"
+	@echo "  make -C data_v2 duckdb-fetch-daily-quotes-> Fetch price data"
+	@echo "  make -C data_v2 duckdb-fetch-breakdown   -> Fetch demand/supply"
+	@echo "  make -C data_v2 duckdb-compute-features  -> Compute 150+ features"
+	@echo "  make -C data_v2 help                     -> Show all data_v2 targets"
+	@echo ""
+	@echo "🤖 Model Training:"
+	@echo "  make train-atft         -> Train ATFT-GAT-FAN model"
+	@echo "  make train-apex         -> Train APEX-Ranker model"
+	@echo ""
+	@echo "📦 Legacy Pipeline (data_deprecated/, chunk-based):"
 	@echo "  make build-2025         -> 2025年全四半期ビルド (Q1-Q4)"
 	@echo "  make build-2020-2024    -> 2020-2024年全期間ビルド"
 	@echo "  make build-all          -> 全期間ビルド (2020-2025)"
-	@echo "  make build-raw          -> Rawスナップショットを四半期チャンク化し raw_manifest を再生成"
+	@echo "  make build-raw          -> Rawスナップショットを四半期チャンク化"
+	@echo "  make data-health DATASET=... [BASELINE=...]"
+	@echo "      -> 簡易ヘルスチェック (同日相関/PSI/KS)"
 	@echo ""
-	@echo "Validation:"
-	@echo "  make validate           -> 全検証 (メタデータ + データ品質)"
-	@echo "  make validate-meta      -> メタデータ検証のみ (2025年)"
-	@echo "  make validate-quality   -> データ品質検証のみ (2025年)"
-	@echo "  make validate-phase1    -> Phase 1機能検証 (単一チャンク)"
-	@echo ""
-	@echo "Utilities:"
+	@echo "🔧 Utilities:"
 	@echo "  make list-chunks        -> チャンク一覧表示"
 	@echo "  make clean-chunks YEAR=2025  -> 指定年のチャンク削除"
 	@echo ""
-	@echo "Merged Dataset Pipelines:"
-	@echo "  make build-2023-2025-dataset"
-	@echo "      -> 2023-2025統合データセット (固定範囲)"
-	@echo "  make build-range-dataset START_YEAR=2020 END_YEAR=2025"
-	@echo "      -> 任意期間の統合データセット"
-	@echo ""
-	@echo "Legacy (Delegated):"
-	@echo "  make dataset            -> delegate to data package"
-	@echo "  make train-atft         -> delegate to ATFT-GAT-FAN package"
-	@echo "  make train-apex         -> delegate to APEX-Ranker package"
-	@echo "  make health-check       -> run shared health diagnostics"
-	@echo "  make status             -> summarize dataset + model states"
+	@echo "📚 Documentation:"
+	@echo "  data_v2/FEATURES.md     -> 150+ feature definitions"
+	@echo "  data_v2/DUCKDB_QUICKSTART.md -> Quick reference"
+	@echo "  DATA_V2_EXPLORATION_REPORT.md -> Architecture overview"
 
-_dataset_make := $(CURDIR)/data/Makefile
+# Data pipeline paths (data_v2 is the current infrastructure)
+_dataset_make := $(CURDIR)/data_v2/Makefile
 _models_atft := $(CURDIR)/models/atft_gat_fan/Makefile.train
 _models_apex := $(CURDIR)/models/apex_ranker/Makefile.train
 _tools_health := $(CURDIR)/tools/health-check.sh
 
+# Legacy data directory (data_deprecated/) for backward compatibility
+_legacy_data_dir := $(CURDIR)/data_deprecated
+
 ifeq (,$(wildcard $(_dataset_make)))
-$(warning data package Makefile not found yet; add gogooku5/data/Makefile)
+$(warning data_v2 package Makefile not found yet; add gogooku5/data_v2/Makefile)
 endif
 ifeq (,$(wildcard $(_models_atft)))
 $(warning ATFT-GAT-FAN Makefile.train not found yet; add gogooku5/models/atft_gat_fan/Makefile.train)
@@ -56,13 +67,16 @@ $(warning health-check script not found yet; add gogooku5/tools/health-check.sh)
 endif
 
 # Common variables ---------------------------------------------------------
-
-_output_dir := $(CURDIR)/data/output
-_data_dir := $(CURDIR)/data
-_tests_dir := $(CURDIR)/data/tests
-_scripts_dir := $(CURDIR)/data/scripts
+# NOTE: data_v2 uses DuckDB as system of record, output goes to data_v2/output/
+_output_dir := $(CURDIR)/data_v2/output
+_data_dir := $(CURDIR)/data_v2
+_tests_dir := $(CURDIR)/data_deprecated/tests
+_scripts_dir := $(CURDIR)/data_deprecated/scripts
 _dim_security := $(_output_dir)/dim_security.parquet
 _raw_manifest := $(_output_dir)/raw_manifest.json
+RAW_START ?= 2020-01-01
+RAW_END ?= 2025-11-20
+RAW_CHUNK_MONTHS ?= 3
 
 # Default year range for merged training dataset (can be overridden on CLI)
 START_YEAR ?= 2023
@@ -332,6 +346,45 @@ build-raw:
 		--manifest "$(_raw_manifest)"
 	@echo "✅ Raw chunk + manifest 更新完了 -> $(_raw_manifest)"
 
+# Fetch RAW snapshots without modifying code (saves under data/output/raw).
+# - Uses inline env overrides so .env is untouched.
+# - Chunked 3-month build with resume to reduce failures.
+fetch-raw:
+	@echo "📥 RAW取得 (期間: $(RAW_START)→$(RAW_END), チャンク: $(RAW_CHUNK_MONTHS)ヶ月, 出力: $(_output_dir)/raw)"
+	@echo "🪪 listed_info をキャッシュ中 (dim_security用の入力確保)..."
+	@cd $(_data_dir) && PYTHONPATH=src RAW_START=$(RAW_START) RAW_END=$(RAW_END) python -c "\
+from builder.api.data_sources import DataSourceManager; import os; \
+start=os.environ['RAW_START']; end=os.environ['RAW_END']; \
+df=DataSourceManager().listed_info(start=start, end=end); \
+print(f'listed_info cached rows: {len(df)}')"
+	@echo "🔑 dim_security を事前生成中 (cache/dim_security.parquet)..."
+	@cd $(_data_dir) && \
+		mkdir -p $(_output_dir)/cache && \
+		python scripts/build_dim_security.py \
+			--output-dir $(_output_dir)/cache \
+			--search-dirs $(_output_dir) $(_output_dir)/raw $(CURDIR)/output
+	@cd $(_data_dir) && \
+	SAVE_RAW_DATA=1 USE_RAW_STORE=1 USE_CACHE=1 \
+	MAX_CONCURRENT_FETCH=16 INDEX_OPTION_PARALLEL_CONCURRENCY=4 \
+	ENABLE_SCHEMA_VALIDATION=0 \
+	PYTHONPATH=src python -m cli.main build \
+		--start $(RAW_START) --end $(RAW_END) \
+		--chunk-mode chunks --chunk-months $(RAW_CHUNK_MONTHS) \
+		--resume --gpu -v
+	@echo "✅ RAW取得完了 (途中失敗した場合はそのまま再実行で --resume しながら続行できます)"
+
+# Data health check (correlation leak hints, PSI, KS if SciPy installed)
+data-health:
+ifndef DATASET
+	$(error "DATASET is required, e.g., make data-health DATASET=data/output/chunks/2020Q1/ml_dataset.parquet BASELINE=data/output/chunks/2020Q2/ml_dataset.parquet")
+endif
+	@echo "🔎 Running data health check..."
+	@PYTHONPATH=$(_data_dir)/src python $(_data_dir)/tools/data_health_check.py \
+		--dataset $(DATASET) \
+		$(if $(BASELINE),--baseline $(BASELINE),) \
+		$(if $(TARGET_COLS),--target-cols $(TARGET_COLS),) \
+		$(if $(SAMPLE_ROWS),--sample-rows $(SAMPLE_ROWS),)
+
 # Validation targets -------------------------------------------------------
 
 validate: validate-meta validate-quality
@@ -367,8 +420,24 @@ endif
 
 # Delegated targets -------------------------------------------------------
 
+# Primary dataset target: use data_v2 DuckDB-based infrastructure
 dataset:
-	@$(MAKE) -C data build
+	@$(MAKE) -C data_v2 duckdb-init
+	@echo "📅 Fetching trading calendar..."
+	@$(MAKE) -C data_v2 duckdb-load-calendar
+	@echo "🏢 Fetching listed info..."
+	@$(MAKE) -C data_v2 duckdb-fetch-listed START=$(or $(START),2015-01-01) END=$(or $(END),$(shell date +%F))
+	@echo "📈 Fetching daily quotes..."
+	@$(MAKE) -C data_v2 duckdb-fetch-daily-quotes START=$(or $(START),2015-01-01) END=$(or $(END),$(shell date +%F))
+	@echo "📊 Fetching breakdown..."
+	@$(MAKE) -C data_v2 duckdb-fetch-breakdown START=$(or $(START),2015-01-01) END=$(or $(END),$(shell date +%F))
+	@echo "🧮 Computing features..."
+	@START=$(or $(START),2015-01-01) END=$(or $(END),$(shell date +%F)) $(MAKE) -C data_v2 duckdb-compute-features
+	@echo "✅ Dataset build complete. Data stored in: data_v2/output/jquants.duckdb"
+
+# Quick dataset for testing (last 30 days)
+dataset-quick:
+	@$(MAKE) dataset START=$(shell date -d '30 days ago' +%Y-%m-%d) END=$(shell date +%F)
 
 train-atft:
 	@$(MAKE) -C models/atft_gat_fan train
@@ -377,7 +446,27 @@ train-apex:
 	@$(MAKE) -C models/apex_ranker train
 
 health-check:
-	@$(MAKE) -C tools health-check
+	@echo "🔍 Running health checks..."
+	@echo "   DuckDB: $(shell ls -lh data_v2/output/jquants.duckdb 2>/dev/null | awk '{print $$5}' || echo 'not found')"
+	@echo "   Models: $(shell ls models/apex_ranker/output/*.pt 2>/dev/null | wc -l) APEX checkpoints"
+	@echo "   GPU: $(shell nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader 2>/dev/null || echo 'not available')"
 
 status:
-	@$(MAKE) -C tools status
+	@echo "📊 gogooku5 Status"
+	@echo "================="
+	@echo ""
+	@echo "📁 Data Infrastructure:"
+	@echo "   data_v2/:    DuckDB-based pipeline (current)"
+	@echo "   data_deprecated/: Legacy Polars pipeline (archived)"
+	@echo ""
+	@echo "📊 DuckDB Database:"
+	@if [ -f data_v2/output/jquants.duckdb ]; then \
+		echo "   Size: $$(ls -lh data_v2/output/jquants.duckdb | awk '{print $$5}')"; \
+		echo "   Tables: $$(PYTHONPATH=data_v2 python -c "import duckdb; con=duckdb.connect('data_v2/output/jquants.duckdb'); print(', '.join([r[0] for r in con.execute('SHOW TABLES').fetchall()]))" 2>/dev/null || echo 'error reading')"; \
+	else \
+		echo "   Not initialized. Run: make dataset"; \
+	fi
+	@echo ""
+	@echo "🤖 Models:"
+	@echo "   APEX-Ranker: $$(ls models/apex_ranker/output/*.pt 2>/dev/null | wc -l) checkpoints"
+	@echo "   ATFT-GAT-FAN: $$(ls models/atft_gat_fan/output/*.pt 2>/dev/null | wc -l) checkpoints"
