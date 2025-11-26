@@ -489,6 +489,32 @@ FEATURES_DAILY_COLUMNS: list[tuple[str, str]] = [
     ("range_z_20", "DOUBLE"),
     ("parkinson_20", "DOUBLE"),
     ("gk_20", "DOUBLE"),
+    # Phase 3.1: Risk/Drawdown features
+    ("drawdown_from_high_20", "DOUBLE"),
+    ("drawdown_from_high_60", "DOUBLE"),
+    ("max_drawdown_20", "DOUBLE"),
+    ("max_drawdown_60", "DOUBLE"),
+    ("risk_adj_mom_20", "DOUBLE"),
+    ("risk_adj_mom_5", "DOUBLE"),
+    ("underwater_days_20", "INT"),
+    ("recovery_rate_20", "DOUBLE"),
+    # end Phase 3.1
+    # Phase 3.2: Market Alpha features
+    ("market_alpha_1d", "DOUBLE"),
+    ("market_alpha_5d", "DOUBLE"),
+    ("market_alpha_20d", "DOUBLE"),
+    ("rel_strength_5d", "DOUBLE"),
+    ("rel_strength_20d", "DOUBLE"),
+    ("cum_alpha_20d", "DOUBLE"),
+    ("info_ratio_20d", "DOUBLE"),
+    # end Phase 3.2
+    # Phase 3.3: Volatility Regime features
+    ("vol_expansion", "INT"),
+    ("vol_trend_20", "DOUBLE"),
+    ("vol_regime", "INT"),
+    ("cs_vol_percentile", "DOUBLE"),
+    ("vol_weighted_mom_20", "DOUBLE"),
+    # end Phase 3.3
     ("vol_ratio_5", "DOUBLE"),
     ("vol_ratio_20", "DOUBLE"),
     ("vol_ratio_5_20", "DOUBLE"),

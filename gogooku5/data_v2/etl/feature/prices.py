@@ -431,6 +431,159 @@ def compute_price_features(
         ]
     )
 
+    # ========== Phase 3.1: Risk/Drawdown Features ==========
+    # Max drawdown: (current - rolling_max) / rolling_max
+    q = q.with_columns(
+        [
+            pl.col("close").rolling_max(window_size=20, min_periods=5).over("code").alias("_rolling_high_20"),
+            pl.col("close").rolling_max(window_size=60, min_periods=10).over("code").alias("_rolling_high_60"),
+        ]
+    )
+    q = q.with_columns(
+        [
+            ((pl.col("close") - pl.col("_rolling_high_20")) / (pl.col("_rolling_high_20") + EPS)).alias(
+                "drawdown_from_high_20"
+            ),
+            ((pl.col("close") - pl.col("_rolling_high_60")) / (pl.col("_rolling_high_60") + EPS)).alias(
+                "drawdown_from_high_60"
+            ),
+        ]
+    )
+    # Max drawdown over period (worst drawdown seen in window)
+    q = q.with_columns(
+        [
+            pl.col("drawdown_from_high_20")
+            .rolling_min(window_size=20, min_periods=5)
+            .over("code")
+            .alias("max_drawdown_20"),
+            pl.col("drawdown_from_high_60")
+            .rolling_min(window_size=60, min_periods=10)
+            .over("code")
+            .alias("max_drawdown_60"),
+        ]
+    )
+    # Risk-adjusted momentum (Sharpe-like ratio: ret / vol)
+    q = q.with_columns(
+        [
+            (pl.col("mom_20") / (pl.col("rv_20") + EPS)).alias("risk_adj_mom_20"),
+            (pl.col("mom_5") / (pl.col("rv_5") + EPS)).alias("risk_adj_mom_5"),
+        ]
+    )
+    # Underwater duration: days since last all-time high in 252-day window
+    # _high_252 was already computed earlier
+    q = q.with_columns(
+        [
+            (pl.col("close") >= pl.col("_rolling_high_20")).cast(pl.Int8).alias("_is_at_high_20"),
+        ]
+    )
+    q = q.with_columns(pl.arange(0, pl.len()).over("code").alias("_uw_idx"))
+    q = q.with_columns(
+        pl.when(pl.col("_is_at_high_20") == 1)
+        .then(pl.col("_uw_idx"))
+        .otherwise(None)
+        .forward_fill()
+        .over("code")
+        .fill_null(-1)
+        .alias("_last_high_idx")
+    )
+    q = q.with_columns(
+        pl.when(pl.col("_last_high_idx") < 0)
+        .then(None)
+        .otherwise((pl.col("_uw_idx") - pl.col("_last_high_idx")).cast(pl.Int32))
+        .alias("underwater_days_20")
+    )
+    # Recovery rate: how much of the drawdown has been recovered
+    q = q.with_columns(
+        pl.when(pl.col("max_drawdown_20").abs() < EPS)
+        .then(1.0)  # No drawdown = fully recovered
+        .otherwise(1.0 - pl.col("drawdown_from_high_20").abs() / (pl.col("max_drawdown_20").abs() + EPS))
+        .clip(0.0, 1.0)
+        .alias("recovery_rate_20")
+    )
+    # Clean up temp columns (will be dropped later with other temps)
+
+    # ========== Phase 3.2: Market Alpha Features ==========
+    # Market-relative returns using cross-sectional mean as market proxy
+    q = q.with_columns(
+        [
+            pl.col("ret_1d").mean().over("date").alias("_market_mean_ret_1d"),
+            pl.col("ret_5d").mean().over("date").alias("_market_mean_ret_5d"),
+            pl.col("ret_20d").mean().over("date").alias("_market_mean_ret_20d"),
+        ]
+    )
+    q = q.with_columns(
+        [
+            (pl.col("ret_1d") - pl.col("_market_mean_ret_1d")).alias("market_alpha_1d"),
+            (pl.col("ret_5d") - pl.col("_market_mean_ret_5d")).alias("market_alpha_5d"),
+            (pl.col("ret_20d") - pl.col("_market_mean_ret_20d")).alias("market_alpha_20d"),
+        ]
+    )
+    # Relative strength: stock momentum vs market momentum (ratio approach)
+    q = q.with_columns(
+        [
+            pl.when(pl.col("_market_mean_ret_5d").abs() > EPS)
+            .then(pl.col("ret_5d") / pl.col("_market_mean_ret_5d"))
+            .otherwise(None)
+            .alias("rel_strength_5d"),
+            pl.when(pl.col("_market_mean_ret_20d").abs() > EPS)
+            .then(pl.col("ret_20d") / pl.col("_market_mean_ret_20d"))
+            .otherwise(None)
+            .alias("rel_strength_20d"),
+        ]
+    )
+    # Cumulative excess returns (alpha summed over rolling window)
+    q = q.with_columns(
+        pl.col("market_alpha_1d").rolling_sum(window_size=20, min_periods=5).over("code").alias("cum_alpha_20d")
+    )
+    # Information ratio-like metric: cumulative alpha / alpha volatility
+    q = q.with_columns(
+        [
+            pl.col("market_alpha_1d").rolling_std(window_size=20, min_periods=5).over("code").alias("_alpha_std_20"),
+        ]
+    )
+    q = q.with_columns(
+        (pl.col("cum_alpha_20d") / (pl.col("_alpha_std_20") + EPS)).alias("info_ratio_20d")
+    )
+    # Clean up Market Alpha temp columns (added to drop list below)
+
+    # ========== Phase 3.3: Volatility Regime Features ==========
+    # Volatility expansion flag: short-term vol > long-term vol
+    q = q.with_columns(
+        [
+            (pl.col("rv_5") > pl.col("rv_20")).cast(pl.Int8).alias("vol_expansion"),
+            # Volatility trend: change in rv_20 over past 20 days
+            (pl.col("rv_20") - pl.col("rv_20").shift(20).over("code")).alias("vol_trend_20"),
+        ]
+    )
+    # Volatility regime: compare current vol to historical distribution
+    q = q.with_columns(
+        [
+            pl.col("rv_20").rolling_quantile(quantile=0.8, window_size=252, min_periods=60).over("code").alias(
+                "_vol_80pct_252"
+            ),
+            pl.col("rv_20").rolling_quantile(quantile=0.2, window_size=252, min_periods=60).over("code").alias(
+                "_vol_20pct_252"
+            ),
+        ]
+    )
+    q = q.with_columns(
+        pl.when(pl.col("rv_20") > pl.col("_vol_80pct_252"))
+        .then(1)  # High vol regime
+        .when(pl.col("rv_20") < pl.col("_vol_20pct_252"))
+        .then(-1)  # Low vol regime
+        .otherwise(0)  # Normal regime
+        .alias("vol_regime")
+    )
+    # Cross-sectional volatility percentile: how does this stock's vol compare to market today?
+    q = q.with_columns(
+        (pl.col("rv_20").rank(method="average").over("date") / pl.count().over("date")).alias("cs_vol_percentile")
+    )
+    # Volatility-adjusted return momentum: higher reward for gains in high vol environments
+    q = q.with_columns(
+        (pl.col("ret_20d") * pl.col("rv_20")).alias("vol_weighted_mom_20")
+    )
+    # Clean up Volatility Regime temp columns (added to drop list below)
+
     # Session-based features if available
     schema_names = q.collect_schema().names()
     has_morning = "morning_open" in schema_names and "morning_close" in schema_names
@@ -659,6 +812,20 @@ def compute_price_features(
             "_limit_idx",
             "_last_limit_up_idx",
             "_last_limit_down_idx",
+            # Phase 3.1 Risk/Drawdown temp columns
+            "_rolling_high_20",
+            "_rolling_high_60",
+            "_is_at_high_20",
+            "_uw_idx",
+            "_last_high_idx",
+            # Phase 3.2 Market Alpha temp columns
+            "_market_mean_ret_1d",
+            "_market_mean_ret_5d",
+            "_market_mean_ret_20d",
+            "_alpha_std_20",
+            # Phase 3.3 Volatility Regime temp columns
+            "_vol_80pct_252",
+            "_vol_20pct_252",
         ]
     )
 
