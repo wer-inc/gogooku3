@@ -12,11 +12,13 @@ run_storage:
   module: dagster.core.storage.runs
   class: SqliteRunStorage
   config:
-    # Use a path relative to DAGSTER_HOME so gogooku5 can run standalone.
-    base_dir: storage
+    # Use a path under .dagster/ so Dagster artifacts are clearly separated.
+    # Effective path: <DAGSTER_HOME>/.dagster/storage
+    base_dir: .dagster/storage
 
 event_log_storage:
   module: dagster.core.storage.event_log
   class: SqliteEventLogStorage
   config:
-    base_dir: storage
+    # Effective path: <DAGSTER_HOME>/.dagster/storage
+    base_dir: .dagster/storage

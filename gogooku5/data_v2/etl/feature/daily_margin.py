@@ -33,6 +33,8 @@ def compute_daily_margin_features(
     cal_df = pl.from_arrow(cal_arrow)
     if cal_df.is_empty():
         return pl.DataFrame(schema={"date": pl.Date, "code": pl.Utf8})
+    # Ensure calendar is sorted for join_asof
+    cal_df = cal_df.sort("cal_date").with_columns(pl.col("cal_date").set_sorted())
 
     start_dt = datetime.strptime(start, "%Y-%m-%d").date()
     window_start = (start_dt - timedelta(days=warmup_days)).isoformat()
@@ -74,6 +76,8 @@ def compute_daily_margin_features(
 
     # effective_date = next trading day after application_date
     dmi = dmi.with_columns((pl.col("application_date") + pl.duration(days=1)).alias("_app_plus1"))
+    # Sort by _app_plus1 for join_asof
+    dmi = dmi.sort("_app_plus1").with_columns(pl.col("_app_plus1").set_sorted())
     dmi = (
         dmi.join_asof(cal_df, left_on="_app_plus1", right_on="cal_date", strategy="forward")
         .rename({"cal_date": "effective_date"})

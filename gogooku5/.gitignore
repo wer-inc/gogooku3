@@ -1,0 +1,43 @@
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor / OS artifacts
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Local tool / agent metadata
+.claude
+.mcp.json
+.codex-env-info.md
+.telemetry/
+
+# Environment files
+.env
+.env.*
+
+# Logs
+logs/
+_logs/
+
+# Data & model artifacts (rebuildable)
+data/output/
+data_v2/output/
+output/
+models/*/output/
+
+# Dagster & scheduler runtime state
+.dagster/storage/
+history/
+schedules/

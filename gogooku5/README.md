@@ -10,10 +10,11 @@ This workspace tracks the migration from the monolithic `gogooku3` system to the
 ## Repository Layout (in-progress)
 ```
 gogooku5/
-├── data/               # Dataset builder package (standalone)
+├── data/               # Final ML datasets (Parquet outputs under data/output/)
+├── data_v2/            # DuckDB-first J-Quants pipeline (current)
 ├── models/             # Individual model packages (ATFT-GAT-FAN, APEX-Ranker, ...)
-├── common/             # Optional shared utilities (only when >1 consumer)
 ├── tools/              # Agent launchers, health checks, shared scripts
+├── .dagster/           # Dagster home (dagster.yaml, runtime storage under .dagster/storage/)
 ├── Makefile            # Top-level shortcuts delegating into sub-packages
 └── MIGRATION_PLAN.md   # Migration roadmap and milestones
 ```
@@ -22,6 +23,11 @@ gogooku5/
 1. Follow `docs/development/development-guidelines.md` for workflow, testing, and documentation expectations.
 2. Update `MIGRATION_PLAN.md` as milestones complete or priorities change.
 3. Run `tools/health-check.sh` (coming soon) before requesting reviews or merging cross-package changes.
+
+### Runtime State (not committed)
+
+- `.dagster/storage/`: Dagster の run_storage / event_log_storage 用の SQLite と compute_logs。削除してもジョブ実行時に再生成されます。
+- `data/output/`, `data_v2/output/`, `output/`: 生成された ML データセットやモデル出力が置かれるディレクトリ群。`.gitignore` で除外する想定です。
 
 ## Getting Started
 1. Review the migration plan and the dataset/model package READMEs.

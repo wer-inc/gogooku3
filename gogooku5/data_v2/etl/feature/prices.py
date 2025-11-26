@@ -1270,14 +1270,64 @@ def compute_price_features(
     )
 
     # Sector-level short selling features (broadcast by sector33_code)
-    # NOTE: Skipped - requires sector33_code which is added in listed_meta_features step.
-    # These columns will be added as NULL for now; full implementation deferred.
-    out = out.with_columns(
-        [
-            pl.lit(None).cast(pl.Float64).alias("sector_short_ratio"),
-            pl.lit(None).cast(pl.Float64).alias("sector_short_trend"),
-        ]
-    )
+    # Attach sector33_code as-of metadata from listed_info for the join.
+    sector_meta_arrow = con.execute(
+        """
+        SELECT date, code, sector33_code
+        FROM listed_info
+        WHERE date BETWEEN ? AND ?
+        """,
+        [start, end],
+    ).fetch_arrow_table()
+    sector_meta = pl.from_arrow(sector_meta_arrow)
+    if not sector_meta.is_empty():
+        out = out.join(sector_meta.lazy(), on=["date", "code"], how="left")
+
+    ss_arrow = con.execute(
+        """
+        SELECT
+            date,
+            sector33_code,
+            selling_excluding_short_selling_turnover_value,
+            short_selling_with_restrictions_turnover_value,
+            short_selling_without_restrictions_turnover_value
+        FROM short_selling
+        WHERE date BETWEEN ? AND ?
+        """,
+        [start, end],
+    ).fetch_arrow_table()
+    ss = pl.from_arrow(ss_arrow)
+    if not ss.is_empty() and "sector33_code" in out.collect_schema().names():
+        ss = ss.sort(["sector33_code", "date"])
+        ss = ss.with_columns(
+            [
+                (
+                    pl.col("short_selling_with_restrictions_turnover_value")
+                    + pl.col("short_selling_without_restrictions_turnover_value")
+                ).alias("_short_total"),
+                (
+                    pl.col("selling_excluding_short_selling_turnover_value")
+                    + pl.col("short_selling_with_restrictions_turnover_value")
+                    + pl.col("short_selling_without_restrictions_turnover_value")
+                ).alias("_total_turnover"),
+            ]
+        )
+        ss = ss.with_columns((pl.col("_short_total") / (pl.col("_total_turnover") + EPS)).alias("sector_short_ratio"))
+        ss = ss.with_columns(
+            (
+                pl.col("sector_short_ratio")
+                - pl.col("sector_short_ratio").rolling_mean(window_size=5, min_periods=1).over("sector33_code")
+            ).alias("sector_short_trend")
+        )
+        ss = ss.select(["date", "sector33_code", "sector_short_ratio", "sector_short_trend"])
+        out = out.join(ss.lazy(), on=["date", "sector33_code"], how="left")
+    else:
+        out = out.with_columns(
+            [
+                pl.lit(None).cast(pl.Float64).alias("sector_short_ratio"),
+                pl.lit(None).cast(pl.Float64).alias("sector_short_trend"),
+            ]
+        )
 
     # Daily margin interest-derived features (effective from next trading day)
     dmi = compute_daily_margin_features(con, start=start, end=end)
