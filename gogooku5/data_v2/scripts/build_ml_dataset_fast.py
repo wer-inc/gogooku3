@@ -166,6 +166,33 @@ FEATURE_PRESETS["fast_v3_fundamental"] = FEATURE_PRESETS["fast_v2"] + [
     "fund_value_trap_flag",
 ]
 
+# v4 preset: fast_v3_fundamental + Phase 3 advanced features (Risk/Alpha/Regime)
+FEATURE_PRESETS["fast_v4"] = FEATURE_PRESETS["fast_v3_fundamental"] + [
+    # Phase 3.1: Risk/Drawdown features (8)
+    "drawdown_from_high_20",
+    "drawdown_from_high_60",
+    "max_drawdown_20",
+    "max_drawdown_60",
+    "risk_adj_mom_20",
+    "risk_adj_mom_5",
+    "underwater_days_20",
+    "recovery_rate_20",
+    # Phase 3.2: Market Alpha features (7)
+    "market_alpha_1d",
+    "market_alpha_5d",
+    "market_alpha_20d",
+    "rel_strength_5d",
+    "rel_strength_20d",
+    "cum_alpha_20d",
+    "info_ratio_20d",
+    # Phase 3.3: Volatility Regime features (5)
+    "vol_expansion",
+    "vol_trend_20",
+    "vol_regime",
+    "cs_vol_percentile",
+    "vol_weighted_mom_20",
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a lightweight ML dataset Parquet from data_v2.features_daily.")

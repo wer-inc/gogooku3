@@ -21,6 +21,44 @@ from .config import (
     WEEKLY_MARGIN_INTEREST_URL,
 )
 
+# 33 sector codes (JPX)
+SECTOR33_CODES: list[str] = [
+    "0050",
+    "1050",
+    "2050",
+    "3050",
+    "3100",
+    "3150",
+    "3200",
+    "3250",
+    "3300",
+    "3350",
+    "3400",
+    "3450",
+    "3500",
+    "3550",
+    "3600",
+    "3650",
+    "3700",
+    "3750",
+    "3800",
+    "4050",
+    "5050",
+    "5100",
+    "5150",
+    "5200",
+    "5250",
+    "6050",
+    "6100",
+    "7050",
+    "7100",
+    "7150",
+    "7200",
+    "8050",
+    "9050",
+    "9999",
+]
+
 
 def _date_iter(start: str, end: str) -> list[str]:
     s = datetime.strptime(start, "%Y-%m-%d").date()
@@ -238,11 +276,12 @@ def fetch_short_selling(
 ) -> list[dict[str, Any]]:
     headers = {"Authorization": f"Bearer {id_token}"}
     all_records: list[dict[str, Any]] = []
-    # API requires sector33code or date. If sector33code provided, we can use from/to; otherwise loop dates.
-    if sector33code:
+    # API requires sector33code or date. Prefer sector33code loops to reduce call count.
+    codes = [sector33code] if sector33code else SECTOR33_CODES
+    for sec in codes:
         pagination_key: str | None = None
         while True:
-            params: dict[str, str] = {"from": start, "to": end, "sector33code": sector33code}
+            params: dict[str, str] = {"from": start, "to": end, "sector33code": sec}
             if pagination_key:
                 params["pagination_key"] = pagination_key
             resp = requests.get(SHORT_SELLING_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
@@ -253,21 +292,6 @@ def fetch_short_selling(
             pagination_key = data.get("pagination_key")
             if not pagination_key:
                 break
-    else:
-        for day in _date_iter(start, end):
-            pagination_key: str | None = None
-            while True:
-                params: dict[str, str] = {"date": day}
-                if pagination_key:
-                    params["pagination_key"] = pagination_key
-                resp = requests.get(SHORT_SELLING_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
-                resp.raise_for_status()
-                data = resp.json()
-                recs = data.get("short_selling") or data.get("data") or []
-                all_records.extend(recs)
-                pagination_key = data.get("pagination_key")
-                if not pagination_key:
-                    break
     return all_records
 
 

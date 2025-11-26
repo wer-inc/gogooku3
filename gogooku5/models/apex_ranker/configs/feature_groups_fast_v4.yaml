@@ -1,0 +1,148 @@
+version: 1
+description: Fast v4 feature preset - v3 core + Phase 3 advanced features (Risk/Alpha/Regime).
+
+groups:
+  fast_v4:
+    description: Fast v3 core features + Phase 3 advanced features (20 new)
+    include:
+      # ============================================================
+      # --- Fast v3 core (60 features) ---
+      # ============================================================
+
+      # Price / Momentum (5)
+      - ret_1d
+      - ret_5d
+      - ret_20d
+      - logret_1d
+      - price_pos_20
+
+      # Volatility (4)
+      - rv_5
+      - rv_20
+      - rv_ratio
+      - range_z_20
+
+      # Volume / Liquidity (5)
+      - vol_ratio_5
+      - vol_ratio_20
+      - val_ratio_5
+      - val_ratio_20
+      - log_amihud_20
+
+      # Technical (TA) (4)
+      - rsi_14
+      - macd_hist
+      - macd_hist_diff_1
+      - adx_14
+
+      # Demand / Flow (breakdown + margin) (8)
+      - breakdown_buy_ratio
+      - sell_short_ratio
+      - inst_short_ratio_value
+      - retail_lev_ratio_value
+      - flow_imbalance
+      - margin_flow_intensity
+      - short_overhang_days
+      - short_squeeze_risk
+
+      # Margin capitulation (2)
+      - margin_capitulation_ratio
+      - margin_capitulation_spike
+
+      # Session (intra-day microstructure) (5)
+      - ret_morning
+      - ret_afternoon
+      - session_corr_20
+      - morning_trend_eff
+      - session_volume_ratio
+
+      # --- Listed meta extensions ---
+      # Sector alpha & percentiles (4)
+      - sector_alpha_ret_5d
+      - sector_alpha_ret_20d
+      - sector_pct_ret_5d
+      - sector_rank_ret_5d
+
+      # Sector mean context (2)
+      - sector_ret_5d
+      - sector_ret_20d
+
+      # Market segment flags (3)
+      - is_prime
+      - is_standard
+      - is_growth
+
+      # Size buckets (3)
+      - is_small_cap
+      - is_mid_cap
+      - is_large_cap
+
+      # Shortability (1)
+      - is_shortable
+
+      # --- K1-style Fundamental factors (14 features) ---
+      # Net cash & valuation (5)
+      - fund_net_cash_k1
+      - fund_net_cash_ratio_k1
+      - fund_per_ttm
+      - fund_pbr
+      - fund_cash_neutral_per
+
+      # Growth (YoY) (4)
+      - fund_yoy_sales
+      - fund_yoy_profit
+      - fund_yoy_cfo
+      - fund_yoy_net_cash
+
+      # Quality & profitability (3)
+      - fund_roe
+      - fund_op_margin
+      - fund_accruals
+
+      # K1-style flags (2)
+      - fund_is_cash_rich
+      - fund_value_trap_flag
+
+      # ============================================================
+      # --- Phase 3 Advanced Features (20 new) ---
+      # ============================================================
+
+      # Phase 3.1: Risk/Drawdown (8 features)
+      # Drawdown from rolling high
+      - drawdown_from_high_20
+      - drawdown_from_high_60
+      # Max drawdown over period
+      - max_drawdown_20
+      - max_drawdown_60
+      # Risk-adjusted momentum (Sharpe-like)
+      - risk_adj_mom_20
+      - risk_adj_mom_5
+      # Underwater duration and recovery
+      - underwater_days_20
+      - recovery_rate_20
+
+      # Phase 3.2: Market Alpha (7 features)
+      # Stock vs market mean return
+      - market_alpha_1d
+      - market_alpha_5d
+      - market_alpha_20d
+      # Relative strength (alpha / volatility)
+      - rel_strength_5d
+      - rel_strength_20d
+      # Cumulative alpha and information ratio
+      - cum_alpha_20d
+      - info_ratio_20d
+
+      # Phase 3.3: Volatility Regime (5 features)
+      # Volatility expansion flag
+      - vol_expansion
+      # Volatility trend
+      - vol_trend_20
+      # Regime classification (-1=low, 0=normal, 1=high)
+      - vol_regime
+      # Cross-sectional volatility percentile
+      - cs_vol_percentile
+      # Volatility-weighted momentum
+      - vol_weighted_mom_20
+
+    masks: []

@@ -33,6 +33,7 @@ from data_v2.etl.client import (
     fetch_statements_for_date,
     fetch_trades_spec,
     fetch_weekly_margin_interest,
+    SECTOR33_CODES,
 )
 from data_v2.etl.config import DEFAULT_DB_PATH
 from data_v2.etl.duckdb import connect_db, ensure_tables
@@ -694,6 +695,12 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("HOLIDAY_DIVISION", "1,2"),
         help="Comma-separated HolidayDivision values to treat as trading days (default: 1,2)",
     )
+    ss_fetch.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("WORKERS", "1")),
+        help="Parallel workers for sector-based fetch (only used when sector33code is not set)",
+    )
 
     ssp_fetch = sub.add_parser(
         "fetch-short-selling-positions",
@@ -1089,7 +1096,6 @@ def main() -> int:
     if args.command == "fetch-short-selling":
         id_token = get_id_token()
         include_divs = [v.strip() for v in args.holiday_division.split(",") if v.strip()]
-        # when sector33code is not specified, loop by trading days similar to listed/daily_quotes/breakdown
         if args.sector33code:
             recs = fetch_short_selling(
                 id_token=id_token,
@@ -1098,32 +1104,25 @@ def main() -> int:
                 sector33code=args.sector33code,
             )
         else:
-            days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
-            if not days:
-                cal_recs = fetch_calendar_records(id_token=id_token, from_date=args.start, to_date=args.end)
-                cal_df = normalize_trading_calendar(cal_recs)
-                _ = upsert_trading_calendar(con, cal_df)
-                days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
-            if not days:
-                raise SystemExit("No trading days found for short_selling fetch range.")
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
             max_workers = max(1, args.workers)
+            sector_codes = SECTOR33_CODES
 
-            def _job(day: str) -> list[dict[str, object]]:
+            def _job(sec: str) -> list[dict[str, object]]:
                 try:
                     return fetch_short_selling(
                         id_token=id_token,
-                        start=day,
-                        end=day,
-                        sector33code=None,
+                        start=args.start,
+                        end=args.end,
+                        sector33code=sec,
                     )
                 except Exception:
                     return []
 
-            recs: list[dict[str, object]] = []
+            recs = []
             with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                futures = {ex.submit(_job, d): d for d in days}
+                futures = {ex.submit(_job, sec): sec for sec in sector_codes}
                 for fut in as_completed(futures):
                     recs.extend(fut.result())
 

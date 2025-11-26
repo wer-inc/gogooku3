@@ -53,7 +53,8 @@ def compute_price_features(
         )
 
     # Load quotes from DuckDB
-    quotes_arrow = con.execute(
+    # Fetch quotes with projection and filter applied in DuckDB, then process lazily.
+    quotes_df = pl.read_database(
         """
         SELECT
             date,
@@ -85,22 +86,18 @@ def compute_price_features(
         WHERE date BETWEEN ? AND ?
         ORDER BY code, date
         """,
-        [warmup_start, end],
-    ).fetch_arrow_table()
-    quotes = pl.from_arrow(quotes_arrow)
-    if quotes.is_empty():
+        connection=con,
+        execute_options={"parameters": [warmup_start, end]},
+    )
+    if quotes_df.is_empty():
         return pl.DataFrame()
 
-    q = (
-        quotes.lazy()
-        .sort(["code", "date"])
-        .with_columns(
-            [
-                pl.col("close").cast(pl.Float64),
-                pl.col("volume").cast(pl.Float64),
-                pl.col("turnover").cast(pl.Float64),
-            ]
-        )
+    q = quotes_df.lazy().sort(["code", "date"]).with_columns(
+        [
+            pl.col("close").cast(pl.Float64),
+            pl.col("volume").cast(pl.Float64),
+            pl.col("turnover").cast(pl.Float64),
+        ]
     )
 
     # Basic returns and momentum
@@ -1472,7 +1469,8 @@ def compute_price_features(
     existing_cols = set(out.collect_schema().names())
     out = out.select([pl.col(c) if c in existing_cols else pl.lit(None).alias(c) for c in schema_cols])
     out = out.filter(pl.col("date").is_between(start_dt, end_dt))
-    df = out.collect().sort(["code", "date"])
+    # collect with streaming to reduce peak memory on large ranges; sort eagerly after
+    df = out.collect(streaming=True).sort(["code", "date"])
 
     # Recompute session_corr_20 eagerly per code to ensure it is populated.
     # NOTE:

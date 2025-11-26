@@ -1,0 +1,104 @@
+version: 1
+description: |
+  Fast v4 config - v3 core + Phase 3 advanced features (80 total features).
+
+  Key improvements over v3:
+  - Phase 3.1: Risk/Drawdown features (8): drawdown, max_drawdown, risk_adj_mom, underwater_days, recovery_rate
+  - Phase 3.2: Market Alpha features (7): market_alpha, rel_strength, cum_alpha, info_ratio
+  - Phase 3.3: Volatility Regime features (5): vol_expansion, vol_trend, vol_regime, cs_vol_percentile, vol_weighted_mom
+
+  Incorporates Phase 2 data quality fixes:
+  - breakdown zero-fill removed (uses actual data only)
+  - Cross-sectional population filter (MIN_CS_POPULATION=500)
+
+  Loss tuning from v2_tuned:
+  - turnover.weight: 0.02 (reduce transaction costs)
+  - ranknet.weight: 0.3 (prevent overfitting)
+  - listnet.tau: 0.3 (sharper ranking)
+
+data:
+  parquet_path: data/output/datasets/apex_fast_v4.parquet
+  metadata_path: null
+  feature_groups_config: models/apex_ranker/configs/feature_groups_fast_v4.yaml
+  feature_aliases_yaml: null
+  feature_groups:
+    - fast_v4
+  optional_groups: []
+  use_plus30: false
+  lookback: 180
+  min_stocks_per_day: 150  # Phase 2: Better CS stats
+  date_column: Date
+  code_column: Code
+  target_columns:
+    20: target_20d
+
+normalization:
+  mode: cross_section_z
+  clip_sigma: 5.0
+
+train:
+  horizons:
+    - 20
+  epochs: 30
+  lr: 0.0004
+  weight_decay: 0.0001
+  grad_clip: 0.5
+  val_days: 120
+  log_interval: 10
+  amp: true
+  device: auto
+  num_workers: 0
+  warmup_epochs: 2
+  warmup_start_factor: 0.1
+  early_stopping:
+    patience: 5
+    metric: 20d_pak
+    min_delta: 0.0
+  evaluation:
+    splitter: purged_kfold
+    purged_kfold:
+      n_splits: 5
+      embargo_days: 5
+  time_decay_tau_days: 120
+  use_ema: true
+  ema_beta: 0.999
+  nvml_enabled: true
+  nvml_device_index: 0
+  nvml_sample_interval: 0.2
+
+eval:
+  k_ratio: 0.10
+  ndcg_beta: 1.0
+
+selection:
+  default:
+    k_ratio: 0.60
+    k_min: 53
+    sign: 1
+  horizons:
+    "20":
+      k_ratio: 0.60
+      k_min: 53
+      sign: 1
+
+model:
+  # Increased capacity for 80 features (was 60)
+  d_model: 384   # Increased from 320 for more feature capacity
+  depth: 5
+  patch_len: 16
+  stride: 8
+  n_heads: 8
+  dropout: 0.2
+
+loss:
+  listnet:
+    weight: 1.0
+    tau: 0.3      # Sharper distribution (tuned)
+    topk: null
+  ranknet:
+    weight: 0.3   # Reduced to prevent overfitting (tuned)
+    neg_sample: 4096
+  mse:
+    weight: 0.05  # Focus on ranking over regression
+  turnover:
+    weight: 0.02  # Significant increase to reduce transaction costs (tuned)
