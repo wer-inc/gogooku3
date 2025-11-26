@@ -28,8 +28,11 @@ from data_v2.etl.client import (
     fetch_daily_quotes_for_date,
     fetch_fs_details_for_date,
     fetch_listed_info_for_date,
+    fetch_short_selling,
+    fetch_short_selling_positions,
     fetch_statements_for_date,
     fetch_trades_spec,
+    fetch_weekly_margin_interest,
 )
 from data_v2.etl.config import DEFAULT_DB_PATH
 from data_v2.etl.duckdb import connect_db, ensure_tables
@@ -41,9 +44,16 @@ from data_v2.etl.normalize.breakdown import normalize_breakdown
 from data_v2.etl.normalize.daily_quotes import normalize_daily_quotes
 from data_v2.etl.normalize.fs_details import normalize_fs_details
 from data_v2.etl.normalize.listed_info import normalize_listed_info
+from data_v2.etl.normalize.short_selling import normalize_short_selling
+from data_v2.etl.normalize.short_selling_positions import (
+    normalize_short_selling_positions,
+)
 from data_v2.etl.normalize.statements import normalize_statements
 from data_v2.etl.normalize.trades_spec import normalize_trades_spec
 from data_v2.etl.normalize.trading_calendar import normalize_trading_calendar
+from data_v2.etl.normalize.weekly_margin_interest import (
+    normalize_weekly_margin_interest,
+)
 from data_v2.etl.normalize.yfinance import normalize_yfinance_multi
 from data_v2.etl.upsert.breakdown import upsert_breakdown
 from data_v2.etl.upsert.daily_quotes import upsert_daily_quotes
@@ -52,12 +62,15 @@ from data_v2.etl.upsert.fs_details import upsert_fs_details
 from data_v2.etl.upsert.listed_features import upsert_listed_features
 from data_v2.etl.upsert.listed_info import upsert_listed_info
 from data_v2.etl.upsert.section_flow_features import upsert_section_flow_features
+from data_v2.etl.upsert.short_selling import upsert_short_selling
+from data_v2.etl.upsert.short_selling_positions import upsert_short_selling_positions
 from data_v2.etl.upsert.statements import upsert_statements
 from data_v2.etl.upsert.trades_spec import upsert_trades_spec
 from data_v2.etl.upsert.trading_calendar import (
     trading_days_from_duckdb,
     upsert_trading_calendar,
 )
+from data_v2.etl.upsert.weekly_margin_interest import upsert_weekly_margin_interest
 from data_v2.etl.upsert.yfinance import upsert_yfinance_prices
 from data_v2.etl.yfinance_tickers import MACRO_FALLBACKS, MACRO_TICKERS
 
@@ -350,11 +363,6 @@ def parse_args() -> argparse.Namespace:
     cal_direct = sub.add_parser("fetch-calendar-direct", help="Fetch calendar from API and upsert directly into DuckDB")
     cal_direct.add_argument("--from", dest="from_date", required=True, help="Start date (YYYY-MM-DD)")
     cal_direct.add_argument("--to", dest="to_date", required=True, help="End date (YYYY-MM-DD)")
-    cal_direct.add_argument(
-        "--holiday-division",
-        default="1,2,3",
-        help="Comma-separated HolidayDivision values to include (default: 1,2,3)",
-    )
 
     listed_direct = sub.add_parser(
         "fetch-listed-direct", help="Fetch listed_info via API and upsert directly into DuckDB"
@@ -655,6 +663,57 @@ def parse_args() -> argparse.Namespace:
         help="End published_date (YYYY-MM-DD) [env: END]",
     )
 
+    wmi_fetch = sub.add_parser(
+        "fetch-weekly-margin-interest",
+        help="Fetch /markets/weekly_margin_interest by date range and upsert into DuckDB",
+    )
+    wmi_fetch.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
+    wmi_fetch.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
+    wmi_fetch.add_argument("--code", required=False, help="Optional code filter (uses from/to when set)")
+    wmi_fetch.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("WORKERS", "1")),
+        help="Parallel workers for date-based fetch (code=None only)",
+    )
+    wmi_fetch.add_argument(
+        "--holiday-division",
+        default=os.environ.get("HOLIDAY_DIVISION", "1,2"),
+        help="Comma-separated HolidayDivision values to treat as trading days (default: 1,2)",
+    )
+
+    ss_fetch = sub.add_parser(
+        "fetch-short-selling",
+        help="Fetch /markets/short_selling by date range and upsert into DuckDB",
+    )
+    ss_fetch.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
+    ss_fetch.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
+    ss_fetch.add_argument("--sector33code", required=False, help="Optional sector33code filter (e.g., 0050)")
+    ss_fetch.add_argument(
+        "--holiday-division",
+        default=os.environ.get("HOLIDAY_DIVISION", "1,2"),
+        help="Comma-separated HolidayDivision values to treat as trading days (default: 1,2)",
+    )
+
+    ssp_fetch = sub.add_parser(
+        "fetch-short-selling-positions",
+        help="Fetch /markets/short_selling_positions by disclosed_date range and upsert into DuckDB",
+    )
+    ssp_fetch.add_argument("--start", required=True, help="disclosed_date start (YYYY-MM-DD)")
+    ssp_fetch.add_argument("--end", required=True, help="disclosed_date end (YYYY-MM-DD)")
+    ssp_fetch.add_argument("--code", required=False, help="Optional code filter")
+    ssp_fetch.add_argument(
+        "--holiday-division",
+        default=os.environ.get("HOLIDAY_DIVISION", "1,2"),
+        help="Comma-separated HolidayDivision values to treat as trading days (default: 1,2)",
+    )
+    ssp_fetch.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("WORKERS", "1")),
+        help="Parallel workers for date-based fetch (code=None only)",
+    )
+
     return parser.parse_args()
 
 
@@ -686,12 +745,11 @@ def main() -> int:
         return 0
 
     if args.command == "fetch-calendar-direct":
-        include_divs = [v.strip() for v in args.holiday_division.split(",") if v.strip()]
         inserted = upsert_calendar_direct(
             con,
             from_date=args.from_date,
             to_date=args.to_date,
-            include_divs=include_divs or None,
+            include_divs=["0", "1", "2", "3"],
         )
         print(f"Upserted {inserted} calendar rows into {args.db}")
         return 0
@@ -983,6 +1041,148 @@ def main() -> int:
         print(
             f"Upserted section_flow_features: {inserted} rows into {args.db} "
             f"for {args.start or 'min'}->{args.end or 'max'}"
+        )
+        return 0
+
+    if args.command == "fetch-weekly-margin-interest":
+        id_token = get_id_token()
+        recs: list[dict[str, object]] = []
+        include_divs = [v.strip() for v in args.holiday_division.split(",") if v.strip()]
+        days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+        if not days:
+            # Fallback: fetch calendar directly if DuckDB calendar is empty for range
+            cal_recs = fetch_calendar_records(id_token=id_token, from_date=args.start, to_date=args.end)
+            cal_df = normalize_trading_calendar(cal_recs)
+            _ = upsert_trading_calendar(con, cal_df)
+            days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+        if not days:
+            raise SystemExit("No trading days found for weekly_margin_interest fetch range.")
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        max_workers = max(1, args.workers)
+
+        def _job(day: str) -> list[dict[str, object]]:
+            try:
+                return fetch_weekly_margin_interest(
+                    id_token=id_token,
+                    start=day,
+                    end=day,
+                    code=args.code,  # optional; API allows code+date
+                )
+            except Exception:
+                return []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_job, d): d for d in days}
+            for fut in as_completed(futures):
+                recs.extend(fut.result())
+
+        df = normalize_weekly_margin_interest(recs)
+        inserted = upsert_weekly_margin_interest(con, df)
+        print(
+            f"Upserted weekly_margin_interest into {args.db} rows={inserted} for {args.start}->{args.end} "
+            f"code={args.code or 'ALL'}"
+        )
+        return 0
+
+    if args.command == "fetch-short-selling":
+        id_token = get_id_token()
+        include_divs = [v.strip() for v in args.holiday_division.split(",") if v.strip()]
+        # when sector33code is not specified, loop by trading days similar to listed/daily_quotes/breakdown
+        if args.sector33code:
+            recs = fetch_short_selling(
+                id_token=id_token,
+                start=args.start,
+                end=args.end,
+                sector33code=args.sector33code,
+            )
+        else:
+            days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+            if not days:
+                cal_recs = fetch_calendar_records(id_token=id_token, from_date=args.start, to_date=args.end)
+                cal_df = normalize_trading_calendar(cal_recs)
+                _ = upsert_trading_calendar(con, cal_df)
+                days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+            if not days:
+                raise SystemExit("No trading days found for short_selling fetch range.")
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            max_workers = max(1, args.workers)
+
+            def _job(day: str) -> list[dict[str, object]]:
+                try:
+                    return fetch_short_selling(
+                        id_token=id_token,
+                        start=day,
+                        end=day,
+                        sector33code=None,
+                    )
+                except Exception:
+                    return []
+
+            recs: list[dict[str, object]] = []
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = {ex.submit(_job, d): d for d in days}
+                for fut in as_completed(futures):
+                    recs.extend(fut.result())
+
+        df = normalize_short_selling(recs)
+        inserted = upsert_short_selling(con, df)
+        print(
+            f"Upserted short_selling into {args.db} rows={inserted} "
+            f"for {args.start}->{args.end} sector33={args.sector33code or 'ALL'}"
+        )
+        return 0
+
+    if args.command == "fetch-short-selling-positions":
+        id_token = get_id_token()
+        include_divs = [v.strip() for v in args.holiday_division.split(",") if v.strip()]
+        # If code is specified, use disclosed_date_from/to + code directly.
+        # If code is not specified, loop over trading days similar to listed/daily_quotes, using disclosed_date=<day>.
+        if args.code:
+            recs = fetch_short_selling_positions(
+                id_token=id_token,
+                start=args.start,
+                end=args.end,
+                code=args.code,
+            )
+        else:
+            days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+            if not days:
+                cal_recs = fetch_calendar_records(id_token=id_token, from_date=args.start, to_date=args.end)
+                cal_df = normalize_trading_calendar(cal_recs)
+                _ = upsert_trading_calendar(con, cal_df)
+                days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+            if not days:
+                raise SystemExit("No trading days found for short_selling_positions fetch range.")
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            max_workers = max(1, args.workers)
+
+            def _job(day: str) -> list[dict[str, object]]:
+                try:
+                    return fetch_short_selling_positions(
+                        id_token=id_token,
+                        start=day,
+                        end=day,
+                        code=None,
+                    )
+                except Exception:
+                    return []
+
+            recs: list[dict[str, object]] = []
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = {ex.submit(_job, d): d for d in days}
+                for fut in as_completed(futures):
+                    recs.extend(fut.result())
+
+        df = normalize_short_selling_positions(recs)
+        inserted = upsert_short_selling_positions(con, df)
+        print(
+            f"Upserted short_selling_positions into {args.db} rows={inserted} "
+            f"for disclosed_date {args.start}->{args.end} code={args.code or 'ALL'}"
         )
         return 0
 

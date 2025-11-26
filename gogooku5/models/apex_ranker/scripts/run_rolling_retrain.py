@@ -22,7 +22,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import polars as pl
 from _bootstrap import ensure_import_paths
 from gogooku5.data.src.builder.utils.lazy_io import lazy_load
 

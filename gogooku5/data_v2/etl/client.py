@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 import requests
@@ -12,15 +13,39 @@ from .config import (
     FS_DETAILS_URL,
     HTTP_TIMEOUT,
     LISTED_URL,
+    SHORT_SELLING_POSITIONS_URL,
+    SHORT_SELLING_URL,
     STATEMENTS_URL,
     TRADES_SPEC_URL,
     TRADING_CAL_URL,
+    WEEKLY_MARGIN_INTEREST_URL,
 )
 
 
-def fetch_calendar_records(id_token: str, *, from_date: str, to_date: str) -> list[dict[str, Any]]:
+def _date_iter(start: str, end: str) -> list[str]:
+    s = datetime.strptime(start, "%Y-%m-%d").date()
+    e = datetime.strptime(end, "%Y-%m-%d").date()
+    step = timedelta(days=1)
+    cur = s
+    out: list[str] = []
+    while cur <= e:
+        out.append(cur.isoformat())
+        cur += step
+    return out
+
+
+def fetch_calendar_records(
+    id_token: str,
+    *,
+    from_date: str | None,
+    to_date: str | None,
+) -> list[dict[str, Any]]:
     headers = {"Authorization": f"Bearer {id_token}"}
-    params: dict[str, str] = {"from": from_date, "to": to_date}
+    params: dict[str, str] = {}
+    if from_date:
+        params["from"] = from_date
+    if to_date:
+        params["to"] = to_date
     resp = requests.get(TRADING_CAL_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
     resp.raise_for_status()
     records = resp.json().get("trading_calendar") or resp.json().get("data")
@@ -140,4 +165,161 @@ def fetch_trades_spec(
         pagination_key = data.get("pagination_key")
         if not pagination_key:
             break
+    return all_records
+
+
+def fetch_weekly_margin_interest(
+    id_token: str,
+    *,
+    start: str,
+    end: str,
+    code: str | None = None,
+) -> list[dict[str, Any]]:
+    headers = {"Authorization": f"Bearer {id_token}"}
+    all_records: list[dict[str, Any]] = []
+    # API requires code or date. If code is provided, use from/to; else loop dates with ?date=.
+    if code:
+        pagination_key: str | None = None
+        while True:
+            params: dict[str, str] = {"from": start, "to": end, "code": code}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+            resp = requests.get(WEEKLY_MARGIN_INTEREST_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+            recs = data.get("weekly_margin_interest") or data.get("data") or []
+            all_records.extend(recs)
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+    else:
+        # Use trading_calendar to pick business days; weekly_margin_interest is weekly so hitting all biz days
+        # still respects API's date requirement but limits to trading days.
+        cal_dates = requests.get(
+            TRADING_CAL_URL,
+            headers=headers,
+            params={"from": start, "to": end},
+            timeout=HTTP_TIMEOUT,
+        )
+        cal_dates.raise_for_status()
+        cal_data = cal_dates.json()
+        cal_records = cal_data.get("trading_calendar") or cal_data.get("data") or []
+        # filter to HolidayDivision in ('1','2') => trading days
+        days = [
+            r["Date"] if "Date" in r else r.get("date")
+            for r in cal_records
+            if (r.get("HolidayDivision") or r.get("holiday_division")) in ("1", "2")
+        ]
+        for day in days:
+            if not day:
+                continue
+            pagination_key: str | None = None
+            while True:
+                params: dict[str, str] = {"date": day}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                resp = requests.get(WEEKLY_MARGIN_INTEREST_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+                resp.raise_for_status()
+                data = resp.json()
+                recs = data.get("weekly_margin_interest") or data.get("data") or []
+                all_records.extend(recs)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+    return all_records
+
+
+def fetch_short_selling(
+    id_token: str,
+    *,
+    start: str,
+    end: str,
+    sector33code: str | None = None,
+) -> list[dict[str, Any]]:
+    headers = {"Authorization": f"Bearer {id_token}"}
+    all_records: list[dict[str, Any]] = []
+    # API requires sector33code or date. If sector33code provided, we can use from/to; otherwise loop dates.
+    if sector33code:
+        pagination_key: str | None = None
+        while True:
+            params: dict[str, str] = {"from": start, "to": end, "sector33code": sector33code}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+            resp = requests.get(SHORT_SELLING_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+            recs = data.get("short_selling") or data.get("data") or []
+            all_records.extend(recs)
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+    else:
+        for day in _date_iter(start, end):
+            pagination_key: str | None = None
+            while True:
+                params: dict[str, str] = {"date": day}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                resp = requests.get(SHORT_SELLING_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+                resp.raise_for_status()
+                data = resp.json()
+                recs = data.get("short_selling") or data.get("data") or []
+                all_records.extend(recs)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+    return all_records
+
+
+def fetch_short_selling_positions(
+    id_token: str,
+    *,
+    start: str,
+    end: str,
+    code: str | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch short selling positions data.
+
+    API requires code, disclosed_date, or calculated_date.
+    - If code is provided: use disclosed_date_from/to for bulk fetch
+    - If code is not provided: iterate through dates using disclosed_date
+    """
+    headers = {"Authorization": f"Bearer {id_token}"}
+    all_records: list[dict[str, Any]] = []
+
+    if code:
+        # code指定あり → from/to でまとめ取得
+        pagination_key: str | None = None
+        while True:
+            params: dict[str, str] = {
+                "code": code,
+                "disclosed_date_from": start,
+                "disclosed_date_to": end,
+            }
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+            resp = requests.get(SHORT_SELLING_POSITIONS_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+            recs = data.get("short_selling_positions") or data.get("data") or []
+            all_records.extend(recs)
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+    else:
+        # code指定なし → disclosed_date で日付ループ
+        for day in _date_iter(start, end):
+            pagination_key: str | None = None
+            while True:
+                params: dict[str, str] = {"disclosed_date": day}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                resp = requests.get(SHORT_SELLING_POSITIONS_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+                resp.raise_for_status()
+                data = resp.json()
+                recs = data.get("short_selling_positions") or data.get("data") or []
+                all_records.extend(recs)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
     return all_records

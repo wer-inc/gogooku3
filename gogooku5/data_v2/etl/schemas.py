@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 LISTED_INFO_COLUMNS: list[tuple[str, str]] = [
     ("date", "DATE"),
@@ -283,6 +283,46 @@ TRADES_SPEC_COLUMNS: list[tuple[str, str]] = [
 ]
 TRADES_SPEC_PK = "PRIMARY KEY (published_date, section, start_date, end_date)"
 
+WEEKLY_MARGIN_INTEREST_COLUMNS: list[tuple[str, str]] = [
+    ("date", "DATE"),
+    ("code", "VARCHAR"),
+    ("short_margin_trade_volume", "DOUBLE"),
+    ("long_margin_trade_volume", "DOUBLE"),
+    ("short_negotiable_margin_trade_volume", "DOUBLE"),
+    ("long_negotiable_margin_trade_volume", "DOUBLE"),
+    ("short_standardized_margin_trade_volume", "DOUBLE"),
+    ("long_standardized_margin_trade_volume", "DOUBLE"),
+    ("issue_type", "VARCHAR"),
+]
+WEEKLY_MARGIN_INTEREST_PK = "PRIMARY KEY (date, code)"
+
+SHORT_SELLING_COLUMNS: list[tuple[str, str]] = [
+    ("date", "DATE"),
+    ("sector33_code", "VARCHAR"),
+    ("selling_excluding_short_selling_turnover_value", "DOUBLE"),
+    ("short_selling_with_restrictions_turnover_value", "DOUBLE"),
+    ("short_selling_without_restrictions_turnover_value", "DOUBLE"),
+]
+SHORT_SELLING_PK = "PRIMARY KEY (date, sector33_code)"
+
+SHORT_SELLING_POSITIONS_COLUMNS: list[tuple[str, str]] = [
+    ("disclosed_date", "DATE"),
+    ("calculated_date", "DATE"),
+    ("code", "VARCHAR"),
+    ("short_seller_name", "VARCHAR"),
+    ("short_seller_address", "VARCHAR"),
+    ("discretionary_investment_contractor_name", "VARCHAR"),
+    ("discretionary_investment_contractor_address", "VARCHAR"),
+    ("investment_fund_name", "VARCHAR"),
+    ("short_positions_to_shares_outstanding_ratio", "DOUBLE"),
+    ("short_positions_in_shares_number", "DOUBLE"),
+    ("short_positions_in_trading_units_number", "DOUBLE"),
+    ("calculation_in_previous_reporting_date", "DATE"),
+    ("short_positions_in_previous_reporting_ratio", "DOUBLE"),
+    ("notes", "VARCHAR"),
+]
+SHORT_SELLING_POSITIONS_PK = "PRIMARY KEY (disclosed_date, code, short_seller_name, calculated_date)"
+
 SECTION_FLOW_FEATURES_COLUMNS: list[tuple[str, str]] = [
     ("published_date", "DATE"),
     ("effective_date", "DATE"),
@@ -306,6 +346,13 @@ SECTION_FLOW_FEATURES_COLUMNS: list[tuple[str, str]] = [
     ("foreigners_net_cum_13w", "DOUBLE"),
     ("smart_vs_retail_cum_4w", "DOUBLE"),
     ("smart_vs_retail_cum_13w", "DOUBLE"),
+    ("foreigners_net_ratio_cum_4w", "DOUBLE"),
+    ("foreigners_net_ratio_cum_13w", "DOUBLE"),
+    ("individuals_net_ratio_cum_4w", "DOUBLE"),
+    ("individuals_net_ratio_cum_13w", "DOUBLE"),
+    ("foreigners_net_ratio_trend_4w", "DOUBLE"),
+    ("individuals_net_ratio_trend_4w", "DOUBLE"),
+    ("smart_vs_retail_trend_4w", "DOUBLE"),
     # z-scores
     ("foreigners_net_ratio_z_26w", "DOUBLE"),
     ("individuals_net_ratio_z_26w", "DOUBLE"),
@@ -358,6 +405,22 @@ FINANCIAL_FEATURES_COLUMNS: list[tuple[str, str]] = [
     ("fund_is_cash_rich", "INT"),
     ("fund_is_high_net_cash", "INT"),
     ("fund_value_trap_flag", "INT"),
+    ("earn_sales_surprise_fy", "DOUBLE"),
+    ("earn_op_profit_surprise_fy", "DOUBLE"),
+    ("earn_profit_surprise_fy", "DOUBLE"),
+    ("earn_eps_surprise_fy", "DOUBLE"),
+    ("earn_sales_revision_fy", "DOUBLE"),
+    ("earn_op_profit_revision_fy", "DOUBLE"),
+    ("earn_profit_revision_fy", "DOUBLE"),
+    ("earn_eps_revision_fy", "DOUBLE"),
+    ("earn_sales_revision_cum_fy", "DOUBLE"),
+    ("earn_op_profit_revision_cum_fy", "DOUBLE"),
+    ("earn_profit_revision_cum_fy", "DOUBLE"),
+    ("earn_eps_revision_cum_fy", "DOUBLE"),
+    ("earn_sales_next_fy_growth", "DOUBLE"),
+    ("earn_op_profit_next_fy_growth", "DOUBLE"),
+    ("earn_profit_next_fy_growth", "DOUBLE"),
+    ("earn_eps_next_fy_growth", "DOUBLE"),
 ]
 FINANCIAL_FEATURES_PK = "PRIMARY KEY (date, code)"
 
@@ -537,6 +600,8 @@ FEATURES_DAILY_COLUMNS: list[tuple[str, str]] = [
     ("short_intensity", "DOUBLE"),
     ("flow_vol_combo", "DOUBLE"),
     ("flow_vol_ratio", "DOUBLE"),
+    ("sector_short_ratio", "DOUBLE"),
+    ("sector_short_trend", "DOUBLE"),
     # Additional prices/breakdown technicals and patterns
     ("ema_12", "DOUBLE"),
     ("ema_26", "DOUBLE"),
@@ -576,6 +641,9 @@ FEATURES_DAILY_COLUMNS: list[tuple[str, str]] = [
     # Flow run lengths
     ("pos_flow_run_len", "INT"),
     ("neg_flow_run_len", "INT"),
+    # Short selling positions (event-driven) projected to daily
+    ("ssp_disclosed_short_ratio", "DOUBLE"),
+    ("ssp_short_disclosure_flag_recent", "INT"),
 ]
 FEATURES_DAILY_PK = "PRIMARY KEY (date, code)"
 

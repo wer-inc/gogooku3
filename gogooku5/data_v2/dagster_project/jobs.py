@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, timedelta
 from pathlib import Path
 
 from dagster import In, Out, job, op
@@ -12,7 +13,10 @@ from data_v2.etl.client import (
     fetch_daily_quotes_for_date,
     fetch_fs_details_for_date,
     fetch_listed_info_for_date,
+    fetch_short_selling,
+    fetch_short_selling_positions,
     fetch_statements_for_date,
+    fetch_weekly_margin_interest,
 )
 from data_v2.etl.config import DEFAULT_DB_PATH
 from data_v2.etl.duckdb import connect_db, ensure_tables
@@ -21,26 +25,36 @@ from data_v2.etl.feature.prices import compute_price_features
 from data_v2.etl.normalize.breakdown import normalize_breakdown
 from data_v2.etl.normalize.daily_quotes import normalize_daily_quotes
 from data_v2.etl.normalize.listed_info import normalize_listed_info
+from data_v2.etl.normalize.short_selling import normalize_short_selling
+from data_v2.etl.normalize.short_selling_positions import (
+    normalize_short_selling_positions,
+)
 from data_v2.etl.normalize.statements import normalize_statements
 from data_v2.etl.normalize.trading_calendar import normalize_trading_calendar
+from data_v2.etl.normalize.weekly_margin_interest import (
+    normalize_weekly_margin_interest,
+)
 from data_v2.etl.upsert.breakdown import upsert_breakdown
 from data_v2.etl.upsert.daily_quotes import upsert_daily_quotes
 from data_v2.etl.upsert.features import upsert_features_daily
 from data_v2.etl.upsert.listed_features import upsert_listed_features
 from data_v2.etl.upsert.listed_info import upsert_listed_info
+from data_v2.etl.upsert.short_selling import upsert_short_selling
+from data_v2.etl.upsert.short_selling_positions import upsert_short_selling_positions
 from data_v2.etl.upsert.statements import upsert_statements
 from data_v2.etl.upsert.trading_calendar import (
     trading_days_from_duckdb,
     upsert_trading_calendar,
 )
+from data_v2.etl.upsert.weekly_margin_interest import upsert_weekly_margin_interest
 from data_v2.etl.yfinance_tickers import MACRO_FALLBACKS, MACRO_TICKERS
 from data_v2.scripts.duckdb_loader import fetch_yfinance_into_duckdb
 
 
 @op(
     ins={
-        "from_date": In(str, description="Start date YYYY-MM-DD", default_value="2015-01-01"),
-        "to_date": In(str, description="End date YYYY-MM-DD", default_value="2025-12-31"),
+        "from_date": In(str, description="Start date YYYY-MM-DD (empty for full)", default_value=""),
+        "to_date": In(str, description="End date YYYY-MM-DD (empty for full)", default_value=""),
         "force_refresh": In(bool, description="Force re-fetch calendar", default_value=False),
         "db_path": In(str, description="DuckDB path", default_value=str(DEFAULT_DB_PATH)),
         "threads": In(int, description="DuckDB threads (0=default)", default_value=0),
@@ -60,7 +74,11 @@ def duckdb_upsert_calendar_op(
 
     # Fetch directly from API and upsert (no Parquet dependency)
     id_token = get_id_token()
-    records = fetch_calendar_records(id_token=id_token, from_date=from_date, to_date=to_date)
+    records = fetch_calendar_records(
+        id_token=id_token,
+        from_date=from_date or None,
+        to_date=to_date or None,
+    )
     df = normalize_trading_calendar(records)
     inserted = upsert_trading_calendar(con, df)
     msg = f"calendar upserted: {inserted} rows into {db_path} for {from_date}->{to_date}"
@@ -609,6 +627,103 @@ def duckdb_fetch_fs_details_op(
     return msg
 
 
+@op(
+    ins={
+        "start": In(str, description="Start date YYYY-MM-DD", default_value=ENV_START),
+        "end": In(str, description="End date YYYY-MM-DD", default_value=ENV_END),
+        "db_path": In(str, description="DuckDB path", default_value=str(DEFAULT_DB_PATH)),
+        "threads": In(int, description="DuckDB threads (0=default)", default_value=0),
+        "code": In(str, description="Optional code filter", default_value=""),
+    },
+    out=Out(str, description="Result string"),
+)
+def duckdb_fetch_weekly_margin_interest_op(
+    context,
+    start: str,
+    end: str,
+    db_path: str,
+    threads: int,
+    code: str = "",
+) -> str:
+    con = connect_db(Path(db_path), threads=threads or None)
+    ensure_tables(con)
+    id_token = get_id_token()
+    recs = fetch_weekly_margin_interest(id_token=id_token, start=start, end=end, code=code or None)
+    df = normalize_weekly_margin_interest(recs)
+    inserted = upsert_weekly_margin_interest(con, df)
+    msg = f"weekly_margin_interest upserted into {db_path} rows={inserted} " f"for {start}->{end} code={code or 'ALL'}"
+    context.log.info(msg)
+    return msg
+
+
+@op(
+    ins={
+        "start": In(str, description="Start date YYYY-MM-DD", default_value=ENV_START),
+        "end": In(str, description="End date YYYY-MM-DD", default_value=ENV_END),
+        "db_path": In(str, description="DuckDB path", default_value=str(DEFAULT_DB_PATH)),
+        "threads": In(int, description="DuckDB threads (0=default)", default_value=0),
+        "sector33code": In(str, description="Optional sector33code filter (e.g., 0050)", default_value=""),
+    },
+    out=Out(str, description="Result string"),
+)
+def duckdb_fetch_short_selling_op(
+    context,
+    start: str,
+    end: str,
+    db_path: str,
+    threads: int,
+    sector33code: str,
+) -> str:
+    con = connect_db(Path(db_path), threads=threads or None)
+    ensure_tables(con)
+    id_token = get_id_token()
+    recs = fetch_short_selling(
+        id_token=id_token,
+        start=start,
+        end=end,
+        sector33code=sector33code or None,
+    )
+    df = normalize_short_selling(recs)
+    inserted = upsert_short_selling(con, df)
+    msg = (
+        f"short_selling upserted into {db_path} rows={inserted} " f"for {start}->{end} sector33={sector33code or 'ALL'}"
+    )
+    context.log.info(msg)
+    return msg
+
+
+@op(
+    ins={
+        "start": In(str, description="disclosed_date start YYYY-MM-DD", default_value=ENV_START),
+        "end": In(str, description="disclosed_date end YYYY-MM-DD", default_value=ENV_END),
+        "db_path": In(str, description="DuckDB path", default_value=str(DEFAULT_DB_PATH)),
+        "threads": In(int, description="DuckDB threads (0=default)", default_value=0),
+        "code": In(str, description="Optional code filter", default_value=""),
+    },
+    out=Out(str, description="Result string"),
+)
+def duckdb_fetch_short_selling_positions_op(
+    context,
+    start: str,
+    end: str,
+    db_path: str,
+    threads: int,
+    code: str,
+) -> str:
+    con = connect_db(Path(db_path), threads=threads or None)
+    ensure_tables(con)
+    id_token = get_id_token()
+    recs = fetch_short_selling_positions(id_token=id_token, start=start, end=end, code=code or None)
+    df = normalize_short_selling_positions(recs)
+    inserted = upsert_short_selling_positions(con, df)
+    msg = (
+        f"short_selling_positions upserted into {db_path} rows={inserted} "
+        f"for disclosed_date {start}->{end} code={code or 'ALL'}"
+    )
+    context.log.info(msg)
+    return msg
+
+
 @job
 def duckdb_breakdown_job():
     duckdb_fetch_breakdown_op()
@@ -622,3 +737,18 @@ def duckdb_statements_job():
 @job
 def duckdb_fs_details_job():
     duckdb_fetch_fs_details_op()
+
+
+@job
+def duckdb_weekly_margin_interest_job():
+    duckdb_fetch_weekly_margin_interest_op()
+
+
+@job
+def duckdb_short_selling_job():
+    duckdb_fetch_short_selling_op()
+
+
+@job
+def duckdb_short_selling_positions_job():
+    duckdb_fetch_short_selling_positions_op()

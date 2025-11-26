@@ -122,6 +122,36 @@ def compute_trades_spec_features(
             pl.col("foreigners_net").rolling_sum(window_size=13).over("section").alias("foreigners_net_cum_13w"),
             pl.col("smart_vs_retail").rolling_sum(window_size=4).over("section").alias("smart_vs_retail_cum_4w"),
             pl.col("smart_vs_retail").rolling_sum(window_size=13).over("section").alias("smart_vs_retail_cum_13w"),
+            pl.col("foreigners_net_ratio")
+            .rolling_sum(window_size=4)
+            .over("section")
+            .alias("foreigners_net_ratio_cum_4w"),
+            pl.col("foreigners_net_ratio")
+            .rolling_sum(window_size=13)
+            .over("section")
+            .alias("foreigners_net_ratio_cum_13w"),
+            pl.col("individuals_net_ratio")
+            .rolling_sum(window_size=4)
+            .over("section")
+            .alias("individuals_net_ratio_cum_4w"),
+            pl.col("individuals_net_ratio")
+            .rolling_sum(window_size=13)
+            .over("section")
+            .alias("individuals_net_ratio_cum_13w"),
+        ]
+    )
+
+    df = df.with_columns(
+        [
+            (pl.col("foreigners_net_ratio") - pl.col("foreigners_net_ratio").shift(3).over("section")).alias(
+                "foreigners_net_ratio_trend_4w"
+            ),
+            (pl.col("individuals_net_ratio") - pl.col("individuals_net_ratio").shift(3).over("section")).alias(
+                "individuals_net_ratio_trend_4w"
+            ),
+            (pl.col("smart_vs_retail") - pl.col("smart_vs_retail").shift(3).over("section")).alias(
+                "smart_vs_retail_trend_4w"
+            ),
         ]
     )
 

@@ -154,6 +154,7 @@ def compute_financial_features(
             s.disclosed_date,
             s.local_code AS code,
             s.current_period_end_date,
+            s.current_fiscal_year_end_date,
             s.type_of_current_period,
             s.net_sales,
             s.operating_profit,
@@ -167,6 +168,14 @@ def compute_financial_features(
             s.cash_and_equivalents,
             s.number_of_issued_and_outstanding_shares_at_the_end_of_fiscal_year_including_treasury_stock,
             s.number_of_treasury_stock_at_the_end_of_fiscal_year,
+            s.forecast_net_sales,
+            s.forecast_operating_profit,
+            s.forecast_profit,
+            s.forecast_earnings_per_share,
+            s.next_year_forecast_net_sales,
+            s.next_year_forecast_operating_profit,
+            s.next_year_forecast_profit,
+            s.next_year_forecast_earnings_per_share,
             fd.financial_statement_json,
             -- Next trading date with a quote (report date ~ DisclosedDate+1営業日)
             (
@@ -203,6 +212,7 @@ def compute_financial_features(
             pl.col("code").cast(pl.Utf8, strict=False),
             pl.col("disclosed_date").cast(pl.Date, strict=False),
             pl.col("current_period_end_date").cast(pl.Date, strict=False),
+            pl.col("current_fiscal_year_end_date").cast(pl.Date, strict=False),
             pl.col("type_of_current_period").cast(pl.Utf8, strict=False),
             pl.col("effective_date").cast(pl.Date, strict=False),
         ]
@@ -222,6 +232,14 @@ def compute_financial_features(
         "number_of_issued_and_outstanding_shares_at_the_end_of_fiscal_year_including_treasury_stock",
         "number_of_treasury_stock_at_the_end_of_fiscal_year",
         "price_at_effective_date",
+        "forecast_net_sales",
+        "forecast_operating_profit",
+        "forecast_profit",
+        "forecast_earnings_per_share",
+        "next_year_forecast_net_sales",
+        "next_year_forecast_operating_profit",
+        "next_year_forecast_profit",
+        "next_year_forecast_earnings_per_share",
     ]
     stm = _cast_float(stm, numeric_cols)
 
@@ -243,10 +261,74 @@ def compute_financial_features(
             ]
         )
 
-    stm = (
-        stm.sort(["code", "current_period_end_date", "disclosed_date"])
-        .unique(subset=["code", "current_period_end_date"], keep="last")
-        .filter(pl.col("code").is_not_null() & pl.col("disclosed_date").is_not_null())
+    stm = stm.with_columns(
+        pl.coalesce([pl.col("current_fiscal_year_end_date"), pl.col("current_period_end_date")]).alias("_fy_end")
+    )
+
+    stm = stm.sort(["code", "_fy_end", "disclosed_date"])
+
+    forecast_map = {
+        "sales": "forecast_net_sales",
+        "op_profit": "forecast_operating_profit",
+        "profit": "forecast_profit",
+        "eps": "forecast_earnings_per_share",
+    }
+    by_fy = ["code", "_fy_end"]
+
+    stm = stm.with_columns(
+        [pl.col(col).forward_fill().shift(1).over(by_fy).alias(f"_prev_{col}") for col in forecast_map.values()]
+    )
+
+    first_fc = stm.group_by(by_fy, maintain_order=True).agg(
+        [pl.col(col).filter(pl.col(col).is_not_null()).first().alias(f"_first_{col}") for col in forecast_map.values()]
+    )
+    stm = stm.join(first_fc, on=by_fy, how="left")
+
+    stm = stm.with_columns(
+        [
+            pl.when(pl.col(col).is_not_null() & pl.col(f"_prev_{col}").is_not_null() & (pl.col(f"_prev_{col}") != 0))
+            .then((pl.col(col) - pl.col(f"_prev_{col}")) / pl.col(f"_prev_{col}").abs())
+            .otherwise(None)
+            .clip(-5.0, 5.0)
+            .alias(f"earn_{name}_revision_fy")
+            for name, col in forecast_map.items()
+        ]
+    )
+
+    stm = stm.with_columns(
+        [
+            pl.when(pl.col(col).is_not_null() & pl.col(f"_first_{col}").is_not_null() & (pl.col(f"_first_{col}") != 0))
+            .then((pl.col(col) - pl.col(f"_first_{col}")) / pl.col(f"_first_{col}").abs())
+            .otherwise(None)
+            .clip(-5.0, 5.0)
+            .alias(f"earn_{name}_revision_cum_fy")
+            for name, col in forecast_map.items()
+        ]
+    )
+
+    stm = stm.with_columns(
+        [
+            pl.when(
+                (pl.col("type_of_current_period") == "FY")
+                & pl.col(act_col).is_not_null()
+                & pl.col(f"_prev_{fc_col}").is_not_null()
+                & (pl.col(f"_prev_{fc_col}") != 0)
+            )
+            .then((pl.col(act_col) - pl.col(f"_prev_{fc_col}")) / pl.col(f"_prev_{fc_col}").abs())
+            .otherwise(None)
+            .clip(-5.0, 5.0)
+            .alias(f"earn_{name}_surprise_fy")
+            for name, (act_col, fc_col) in {
+                "sales": ("net_sales", "forecast_net_sales"),
+                "op_profit": ("operating_profit", "forecast_operating_profit"),
+                "profit": ("profit", "forecast_profit"),
+                "eps": ("earnings_per_share", "forecast_earnings_per_share"),
+            }.items()
+        ]
+    )
+
+    stm = stm.unique(subset=["code", "current_period_end_date"], keep="last").filter(
+        pl.col("code").is_not_null() & pl.col("disclosed_date").is_not_null()
     )
     if stm.is_empty():
         return pl.DataFrame(schema={"date": pl.Date, "code": pl.Utf8})
@@ -376,9 +458,11 @@ def compute_financial_features(
             [
                 pl.col("current_period_end_date").shift(1).over("code").alias("_prev_period_end_date"),
                 pl.col("net_sales").shift(1).over("code").alias("_prev_net_sales"),
+                pl.col("operating_profit").shift(1).over("code").alias("_prev_operating_profit"),
                 pl.col("profit").shift(1).over("code").alias("_prev_profit"),
                 pl.col("cash_flows_from_operating_activities").shift(1).over("code").alias("_prev_cfo"),
                 pl.col("fund_net_cash_k1").shift(1).over("code").alias("_prev_net_cash_k1"),
+                pl.col("earnings_per_share").shift(1).over("code").alias("_prev_eps"),
             ]
         )
         .with_columns(
@@ -432,6 +516,58 @@ def compute_financial_features(
                 .otherwise(None)
                 .clip(-5.0, 5.0)
                 .alias("fund_yoy_net_cash"),
+                pl.when(
+                    pl.col("next_year_forecast_net_sales").is_not_null()
+                    & pl.col("_prev_net_sales").is_not_null()
+                    & (pl.col("_prev_net_sales") != 0)
+                    & (pl.col("_period_days_delta") >= 0.75 * 365)
+                    & (pl.col("_period_days_delta") <= 1.25 * 365)
+                )
+                .then(
+                    (pl.col("next_year_forecast_net_sales") - pl.col("_prev_net_sales"))
+                    / pl.col("_prev_net_sales").abs()
+                )
+                .otherwise(None)
+                .clip(-5.0, 5.0)
+                .alias("earn_sales_next_fy_growth"),
+                pl.when(
+                    pl.col("next_year_forecast_operating_profit").is_not_null()
+                    & pl.col("_prev_operating_profit").is_not_null()
+                    & (pl.col("_prev_operating_profit") != 0)
+                    & (pl.col("_period_days_delta") >= 0.75 * 365)
+                    & (pl.col("_period_days_delta") <= 1.25 * 365)
+                )
+                .then(
+                    (pl.col("next_year_forecast_operating_profit") - pl.col("_prev_operating_profit"))
+                    / pl.col("_prev_operating_profit").abs()
+                )
+                .otherwise(None)
+                .clip(-5.0, 5.0)
+                .alias("earn_op_profit_next_fy_growth"),
+                pl.when(
+                    pl.col("next_year_forecast_profit").is_not_null()
+                    & pl.col("_prev_profit").is_not_null()
+                    & (pl.col("_prev_profit") != 0)
+                    & (pl.col("_period_days_delta") >= 0.75 * 365)
+                    & (pl.col("_period_days_delta") <= 1.25 * 365)
+                )
+                .then((pl.col("next_year_forecast_profit") - pl.col("_prev_profit")) / pl.col("_prev_profit").abs())
+                .otherwise(None)
+                .clip(-5.0, 5.0)
+                .alias("earn_profit_next_fy_growth"),
+                pl.when(
+                    pl.col("next_year_forecast_earnings_per_share").is_not_null()
+                    & pl.col("_prev_eps").is_not_null()
+                    & (pl.col("_prev_eps") != 0)
+                    & (pl.col("_period_days_delta") >= 0.75 * 365)
+                    & (pl.col("_period_days_delta") <= 1.25 * 365)
+                )
+                .then(
+                    (pl.col("next_year_forecast_earnings_per_share") - pl.col("_prev_eps")) / pl.col("_prev_eps").abs()
+                )
+                .otherwise(None)
+                .clip(-5.0, 5.0)
+                .alias("earn_eps_next_fy_growth"),
             ]
         )
         .select(
@@ -442,6 +578,10 @@ def compute_financial_features(
                 "fund_yoy_profit",
                 "fund_yoy_cfo",
                 "fund_yoy_net_cash",
+                "earn_sales_next_fy_growth",
+                "earn_op_profit_next_fy_growth",
+                "earn_profit_next_fy_growth",
+                "earn_eps_next_fy_growth",
             ]
         )
     )
@@ -587,6 +727,22 @@ def compute_financial_features(
             "fund_is_cash_rich",
             "fund_is_high_net_cash",
             "fund_value_trap_flag",
+            "earn_sales_surprise_fy",
+            "earn_op_profit_surprise_fy",
+            "earn_profit_surprise_fy",
+            "earn_eps_surprise_fy",
+            "earn_sales_revision_fy",
+            "earn_op_profit_revision_fy",
+            "earn_profit_revision_fy",
+            "earn_eps_revision_fy",
+            "earn_sales_revision_cum_fy",
+            "earn_op_profit_revision_cum_fy",
+            "earn_profit_revision_cum_fy",
+            "earn_eps_revision_cum_fy",
+            "earn_sales_next_fy_growth",
+            "earn_op_profit_next_fy_growth",
+            "earn_profit_next_fy_growth",
+            "earn_eps_next_fy_growth",
         ]
     )
     return result

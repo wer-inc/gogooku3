@@ -28,6 +28,10 @@ from .schemas import (
     SECTION_FLOW_FEATURES_COLUMNS,
     SECTION_FLOW_FEATURES_PK,
     SECTION_FLOW_FEATURES_TABLE,
+    SHORT_SELLING_COLUMNS,
+    SHORT_SELLING_PK,
+    SHORT_SELLING_POSITIONS_COLUMNS,
+    SHORT_SELLING_POSITIONS_PK,
     STATEMENTS_COLUMNS,
     STATEMENTS_PK,
     STATEMENTS_TABLE,
@@ -35,6 +39,8 @@ from .schemas import (
     TRADES_SPEC_PK,
     TRADING_CALENDAR_COLUMNS,
     TRADING_CALENDAR_PK,
+    WEEKLY_MARGIN_INTEREST_COLUMNS,
+    WEEKLY_MARGIN_INTEREST_PK,
     YF_PRICE_COLUMNS,
     YF_PRICE_PK,
     create_table_sql,
@@ -55,6 +61,11 @@ def ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(create_table_sql("yf_prices", YF_PRICE_COLUMNS, YF_PRICE_PK))
     con.execute(create_table_sql("daily_quotes", DAILY_QUOTES_COLUMNS, DAILY_QUOTES_PK))
     con.execute(create_table_sql("breakdown", BREAKDOWN_COLUMNS, BREAKDOWN_PK))
+    con.execute(create_table_sql("weekly_margin_interest", WEEKLY_MARGIN_INTEREST_COLUMNS, WEEKLY_MARGIN_INTEREST_PK))
+    con.execute(create_table_sql("short_selling", SHORT_SELLING_COLUMNS, SHORT_SELLING_PK))
+    con.execute(
+        create_table_sql("short_selling_positions", SHORT_SELLING_POSITIONS_COLUMNS, SHORT_SELLING_POSITIONS_PK)
+    )
     con.execute(create_table_sql(PRICE_FLOW_FEATURES_TABLE, FEATURES_DAILY_COLUMNS, FEATURES_DAILY_PK))
     con.execute(create_table_sql(LISTED_META_FEATURES_TABLE, LISTED_META_FEATURES_COLUMNS, LISTED_META_FEATURES_PK))
     con.execute(create_table_sql(FINANCIAL_FEATURES_TABLE, FINANCIAL_FEATURES_COLUMNS, FINANCIAL_FEATURES_PK))

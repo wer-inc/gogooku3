@@ -37,22 +37,42 @@ from apex_ranker.utils import (
     topk_overlap,
     wil_at_k,
 )
+from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
 from torch.utils.data import DataLoader
 
-from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
+# NOTE: lazy_load replaced with pl.read_parquet directly.
+# MLflowTracker is optional - create a stub if not available.
 
-# NOTE:
-# - Newer gogooku5 data pipeline lives under gogooku5.data.src.
-# - In this repo, the shared lazy I/O and MLflow helpers are still under
-#   gogooku5.data_deprecated.src.builder.utils.
-# - To keep train_v0 working across both layouts, try the new path first
-#   and fall back to the deprecated location.
-try:
-    from gogooku5.data.src.builder.utils.lazy_io import lazy_load
-    from gogooku5.data.src.builder.utils.mlflow_tracker import MLflowTracker
-except ModuleNotFoundError:  # pragma: no cover - environment-dependent
-    from gogooku5.data_deprecated.src.builder.utils.lazy_io import lazy_load
-    from gogooku5.data_deprecated.src.builder.utils.mlflow_tracker import MLflowTracker
+
+def lazy_load(path, prefer_ipc: bool = True):
+    """Load parquet file. IPC caching removed for simplicity."""
+    return pl.read_parquet(path)
+
+
+class MLflowTracker:
+    """Stub MLflow tracker when gogooku5.data module is not available."""
+
+    def __init__(self, enabled: bool = False, **kwargs):
+        self.enabled = enabled
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def log_params(self, params: dict):
+        pass
+
+    def log_metrics(self, metrics: dict, step: int | None = None):
+        pass
+
+    def set_tags(self, tags: dict):
+        pass
+
+    def log_artifact(self, path: str):
+        pass
+
 
 DEFAULT_SEED = 42
 

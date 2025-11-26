@@ -9,6 +9,7 @@ import duckdb
 import polars as pl
 
 from ..schemas import FEATURES_DAILY_COLUMNS
+from .short_positions import compute_short_positions_features
 
 
 def compute_price_features(
@@ -1093,6 +1094,53 @@ def compute_price_features(
         ]
     )
 
+    # Sector-level short selling features (broadcast by sector33_code)
+    ss_arrow = con.execute(
+        """
+        SELECT
+            date,
+            sector33_code,
+            selling_excluding_short_selling_turnover_value,
+            short_selling_with_restrictions_turnover_value,
+            short_selling_without_restrictions_turnover_value
+        FROM short_selling
+        WHERE date BETWEEN ? AND ?
+        """,
+        [start, end],
+    ).fetch_arrow_table()
+    ss = pl.from_arrow(ss_arrow)
+    if not ss.is_empty():
+        ss = ss.sort(["sector33_code", "date"])
+        ss = ss.with_columns(
+            [
+                (
+                    pl.col("short_selling_with_restrictions_turnover_value")
+                    + pl.col("short_selling_without_restrictions_turnover_value")
+                ).alias("_short_total"),
+                (
+                    pl.col("selling_excluding_short_selling_turnover_value")
+                    + pl.col("short_selling_with_restrictions_turnover_value")
+                    + pl.col("short_selling_without_restrictions_turnover_value")
+                ).alias("_total_turnover"),
+            ]
+        )
+        ss = ss.with_columns((pl.col("_short_total") / (pl.col("_total_turnover") + EPS)).alias("sector_short_ratio"))
+        ss = ss.with_columns(
+            (
+                pl.col("sector_short_ratio")
+                - pl.col("sector_short_ratio").rolling_mean(window_size=5, min_periods=1).over("sector33_code")
+            ).alias("sector_short_trend")
+        )
+        ss = ss.select(["date", "sector33_code", "sector_short_ratio", "sector_short_trend"])
+        out = out.join(ss, on=["date", "sector33_code"], how="left")
+    else:
+        out = out.with_columns(
+            [
+                pl.lit(None).cast(pl.Float64).alias("sector_short_ratio"),
+                pl.lit(None).cast(pl.Float64).alias("sector_short_trend"),
+            ]
+        )
+
     # Availability flags for downstream filtering
     out = out.with_columns(
         [
@@ -1210,6 +1258,18 @@ def compute_price_features(
             .alias("has_sessions"),
         ]
     )
+
+    # Short selling positions-derived features (event-driven)
+    ssp = compute_short_positions_features(con, start=start, end=end)
+    if not ssp.is_empty():
+        out = out.join(ssp, on=["date", "code"], how="left")
+    else:
+        out = out.with_columns(
+            [
+                pl.lit(None).cast(pl.Float64).alias("ssp_disclosed_short_ratio"),
+                pl.lit(0).cast(pl.Int8).alias("ssp_short_disclosure_flag_recent"),
+            ]
+        )
 
     # Align to FEATURES_DAILY_COLUMNS schema; any missing columns become null.
     schema_cols = [name for name, _ in FEATURES_DAILY_COLUMNS]
