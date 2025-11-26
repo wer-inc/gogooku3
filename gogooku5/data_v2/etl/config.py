@@ -21,6 +21,7 @@ STATEMENTS_URL = "https://api.jquants.com/v1/fins/statements"
 FS_DETAILS_URL = "https://api.jquants.com/v1/fins/fs_details"
 TRADES_SPEC_URL = "https://api.jquants.com/v1/markets/trades_spec"
 WEEKLY_MARGIN_INTEREST_URL = "https://api.jquants.com/v1/markets/weekly_margin_interest"
+DAILY_MARGIN_INTEREST_URL = "https://api.jquants.com/v1/markets/daily_margin_interest"
 SHORT_SELLING_URL = "https://api.jquants.com/v1/markets/short_selling"
 SHORT_SELLING_POSITIONS_URL = "https://api.jquants.com/v1/markets/short_selling_positions"
 

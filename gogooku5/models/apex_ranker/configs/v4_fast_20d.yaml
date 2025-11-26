@@ -17,7 +17,7 @@ description: |
   - listnet.tau: 0.3 (sharper ranking)
 
 data:
-  parquet_path: data/output/datasets/apex_fast_v4.parquet
+  parquet_path: data_v2/output/ml_fast_v4_20d.parquet
   metadata_path: null
   feature_groups_config: models/apex_ranker/configs/feature_groups_fast_v4.yaml
   feature_aliases_yaml: null

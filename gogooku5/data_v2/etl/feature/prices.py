@@ -9,6 +9,7 @@ import duckdb
 import polars as pl
 
 from ..schemas import FEATURES_DAILY_COLUMNS
+from .daily_margin import compute_daily_margin_features
 from .short_positions import compute_short_positions_features
 
 
@@ -92,12 +93,16 @@ def compute_price_features(
     if quotes_df.is_empty():
         return pl.DataFrame()
 
-    q = quotes_df.lazy().sort(["code", "date"]).with_columns(
-        [
-            pl.col("close").cast(pl.Float64),
-            pl.col("volume").cast(pl.Float64),
-            pl.col("turnover").cast(pl.Float64),
-        ]
+    q = (
+        quotes_df.lazy()
+        .sort(["code", "date"])
+        .with_columns(
+            [
+                pl.col("close").cast(pl.Float64),
+                pl.col("volume").cast(pl.Float64),
+                pl.col("turnover").cast(pl.Float64),
+            ]
+        )
     )
 
     # Basic returns and momentum
@@ -538,9 +543,7 @@ def compute_price_features(
             pl.col("market_alpha_1d").rolling_std(window_size=20, min_periods=5).over("code").alias("_alpha_std_20"),
         ]
     )
-    q = q.with_columns(
-        (pl.col("cum_alpha_20d") / (pl.col("_alpha_std_20") + EPS)).alias("info_ratio_20d")
-    )
+    q = q.with_columns((pl.col("cum_alpha_20d") / (pl.col("_alpha_std_20") + EPS)).alias("info_ratio_20d"))
     # Clean up Market Alpha temp columns (added to drop list below)
 
     # ========== Phase 3.3: Volatility Regime Features ==========
@@ -555,12 +558,14 @@ def compute_price_features(
     # Volatility regime: compare current vol to historical distribution
     q = q.with_columns(
         [
-            pl.col("rv_20").rolling_quantile(quantile=0.8, window_size=252, min_periods=60).over("code").alias(
-                "_vol_80pct_252"
-            ),
-            pl.col("rv_20").rolling_quantile(quantile=0.2, window_size=252, min_periods=60).over("code").alias(
-                "_vol_20pct_252"
-            ),
+            pl.col("rv_20")
+            .rolling_quantile(quantile=0.8, window_size=252, min_periods=60)
+            .over("code")
+            .alias("_vol_80pct_252"),
+            pl.col("rv_20")
+            .rolling_quantile(quantile=0.2, window_size=252, min_periods=60)
+            .over("code")
+            .alias("_vol_20pct_252"),
         ]
     )
     q = q.with_columns(
@@ -576,9 +581,7 @@ def compute_price_features(
         (pl.col("rv_20").rank(method="average").over("date") / pl.count().over("date")).alias("cs_vol_percentile")
     )
     # Volatility-adjusted return momentum: higher reward for gains in high vol environments
-    q = q.with_columns(
-        (pl.col("ret_20d") * pl.col("rv_20")).alias("vol_weighted_mom_20")
-    )
+    q = q.with_columns((pl.col("ret_20d") * pl.col("rv_20")).alias("vol_weighted_mom_20"))
     # Clean up Volatility Regime temp columns (added to drop list below)
 
     # Session-based features if available
@@ -1267,51 +1270,98 @@ def compute_price_features(
     )
 
     # Sector-level short selling features (broadcast by sector33_code)
-    ss_arrow = con.execute(
-        """
-        SELECT
-            date,
-            sector33_code,
-            selling_excluding_short_selling_turnover_value,
-            short_selling_with_restrictions_turnover_value,
-            short_selling_without_restrictions_turnover_value
-        FROM short_selling
-        WHERE date BETWEEN ? AND ?
-        """,
-        [start, end],
-    ).fetch_arrow_table()
-    ss = pl.from_arrow(ss_arrow)
-    if not ss.is_empty():
-        ss = ss.sort(["sector33_code", "date"])
-        ss = ss.with_columns(
-            [
-                (
-                    pl.col("short_selling_with_restrictions_turnover_value")
-                    + pl.col("short_selling_without_restrictions_turnover_value")
-                ).alias("_short_total"),
-                (
-                    pl.col("selling_excluding_short_selling_turnover_value")
-                    + pl.col("short_selling_with_restrictions_turnover_value")
-                    + pl.col("short_selling_without_restrictions_turnover_value")
-                ).alias("_total_turnover"),
-            ]
-        )
-        ss = ss.with_columns((pl.col("_short_total") / (pl.col("_total_turnover") + EPS)).alias("sector_short_ratio"))
-        ss = ss.with_columns(
-            (
-                pl.col("sector_short_ratio")
-                - pl.col("sector_short_ratio").rolling_mean(window_size=5, min_periods=1).over("sector33_code")
-            ).alias("sector_short_trend")
-        )
-        ss = ss.select(["date", "sector33_code", "sector_short_ratio", "sector_short_trend"])
-        out = out.join(ss, on=["date", "sector33_code"], how="left")
+    # NOTE: Skipped - requires sector33_code which is added in listed_meta_features step.
+    # These columns will be added as NULL for now; full implementation deferred.
+    out = out.with_columns(
+        [
+            pl.lit(None).cast(pl.Float64).alias("sector_short_ratio"),
+            pl.lit(None).cast(pl.Float64).alias("sector_short_trend"),
+        ]
+    )
+
+    # Daily margin interest-derived features (effective from next trading day)
+    dmi = compute_daily_margin_features(con, start=start, end=end)
+    if not dmi.is_empty():
+        out = out.join(dmi.lazy(), on=["date", "code"], how="left")
     else:
         out = out.with_columns(
             [
-                pl.lit(None).cast(pl.Float64).alias("sector_short_ratio"),
-                pl.lit(None).cast(pl.Float64).alias("sector_short_trend"),
+                pl.lit(None).cast(pl.Float64).alias("dmi_short_balance"),
+                pl.lit(None).cast(pl.Float64).alias("dmi_long_balance"),
+                pl.lit(None).cast(pl.Float64).alias("dmi_short_balance_listed_ratio"),
+                pl.lit(None).cast(pl.Utf8).alias("dmi_regulation_code"),
+                pl.lit(None).cast(pl.Utf8).alias("precaution_by_jsf"),
+                pl.lit(None).cast(pl.Utf8).alias("restricted_by_jsf"),
             ]
         )
+
+    out = out.with_columns(
+        pl.when(pl.col("adv_vol_20").is_null() | (pl.col("adv_vol_20") <= 0))
+        .then(None)
+        .otherwise(pl.col("dmi_short_balance") / (pl.col("adv_vol_20") + EPS))
+        .alias("dmi_short_days_to_cover_20")
+    )
+    out = out.with_columns(
+        (
+            (pl.col("dmi_short_balance") - pl.col("dmi_short_balance").shift(5).over("code"))
+            / (pl.col("dmi_short_balance").shift(5).over("code").abs() + EPS)
+        ).alias("_dmi_short_chg_5")
+    )
+    out = out.with_columns(
+        [
+            (
+                (
+                    pl.col("dmi_short_balance_listed_ratio")
+                    - pl.col("dmi_short_balance_listed_ratio").rolling_mean(window_size=60, min_periods=10).over("code")
+                )
+                / (
+                    pl.col("dmi_short_balance_listed_ratio").rolling_std(window_size=60, min_periods=10).over("code")
+                    + EPS
+                )
+            ).alias("_dmi_ratio_z"),
+            (
+                (
+                    pl.col("dmi_short_days_to_cover_20")
+                    - pl.col("dmi_short_days_to_cover_20").rolling_mean(window_size=60, min_periods=10).over("code")
+                )
+                / (pl.col("dmi_short_days_to_cover_20").rolling_std(window_size=60, min_periods=10).over("code") + EPS)
+            ).alias("_dmi_dtc_z"),
+            (
+                (
+                    pl.col("_dmi_short_chg_5")
+                    - pl.col("_dmi_short_chg_5").rolling_mean(window_size=60, min_periods=10).over("code")
+                )
+                / (pl.col("_dmi_short_chg_5").rolling_std(window_size=60, min_periods=10).over("code") + EPS)
+            ).alias("_dmi_chg_z"),
+        ]
+    )
+    dmi_components = ["_dmi_ratio_z", "_dmi_dtc_z", "_dmi_chg_z"]
+    out = out.with_columns(
+        pl.when(pl.sum_horizontal([pl.col(c).is_not_null().cast(pl.Float64) for c in dmi_components]) > 0)
+        .then(
+            pl.sum_horizontal([pl.col(c).fill_null(0.0) for c in dmi_components])
+            / pl.sum_horizontal([pl.col(c).is_not_null().cast(pl.Float64) for c in dmi_components])
+        )
+        .otherwise(None)
+        .clip(-5.0, 5.0)
+        .alias("dmi_short_squeeze_score")
+    )
+    reg_codes = ["003", "004", "005", "006", "3", "4", "5", "6"]
+    out = out.with_columns(
+        [
+            pl.when(pl.col("dmi_regulation_code").cast(pl.Utf8).is_in(reg_codes))
+            .then(1)
+            .otherwise(0)
+            .cast(pl.Int8)
+            .alias("dmi_has_margin_regulation"),
+            (
+                (pl.col("precaution_by_jsf").is_not_null() & (pl.col("precaution_by_jsf") != "0"))
+                | (pl.col("restricted_by_jsf").is_not_null() & (pl.col("restricted_by_jsf") != "0"))
+            )
+            .cast(pl.Int8)
+            .alias("dmi_is_jsf_flagged"),
+        ]
+    )
 
     # Availability flags for downstream filtering
     out = out.with_columns(
@@ -1348,9 +1398,7 @@ def compute_price_features(
     )
 
     # Add flag for sufficient CS population
-    out = out.with_columns(
-        (pl.col("_n_date") >= MIN_CS_POPULATION).alias("_cs_population_ok")
-    )
+    out = out.with_columns((pl.col("_n_date") >= MIN_CS_POPULATION).alias("_cs_population_ok"))
 
     # Helper function to apply CS population filter
     def cs_with_filter(expr: pl.Expr, alias: str) -> pl.Expr:
@@ -1455,7 +1503,7 @@ def compute_price_features(
     # Short selling positions-derived features (event-driven)
     ssp = compute_short_positions_features(con, start=start, end=end)
     if not ssp.is_empty():
-        out = out.join(ssp, on=["date", "code"], how="left")
+        out = out.join(ssp.lazy(), on=["date", "code"], how="left")
     else:
         out = out.with_columns(
             [

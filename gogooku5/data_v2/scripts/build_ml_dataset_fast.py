@@ -40,6 +40,12 @@ TARGET_COLUMN_MAP: dict[int, str] = {
     20: "fwd_ret_20d",
 }
 
+TARGET_SETS: dict[str, list[int]] = {
+    "ret_20": [20],
+    "ret_multi": [1, 5, 10, 20],
+    "ret_short": [1, 5],
+}
+
 
 FEATURE_PRESETS: dict[str, list[str]] = {
     # v1 fast preset for 20d-ahead ranking.
@@ -215,6 +221,13 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated horizons to include as targets (subset of 1,5,10,20). Default: 20",
     )
     parser.add_argument(
+        "--target-set",
+        type=str,
+        default="custom",
+        choices=["custom"] + sorted(TARGET_SETS.keys()),
+        help="Named target set to use (overrides --targets unless 'custom').",
+    )
+    parser.add_argument(
         "--feature-preset",
         type=str,
         default="fast_v1",
@@ -263,6 +276,12 @@ def parse_args() -> argparse.Namespace:
         "--no-metadata",
         action="store_true",
         help="Do not write sidecar metadata JSON (APEX-Ranker v0 expects metadata by default).",
+    )
+    parser.add_argument(
+        "--out-metadata",
+        type=Path,
+        default=None,
+        help="Optional explicit metadata JSON path. Default: <out>_metadata.json",
     )
     return parser.parse_args()
 
@@ -329,21 +348,34 @@ def build_where_clause(
     return "WHERE\n  " + "\n  AND ".join(clauses)
 
 
-def main() -> None:
-    args = parse_args()
+def resolve_horizons(args: argparse.Namespace) -> list[int]:
+    """Resolve target horizons from CLI args."""
 
-    # Parse horizons
-    try:
-        horizons = sorted({int(h) for h in args.targets.split(",") if h.strip()})
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise SystemExit(f"Invalid --targets value: {args.targets}") from exc
+    if args.target_set != "custom":
+        horizons = TARGET_SETS[args.target_set]
+    else:
+        try:
+            horizons = sorted({int(h) for h in args.targets.split(",") if h.strip()})
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise SystemExit(f"Invalid --targets value: {args.targets}") from exc
 
     unsupported = [h for h in horizons if h not in TARGET_COLUMN_MAP]
     if unsupported:
-        raise SystemExit(f"Unsupported horizon(s) in --targets: {unsupported} (allowed: 1,5,10,20)")
+        raise SystemExit(f"Unsupported horizon(s): {unsupported} (allowed: 1,5,10,20)")
+
+    return horizons
+
+
+def main() -> None:
+    args = parse_args()
+
+    # Resolve horizons (target set or custom)
+    horizons = resolve_horizons(args)
 
     # Build SQL
     select_clause = build_select_clause(horizons, args.feature_preset)
+    target_columns = [f"target_{h}d" for h in horizons]
+    feature_columns = FEATURE_PRESETS[args.feature_preset]
     where_clause = build_where_clause(
         horizons,
         min_date=args.min_date,
@@ -397,8 +429,22 @@ def main() -> None:
                 },
                 "row_count": rows,
                 "path": str(args.out),
+                "target_columns": target_columns,
+                "feature_columns": feature_columns,
+                "args": {
+                    "targets": horizons,
+                    "target_set": args.target_set,
+                    "feature_preset": args.feature_preset,
+                    "min_date": args.min_date,
+                    "max_date": args.max_date,
+                    "require_has_price_core": args.require_has_price_core,
+                    "require_has_target": args.require_has_target,
+                    "require_has_sessions": args.require_has_sessions,
+                    "require_has_breakdown": args.require_has_breakdown,
+                    "require_has_long_window_60": args.require_has_long_window_60,
+                },
             }
-            meta_path = args.out.with_name(args.out.stem + "_metadata.json")
+            meta_path = args.out_metadata or args.out.with_name(args.out.stem + "_metadata.json")
             meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
             print(f"Wrote metadata JSON to {meta_path}")
         except Exception as exc:  # pragma: no cover - defensive

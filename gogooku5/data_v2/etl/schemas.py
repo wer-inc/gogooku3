@@ -296,6 +296,32 @@ WEEKLY_MARGIN_INTEREST_COLUMNS: list[tuple[str, str]] = [
 ]
 WEEKLY_MARGIN_INTEREST_PK = "PRIMARY KEY (date, code)"
 
+DAILY_MARGIN_INTEREST_COLUMNS: list[tuple[str, str]] = [
+    ("application_date", "DATE"),
+    ("published_date", "DATE"),
+    ("code", "VARCHAR"),
+    ("publish_reason", "VARCHAR"),
+    ("short_margin_outstanding", "DOUBLE"),
+    ("long_margin_outstanding", "DOUBLE"),
+    ("daily_change_short_margin_outstanding", "DOUBLE"),
+    ("daily_change_long_margin_outstanding", "DOUBLE"),
+    ("short_margin_outstanding_listed_share_ratio", "DOUBLE"),
+    ("long_margin_outstanding_listed_share_ratio", "DOUBLE"),
+    ("short_long_ratio", "DOUBLE"),
+    ("short_negotiable_margin_outstanding", "DOUBLE"),
+    ("short_standardized_margin_outstanding", "DOUBLE"),
+    ("long_negotiable_margin_outstanding", "DOUBLE"),
+    ("long_standardized_margin_outstanding", "DOUBLE"),
+    ("daily_change_short_negotiable_margin_outstanding", "DOUBLE"),
+    ("daily_change_short_standardized_margin_outstanding", "DOUBLE"),
+    ("daily_change_long_negotiable_margin_outstanding", "DOUBLE"),
+    ("daily_change_long_standardized_margin_outstanding", "DOUBLE"),
+    ("tse_margin_regulation_classification", "VARCHAR"),
+    ("precaution_by_jsf", "VARCHAR"),
+    ("restricted_by_jsf", "VARCHAR"),
+]
+DAILY_MARGIN_INTEREST_PK = "PRIMARY KEY (application_date, code)"
+
 SHORT_SELLING_COLUMNS: list[tuple[str, str]] = [
     ("date", "DATE"),
     ("sector33_code", "VARCHAR"),
@@ -614,6 +640,13 @@ FEATURES_DAILY_COLUMNS: list[tuple[str, str]] = [
     ("long_overhang_days", "DOUBLE"),
     ("short_squeeze_risk", "DOUBLE"),
     ("long_liquidation_risk", "DOUBLE"),
+    ("dmi_short_balance", "DOUBLE"),
+    ("dmi_long_balance", "DOUBLE"),
+    ("dmi_short_balance_listed_ratio", "DOUBLE"),
+    ("dmi_short_days_to_cover_20", "DOUBLE"),
+    ("dmi_short_squeeze_score", "DOUBLE"),
+    ("dmi_has_margin_regulation", "INT"),
+    ("dmi_is_jsf_flagged", "INT"),
     ("cs_pct_sell_short_ratio", "DOUBLE"),
     ("cs_pct_flow_imbalance", "DOUBLE"),
     ("cs_pct_short_overhang_days", "DOUBLE"),

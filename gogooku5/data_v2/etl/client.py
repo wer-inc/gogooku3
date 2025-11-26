@@ -9,6 +9,7 @@ import requests
 
 from .config import (
     BREAKDOWN_URL,
+    DAILY_MARGIN_INTEREST_URL,
     DAILY_QUOTES_URL,
     FS_DETAILS_URL,
     HTTP_TIMEOUT,
@@ -267,6 +268,67 @@ def fetch_weekly_margin_interest(
     return all_records
 
 
+def fetch_daily_margin_interest(
+    id_token: str,
+    *,
+    start: str,
+    end: str,
+    code: str | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch /markets/daily_margin_interest."""
+    headers = {"Authorization": f"Bearer {id_token}"}
+    all_records: list[dict[str, Any]] = []
+
+    if code:
+        pagination_key: str | None = None
+        while True:
+            params: dict[str, str] = {"from": start, "to": end, "code": code}
+            if pagination_key:
+                params["pagination_key"] = pagination_key
+            resp = requests.get(DAILY_MARGIN_INTEREST_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+            recs = data.get("daily_margin_interest") or data.get("data") or []
+            all_records.extend(recs)
+            pagination_key = data.get("pagination_key")
+            if not pagination_key:
+                break
+    else:
+        # code指定なし → trading_calendar から取引日を取得して date でループ
+        cal_resp = requests.get(
+            TRADING_CAL_URL,
+            headers=headers,
+            params={"from": start, "to": end},
+            timeout=HTTP_TIMEOUT,
+        )
+        cal_resp.raise_for_status()
+        cal_data = cal_resp.json()
+        cal_records = cal_data.get("trading_calendar") or cal_data.get("data") or []
+        # filter to HolidayDivision in ('1','2') => trading days
+        days = [
+            r["Date"] if "Date" in r else r.get("date")
+            for r in cal_records
+            if (r.get("HolidayDivision") or r.get("holiday_division")) in ("1", "2")
+        ]
+        for day in days:
+            if not day:
+                continue
+            pagination_key: str | None = None
+            while True:
+                params: dict[str, str] = {"date": day}
+                if pagination_key:
+                    params["pagination_key"] = pagination_key
+                resp = requests.get(DAILY_MARGIN_INTEREST_URL, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+                resp.raise_for_status()
+                data = resp.json()
+                recs = data.get("daily_margin_interest") or data.get("data") or []
+                all_records.extend(recs)
+                pagination_key = data.get("pagination_key")
+                if not pagination_key:
+                    break
+    return all_records
+
+
 def fetch_short_selling(
     id_token: str,
     *,
@@ -331,8 +393,25 @@ def fetch_short_selling_positions(
             if not pagination_key:
                 break
     else:
-        # code指定なし → disclosed_date で日付ループ
-        for day in _date_iter(start, end):
+        # code指定なし → trading_calendar から取引日を取得して disclosed_date でループ
+        cal_resp = requests.get(
+            TRADING_CAL_URL,
+            headers=headers,
+            params={"from": start, "to": end},
+            timeout=HTTP_TIMEOUT,
+        )
+        cal_resp.raise_for_status()
+        cal_data = cal_resp.json()
+        cal_records = cal_data.get("trading_calendar") or cal_data.get("data") or []
+        # filter to HolidayDivision in ('1','2') => trading days
+        days = [
+            r["Date"] if "Date" in r else r.get("date")
+            for r in cal_records
+            if (r.get("HolidayDivision") or r.get("holiday_division")) in ("1", "2")
+        ]
+        for day in days:
+            if not day:
+                continue
             pagination_key: str | None = None
             while True:
                 params: dict[str, str] = {"disclosed_date": day}

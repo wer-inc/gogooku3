@@ -62,6 +62,9 @@ def compute_short_positions_features(
 
     # effective_date = next trading day after disclosed_date
     pos = pos.with_columns((pl.col("disclosed_date") + pl.duration(days=1)).alias("_disclosed_plus1"))
+    # Sort both frames for join_asof requirement
+    pos = pos.sort("_disclosed_plus1")
+    cal_df = cal_df.sort("cal_date")
     pos = (
         pos.join_asof(cal_df, left_on="_disclosed_plus1", right_on="cal_date", strategy="forward")
         .rename({"cal_date": "effective_date"})
@@ -101,14 +104,16 @@ def compute_short_positions_features(
     agg = agg.sort(["code", "effective_date"])
 
     # join_asof to forward-fill latest disclosed ratio
-    with pl.Config(set_sorted=True):
-        daily = pf.join_asof(
-            agg,
-            left_on="date",
-            right_on="effective_date",
-            by="code",
-            strategy="backward",
-        )
+    # Note: set_sorted flag must be set on columns directly for Polars 1.x
+    pf = pf.with_columns(pl.col("date").set_sorted())
+    agg = agg.with_columns(pl.col("effective_date").set_sorted())
+    daily = pf.join_asof(
+        agg,
+        left_on="date",
+        right_on="effective_date",
+        by="code",
+        strategy="backward",
+    )
 
     # mark disclosure days, then rolling_sum over code to flag recent disclosures
     disc_flags = (

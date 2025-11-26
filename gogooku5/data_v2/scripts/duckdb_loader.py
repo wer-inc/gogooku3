@@ -23,8 +23,10 @@ import duckdb
 import polars as pl
 from data_v2.etl.auth import get_id_token
 from data_v2.etl.client import (
+    SECTOR33_CODES,
     fetch_breakdown_for_date,
     fetch_calendar_records,
+    fetch_daily_margin_interest,
     fetch_daily_quotes_for_date,
     fetch_fs_details_for_date,
     fetch_listed_info_for_date,
@@ -33,7 +35,6 @@ from data_v2.etl.client import (
     fetch_statements_for_date,
     fetch_trades_spec,
     fetch_weekly_margin_interest,
-    SECTOR33_CODES,
 )
 from data_v2.etl.config import DEFAULT_DB_PATH
 from data_v2.etl.duckdb import connect_db, ensure_tables
@@ -42,6 +43,7 @@ from data_v2.etl.feature.listed_info import compute_listed_features
 from data_v2.etl.feature.prices import compute_price_features
 from data_v2.etl.feature.trades_spec import compute_trades_spec_features
 from data_v2.etl.normalize.breakdown import normalize_breakdown
+from data_v2.etl.normalize.daily_margin_interest import normalize_daily_margin_interest
 from data_v2.etl.normalize.daily_quotes import normalize_daily_quotes
 from data_v2.etl.normalize.fs_details import normalize_fs_details
 from data_v2.etl.normalize.listed_info import normalize_listed_info
@@ -57,6 +59,7 @@ from data_v2.etl.normalize.weekly_margin_interest import (
 )
 from data_v2.etl.normalize.yfinance import normalize_yfinance_multi
 from data_v2.etl.upsert.breakdown import upsert_breakdown
+from data_v2.etl.upsert.daily_margin_interest import upsert_daily_margin_interest
 from data_v2.etl.upsert.daily_quotes import upsert_daily_quotes
 from data_v2.etl.upsert.features import upsert_features_daily
 from data_v2.etl.upsert.fs_details import upsert_fs_details
@@ -683,6 +686,25 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated HolidayDivision values to treat as trading days (default: 1,2)",
     )
 
+    dmi_fetch = sub.add_parser(
+        "fetch-daily-margin-interest",
+        help="Fetch /markets/daily_margin_interest by date range and upsert into DuckDB",
+    )
+    dmi_fetch.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
+    dmi_fetch.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
+    dmi_fetch.add_argument("--code", required=False, help="Optional code filter (uses from/to when set)")
+    dmi_fetch.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("WORKERS", "1")),
+        help="Parallel workers for date-based fetch (code=None only)",
+    )
+    dmi_fetch.add_argument(
+        "--holiday-division",
+        default=os.environ.get("HOLIDAY_DIVISION", "1,2"),
+        help="Comma-separated HolidayDivision values to treat as trading days (default: 1,2)",
+    )
+
     ss_fetch = sub.add_parser(
         "fetch-short-selling",
         help="Fetch /markets/short_selling by date range and upsert into DuckDB",
@@ -1131,6 +1153,45 @@ def main() -> int:
         print(
             f"Upserted short_selling into {args.db} rows={inserted} "
             f"for {args.start}->{args.end} sector33={args.sector33code or 'ALL'}"
+        )
+        return 0
+
+    if args.command == "fetch-daily-margin-interest":
+        id_token = get_id_token()
+        include_divs = [v.strip() for v in args.holiday_division.split(",") if v.strip()]
+        if args.code:
+            recs = fetch_daily_margin_interest(id_token=id_token, start=args.start, end=args.end, code=args.code)
+        else:
+            days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+            if not days:
+                cal_recs = fetch_calendar_records(id_token=id_token, from_date=args.start, to_date=args.end)
+                cal_df = normalize_trading_calendar(cal_recs)
+                _ = upsert_trading_calendar(con, cal_df)
+                days = trading_days_from_duckdb(con, start=args.start, end=args.end, include_divs=include_divs)
+            if not days:
+                raise SystemExit("No trading days found for daily_margin_interest fetch range.")
+
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            max_workers = max(1, args.workers)
+
+            def _job(day: str) -> list[dict[str, object]]:
+                try:
+                    return fetch_daily_margin_interest(id_token=id_token, start=day, end=day, code=None)
+                except Exception:
+                    return []
+
+            recs: list[dict[str, object]] = []
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = {ex.submit(_job, d): d for d in days}
+                for fut in as_completed(futures):
+                    recs.extend(fut.result())
+
+        df = normalize_daily_margin_interest(recs)
+        inserted = upsert_daily_margin_interest(con, df)
+        print(
+            f"Upserted daily_margin_interest into {args.db} rows={inserted} "
+            f"for {args.start}->{args.end} code={args.code or 'ALL'}"
         )
         return 0
 

@@ -5,6 +5,7 @@ from dagster import Definitions
 from .jobs import (
     duckdb_breakdown_job,
     duckdb_calendar_job,
+    duckdb_daily_margin_interest_job,
     duckdb_daily_quotes_job,
     duckdb_features_job,
     duckdb_fs_details_job,
@@ -31,6 +32,7 @@ defs = Definitions(
         duckdb_statements_job,
         duckdb_fs_details_job,
         duckdb_weekly_margin_interest_job,
+        duckdb_daily_margin_interest_job,
         duckdb_short_selling_job,
         duckdb_short_selling_positions_job,
     ]

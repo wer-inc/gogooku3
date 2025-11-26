@@ -10,6 +10,7 @@ from data_v2.etl.auth import get_id_token
 from data_v2.etl.client import (
     fetch_breakdown_for_date,
     fetch_calendar_records,
+    fetch_daily_margin_interest,
     fetch_daily_quotes_for_date,
     fetch_fs_details_for_date,
     fetch_listed_info_for_date,
@@ -23,6 +24,7 @@ from data_v2.etl.duckdb import connect_db, ensure_tables
 from data_v2.etl.feature.listed_info import compute_listed_features
 from data_v2.etl.feature.prices import compute_price_features
 from data_v2.etl.normalize.breakdown import normalize_breakdown
+from data_v2.etl.normalize.daily_margin_interest import normalize_daily_margin_interest
 from data_v2.etl.normalize.daily_quotes import normalize_daily_quotes
 from data_v2.etl.normalize.listed_info import normalize_listed_info
 from data_v2.etl.normalize.short_selling import normalize_short_selling
@@ -35,6 +37,7 @@ from data_v2.etl.normalize.weekly_margin_interest import (
     normalize_weekly_margin_interest,
 )
 from data_v2.etl.upsert.breakdown import upsert_breakdown
+from data_v2.etl.upsert.daily_margin_interest import upsert_daily_margin_interest
 from data_v2.etl.upsert.daily_quotes import upsert_daily_quotes
 from data_v2.etl.upsert.features import upsert_features_daily
 from data_v2.etl.upsert.listed_features import upsert_listed_features
@@ -662,6 +665,65 @@ def duckdb_fetch_weekly_margin_interest_op(
         "end": In(str, description="End date YYYY-MM-DD", default_value=ENV_END),
         "db_path": In(str, description="DuckDB path", default_value=str(DEFAULT_DB_PATH)),
         "threads": In(int, description="DuckDB threads (0=default)", default_value=0),
+        "code": In(str, description="Optional code filter", default_value=""),
+        "holiday_division": In(str, description="HolidayDivision CSV (e.g., '1,2')", default_value="1,2"),
+        "workers": In(int, description="Parallel fetch workers for date-based fetch", default_value=4),
+    },
+    out=Out(str, description="Result string"),
+)
+def duckdb_fetch_daily_margin_interest_op(
+    context,
+    start: str,
+    end: str,
+    db_path: str,
+    threads: int,
+    code: str,
+    holiday_division: str,
+    workers: int,
+) -> str:
+    con = connect_db(Path(db_path), threads=threads or None)
+    ensure_tables(con)
+    id_token = get_id_token()
+    include_divs = [v.strip() for v in holiday_division.split(",") if v.strip()]
+
+    if code:
+        recs = fetch_daily_margin_interest(id_token=id_token, start=start, end=end, code=code)
+    else:
+        days = trading_days_from_duckdb(con, start=start, end=end, include_divs=include_divs)
+        if not days:
+            cal_recs = fetch_calendar_records(id_token=id_token, from_date=start, to_date=end)
+            cal_df = normalize_trading_calendar(cal_recs)
+            _ = upsert_trading_calendar(con, cal_df)
+            days = trading_days_from_duckdb(con, start=start, end=end, include_divs=include_divs)
+        if not days:
+            raise RuntimeError("No trading days found for daily_margin_interest fetch range.")
+
+        recs = []
+        workers = max(1, workers)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {
+                ex.submit(fetch_daily_margin_interest, id_token=id_token, start=day, end=day, code=None): day
+                for day in days
+            }
+            for fut in as_completed(futures):
+                try:
+                    recs.extend(fut.result())
+                except Exception as exc:  # pragma: no cover - network variability
+                    context.log.warning("daily_margin_interest fetch failed for %s: %s", futures[fut], exc)
+
+    df = normalize_daily_margin_interest(recs)
+    inserted = upsert_daily_margin_interest(con, df)
+    msg = f"daily_margin_interest upserted into {db_path} rows={inserted} for {start}->{end} code={code or 'ALL'}"
+    context.log.info(msg)
+    return msg
+
+
+@op(
+    ins={
+        "start": In(str, description="Start date YYYY-MM-DD", default_value=ENV_START),
+        "end": In(str, description="End date YYYY-MM-DD", default_value=ENV_END),
+        "db_path": In(str, description="DuckDB path", default_value=str(DEFAULT_DB_PATH)),
+        "threads": In(int, description="DuckDB threads (0=default)", default_value=0),
         "sector33code": In(str, description="Optional sector33code filter (e.g., 0050)", default_value=""),
     },
     out=Out(str, description="Result string"),
@@ -742,6 +804,11 @@ def duckdb_fs_details_job():
 @job
 def duckdb_weekly_margin_interest_job():
     duckdb_fetch_weekly_margin_interest_op()
+
+
+@job
+def duckdb_daily_margin_interest_job():
+    duckdb_fetch_daily_margin_interest_op()
 
 
 @job

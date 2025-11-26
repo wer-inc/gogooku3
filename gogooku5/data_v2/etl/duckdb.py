@@ -9,6 +9,8 @@ import duckdb
 from .schemas import (
     BREAKDOWN_COLUMNS,
     BREAKDOWN_PK,
+    DAILY_MARGIN_INTEREST_COLUMNS,
+    DAILY_MARGIN_INTEREST_PK,
     DAILY_QUOTES_COLUMNS,
     DAILY_QUOTES_PK,
     FEATURES_DAILY_COLUMNS,
@@ -61,6 +63,7 @@ def ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(create_table_sql("yf_prices", YF_PRICE_COLUMNS, YF_PRICE_PK))
     con.execute(create_table_sql("daily_quotes", DAILY_QUOTES_COLUMNS, DAILY_QUOTES_PK))
     con.execute(create_table_sql("breakdown", BREAKDOWN_COLUMNS, BREAKDOWN_PK))
+    con.execute(create_table_sql("daily_margin_interest", DAILY_MARGIN_INTEREST_COLUMNS, DAILY_MARGIN_INTEREST_PK))
     con.execute(create_table_sql("weekly_margin_interest", WEEKLY_MARGIN_INTEREST_COLUMNS, WEEKLY_MARGIN_INTEREST_PK))
     con.execute(create_table_sql("short_selling", SHORT_SELLING_COLUMNS, SHORT_SELLING_PK))
     con.execute(
