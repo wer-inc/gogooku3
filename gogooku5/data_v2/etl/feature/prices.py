@@ -707,7 +707,15 @@ def compute_price_features(
             "margin_buy_new_volume",
             "margin_buy_close_volume",
         ]
-        bd = bd.with_columns([pl.col(c).cast(pl.Float64).fill_null(0.0) for c in value_cols + volume_cols])
+        # Cast to Float64 but keep NULLs (don't fill with 0.0 - preserves data quality)
+        # NULL means "no breakdown data available", 0.0 means "actual zero value"
+        bd = bd.with_columns([pl.col(c).cast(pl.Float64) for c in value_cols + volume_cols])
+
+        # Add has_breakdown flag: True if any breakdown column has non-null data
+        bd = bd.with_columns(
+            pl.any_horizontal([pl.col(c).is_not_null() for c in value_cols + volume_cols]).alias("has_breakdown")
+        )
+
         bd = bd.with_columns(
             [
                 (
@@ -1159,6 +1167,9 @@ def compute_price_features(
     )
 
     # Cross-sectional percentiles (per date)
+    # Minimum population threshold for reliable CS statistics
+    MIN_CS_POPULATION = 500
+
     out = out.with_columns(
         [
             pl.count().over("date").alias("_n_date"),
@@ -1171,41 +1182,59 @@ def compute_price_features(
             pl.col("short_overhang_days").rank(method="average").over("date").alias("_rank_short_overhang_days"),
         ]
     )
+
+    # Add flag for sufficient CS population
+    out = out.with_columns(
+        (pl.col("_n_date") >= MIN_CS_POPULATION).alias("_cs_population_ok")
+    )
+
+    # Helper function to apply CS population filter
+    def cs_with_filter(expr: pl.Expr, alias: str) -> pl.Expr:
+        """Apply CS feature calculation only when population >= MIN_CS_POPULATION."""
+        return pl.when(pl.col("_cs_population_ok")).then(expr).otherwise(None).alias(alias)
+
     out = out.with_columns(
         [
-            (pl.col("_rank_ret_1d") / (pl.col("_n_date") - 1 + EPS)).alias("cs_pct_ret_1d"),
-            (pl.col("_rank_dollar_volume") / (pl.col("_n_date") - 1 + EPS)).alias("cs_pct_dollar_volume"),
-            (pl.col("_rank_sell_short_ratio") / (pl.col("_n_date") - 1 + EPS)).alias("cs_pct_sell_short_ratio"),
-            (pl.col("_rank_flow_imbalance") / (pl.col("_n_date") - 1 + EPS)).alias("cs_pct_flow_imbalance"),
-            (pl.col("_rank_credit_turnover_share") / (pl.col("_n_date") - 1 + EPS)).alias(
-                "cs_pct_credit_turnover_share"
+            cs_with_filter(pl.col("_rank_ret_1d") / (pl.col("_n_date") - 1 + EPS), "cs_pct_ret_1d"),
+            cs_with_filter(pl.col("_rank_dollar_volume") / (pl.col("_n_date") - 1 + EPS), "cs_pct_dollar_volume"),
+            cs_with_filter(pl.col("_rank_sell_short_ratio") / (pl.col("_n_date") - 1 + EPS), "cs_pct_sell_short_ratio"),
+            cs_with_filter(pl.col("_rank_flow_imbalance") / (pl.col("_n_date") - 1 + EPS), "cs_pct_flow_imbalance"),
+            cs_with_filter(
+                pl.col("_rank_credit_turnover_share") / (pl.col("_n_date") - 1 + EPS),
+                "cs_pct_credit_turnover_share",
             ),
-            (pl.col("_rank_short_overhang_days") / (pl.col("_n_date") - 1 + EPS)).alias("cs_pct_short_overhang_days"),
+            cs_with_filter(
+                pl.col("_rank_short_overhang_days") / (pl.col("_n_date") - 1 + EPS), "cs_pct_short_overhang_days"
+            ),
             # rank versions (0-1) kept併記
-            (pl.col("_rank_ret_1d") / (pl.col("_n_date") - 1 + EPS)).alias("cs_rank_ret_1d"),
-            (pl.col("_rank_ret_5d") / (pl.col("_n_date") - 1 + EPS)).alias("cs_rank_ret_5d"),
-            (pl.col("_rank_sell_short_ratio") / (pl.col("_n_date") - 1 + EPS)).alias("cs_rank_short_ratio"),
+            cs_with_filter(pl.col("_rank_ret_1d") / (pl.col("_n_date") - 1 + EPS), "cs_rank_ret_1d"),
+            cs_with_filter(pl.col("_rank_ret_5d") / (pl.col("_n_date") - 1 + EPS), "cs_rank_ret_5d"),
+            cs_with_filter(pl.col("_rank_sell_short_ratio") / (pl.col("_n_date") - 1 + EPS), "cs_rank_short_ratio"),
         ]
     )
 
-    # Cross-sectional Z-scores per date
+    # Cross-sectional Z-scores per date (with population filter)
     out = out.with_columns(
         [
-            (
-                (pl.col("ret_1d") - pl.col("ret_1d").mean().over("date")) / (pl.col("ret_1d").std().over("date") + EPS)
-            ).alias("cs_z_ret_1d"),
-            (
+            cs_with_filter(
+                (pl.col("ret_1d") - pl.col("ret_1d").mean().over("date")) / (pl.col("ret_1d").std().over("date") + EPS),
+                "cs_z_ret_1d",
+            ),
+            cs_with_filter(
                 (pl.col("vol_z_20") - pl.col("vol_z_20").mean().over("date"))
-                / (pl.col("vol_z_20").std().over("date") + EPS)
-            ).alias("cs_z_vol_z_20"),
-            (
+                / (pl.col("vol_z_20").std().over("date") + EPS),
+                "cs_z_vol_z_20",
+            ),
+            cs_with_filter(
                 (pl.col("sell_short_ratio") - pl.col("sell_short_ratio").mean().over("date"))
-                / (pl.col("sell_short_ratio").std().over("date") + EPS)
-            ).alias("cs_z_short_ratio"),
-            (
+                / (pl.col("sell_short_ratio").std().over("date") + EPS),
+                "cs_z_short_ratio",
+            ),
+            cs_with_filter(
                 (pl.col("flow_imbalance") - pl.col("flow_imbalance").mean().over("date"))
-                / (pl.col("flow_imbalance").std().over("date") + EPS)
-            ).alias("cs_z_flow_imbalance"),
+                / (pl.col("flow_imbalance").std().over("date") + EPS),
+                "cs_z_flow_imbalance",
+            ),
         ]
     )
 
