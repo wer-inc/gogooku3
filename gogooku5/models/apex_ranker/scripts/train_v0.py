@@ -37,14 +37,15 @@ from apex_ranker.utils import (
     topk_overlap,
     wil_at_k,
 )
-from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
 from torch.utils.data import DataLoader
+
+from atft_gat_fan.monitoring.nvml_wrapper import NVMLMonitor
 
 # NOTE: lazy_load replaced with pl.read_parquet directly.
 # MLflowTracker is optional - create a stub if not available.
 
 
-def lazy_load(path, prefer_ipc: bool = True):
+def lazy_load(path, _prefer_ipc: bool = True):
     """Load parquet file. IPC caching removed for simplicity."""
     return pl.read_parquet(path)
 
@@ -52,7 +53,7 @@ def lazy_load(path, prefer_ipc: bool = True):
 class MLflowTracker:
     """Stub MLflow tracker when gogooku5.data module is not available."""
 
-    def __init__(self, enabled: bool = False, **kwargs):
+    def __init__(self, enabled: bool = False, **_kwargs):
         self.enabled = enabled
 
     def __enter__(self):
@@ -920,24 +921,11 @@ def _run_training(args, cfg, tracker) -> None:
                 }
 
                 print(
-                    "[Val] h=%2dd RankIC=%.4f ΔP@K=%.4f (P@K=%.4f | rand=%.4f) "
-                    "ΔNDCG=%.4f (NDCG=%.4f | rand=%.4f) "
-                    "Overlap=%.4f Spread=%.4f WIL=%.4f (panels=%d, K/N=%.3f)"
-                    % (
-                        horizon,
-                        rank_ic_mean,
-                        delta_p,
-                        p_at_k_mean,
-                        p_rand_mean,
-                        delta_ndcg,
-                        ndcg_mean,
-                        ndcg_rand_mean,
-                        overlap_mean,
-                        spread_mean,
-                        wil_mean,
-                        arrays["rank_ic"].size,
-                        k_over_n_mean,
-                    )
+                    f"[Val] h={horizon:2d}d RankIC={rank_ic_mean:.4f} ΔP@K={delta_p:.4f} "
+                    f"(P@K={p_at_k_mean:.4f} | rand={p_rand_mean:.4f}) "
+                    f"ΔNDCG={delta_ndcg:.4f} (NDCG={ndcg_mean:.4f} | rand={ndcg_rand_mean:.4f}) "
+                    f"Overlap={overlap_mean:.4f} Spread={spread_mean:.4f} WIL={wil_mean:.4f} "
+                    f"(panels={arrays['rank_ic'].size:d}, K/N={k_over_n_mean:.3f})"
                 )
 
             if val_panel_count == 0:
@@ -1284,24 +1272,11 @@ def _run_training(args, cfg, tracker) -> None:
             }
 
             print(
-                "[Val] h=%2dd RankIC=%.4f ΔP@K=%.4f (P@K=%.4f | rand=%.4f) "
-                "ΔNDCG=%.4f (NDCG=%.4f | rand=%.4f) "
-                "Overlap=%.4f Spread=%.4f WIL=%.4f (panels=%d, K/N=%.3f)"
-                % (
-                    horizon,
-                    rank_ic_mean,
-                    delta_p,
-                    p_at_k_mean,
-                    p_rand_mean,
-                    delta_ndcg,
-                    ndcg_mean,
-                    ndcg_rand_mean,
-                    overlap_mean,
-                    spread_mean,
-                    wil_mean,
-                    arrays["rank_ic"].size,
-                    k_over_n_mean,
-                )
+                f"[Val] h={horizon:2d}d RankIC={rank_ic_mean:.4f} ΔP@K={delta_p:.4f} "
+                f"(P@K={p_at_k_mean:.4f} | rand={p_rand_mean:.4f}) "
+                f"ΔNDCG={delta_ndcg:.4f} (NDCG={ndcg_mean:.4f} | rand={ndcg_rand_mean:.4f}) "
+                f"Overlap={overlap_mean:.4f} Spread={spread_mean:.4f} WIL={wil_mean:.4f} "
+                f"(panels={arrays['rank_ic'].size:d}, K/N={k_over_n_mean:.3f})"
             )
         if val_panel_count == 0:
             print("[WARN] Validation loader yielded no panels; verify mask coverage and min_stocks_per_day.")

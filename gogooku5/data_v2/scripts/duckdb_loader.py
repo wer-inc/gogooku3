@@ -83,14 +83,11 @@ DEFAULT_CALENDAR_PATH = Path()  # deprecated; kept for CLI compatibility
 
 def _fetch_with_retries(fn, day: str, *, retries: int = 3, delay: float = 1.0) -> tuple[str, list[dict[str, Any]]]:
     """Run a day-based fetch with simple retry/backoff."""
-
-    last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
             recs = fn(day)
             return day, recs
         except Exception as exc:  # pragma: no cover - network variability
-            last_exc = exc
             if attempt < retries:
                 time.sleep(delay)
             else:
@@ -259,20 +256,16 @@ def fetch_listed_into_duckdb(
     *,
     start: str,
     end: str,
-    calendar_path: Path,
     include_divs: Iterable[str],
     sleep_sec: float,
     workers: int = 10,
 ) -> None:
     """
     Fetch /listed/info day by day and upsert into DuckDB.
-    """
-    if not calendar_path.exists():
-        raise FileNotFoundError(
-            f"Calendar parquet not found at {calendar_path}. Provide a valid path or use duckdb_fetch_listed_op with auto_fetch_calendar."
-        )
 
-    days = load_trading_days(calendar_path, start, end, list(include_divs))
+    Note: Uses trading_calendar from DuckDB. Ensure calendar is populated first.
+    """
+    days = trading_days_from_duckdb(con, start=start, end=end, include_divs=list(include_divs))
     if not days:
         print(f"No trading days between {start} and {end}")
         return
@@ -287,13 +280,12 @@ def fetch_listed_into_duckdb(
         except Exception:
             return day, []
 
-    results: list[tuple[str, list[dict[str, Any]]]] = []
     max_workers = max(1, workers)
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         future_map = {ex.submit(_job, d): d for d in days}
         for idx, fut in enumerate(as_completed(future_map), 1):
             day = future_map[fut]
-            day, records = fut.result()
+            _, records = fut.result()
             if records:
                 df = normalize_listed_info(records)
                 inserted = upsert_listed_info(con, df)

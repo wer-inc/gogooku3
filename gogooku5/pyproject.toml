@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # Pyflakes
+    "B",      # flake8-bugbear
+    "ARG",    # flake8-unused-arguments
+    "UP",     # pyupgrade
+]
+ignore = [
+    "E501",   # Line too long (handled by formatter or accepted in mappings)
+    "E402",   # Module level import not at top of file (common in scripts with sys.path manipulation)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Allow E402 (imports not at top) in scripts that manipulate sys.path
+"*/scripts/*.py" = ["E402"]
+# Allow long lines in schema/mapping files
+"*/normalize/*.py" = ["E501"]
+"*/schemas.py" = ["E501"]

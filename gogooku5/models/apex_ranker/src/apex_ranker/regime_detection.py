@@ -84,9 +84,7 @@ class RegimeDetector:
         end_date = pl.datetime(date)
         start_date = end_date - pl.duration(days=lookback_days)
 
-        recent = prices.filter(
-            (pl.col("Date") >= start_date) & (pl.col("Date") <= end_date)
-        )
+        recent = prices.filter((pl.col("Date") >= start_date) & (pl.col("Date") <= end_date))
 
         if len(recent) == 0:
             return RegimeSignals(
@@ -99,9 +97,7 @@ class RegimeDetector:
             )
 
         # Calculate realized volatility (annualized)
-        returns = recent.group_by("Code").agg(
-            pl.col("Close").pct_change().std().alias("vol")
-        )
+        returns = recent.group_by("Code").agg(pl.col("Close").pct_change().std().alias("vol"))
         avg_vol = returns["vol"].mean() * np.sqrt(252)
 
         # Calculate momentum (20-day return)
@@ -134,9 +130,7 @@ class RegimeDetector:
             avg_corr = 0.5
 
         # Regime classification
-        regime, confidence = self._classify_regime(
-            avg_vol, avg_momentum, max_dd, avg_corr
-        )
+        regime, confidence = self._classify_regime(avg_vol, avg_momentum, max_dd, avg_corr)
 
         return RegimeSignals(
             realized_vol=avg_vol,
@@ -152,7 +146,7 @@ class RegimeDetector:
         vol: float,
         momentum: float,
         max_dd: float,
-        correlation: float,
+        _correlation: float,  # Reserved for future correlation-based regime detection
     ) -> tuple[MarketRegime, float]:
         """Classify regime based on signals with confidence score."""
 
@@ -325,17 +319,13 @@ if __name__ == "__main__":
         )
 
         print(f"Detected Regime: {regime.value.upper()} (confidence: {confidence:.2%})")
-        print(
-            f"Realized Vol: {scenario['vol']:.1%} | Momentum: {scenario['momentum']:.1%}"
-        )
+        print(f"Realized Vol: {scenario['vol']:.1%} | Momentum: {scenario['momentum']:.1%}")
 
         exposure = risk_mgr.calculate_exposure(signals)
         print(f"\n💰 Recommended Exposure: {exposure:.1%}")
         print(f"   Capital Allocation: ¥{100_000_000 * exposure:,.0f} / ¥100,000,000")
 
         if exposure < 0.5:
-            print(
-                f"   ⚠️  DEFENSIVE MODE: Reduced to {exposure:.0%} due to {regime.value} regime"
-            )
+            print(f"   ⚠️  DEFENSIVE MODE: Reduced to {exposure:.0%} due to {regime.value} regime")
 
     print("\n" + "=" * 80)

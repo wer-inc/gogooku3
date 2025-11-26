@@ -409,7 +409,7 @@ def main() -> None:
 
             # Compute simple schema hash (column name + dtype)
             df_head = pl.read_parquet(args.out, n_rows=0)
-            schema_items = [f"{name}:{dtype}" for name, dtype in zip(df_head.columns, df_head.dtypes)]
+            schema_items = [f"{name}:{dtype}" for name, dtype in zip(df_head.columns, df_head.dtypes, strict=True)]
             schema_blob = "\n".join(schema_items).encode("utf-8")
             schema_hash = hashlib.sha256(schema_blob).hexdigest()
 

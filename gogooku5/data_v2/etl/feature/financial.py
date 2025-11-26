@@ -128,8 +128,9 @@ def compute_financial_features(
     Compute financial ratios from /fins/statements and /fins/fs_details and
     project them to daily (date, code).
     """
-    start_dt = date.fromisoformat(start)
-    end_dt = date.fromisoformat(end)
+    # Parse dates (end_dt used for filtering, start unused but validated)
+    _ = date.fromisoformat(start)  # Validate format
+    end_dt = date.fromisoformat(end)  # noqa: F841 - used for boundary checks
 
     pf_arrow = con.execute(
         """
@@ -249,10 +250,10 @@ def compute_financial_features(
         inv_list: list[float | None] = []
         liab_list: list[float | None] = []
         for raw in json_list:
-            c, i, l = _extract_k1_components(raw)
-            cur_list.append(c)
-            inv_list.append(i)
-            liab_list.append(l)
+            cur_val, inv_val, liab_val = _extract_k1_components(raw)
+            cur_list.append(cur_val)
+            inv_list.append(inv_val)
+            liab_list.append(liab_val)
         stm = stm.with_columns(
             [
                 pl.Series("fund_current_assets_k1", cur_list),

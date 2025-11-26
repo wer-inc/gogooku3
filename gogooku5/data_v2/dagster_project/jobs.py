@@ -26,6 +26,7 @@ from data_v2.etl.feature.prices import compute_price_features
 from data_v2.etl.normalize.breakdown import normalize_breakdown
 from data_v2.etl.normalize.daily_margin_interest import normalize_daily_margin_interest
 from data_v2.etl.normalize.daily_quotes import normalize_daily_quotes
+from data_v2.etl.normalize.fs_details import normalize_fs_details
 from data_v2.etl.normalize.listed_info import normalize_listed_info
 from data_v2.etl.normalize.short_selling import normalize_short_selling
 from data_v2.etl.normalize.short_selling_positions import (
@@ -40,6 +41,7 @@ from data_v2.etl.upsert.breakdown import upsert_breakdown
 from data_v2.etl.upsert.daily_margin_interest import upsert_daily_margin_interest
 from data_v2.etl.upsert.daily_quotes import upsert_daily_quotes
 from data_v2.etl.upsert.features import upsert_features_daily
+from data_v2.etl.upsert.fs_details import upsert_fs_details
 from data_v2.etl.upsert.listed_features import upsert_listed_features
 from data_v2.etl.upsert.listed_info import upsert_listed_info
 from data_v2.etl.upsert.short_selling import upsert_short_selling
@@ -68,7 +70,7 @@ def duckdb_upsert_calendar_op(
     context,
     from_date: str,
     to_date: str,
-    force_refresh: bool,
+    force_refresh: bool,  # noqa: ARG001 - Intended for future use; ignored for now
     db_path: str,
     threads: int,
 ) -> str:
